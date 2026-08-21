@@ -13,15 +13,8 @@
 #define LCD_CYAN    0x07FFU
 
 bool LCD_Init(void);
-void LCD_SetBacklight(bool enabled);
 void LCD_FillScreen(uint16_t color);
 void LCD_FillRect(uint16_t x, uint16_t y, uint16_t width, uint16_t height, uint16_t color);
-void LCD_DrawPixel(uint16_t x, uint16_t y, uint16_t color);
-void LCD_DrawLine(uint16_t x1, uint16_t y1,
-                  uint16_t x2, uint16_t y2, uint16_t color);
-void LCD_DrawRectangle(uint16_t x1, uint16_t y1,
-                       uint16_t x2, uint16_t y2, uint16_t color);
-void LCD_DrawCircle(uint16_t x0, uint16_t y0, uint8_t radius, uint16_t color);
 void LCD_DrawText(uint16_t x, uint16_t y, const char *text, uint16_t color, uint16_t background);
 
 #endif

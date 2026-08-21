@@ -101,15 +101,6 @@ void Error_Handler(void);
 #define PWM3_GPIO_Port GPIOC
 #define PWM4_Pin GPIO_PIN_9
 #define PWM4_GPIO_Port GPIOC
-#define M4AEXTI_Pin GPIO_PIN_3
-#define M4AEXTI_GPIO_Port GPIOD
-#define M4BI_Pin GPIO_PIN_4
-#define M4BI_GPIO_Port GPIOD
-#define DIN1_Pin GPIO_PIN_8
-#define DIN1_GPIO_Port GPIOB
-#define DIN2_Pin GPIO_PIN_9
-#define DIN2_GPIO_Port GPIOB
-
 /* USER CODE BEGIN Private defines */
 
 /* USER CODE END Private defines */

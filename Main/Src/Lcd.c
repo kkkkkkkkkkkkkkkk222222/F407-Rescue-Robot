@@ -101,10 +101,10 @@ static bool write_command(uint8_t command, const uint8_t *data, uint8_t size)
 
 static void set_address_window(uint16_t x, uint16_t y, uint16_t width, uint16_t height)
 {
-  const uint16_t x0 = x + APP_LCD_X_OFFSET;
-  const uint16_t y0 = y + APP_LCD_Y_OFFSET;
-  const uint16_t x1 = x0 + width - 1U;
-  const uint16_t y1 = y0 + height - 1U;
+  const uint32_t x0 = (uint32_t)x + APP_LCD_X_OFFSET;
+  const uint32_t y0 = (uint32_t)y + APP_LCD_Y_OFFSET;
+  const uint32_t x1 = x0 + width - 1U;
+  const uint32_t y1 = y0 + height - 1U;
   const uint8_t columns[4] = {(uint8_t)(x0 >> 8), (uint8_t)x0, (uint8_t)(x1 >> 8), (uint8_t)x1};
   const uint8_t rows[4] = {(uint8_t)(y0 >> 8), (uint8_t)y0, (uint8_t)(y1 >> 8), (uint8_t)y1};
   (void)write_command(ST7735_CASET, columns, sizeof(columns));
@@ -112,7 +112,7 @@ static void set_address_window(uint16_t x, uint16_t y, uint16_t width, uint16_t 
   (void)write_command(ST7735_RAMWR, NULL, 0U);
 }
 
-void LCD_SetBacklight(bool enabled)
+static void set_backlight(bool enabled)
 {
   HAL_GPIO_WritePin(TFT_BLK_GPIO_Port, TFT_BLK_Pin, enabled ? GPIO_PIN_SET : GPIO_PIN_RESET);
 }
@@ -127,7 +127,7 @@ bool LCD_Init(void)
                                       0x2E, 0x2E, 0x37, 0x3F, 0x00, 0x00, 0x02, 0x10};
   bool ok = true;
 
-  LCD_SetBacklight(false);
+  set_backlight(false);
   deselect_lcd();
   HAL_GPIO_WritePin(TFT_RST_GPIO_Port, TFT_RST_Pin, GPIO_PIN_RESET);
   HAL_Delay(20U);
@@ -167,7 +167,7 @@ bool LCD_Init(void)
   ok = write_command(ST7735_DISPON, NULL, 0U) && ok;
   HAL_Delay(100U);
   LCD_FillScreen(LCD_BLACK);
-  LCD_SetBacklight(true);
+  set_backlight(true);
   return ok;
 }
 
@@ -176,10 +176,10 @@ void LCD_FillRect(uint16_t x, uint16_t y, uint16_t width, uint16_t height, uint1
   if ((x >= APP_LCD_WIDTH) || (y >= APP_LCD_HEIGHT) || (width == 0U) || (height == 0U)) {
     return;
   }
-  if ((x + width) > APP_LCD_WIDTH) {
+  if (((uint32_t)x + width) > APP_LCD_WIDTH) {
     width = APP_LCD_WIDTH - x;
   }
-  if ((y + height) > APP_LCD_HEIGHT) {
+  if (((uint32_t)y + height) > APP_LCD_HEIGHT) {
     height = APP_LCD_HEIGHT - y;
   }
 
@@ -205,81 +205,6 @@ void LCD_FillRect(uint16_t x, uint16_t y, uint16_t width, uint16_t height, uint1
 void LCD_FillScreen(uint16_t color)
 {
   LCD_FillRect(0U, 0U, APP_LCD_WIDTH, APP_LCD_HEIGHT, color);
-}
-
-void LCD_DrawPixel(uint16_t x, uint16_t y, uint16_t color)
-{
-  LCD_FillRect(x, y, 1U, 1U, color);
-}
-
-static void draw_pixel_if_visible(int32_t x, int32_t y, uint16_t color)
-{
-  if ((x >= 0) && (x < (int32_t)APP_LCD_WIDTH) &&
-      (y >= 0) && (y < (int32_t)APP_LCD_HEIGHT)) {
-    LCD_DrawPixel((uint16_t)x, (uint16_t)y, color);
-  }
-}
-
-void LCD_DrawLine(uint16_t x1, uint16_t y1,
-                  uint16_t x2, uint16_t y2, uint16_t color)
-{
-  int32_t x = x1;
-  int32_t y = y1;
-  const int32_t dx = (x2 > x1) ? (int32_t)x2 - x1 : (int32_t)x1 - x2;
-  const int32_t sx = (x1 < x2) ? 1 : -1;
-  const int32_t dy = (y2 > y1) ? (int32_t)y1 - y2 : (int32_t)y2 - y1;
-  const int32_t sy = (y1 < y2) ? 1 : -1;
-  int32_t error = dx + dy;
-
-  for (;;) {
-    draw_pixel_if_visible(x, y, color);
-    if ((x == x2) && (y == y2)) {
-      break;
-    }
-    const int32_t doubled = error * 2;
-    if (doubled >= dy) {
-      error += dy;
-      x += sx;
-    }
-    if (doubled <= dx) {
-      error += dx;
-      y += sy;
-    }
-  }
-}
-
-void LCD_DrawRectangle(uint16_t x1, uint16_t y1,
-                       uint16_t x2, uint16_t y2, uint16_t color)
-{
-  LCD_DrawLine(x1, y1, x2, y1, color);
-  LCD_DrawLine(x1, y1, x1, y2, color);
-  LCD_DrawLine(x1, y2, x2, y2, color);
-  LCD_DrawLine(x2, y1, x2, y2, color);
-}
-
-void LCD_DrawCircle(uint16_t x0, uint16_t y0, uint8_t radius, uint16_t color)
-{
-  int32_t x = 0;
-  int32_t y = radius;
-  int32_t decision = 3 - (int32_t)radius * 2;
-
-  while (x <= y) {
-    draw_pixel_if_visible((int32_t)x0 + x, (int32_t)y0 + y, color);
-    draw_pixel_if_visible((int32_t)x0 - x, (int32_t)y0 + y, color);
-    draw_pixel_if_visible((int32_t)x0 + x, (int32_t)y0 - y, color);
-    draw_pixel_if_visible((int32_t)x0 - x, (int32_t)y0 - y, color);
-    draw_pixel_if_visible((int32_t)x0 + y, (int32_t)y0 + x, color);
-    draw_pixel_if_visible((int32_t)x0 - y, (int32_t)y0 + x, color);
-    draw_pixel_if_visible((int32_t)x0 + y, (int32_t)y0 - x, color);
-    draw_pixel_if_visible((int32_t)x0 - y, (int32_t)y0 - x, color);
-    if (decision < 0) {
-      decision += 4 * x + 6;
-    } else {
-      decision += 4 * (x - y) + 10;
-      --y;
-    }
-    ++x;
-  }
 }
 
 static void draw_character(uint16_t x, uint16_t y, char character, uint16_t color, uint16_t background)
@@ -310,10 +235,10 @@ static void draw_character(uint16_t x, uint16_t y, char character, uint16_t colo
 
 void LCD_DrawText(uint16_t x, uint16_t y, const char *text, uint16_t color, uint16_t background)
 {
-  if (text == NULL) {
+  if ((text == NULL) || (((uint32_t)y + 8U) > APP_LCD_HEIGHT)) {
     return;
   }
-  while ((*text != '\0') && ((x + 6U) <= APP_LCD_WIDTH)) {
+  while ((*text != '\0') && (((uint32_t)x + 6U) <= APP_LCD_WIDTH)) {
     draw_character(x, y, *text, color, background);
     x += 6U;
     ++text;

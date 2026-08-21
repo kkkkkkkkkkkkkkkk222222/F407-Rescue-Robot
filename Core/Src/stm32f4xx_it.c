@@ -58,7 +58,6 @@
 
 /* USER CODE BEGIN EV */
 extern TIM_HandleTypeDef htim6;
-extern DMA_HandleTypeDef hdma_usart1_rx;
 extern DMA_HandleTypeDef hdma_usart3_rx;
 extern UART_HandleTypeDef huart1;
 extern UART_HandleTypeDef huart3;
@@ -205,16 +204,6 @@ void SysTick_Handler(void)
 void DMA1_Stream1_IRQHandler(void)
 {
   HAL_DMA_IRQHandler(&hdma_usart3_rx);
-}
-
-void DMA2_Stream2_IRQHandler(void)
-{
-  HAL_DMA_IRQHandler(&hdma_usart1_rx);
-}
-
-void EXTI3_IRQHandler(void)
-{
-  HAL_GPIO_EXTI_IRQHandler(M4AEXTI_Pin);
 }
 
 void TIM6_DAC_IRQHandler(void)

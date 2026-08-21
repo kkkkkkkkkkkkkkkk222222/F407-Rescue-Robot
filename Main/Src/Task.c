@@ -6,9 +6,17 @@
 #include "pid.h"
 #include "vision.h"
 
+typedef enum {
+  TASK_CAMERA_WIDE = 0,
+  TASK_WAIT_TARGET,
+  TASK_CLEAR_BUMP,
+  TASK_SEARCH_TARGET,
+  TASK_APPROACH_TARGET,
+  TASK_STOPPED
+} TaskState_t;
+
 static TaskState_t task_state;
 static uint32_t state_tick;
-static uint32_t update_tick;
 static Pid_t steering_pid;
 static Pid_t camera_pid;
 static float camera_angle;
@@ -35,7 +43,6 @@ void Task_Init(uint32_t now_ms)
   Mechanism_Init();
   camera_angle = (float)Camera_GetAngle();
   Motor_Stop();
-  update_tick = now_ms;
   task_set_state(TASK_CAMERA_WIDE, now_ms);
 }
 
@@ -43,10 +50,6 @@ void Task_Update(uint32_t now_ms)
 {
   VisionData vision;
 
-  if ((uint32_t)(now_ms - update_tick) < APP_TASK_PERIOD_MS) {
-    return;
-  }
-  update_tick = now_ms;
   vision = Vision_GetSnapshot();
 
   if (vision.stop) {
@@ -80,7 +83,7 @@ void Task_Update(uint32_t now_ms)
         Motor_Stop();
         task_set_state(TASK_APPROACH_TARGET, now_ms);
       } else if ((uint32_t)(now_ms - state_tick) < APP_CLEAR_BUMP_MS) {
-        Motor_Forward(APP_CLEAR_BUMP_SPEED);
+        Motor_Move(APP_CLEAR_BUMP_SPEED, 0, 0);
       } else {
         Motor_Stop();
         task_set_state(TASK_SEARCH_TARGET, now_ms);
@@ -92,7 +95,7 @@ void Task_Update(uint32_t now_ms)
         Motor_Stop();
         task_set_state(TASK_APPROACH_TARGET, now_ms);
       } else {
-        Motor_RotateLeft(APP_SEARCH_ROTATE_SPEED);
+        Motor_Move(0, 0, APP_SEARCH_ROTATE_SPEED);
       }
       break;
 
@@ -111,8 +114,8 @@ void Task_Update(uint32_t now_ms)
                             (float)APP_VISION_TARGET_X,
                             (float)vision.x);
         }
-        Motor_Follow(APP_APPROACH_SPEED,
-                     (int16_t)(turn * APP_STEERING_DIRECTION));
+        Motor_Move(APP_APPROACH_SPEED, 0,
+                   (int16_t)(turn * APP_STEERING_DIRECTION));
 
         camera_change = Pid_Update(&camera_pid,
                                    (float)APP_VISION_TARGET_Y,
@@ -134,11 +137,4 @@ void Task_Update(uint32_t now_ms)
       Motor_Stop();
       break;
   }
-
-  Motor_Update();
-}
-
-TaskState_t Task_GetState(void)
-{
-  return task_state;
 }

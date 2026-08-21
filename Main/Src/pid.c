@@ -42,16 +42,18 @@ void Pid_Reset(Pid_t *pid)
 float Pid_Update(Pid_t *pid, float target, float actual)
 {
   float derivative = 0.0f;
+  float candidate_integral;
   float output;
-  const float error = target - actual;
+  float error;
 
   if (pid == 0) {
     return 0.0f;
   }
+  error = target - actual;
 
-  pid->integral = pid_limit(pid->integral + error,
-                            pid->integral_min,
-                            pid->integral_max);
+  candidate_integral = pid_limit(pid->integral + error,
+                                 pid->integral_min,
+                                 pid->integral_max);
   if (pid->started != 0U) {
     derivative = error - pid->last_error;
   }
@@ -59,7 +61,19 @@ float Pid_Update(Pid_t *pid, float target, float actual)
   pid->started = 1U;
 
   output = pid->kp * error +
-           pid->ki * pid->integral +
+           pid->ki * candidate_integral +
            pid->kd * derivative;
+
+  /* Do not keep integrating when the error would push an already saturated
+   * output farther into saturation. Integration resumes automatically when
+   * the error helps the controller return to its usable output range. */
+  if (!(((output > pid->output_max) && (error > 0.0f)) ||
+        ((output < pid->output_min) && (error < 0.0f)))) {
+    pid->integral = candidate_integral;
+  } else {
+    output = pid->kp * error +
+             pid->ki * pid->integral +
+             pid->kd * derivative;
+  }
   return pid_limit(output, pid->output_min, pid->output_max);
 }

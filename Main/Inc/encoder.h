@@ -3,12 +3,14 @@
 
 #include <stdint.h>
 
+typedef struct {
+  int64_t position;
+  int32_t delta_10ms;
+} EncoderStatus;
+
 void Encoder_Init(void);
 void Encoder_Sample10ms(void);
-int32_t Encoder_Get(uint8_t id);
-int32_t Encoder_GetDelta10ms(uint8_t id);
+EncoderStatus Encoder_GetStatus(uint8_t id);
 int32_t Encoder_TakeControlDelta(uint8_t id);
-void Encoder_Reset(uint8_t id);
-void Encoder_OnExti(uint16_t gpio_pin);
 
 #endif

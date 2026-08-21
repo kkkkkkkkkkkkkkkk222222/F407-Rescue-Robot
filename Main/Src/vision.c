@@ -1,5 +1,6 @@
 #include "vision.h"
 
+#include "app_config.h"
 #include "main.h"
 
 static volatile VisionData latest_data;
@@ -13,6 +14,8 @@ static void vision_save_frame(uint32_t tick_ms)
   const bool stop = (x == VISION_STOP_VALUE) && (y == VISION_STOP_VALUE);
   const bool no_target = (x == VISION_NO_TARGET_VALUE) &&
                          (y == VISION_NO_TARGET_VALUE);
+  const bool coordinates_in_range =
+      (x <= APP_VISION_MAX_X) && (y <= APP_VISION_MAX_Y);
   const uint32_t primask = __get_PRIMASK();
 
   __disable_irq();
@@ -20,7 +23,7 @@ static void vision_save_frame(uint32_t tick_ms)
   latest_data.y = y;
   latest_data.tick_ms = tick_ms;
   latest_data.stop = stop;
-  latest_data.valid = !stop && !no_target;
+  latest_data.valid = !stop && !no_target && coordinates_in_range;
   if (primask == 0U) {
     __enable_irq();
   }

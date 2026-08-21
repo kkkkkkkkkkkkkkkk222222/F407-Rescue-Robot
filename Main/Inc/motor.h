@@ -1,22 +1,32 @@
 #ifndef MOTOR_H
 #define MOTOR_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
-#define MOTOR_MAX_SPEED 1000
+typedef struct {
+  int16_t command;
+  int16_t target;
+  int16_t measured_speed_mm_s;
+  int16_t target_speed_mm_s;
+  bool direction_fault;
+  bool stall_fault;
+} MotorStatus;
+
+typedef enum {
+  MOTOR_DISTANCE_IDLE = 0,
+  MOTOR_DISTANCE_RUNNING,
+  MOTOR_DISTANCE_DONE,
+  MOTOR_DISTANCE_FAULT,
+  MOTOR_DISTANCE_INVALID
+} MotorDistanceStatus;
 
 void Motor_Init(void);
-void Motor_Control(uint8_t id, int16_t speed);
-void Motor_StopAll(void);
-int16_t Motor_GetCommand(uint8_t id);
-void Motor_Update(void);
-void Motor_Stop(void);
-void Motor_Forward(int16_t speed);
-void Motor_Back(int16_t speed);
-void Motor_RotateLeft(int16_t speed);
-void Motor_RotateRight(int16_t speed);
+void Motor_SetSpeed(float target_speed, uint8_t id);
+MotorDistanceStatus Go_distance(float distance_m);
 void Motor_Move(int16_t forward, int16_t lateral, int16_t rotate);
-void Motor_Follow(int16_t speed, int16_t turn);
-int16_t Motor_GetTarget(uint8_t id);
+void Motor_Stop(void);
+void Motor_Update(void);
+MotorStatus Motor_GetStatus(uint8_t id);
 
 #endif
