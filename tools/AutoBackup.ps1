@@ -42,9 +42,8 @@ function Push-Backup {
 
     & git @gitPrefix rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' *> $null
     if ($LASTEXITCODE -eq 0) {
-        $pushOutput = @(& git @gitPrefix push 2>&1)
+        $null = & git @gitPrefix push
         $pushExitCode = $LASTEXITCODE
-        $pushOutput | ForEach-Object { Write-Host $_ }
         return $pushExitCode
     }
 
@@ -53,9 +52,8 @@ function Push-Backup {
         Write-Warning 'Auto-backup could not determine the current Git branch.'
         return 1
     }
-    $pushOutput = @(& git @gitPrefix push --set-upstream origin $branch 2>&1)
+    $null = & git @gitPrefix push --set-upstream origin $branch
     $pushExitCode = $LASTEXITCODE
-    $pushOutput | ForEach-Object { Write-Host $_ }
     return $pushExitCode
 }
 
