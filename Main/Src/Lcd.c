@@ -30,7 +30,7 @@ extern SPI_HandleTypeDef hspi2;
 #define ST7735_GMCTRP1  0xE0U
 #define ST7735_GMCTRN1  0xE1U
 
-static const uint8_t font_5x7[59][5] = {
+static const uint8_t font_5x7[64][5] = {
   ['-' - ' '] = {0x08, 0x08, 0x08, 0x08, 0x08},
   [':' - ' '] = {0x00, 0x36, 0x36, 0x00, 0x00},
   ['0' - ' '] = {0x3E, 0x51, 0x49, 0x45, 0x3E},
@@ -69,6 +69,7 @@ static const uint8_t font_5x7[59][5] = {
   ['X' - ' '] = {0x63, 0x14, 0x08, 0x14, 0x63},
   ['Y' - ' '] = {0x07, 0x08, 0x70, 0x08, 0x07},
   ['Z' - ' '] = {0x61, 0x51, 0x49, 0x45, 0x43},
+  ['_' - ' '] = {0x40, 0x40, 0x40, 0x40, 0x40},
 };
 
 static void select_lcd(void)
@@ -212,7 +213,7 @@ static void draw_character(uint16_t x, uint16_t y, char character, uint16_t colo
   if ((character >= 'a') && (character <= 'z')) {
     character = (char)(character - ('a' - 'A'));
   }
-  if ((character < ' ') || (character > 'Z')) {
+  if ((character < ' ') || (character > '_')) {
     character = ' ';
   }
   const uint8_t *glyph = font_5x7[(uint8_t)character - (uint8_t)' '];

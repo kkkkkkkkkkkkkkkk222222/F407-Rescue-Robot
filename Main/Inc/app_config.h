@@ -77,6 +77,7 @@
 #define APP_VISION_TARGET_Y              240U
 #define APP_VISION_MAX_X                 639U
 #define APP_VISION_MAX_Y                 479U
+#define APP_VISION_MIN_DISTANCE_MM       1U
 #define APP_SEARCH_ROTATE_SPEED          220
 #define APP_APPROACH_SPEED               780
 #define APP_CRAB_MID_SPEED               450

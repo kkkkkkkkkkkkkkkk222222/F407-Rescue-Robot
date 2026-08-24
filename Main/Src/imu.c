@@ -11,6 +11,7 @@
 #define IMU_CALIBRATION_SAMPLES     128U
 #define IMU_CALIBRATION_TIMEOUT_MS  2000U
 #define IMU_MAX_INTEGRATION_GAP_MS  100U
+#define IMU_RUNTIME_TIMEOUT_MS      250U
 
 #define LSM6DSV16X_WHO_AM_I         0x0FU
 #define LSM6DSV16X_IF_CFG           0x03U
@@ -43,6 +44,24 @@ static int64_t gyro_bias_sum[3];
 static int64_t yaw_numerator;
 static uint32_t last_sample_ms;
 static bool sample_time_valid;
+static bool imu_initialized;
+static bool runtime_poll_started;
+static bool runtime_fault_latched;
+static uint32_t last_successful_sample_ms;
+
+static uint32_t imu_enter_critical(void)
+{
+  const uint32_t primask = __get_PRIMASK();
+  __disable_irq();
+  return primask;
+}
+
+static void imu_leave_critical(uint32_t primask)
+{
+  if (primask == 0U) {
+    __enable_irq();
+  }
+}
 
 static int16_t read_i16(const uint8_t *bytes)
 {
@@ -82,14 +101,13 @@ static uint8_t spi_transfer(uint8_t output)
   return input;
 }
 
-static bool spi_write(uint8_t reg, uint8_t value)
+static void spi_write(uint8_t reg, uint8_t value)
 {
   HAL_GPIO_WritePin(IMU_SCK_GPIO_Port, IMU_SCK_Pin, GPIO_PIN_SET);
   HAL_GPIO_WritePin(IMU_CS_GPIO_Port, IMU_CS_Pin, GPIO_PIN_RESET);
   (void)spi_transfer((uint8_t)(reg & 0x7FU));
   (void)spi_transfer(value);
   HAL_GPIO_WritePin(IMU_CS_GPIO_Port, IMU_CS_Pin, GPIO_PIN_SET);
-  return true;
 }
 
 static bool spi_read(uint8_t reg, uint8_t *data, uint16_t length)
@@ -106,6 +124,18 @@ static bool spi_read(uint8_t reg, uint8_t *data, uint16_t length)
     data[index] = spi_transfer(0xFFU);
   }
   HAL_GPIO_WritePin(IMU_CS_GPIO_Port, IMU_CS_Pin, GPIO_PIN_SET);
+  return true;
+}
+
+static bool spi_write_checked(uint8_t reg, uint8_t value, uint8_t mask)
+{
+  uint8_t readback = 0U;
+  spi_write(reg, value);
+  if (!spi_read(reg, &readback, 1U) ||
+      ((readback & mask) != (value & mask))) {
+    ++imu_data.error_count;
+    return false;
+  }
   return true;
 }
 
@@ -185,6 +215,10 @@ bool IMU_Init(void)
   yaw_numerator = 0LL;
   last_sample_ms = 0U;
   sample_time_valid = false;
+  imu_initialized = false;
+  runtime_poll_started = false;
+  runtime_fault_latched = false;
+  last_successful_sample_ms = 0U;
 
   HAL_GPIO_WritePin(IMU_CS_GPIO_Port, IMU_CS_Pin, GPIO_PIN_SET);
   HAL_Delay(IMU_BOOT_TIME_MS);
@@ -201,15 +235,22 @@ bool IMU_Init(void)
     return false;
   }
 
-  if (!spi_write(LSM6DSV16X_CTRL3, LSM6DSV16X_SW_RESET) ||
-      !wait_for_reset() ||
-      !spi_write(LSM6DSV16X_IF_CFG, LSM6DSV16X_I2C_I3C_DISABLE) ||
-      !spi_write(LSM6DSV16X_CTRL3, LSM6DSV16X_BDU_IF_INC) ||
-      !spi_write(LSM6DSV16X_CTRL6, LSM6DSV16X_GY_500_DPS) ||
-      !spi_write(LSM6DSV16X_CTRL7, LSM6DSV16X_GY_LPF1_ENABLE) ||
-      !spi_write(LSM6DSV16X_CTRL8, LSM6DSV16X_XL_4_G) ||
-      !spi_write(LSM6DSV16X_CTRL1, LSM6DSV16X_ODR_120_HZ) ||
-      !spi_write(LSM6DSV16X_CTRL2, LSM6DSV16X_ODR_120_HZ)) {
+  spi_write(LSM6DSV16X_CTRL3, LSM6DSV16X_SW_RESET);
+  if (!wait_for_reset() ||
+      !spi_write_checked(LSM6DSV16X_IF_CFG,
+                         LSM6DSV16X_I2C_I3C_DISABLE, 0x01U) ||
+      !spi_write_checked(LSM6DSV16X_CTRL3,
+                         LSM6DSV16X_BDU_IF_INC, 0x44U) ||
+      !spi_write_checked(LSM6DSV16X_CTRL6,
+                         LSM6DSV16X_GY_500_DPS, 0x0FU) ||
+      !spi_write_checked(LSM6DSV16X_CTRL7,
+                         LSM6DSV16X_GY_LPF1_ENABLE, 0x01U) ||
+      !spi_write_checked(LSM6DSV16X_CTRL8,
+                         LSM6DSV16X_XL_4_G, 0x03U) ||
+      !spi_write_checked(LSM6DSV16X_CTRL1,
+                         LSM6DSV16X_ODR_120_HZ, 0x0FU) ||
+      !spi_write_checked(LSM6DSV16X_CTRL2,
+                         LSM6DSV16X_ODR_120_HZ, 0x0FU)) {
     return false;
   }
 
@@ -219,39 +260,68 @@ bool IMU_Init(void)
   }
 
   imu_data.ready = true;
+  imu_initialized = true;
   return true;
+}
+
+static void imu_check_runtime_timeout(uint32_t now_ms)
+{
+  if (!runtime_poll_started) {
+    runtime_poll_started = true;
+    last_successful_sample_ms = now_ms;
+    return;
+  }
+  if (!runtime_fault_latched &&
+      ((uint32_t)(now_ms - last_successful_sample_ms) >=
+       IMU_RUNTIME_TIMEOUT_MS)) {
+    const uint32_t primask = imu_enter_critical();
+    runtime_fault_latched = true;
+    imu_data.ready = false;
+    ++imu_data.error_count;
+    sample_time_valid = false;
+    imu_leave_critical(primask);
+  }
 }
 
 void IMU_Update(uint32_t now_ms)
 {
-  if (!imu_data.ready) {
+  if (!imu_initialized || runtime_fault_latched) {
     return;
   }
 
   uint8_t status = 0U;
   if (!spi_read(LSM6DSV16X_STATUS_REG, &status, 1U) ||
       ((status & LSM6DSV16X_DATA_READY) != LSM6DSV16X_DATA_READY)) {
+    imu_check_runtime_timeout(now_ms);
     return;
   }
 
   int16_t gyro[3];
   int16_t accel[3];
   if (!read_raw(gyro, accel)) {
+    imu_check_runtime_timeout(now_ms);
     return;
   }
 
   int64_t corrected_gyro[3];
+  int32_t gyro_mdps[3];
+  int32_t accel_mg[3];
   for (uint8_t axis = 0U; axis < 3U; ++axis) {
     corrected_gyro[axis] =
         ((int64_t)gyro[axis] * IMU_CALIBRATION_SAMPLES) - gyro_bias_sum[axis];
-    imu_data.gyro_mdps[axis] = divide_round(
+    gyro_mdps[axis] = divide_round(
         corrected_gyro[axis] * IMU_GYRO_SCALE_NUMERATOR,
         IMU_GYRO_SCALE_DENOMINATOR * IMU_CALIBRATION_SAMPLES);
-    imu_data.accel_mg[axis] = divide_round(
+    accel_mg[axis] = divide_round(
         (int64_t)accel[axis] * IMU_ACCEL_SCALE_NUMERATOR,
         IMU_ACCEL_SCALE_DENOMINATOR);
   }
 
+  const uint32_t primask = imu_enter_critical();
+  for (uint8_t axis = 0U; axis < 3U; ++axis) {
+    imu_data.gyro_mdps[axis] = gyro_mdps[axis];
+    imu_data.accel_mg[axis] = accel_mg[axis];
+  }
   if (sample_time_valid) {
     const uint32_t elapsed_ms = now_ms - last_sample_ms;
     if (elapsed_ms <= IMU_MAX_INTEGRATION_GAP_MS) {
@@ -265,15 +335,24 @@ void IMU_Update(uint32_t now_ms)
   }
   last_sample_ms = now_ms;
   ++imu_data.sample_count;
+  imu_leave_critical(primask);
+  last_successful_sample_ms = now_ms;
+  runtime_poll_started = true;
 }
 
 void IMU_ZeroYaw(void)
 {
+  const uint32_t primask = imu_enter_critical();
   yaw_numerator = 0LL;
   imu_data.yaw_mdeg = 0;
+  sample_time_valid = false;
+  imu_leave_critical(primask);
 }
 
 IMUData IMU_GetData(void)
 {
-  return imu_data;
+  const uint32_t primask = imu_enter_critical();
+  const IMUData snapshot = imu_data;
+  imu_leave_critical(primask);
+  return snapshot;
 }

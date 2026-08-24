@@ -108,6 +108,7 @@ static void vision_save_report(const uint8_t *payload,
 
   if (((flags & 0xC0U) != 0U) ||
       (found && !coordinates_valid) ||
+      (found && (distance < APP_VISION_MIN_DISTANCE_MM)) ||
       (!found && ((payload[6] != 0U) || near || grabbed || unknown))) {
     return;
   }

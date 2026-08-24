@@ -12,9 +12,12 @@ void Mechanism_Init(void)
 
 void Camera_SetAngle(uint8_t angle)
 {
+#if APP_CAMERA_MIN_ANGLE > 0U
   if (angle < APP_CAMERA_MIN_ANGLE) {
     angle = APP_CAMERA_MIN_ANGLE;
-  } else if (angle > APP_CAMERA_MAX_ANGLE) {
+  }
+#endif
+  if (angle > APP_CAMERA_MAX_ANGLE) {
     angle = APP_CAMERA_MAX_ANGLE;
   }
   camera_angle = angle;

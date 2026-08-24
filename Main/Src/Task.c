@@ -578,8 +578,11 @@ static void Crab_Object(const VisionData *vision, uint32_t now_ms)
   }
 
   task_track_camera(vision);
-  if (vision->near ||
-      (vision->distance_mm <= APP_CRAB_STOP_DISTANCE_MM)) {
+  const bool distance_valid =
+      vision->distance_mm >= APP_VISION_MIN_DISTANCE_MM;
+  if (distance_valid &&
+      (vision->near ||
+       (vision->distance_mm <= APP_CRAB_STOP_DISTANCE_MM))) {
     Motor_Stop();
     Claw_SetAngle(APP_CLAW_CLOSE_ANGLE);
     crab_step = CRAB_CLOSE;

@@ -24,6 +24,7 @@ static uint8_t usart3_rx_dma[UART_DMA_RX_SIZE];
 static uint16_t usart3_rx_position;
 static volatile uint8_t usart3_last_byte;
 static volatile bool usart3_byte_received;
+static volatile uint32_t usart3_last_rx_ms;
 static volatile bool usart3_rx_active;
 static volatile uint32_t usart3_rx_next_retry_ms;
 static volatile uint32_t lcd_release_sequence;
@@ -34,6 +35,9 @@ static uint8_t motor_control_period_ms;
 static uint8_t lcd_period_ms;
 #if APP_ENABLE_TASK
 static uint8_t task_period_ms;
+static volatile uint32_t task_release_sequence;
+static volatile uint32_t task_release_ms;
+static uint32_t task_consumed_sequence;
 #endif
 static bool lcd_ready;
 #if APP_ENABLE_TASK
@@ -118,7 +122,7 @@ static void lcd_draw_task_layout(TaskState state)
     case TASK_FIND_OBJECT:
       LCD_DrawText(0U, 94U, "TIME:", LCD_GREEN, LCD_BLACK);
       LCD_DrawText(0U, 108U, "FOUND:", LCD_GREEN, LCD_BLACK);
-      LCD_DrawText(0U, 122U, "TGT:", LCD_GREEN, LCD_BLACK);
+      LCD_DrawText(0U, 122U, "DIST:", LCD_GREEN, LCD_BLACK);
       LCD_DrawText(0U, 136U, "TYPE:", LCD_GREEN, LCD_BLACK);
       LCD_DrawText(0U, 150U, "MOTOR:", LCD_GREEN, LCD_BLACK);
       break;
@@ -296,8 +300,12 @@ static void lcd_draw_dynamic(void)
 
   if (!usart3_rx_active) {
     (void)strcpy(text, "DMA ERR");
-  } else if (usart3_byte_received) {
+  } else if (usart3_byte_received &&
+             ((uint32_t)(app_milliseconds - usart3_last_rx_ms) <=
+              APP_VISION_TIMEOUT_MS)) {
     (void)strcpy(text, "RX OK");
+  } else if (usart3_byte_received) {
+    (void)strcpy(text, "TIMEOUT");
   } else {
     (void)strcpy(text, "WAIT");
   }
@@ -335,14 +343,8 @@ static void lcd_draw_dynamic(void)
       (void)snprintf(text, sizeof(text), "%us", task.remaining_s);
       lcd_write_value(94U, text);
       lcd_write_value(108U, task.found ? "YES" : "NO");
-      if ((vision.tick_ms != 0U) &&
-          ((uint32_t)(app_milliseconds - vision.tick_ms) <=
-           APP_VISION_TIMEOUT_MS)) {
-        (void)snprintf(text, sizeof(text), "%umm", vision.distance_mm);
-        lcd_write_value(122U, text);
-      } else {
-        lcd_write_value(122U, "--");
-      }
+      (void)snprintf(text, sizeof(text), "%umm", task.distance_mm);
+      lcd_write_value(122U, text);
       lcd_format_counts(text, sizeof(text), task.cargo_counts);
       lcd_write_value(136U, text);
       lcd_write_value(150U, motor_fault ? "FAULT" : "OK");
@@ -419,8 +421,12 @@ static void lcd_draw_dynamic(void)
 
   if (!usart3_rx_active) {
     (void)strcpy(text, "DMA ERR");
-  } else if (usart3_byte_received) {
+  } else if (usart3_byte_received &&
+             ((uint32_t)(app_milliseconds - usart3_last_rx_ms) <=
+              APP_VISION_TIMEOUT_MS)) {
     (void)snprintf(text, sizeof(text), "RX %02X", usart3_last_byte);
+  } else if (usart3_byte_received) {
+    (void)strcpy(text, "TIMEOUT");
   } else {
     (void)strcpy(text, "WAIT");
   }
@@ -520,6 +526,7 @@ void Robot_Init(void)
   app_milliseconds = 0U;
   usart3_last_byte = 0U;
   usart3_byte_received = false;
+  usart3_last_rx_ms = 0U;
   usart3_rx_active = false;
   usart3_rx_next_retry_ms = 0U;
   usart3_rx_position = 0U;
@@ -531,6 +538,9 @@ void Robot_Init(void)
   lcd_period_ms = 0U;
 #if APP_ENABLE_TASK
   task_period_ms = 0U;
+  task_release_sequence = 0U;
+  task_release_ms = 0U;
+  task_consumed_sequence = 0U;
 #endif
 #if APP_ENABLE_AUTOMATIC_MOTOR_TEST && !APP_ENABLE_TASK
   motor_test_running = false;
@@ -545,6 +555,9 @@ void Robot_Init(void)
   HAL_NVIC_EnableIRQ(TIM6_DAC_IRQn);
   HAL_NVIC_SetPriority(USART3_IRQn, 7U, 0U);
   HAL_NVIC_EnableIRQ(USART3_IRQn);
+#if APP_ENABLE_TASK
+  HAL_NVIC_SetPriority(PendSV_IRQn, 15U, 0U);
+#endif
 
   Motor_Init();
   Encoder_Init();
@@ -621,6 +634,24 @@ void Robot_Process(void)
 #endif
 }
 
+void Robot_RunDeferredTask(void)
+{
+#if APP_ENABLE_TASK
+  const uint32_t released = task_release_sequence;
+  if (released != task_consumed_sequence) {
+    const uint32_t now_ms = task_release_ms;
+    task_consumed_sequence = released;
+    Task_FindObject(now_ms);
+  }
+
+  /* A TIM6 release arriving while the task ran must remain pending. */
+  if (task_release_sequence != task_consumed_sequence) {
+    __DMB();
+    SCB->ICSR = SCB_ICSR_PENDSVSET_Msk;
+  }
+#endif
+}
+
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *timer)
 {
   if (timer->Instance == TIM6) {
@@ -637,8 +668,10 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *timer)
 #if APP_ENABLE_TASK
     if (++task_period_ms >= APP_TASK_PERIOD_MS) {
       task_period_ms = 0U;
-      /* The 10 ms encoder sample above is visible before targets are updated. */
-      Task_FindObject(app_milliseconds);
+      task_release_ms = app_milliseconds;
+      ++task_release_sequence;
+      __DMB();
+      SCB->ICSR = SCB_ICSR_PENDSVSET_Msk;
     }
 #endif
 
@@ -664,6 +697,7 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *uart, uint16_t size)
     usart3_rx_active = true;
     usart3_last_byte = usart3_rx_dma[size - 1U];
     usart3_byte_received = true;
+    usart3_last_rx_ms = app_milliseconds;
     vision_parse_dma_range(size);
   }
 }

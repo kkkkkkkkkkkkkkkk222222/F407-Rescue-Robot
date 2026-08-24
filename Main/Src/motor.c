@@ -584,7 +584,6 @@ void Motor_SetSpeed(float target_speed, uint8_t id)
   }
   distance_move.status = MOTOR_DISTANCE_IDLE;
   distance_move.slowing = false;
-  brake_cycles_remaining = 0U;
   motor_set_speed_target(target_speed, id);
   motor_leave_critical(primask);
 }
@@ -613,7 +612,6 @@ MotorDistanceStatus Go_distance(float distance_m)
   }
 
   motor_stop_outputs(false);
-  brake_cycles_remaining = 0U;
   if ((distance_mm >= -APP_GO_DISTANCE_TOLERANCE_MM) &&
       (distance_mm <= APP_GO_DISTANCE_TOLERANCE_MM)) {
     distance_move.status = MOTOR_DISTANCE_DONE;
@@ -657,7 +655,6 @@ void Motor_Move(int16_t forward, int16_t lateral, int16_t rotate)
   }
   distance_move.status = MOTOR_DISTANCE_IDLE;
   distance_move.slowing = false;
-  brake_cycles_remaining = 0U;
   forward = motor_limit(forward);
   lateral = motor_limit(lateral);
   rotate = motor_limit(rotate);

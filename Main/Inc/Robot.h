@@ -3,5 +3,6 @@
 
 void Robot_Init(void);
 void Robot_Process(void);
+void Robot_RunDeferredTask(void);
 
 #endif

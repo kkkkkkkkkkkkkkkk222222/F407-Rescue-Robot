@@ -85,6 +85,8 @@ def report_frame(
     if not 0 <= flags <= 0x3F:
         raise ValueError("flags may only use bits 0..5")
     found = bool(flags & FLAG_FOUND)
+    if found and distance_mm == 0:
+        raise ValueError("a found target must have distance_mm in 1..65535")
     if not found and (counts or flags & (FLAG_NEAR | FLAG_GRABBED | FLAG_UNKNOWN)):
         raise ValueError("a no-target report cannot contain counts/near/grabbed/unknown")
     payload = (
