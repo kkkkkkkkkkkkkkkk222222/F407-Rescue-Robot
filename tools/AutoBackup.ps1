@@ -39,7 +39,6 @@ function Get-ChangeSummary {
 
 function Push-Backup {
     $env:GIT_TERMINAL_PROMPT = '0'
-    $env:GCM_INTERACTIVE = 'Never'
 
     & git @gitPrefix rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' *> $null
     if ($LASTEXITCODE -eq 0) {
