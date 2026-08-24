@@ -46,6 +46,7 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Main/Src/Robot.c
     Main/Src/encoder.c
+    Main/Src/imu.c
     Main/Src/Lcd.c
     Main/Src/mechanism.c
     Main/Src/motor.c
