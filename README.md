@@ -417,6 +417,8 @@ A3 B3 TYPE SEQ P0 P1 P2 P3 P4 P5 P6 P7 CRC_LO CRC_HI C3
 
 ## 编译与安全测试顺序
 
+每次源码修改后成功链接`WWW.elf`，CMake都会调用`tools/AutoBackup.ps1`：先创建标题带`yyyy-MM-dd HH:mm:ss`的本地提交，再根据改动路径附加`IMU`、`motor/PID`、`task/vision`、`scheduler/LCD`、`board/build config`或`documentation`等摘要，最后推送到`origin`。当前DAPLink OpenOCD配置开启了烧录前构建，因此点击烧录也会先完成同样的自动备份。没有文件变化时不会产生空提交；网络或GitHub认证失败时保留本地提交并在下次成功编译后重试，不阻止生成固件和烧录。疑似凭据文件（例如`.env`、`.pem`、`.key`）出现时自动跳过并警告。
+
 ```powershell
 cmake --preset Debug
 cmake --build --preset Debug
