@@ -12,6 +12,9 @@
 #define IMU_CALIBRATION_TIMEOUT_MS  2000U
 #define IMU_MAX_INTEGRATION_GAP_MS  100U
 #define IMU_RUNTIME_TIMEOUT_MS      250U
+#define IMU_IDENTITY_CHECK_MS       250U
+#define IMU_CAL_MAX_ABS_MEAN_RAW    300LL
+#define IMU_CAL_MAX_RANGE_RAW       200
 
 #define LSM6DSV16X_WHO_AM_I         0x0FU
 #define LSM6DSV16X_IF_CFG           0x03U
@@ -44,10 +47,10 @@ static int64_t gyro_bias_sum[3];
 static int64_t yaw_numerator;
 static uint32_t last_sample_ms;
 static bool sample_time_valid;
-static bool imu_initialized;
 static bool runtime_poll_started;
-static bool runtime_fault_latched;
+static bool identity_check_started;
 static uint32_t last_successful_sample_ms;
+static uint32_t last_identity_check_ms;
 
 static uint32_t imu_enter_critical(void)
 {
@@ -173,6 +176,8 @@ static bool wait_for_reset(void)
 static bool calibrate_gyro(void)
 {
   int64_t sum[3] = {0LL, 0LL, 0LL};
+  int16_t minimum[3] = {INT16_MAX, INT16_MAX, INT16_MAX};
+  int16_t maximum[3] = {INT16_MIN, INT16_MIN, INT16_MIN};
   uint16_t collected = 0U;
   const uint32_t deadline = HAL_GetTick() + IMU_CALIBRATION_TIMEOUT_MS;
 
@@ -194,6 +199,12 @@ static bool calibrate_gyro(void)
     }
     for (uint8_t axis = 0U; axis < 3U; ++axis) {
       sum[axis] += gyro[axis];
+      if (gyro[axis] < minimum[axis]) {
+        minimum[axis] = gyro[axis];
+      }
+      if (gyro[axis] > maximum[axis]) {
+        maximum[axis] = gyro[axis];
+      }
     }
     ++collected;
   }
@@ -203,6 +214,14 @@ static bool calibrate_gyro(void)
     return false;
   }
   for (uint8_t axis = 0U; axis < 3U; ++axis) {
+    const int64_t absolute_sum = (sum[axis] < 0LL) ? -sum[axis] : sum[axis];
+    if ((absolute_sum >
+         IMU_CAL_MAX_ABS_MEAN_RAW * IMU_CALIBRATION_SAMPLES) ||
+        (((int32_t)maximum[axis] - minimum[axis]) >
+         IMU_CAL_MAX_RANGE_RAW)) {
+      ++imu_data.error_count;
+      return false;
+    }
     gyro_bias_sum[axis] = sum[axis];
   }
   return true;
@@ -215,10 +234,10 @@ bool IMU_Init(void)
   yaw_numerator = 0LL;
   last_sample_ms = 0U;
   sample_time_valid = false;
-  imu_initialized = false;
   runtime_poll_started = false;
-  runtime_fault_latched = false;
+  identity_check_started = false;
   last_successful_sample_ms = 0U;
+  last_identity_check_ms = 0U;
 
   HAL_GPIO_WritePin(IMU_CS_GPIO_Port, IMU_CS_Pin, GPIO_PIN_SET);
   HAL_Delay(IMU_BOOT_TIME_MS);
@@ -260,8 +279,18 @@ bool IMU_Init(void)
   }
 
   imu_data.ready = true;
-  imu_initialized = true;
   return true;
+}
+
+static void imu_latch_runtime_fault(void)
+{
+  const uint32_t primask = imu_enter_critical();
+  if (imu_data.ready) {
+    imu_data.ready = false;
+    ++imu_data.error_count;
+  }
+  sample_time_valid = false;
+  imu_leave_critical(primask);
 }
 
 static void imu_check_runtime_timeout(uint32_t now_ms)
@@ -271,22 +300,32 @@ static void imu_check_runtime_timeout(uint32_t now_ms)
     last_successful_sample_ms = now_ms;
     return;
   }
-  if (!runtime_fault_latched &&
-      ((uint32_t)(now_ms - last_successful_sample_ms) >=
-       IMU_RUNTIME_TIMEOUT_MS)) {
-    const uint32_t primask = imu_enter_critical();
-    runtime_fault_latched = true;
-    imu_data.ready = false;
-    ++imu_data.error_count;
-    sample_time_valid = false;
-    imu_leave_critical(primask);
+  if ((uint32_t)(now_ms - last_successful_sample_ms) >=
+      IMU_RUNTIME_TIMEOUT_MS) {
+    imu_latch_runtime_fault();
   }
 }
 
 void IMU_Update(uint32_t now_ms)
 {
-  if (!imu_initialized || runtime_fault_latched) {
+  if (!imu_data.ready) {
     return;
+  }
+
+  if (!identity_check_started ||
+      ((uint32_t)(now_ms - last_identity_check_ms) >=
+       IMU_IDENTITY_CHECK_MS)) {
+    uint8_t device_id = 0U;
+    identity_check_started = true;
+    last_identity_check_ms = now_ms;
+    if (!spi_read(LSM6DSV16X_WHO_AM_I, &device_id, 1U) ||
+        (device_id != LSM6DSV16X_ID)) {
+      const uint32_t primask = imu_enter_critical();
+      imu_data.device_id = device_id;
+      imu_leave_critical(primask);
+      imu_latch_runtime_fault();
+      return;
+    }
   }
 
   uint8_t status = 0U;

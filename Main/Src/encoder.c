@@ -10,7 +10,6 @@ static TIM_HandleTypeDef *const encoder_timers[3] = {&htim1, &htim3, &htim4};
 static uint16_t previous_counter[3];
 static volatile int64_t position[3];
 static volatile int32_t delta_10ms[3];
-static volatile int32_t control_pending_delta[3];
 
 void Encoder_Init(void)
 {
@@ -19,7 +18,6 @@ void Encoder_Init(void)
     previous_counter[i] = 0U;
     position[i] = 0;
     delta_10ms[i] = 0;
-    control_pending_delta[i] = 0;
     if (HAL_TIM_Encoder_Start(encoder_timers[i], TIM_CHANNEL_ALL) != HAL_OK) {
       Error_Handler();
     }
@@ -34,44 +32,21 @@ void Encoder_Sample10ms(void)
     previous_counter[i] = current;
     delta_10ms[i] = wrapped_delta;
     position[i] += wrapped_delta;
-    control_pending_delta[i] += wrapped_delta;
   }
-
 }
 
-EncoderStatus Encoder_GetStatus(uint8_t id)
+void Encoder_GetAll(EncoderStatus status[3])
 {
-  EncoderStatus status = {0, 0};
-  uint32_t primask;
-
-  if ((id < 1U) || (id > 3U)) {
-    return status;
+  if (status == 0) {
+    return;
   }
-  primask = __get_PRIMASK();
+  const uint32_t primask = __get_PRIMASK();
   __disable_irq();
-  status.position = position[id - 1U];
-  status.delta_10ms = delta_10ms[id - 1U];
+  for (uint8_t i = 0U; i < 3U; ++i) {
+    status[i].position = position[i];
+    status[i].delta_10ms = delta_10ms[i];
+  }
   if (primask == 0U) {
     __enable_irq();
   }
-  return status;
-}
-
-int32_t Encoder_TakeControlDelta(uint8_t id)
-{
-  int32_t delta;
-  uint32_t primask;
-
-  if ((id < 1U) || (id > 3U)) {
-    return 0;
-  }
-
-  primask = __get_PRIMASK();
-  __disable_irq();
-  delta = control_pending_delta[id - 1U];
-  control_pending_delta[id - 1U] = 0;
-  if (primask == 0U) {
-    __enable_irq();
-  }
-  return delta;
 }

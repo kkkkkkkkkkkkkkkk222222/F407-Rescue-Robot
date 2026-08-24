@@ -33,7 +33,7 @@ typedef struct {
   TaskState state;
   TaskDestination destination;
   uint16_t remaining_s;
-  uint16_t distance_mm;
+  uint32_t distance_mm;
   uint8_t color;
   uint8_t start_zone;
   uint8_t cargo_counts;

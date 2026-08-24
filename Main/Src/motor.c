@@ -32,7 +32,6 @@ typedef struct {
   int64_t start_m1_count;
   int64_t start_m2_count;
   uint16_t no_progress_cycles;
-  int16_t slowdown_start_pwm[MOTOR_COUNT];
 } DistanceMove;
 
 static const MotorPwm motors[MOTOR_COUNT] = {
@@ -46,7 +45,6 @@ static volatile int16_t targets[MOTOR_COUNT];
 static float target_counts_per_update[MOTOR_COUNT];
 static volatile int16_t measured_speeds_mm_s[MOTOR_COUNT];
 static volatile int16_t target_speeds_mm_s[MOTOR_COUNT];
-static int16_t output_limits[MOTOR_COUNT];
 static uint8_t direction_mismatch_cycles[MOTOR_COUNT];
 static uint8_t direction_grace_cycles[MOTOR_COUNT];
 static uint8_t stall_cycles[MOTOR_COUNT];
@@ -163,7 +161,6 @@ static void motor_set_target(uint8_t id, int32_t target)
       (float)limited * (float)APP_MOTOR_MAX_COUNT_10MS / (float)MOTOR_MAX_SPEED;
   target_speeds_mm_s[index] =
       motor_round_to_int16(motor_counts_to_mm_s(target_counts_per_update[index]));
-  output_limits[index] = motor_default_output_limit();
 }
 
 static void motor_set_target_counts(uint8_t id, float target_counts)
@@ -193,13 +190,6 @@ static void motor_set_target_counts(uint8_t id, float target_counts)
   target_counts_per_update[id - 1U] = limited_counts;
   target_speeds_mm_s[id - 1U] =
       motor_round_to_int16(motor_counts_to_mm_s(limited_counts));
-}
-
-static void motor_set_three_targets(int32_t m1, int32_t m2, int32_t m3)
-{
-  motor_set_target(1U, m1);
-  motor_set_target(2U, m2);
-  motor_set_target(3U, m3);
 }
 
 static uint32_t speed_to_compare(TIM_HandleTypeDef *timer, int16_t speed)
@@ -238,26 +228,12 @@ static void motor_set_speed_target(float target_speed, uint8_t id)
   motor_set_target_counts(id, target_counts);
 }
 
-static void motor_set_output_limit(uint8_t id, int32_t limit)
-{
-  if ((id < 1U) || (id > MOTOR_COUNT)) {
-    return;
-  }
-  if (limit < 0) {
-    limit = -limit;
-  }
-  output_limits[id - 1U] = motor_limit(limit);
-}
-
-static void motor_set_forward_speed(float speed_mm_s, int16_t m1_limit, int16_t m2_limit)
+static void motor_set_forward_speed(float speed_mm_s)
 {
   const float wheel_speed = speed_mm_s * 0.8660254f;
   motor_set_speed_target(-wheel_speed, 1U);
   motor_set_speed_target( wheel_speed, 2U);
   motor_set_speed_target(0.0f, 3U);
-  motor_set_output_limit(1U, m1_limit);
-  motor_set_output_limit(2U, m2_limit);
-  motor_set_output_limit(3U, 0);
 }
 
 static void motor_apply_pwm(uint8_t id, int16_t speed)
@@ -294,7 +270,6 @@ static void motor_reset_targets(void)
     targets[i] = 0;
     target_counts_per_update[i] = 0.0f;
     target_speeds_mm_s[i] = 0;
-    output_limits[i] = motor_default_output_limit();
     direction_mismatch_cycles[i] = 0U;
     direction_grace_cycles[i] = 0U;
     stall_cycles[i] = 0U;
@@ -343,18 +318,18 @@ static void motor_abort_all(MotorDistanceStatus distance_status)
   motor_stop_outputs(true);
 }
 
-static void motor_update_distance_move(void)
+static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
 {
   if (distance_move.status != MOTOR_DISTANCE_RUNNING) {
     return;
   }
 
-  const EncoderStatus m1 = Encoder_GetStatus(1U);
-  const EncoderStatus m2 = Encoder_GetStatus(2U);
   const float m1_mm = motor_counts_to_mm(
-      (float)(m1.position - distance_move.start_m1_count) * (float)encoder_signs[0]);
+      (float)(encoder[0].position - distance_move.start_m1_count) *
+      (float)encoder_signs[0]);
   const float m2_mm = motor_counts_to_mm(
-      (float)(m2.position - distance_move.start_m2_count) * (float)encoder_signs[1]);
+      (float)(encoder[1].position - distance_move.start_m2_count) *
+      (float)encoder_signs[1]);
   const float forward_mm = (m2_mm - m1_mm) / 1.7320508f;
   const float direction = (distance_move.target_mm >= 0.0f) ? 1.0f : -1.0f;
   const float target_mm = distance_move.target_mm * direction;
@@ -383,20 +358,10 @@ static void motor_update_distance_move(void)
   }
 
   float speed_mm_s = APP_GO_DISTANCE_SPEED_MM_S;
-  int16_t m1_limit = motor_default_output_limit();
-  int16_t m2_limit = motor_default_output_limit();
 
   if (remaining_mm < distance_move.slowdown_start_mm) {
     if (!distance_move.slowing) {
       distance_move.slowing = true;
-      distance_move.slowdown_start_pwm[0] = (int16_t)motor_abs(commands[0]);
-      distance_move.slowdown_start_pwm[1] = (int16_t)motor_abs(commands[1]);
-      if (distance_move.slowdown_start_pwm[0] < APP_MOTOR_BASE_PWM) {
-        distance_move.slowdown_start_pwm[0] = APP_MOTOR_BASE_PWM;
-      }
-      if (distance_move.slowdown_start_pwm[1] < APP_MOTOR_BASE_PWM) {
-        distance_move.slowdown_start_pwm[1] = APP_MOTOR_BASE_PWM;
-      }
       Pid_Reset(&speed_pids[0]);
       Pid_Reset(&speed_pids[1]);
     }
@@ -409,12 +374,11 @@ static void motor_update_distance_move(void)
     } else if (ratio > 1.0f) {
       ratio = 1.0f;
     }
-    speed_mm_s *= ratio;
-    m1_limit = motor_round_to_int16((float)distance_move.slowdown_start_pwm[0] * ratio);
-    m2_limit = motor_round_to_int16((float)distance_move.slowdown_start_pwm[1] * ratio);
+    speed_mm_s = APP_GO_DISTANCE_MIN_SPEED_MM_S +
+        (APP_GO_DISTANCE_SPEED_MM_S - APP_GO_DISTANCE_MIN_SPEED_MM_S) * ratio;
   }
 
-  motor_set_forward_speed(speed_mm_s * direction, m1_limit, m2_limit);
+  motor_set_forward_speed(speed_mm_s * direction);
 }
 
 void Motor_Init(void)
@@ -442,7 +406,6 @@ void Motor_Init(void)
     target_counts_per_update[i] = 0.0f;
     measured_speeds_mm_s[i] = 0;
     target_speeds_mm_s[i] = 0;
-    output_limits[i] = motor_default_output_limit();
     direction_mismatch_cycles[i] = 0U;
     direction_grace_cycles[i] = 0U;
     stall_cycles[i] = 0U;
@@ -474,12 +437,14 @@ void Motor_Update(void)
 {
   int32_t measured_counts[MOTOR_COUNT];
   bool fault_detected = false;
+  EncoderStatus encoder[MOTOR_COUNT];
 
-  motor_update_distance_move();
+  Encoder_GetAll(encoder);
+  motor_update_distance_move(encoder);
 
   for (uint8_t id = 1U; id <= MOTOR_COUNT; ++id) {
     const uint32_t index = id - 1U;
-    measured_counts[index] = Encoder_TakeControlDelta(id) * encoder_signs[index];
+    measured_counts[index] = encoder[index].delta_10ms * encoder_signs[index];
     measured_speeds_mm_s[index] =
         motor_round_to_int16(motor_counts_to_mm_s((float)measured_counts[index]));
   }
@@ -554,7 +519,7 @@ void Motor_Update(void)
     const int32_t base_pwm =
         (targets[index] > 0) ? APP_MOTOR_BASE_PWM : -APP_MOTOR_BASE_PWM;
     int32_t output = base_pwm + (int32_t)correction;
-    const int32_t output_limit = output_limits[index];
+    const int32_t output_limit = motor_default_output_limit();
     if (output > output_limit) {
       output = output_limit;
     } else if (output < -output_limit) {
@@ -619,12 +584,12 @@ MotorDistanceStatus Go_distance(float distance_m)
     return MOTOR_DISTANCE_DONE;
   }
 
-  const EncoderStatus m1 = Encoder_GetStatus(1U);
-  const EncoderStatus m2 = Encoder_GetStatus(2U);
+  EncoderStatus encoder[MOTOR_COUNT];
+  Encoder_GetAll(encoder);
   const float absolute_distance = motor_abs_float(distance_mm);
   distance_move.target_mm = distance_mm;
-  distance_move.start_m1_count = m1.position;
-  distance_move.start_m2_count = m2.position;
+  distance_move.start_m1_count = encoder[0].position;
+  distance_move.start_m2_count = encoder[1].position;
   distance_move.slowdown_start_mm = APP_GO_DISTANCE_SLOWDOWN_MM;
   if (distance_move.slowdown_start_mm > (absolute_distance * 0.5f)) {
     distance_move.slowdown_start_mm = absolute_distance * 0.5f;
@@ -636,48 +601,47 @@ MotorDistanceStatus Go_distance(float distance_m)
   distance_move.no_progress_cycles = 0U;
   distance_move.slowing = false;
   distance_move.status = MOTOR_DISTANCE_RUNNING;
-  motor_update_distance_move();
+  motor_update_distance_move(encoder);
   motor_leave_critical(primask);
   return MOTOR_DISTANCE_RUNNING;
 }
 
-void Motor_Move(int16_t forward, int16_t lateral, int16_t rotate)
+void Motor_Move(float forward_mm_s, float lateral_mm_s, float rotate_mm_s)
 {
-  int32_t m1;
-  int32_t m2;
-  int32_t m3;
-  int32_t maximum;
   const uint32_t primask = motor_enter_critical();
 
-  if (motor_has_fault()) {
+  if (motor_has_fault() || !isfinite(forward_mm_s) ||
+      !isfinite(lateral_mm_s) || !isfinite(rotate_mm_s)) {
     motor_leave_critical(primask);
     return;
   }
   distance_move.status = MOTOR_DISTANCE_IDLE;
   distance_move.slowing = false;
-  forward = motor_limit(forward);
-  lateral = motor_limit(lateral);
-  rotate = motor_limit(rotate);
-
-  /* LED_3 three-wheel omni inverse kinematics (sqrt(3)/2 ~= 0.866). */
-  m1 = -(int32_t)forward * 866 / 1000 - (int32_t)lateral / 2 + rotate;
-  m2 =  (int32_t)forward * 866 / 1000 - (int32_t)lateral / 2 + rotate;
-  m3 =  (int32_t)lateral + rotate;
-
-  maximum = motor_abs(m1);
-  if (motor_abs(m2) > maximum) {
-    maximum = motor_abs(m2);
+  /* Three-wheel omni inverse kinematics; all arguments and wheels use mm/s. */
+  float wheel[3] = {
+    -0.8660254f * forward_mm_s - 0.5f * lateral_mm_s + rotate_mm_s,
+     0.8660254f * forward_mm_s - 0.5f * lateral_mm_s + rotate_mm_s,
+     lateral_mm_s + rotate_mm_s
+  };
+  float maximum = motor_abs_float(wheel[0]);
+  if (motor_abs_float(wheel[1]) > maximum) {
+    maximum = motor_abs_float(wheel[1]);
   }
-  if (motor_abs(m3) > maximum) {
-    maximum = motor_abs(m3);
+  if (motor_abs_float(wheel[2]) > maximum) {
+    maximum = motor_abs_float(wheel[2]);
   }
-  if (maximum > MOTOR_MAX_SPEED) {
-    m1 = m1 * MOTOR_MAX_SPEED / maximum;
-    m2 = m2 * MOTOR_MAX_SPEED / maximum;
-    m3 = m3 * MOTOR_MAX_SPEED / maximum;
+  const float maximum_wheel_speed =
+      motor_counts_to_mm_s((float)APP_MOTOR_MAX_COUNT_10MS);
+  if (maximum > maximum_wheel_speed) {
+    const float scale = maximum_wheel_speed / maximum;
+    wheel[0] *= scale;
+    wheel[1] *= scale;
+    wheel[2] *= scale;
   }
 
-  motor_set_three_targets(m1, m2, m3);
+  for (uint8_t id = 1U; id <= MOTOR_COUNT; ++id) {
+    motor_set_speed_target(wheel[id - 1U], id);
+  }
   motor_leave_critical(primask);
 }
 

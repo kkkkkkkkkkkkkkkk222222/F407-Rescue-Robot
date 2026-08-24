@@ -1,5 +1,7 @@
 #include "Task.h"
 
+#include <math.h>
+
 #include "app_config.h"
 #include "encoder.h"
 #include "main.h"
@@ -16,29 +18,29 @@
 #define INSPECTION_EMPTY  1U
 #define INSPECTION_LOADED 2U
 
+typedef struct {
+  uint16_t signature;
+  uint8_t sequence;
+  uint8_t streak;
+  bool valid;
+} FrameConfirmation;
+
 static volatile TaskStatus task_status;
 static bool task_initialized;
 static bool match_started;
 static bool key_sample;
 static bool key_stable;
 static uint8_t crab_step;
-static uint8_t cargo_confirm_streak;
-static uint8_t cargo_confirm_sequence;
-static uint8_t nav_confirm_streak;
-static uint8_t nav_confirm_sequence;
-static uint8_t inspection_confirm_streak;
-static uint8_t inspection_confirm_sequence;
-static uint8_t inspection_confirm_result;
-static uint16_t cargo_confirm_signature;
-static bool cargo_confirm_sequence_valid;
-static bool nav_confirm_sequence_valid;
-static bool inspection_confirm_sequence_valid;
+static uint8_t inspection_retry_count;
+static FrameConfirmation cargo_confirmation;
+static FrameConfirmation nav_confirmation;
+static FrameConfirmation inspection_confirmation;
 static uint32_t match_tick;
 static uint32_t state_tick;
 static uint32_t key_tick;
 static uint32_t inspection_tick;
-static int64_t start_m1;
-static int64_t start_m2;
+static int64_t distance_last_count[3];
+static float travel_distance_mm;
 static Pid_t steering_pid;
 static Pid_t camera_pid;
 static float camera_angle;
@@ -51,27 +53,38 @@ static uint8_t task_total_count(uint8_t counts)
                    VISION_COUNT_DANGER(counts));
 }
 
-static void task_reset_cargo_confirmation(void)
+static void task_confirmation_reset(FrameConfirmation *confirmation)
 {
-  cargo_confirm_streak = 0U;
-  cargo_confirm_sequence = 0U;
-  cargo_confirm_signature = 0U;
-  cargo_confirm_sequence_valid = false;
+  confirmation->signature = 0U;
+  confirmation->sequence = 0U;
+  confirmation->streak = 0U;
+  confirmation->valid = false;
 }
 
-static void task_reset_nav_confirmation(void)
+static bool task_confirmation_update(FrameConfirmation *confirmation,
+                                     uint8_t sequence,
+                                     uint16_t signature,
+                                     uint8_t required_frames)
 {
-  nav_confirm_streak = 0U;
-  nav_confirm_sequence = 0U;
-  nav_confirm_sequence_valid = false;
-}
-
-static void task_reset_inspection_confirmation(void)
-{
-  inspection_confirm_streak = 0U;
-  inspection_confirm_sequence = 0U;
-  inspection_confirm_result = INSPECTION_NONE;
-  inspection_confirm_sequence_valid = false;
+  if (!confirmation->valid) {
+    confirmation->signature = signature;
+    confirmation->sequence = sequence;
+    confirmation->streak = 1U;
+    confirmation->valid = true;
+  } else if (sequence == confirmation->sequence) {
+    return false;
+  } else if ((sequence != (uint8_t)(confirmation->sequence + 1U)) ||
+             (signature != confirmation->signature)) {
+    confirmation->signature = signature;
+    confirmation->sequence = sequence;
+    confirmation->streak = 1U;
+  } else {
+    confirmation->sequence = sequence;
+    if (confirmation->streak < required_frames) {
+      ++confirmation->streak;
+    }
+  }
+  return confirmation->streak >= required_frames;
 }
 
 static void task_set_state(TaskState state, uint32_t now_ms)
@@ -90,13 +103,13 @@ static void task_set_state(TaskState state, uint32_t now_ms)
     task_status.claw_empty = false;
     task_status.nav_direction = VISION_NAV_HOLD;
     crab_step = CRAB_APPROACH;
-    task_reset_cargo_confirmation();
+    task_confirmation_reset(&cargo_confirmation);
     Claw_SetAngle(APP_CLAW_OPEN_ANGLE);
   } else if (state == TASK_CRAB_OBJECT) {
     Pid_Reset(&steering_pid);
     Pid_Reset(&camera_pid);
     crab_step = CRAB_APPROACH;
-    task_reset_cargo_confirmation();
+    task_confirmation_reset(&cargo_confirmation);
   } else if (state == TASK_RETURN_SAFE) {
     Motor_Stop();
     Claw_SetAngle(APP_CLAW_CLOSE_ANGLE);
@@ -105,7 +118,7 @@ static void task_set_state(TaskState state, uint32_t now_ms)
     task_status.near_safe = false;
     task_status.claw_empty = false;
     task_status.nav_direction = VISION_NAV_HOLD;
-    task_reset_nav_confirmation();
+    task_confirmation_reset(&nav_confirmation);
   } else if (state == TASK_DROP_OBJECT) {
     Motor_Stop();
     Claw_SetAngle(APP_CLAW_CLOSE_ANGLE);
@@ -115,7 +128,8 @@ static void task_set_state(TaskState state, uint32_t now_ms)
     task_status.near_safe = true;
     task_status.claw_empty = false;
     task_status.nav_direction = VISION_NAV_HOLD;
-    task_reset_inspection_confirmation();
+    inspection_retry_count = 0U;
+    task_confirmation_reset(&inspection_confirmation);
   } else if (state == TASK_STOPPED) {
     Motor_Stop();
   }
@@ -123,8 +137,10 @@ static void task_set_state(TaskState state, uint32_t now_ms)
 
 static void task_initialize(uint32_t now_ms)
 {
-  Pid_Init(&steering_pid, 3.0f, 0.0f, 2.0f,
-           -320.0f, 320.0f, -1000.0f, 1000.0f);
+  Pid_Init(&steering_pid,
+           APP_STEERING_KP_MM_S, 0.0f, APP_STEERING_KD_MM_S,
+           -APP_STEERING_LIMIT_MM_S, APP_STEERING_LIMIT_MM_S,
+           -1000.0f, 1000.0f);
   Pid_Init(&camera_pid, 0.5f, 0.0f, 0.3f,
            -3.0f, 3.0f, -1000.0f, 1000.0f);
   Mechanism_Init();
@@ -156,14 +172,17 @@ static void task_initialize(uint32_t now_ms)
   key_stable = key_sample;
   key_tick = now_ms;
   crab_step = CRAB_APPROACH;
-  task_reset_cargo_confirmation();
-  task_reset_nav_confirmation();
-  task_reset_inspection_confirmation();
+  task_confirmation_reset(&cargo_confirmation);
+  task_confirmation_reset(&nav_confirmation);
+  task_confirmation_reset(&inspection_confirmation);
   match_tick = now_ms;
   state_tick = now_ms;
   inspection_tick = now_ms;
-  start_m1 = 0;
-  start_m2 = 0;
+  for (uint8_t i = 0U; i < 3U; ++i) {
+    distance_last_count[i] = 0;
+  }
+  travel_distance_mm = 0.0f;
+  inspection_retry_count = 0U;
   task_initialized = true;
 }
 
@@ -203,23 +222,30 @@ static void task_update_time(uint32_t now_ms)
 
 static void task_update_distance(void)
 {
-  const EncoderStatus m1 = Encoder_GetStatus(1U);
-  const EncoderStatus m2 = Encoder_GetStatus(2U);
+  EncoderStatus encoder[3];
+  Encoder_GetAll(encoder);
   const float millimetres_per_count =
       3.14159265358979323846f * (float)APP_WHEEL_DIAMETER_MM /
       (float)APP_ENCODER_COUNTS_PER_WHEEL_REV;
-  const float m1_mm = (float)(m1.position - start_m1) *
-                      (float)APP_OMNI_M1_ENCODER_SIGN * millimetres_per_count;
-  const float m2_mm = (float)(m2.position - start_m2) *
-                      (float)APP_OMNI_M2_ENCODER_SIGN * millimetres_per_count;
-  float distance = (m2_mm - m1_mm) / 1.7320508f;
-
-  if (distance < 0.0f) {
-    distance = 0.0f;
-  } else if (distance > 65535.0f) {
-    distance = 65535.0f;
+  float wheel_mm[3];
+  const int8_t signs[3] = {
+    APP_OMNI_M1_ENCODER_SIGN,
+    APP_OMNI_M2_ENCODER_SIGN,
+    APP_OMNI_M3_ENCODER_SIGN
+  };
+  for (uint8_t i = 0U; i < 3U; ++i) {
+    wheel_mm[i] = (float)(encoder[i].position - distance_last_count[i]) *
+                  (float)signs[i] * millimetres_per_count;
+    distance_last_count[i] = encoder[i].position;
   }
-  task_status.distance_mm = (uint16_t)(distance + 0.5f);
+  const float forward_mm = (wheel_mm[1] - wheel_mm[0]) / 1.7320508f;
+  const float lateral_mm =
+      (2.0f * wheel_mm[2] - wheel_mm[0] - wheel_mm[1]) / 3.0f;
+  travel_distance_mm += sqrtf(forward_mm * forward_mm +
+                              lateral_mm * lateral_mm);
+  task_status.distance_mm =
+      (travel_distance_mm >= (float)UINT32_MAX) ? UINT32_MAX :
+      (uint32_t)(travel_distance_mm + 0.5f);
 }
 
 static void task_track_camera(const VisionData *vision)
@@ -236,7 +262,7 @@ static void task_track_camera(const VisionData *vision)
   Camera_SetAngle((uint8_t)(camera_angle + 0.5f));
 }
 
-static int16_t task_turn(const VisionData *vision)
+static float task_turn(const VisionData *vision)
 {
   const int32_t error = (int32_t)APP_VISION_TARGET_X - vision->x;
   if ((error >= -APP_STEERING_DEAD_ZONE) &&
@@ -244,9 +270,9 @@ static int16_t task_turn(const VisionData *vision)
     Pid_Reset(&steering_pid);
     return 0;
   }
-  return (int16_t)(Pid_Update(&steering_pid,
-                              (float)APP_VISION_TARGET_X,
-                              (float)vision->x) * APP_STEERING_DIRECTION);
+  return Pid_Update(&steering_pid,
+                    (float)APP_VISION_TARGET_X,
+                    (float)vision->x) * APP_STEERING_DIRECTION;
 }
 
 static bool task_report_fresh(const VisionData *vision, uint32_t now_ms)
@@ -259,6 +285,7 @@ static bool task_candidate_allowed(const VisionData *vision)
 {
   const uint8_t counts = vision->cargo_counts;
   if (!vision->classification_valid || vision->unknown ||
+      vision->claw_view || vision->grabbed ||
       (task_total_count(counts) != 1U) ||
       (VISION_COUNT_DANGER(counts) != 0U)) {
     return false;
@@ -312,85 +339,26 @@ static bool task_cargo_confirmed(const VisionData *vision)
   const uint16_t signature = (uint16_t)vision->cargo_counts |
       (vision->classification_valid ? 0x0100U : 0U) |
       (vision->unknown ? 0x0200U : 0U);
-
-  if (!cargo_confirm_sequence_valid) {
-    cargo_confirm_sequence = vision->sequence;
-    cargo_confirm_signature = signature;
-    cargo_confirm_streak = 1U;
-    cargo_confirm_sequence_valid = true;
-    return false;
-  }
-  if (vision->sequence == cargo_confirm_sequence) {
-    return false;
-  }
-  if (vision->sequence != (uint8_t)(cargo_confirm_sequence + 1U)) {
-    cargo_confirm_sequence = vision->sequence;
-    cargo_confirm_signature = signature;
-    cargo_confirm_streak = 1U;
-    return false;
-  }
-  cargo_confirm_sequence = vision->sequence;
-
-  if (signature == cargo_confirm_signature) {
-    if (cargo_confirm_streak < APP_CARGO_CONFIRM_FRAMES) {
-      ++cargo_confirm_streak;
-    }
-  } else {
-    cargo_confirm_signature = signature;
-    cargo_confirm_streak = 1U;
-  }
-  return cargo_confirm_streak >= APP_CARGO_CONFIRM_FRAMES;
+  return task_confirmation_update(&cargo_confirmation,
+                                  vision->sequence,
+                                  signature,
+                                  APP_CARGO_CONFIRM_FRAMES);
 }
 
 static bool task_nav_near_confirmed(const VisionData *vision)
 {
-  if (!nav_confirm_sequence_valid) {
-    nav_confirm_sequence = vision->nav_sequence;
-    nav_confirm_streak = 1U;
-    nav_confirm_sequence_valid = true;
-    return APP_NAV_CONFIRM_FRAMES <= 1U;
-  }
-  if (vision->nav_sequence == nav_confirm_sequence) {
-    return false;
-  }
-  if (vision->nav_sequence != (uint8_t)(nav_confirm_sequence + 1U)) {
-    nav_confirm_sequence = vision->nav_sequence;
-    nav_confirm_streak = 1U;
-    return false;
-  }
-
-  nav_confirm_sequence = vision->nav_sequence;
-  if (nav_confirm_streak < APP_NAV_CONFIRM_FRAMES) {
-    ++nav_confirm_streak;
-  }
-  return nav_confirm_streak >= APP_NAV_CONFIRM_FRAMES;
+  return task_confirmation_update(&nav_confirmation,
+                                  vision->nav_sequence,
+                                  0U,
+                                  APP_NAV_CONFIRM_FRAMES);
 }
 
 static bool task_inspection_confirmed(uint8_t result, uint8_t sequence)
 {
-  if (!inspection_confirm_sequence_valid) {
-    inspection_confirm_result = result;
-    inspection_confirm_sequence = sequence;
-    inspection_confirm_streak = 1U;
-    inspection_confirm_sequence_valid = true;
-    return APP_DROP_CONFIRM_FRAMES <= 1U;
-  }
-  if (sequence == inspection_confirm_sequence) {
-    return false;
-  }
-  if ((sequence != (uint8_t)(inspection_confirm_sequence + 1U)) ||
-      (result != inspection_confirm_result)) {
-    inspection_confirm_result = result;
-    inspection_confirm_sequence = sequence;
-    inspection_confirm_streak = 1U;
-    return false;
-  }
-
-  inspection_confirm_sequence = sequence;
-  if (inspection_confirm_streak < APP_DROP_CONFIRM_FRAMES) {
-    ++inspection_confirm_streak;
-  }
-  return inspection_confirm_streak >= APP_DROP_CONFIRM_FRAMES;
+  return task_confirmation_update(&inspection_confirmation,
+                                  sequence,
+                                  result,
+                                  APP_DROP_CONFIRM_FRAMES);
 }
 
 static bool task_motor_has_fault(void)
@@ -408,16 +376,16 @@ static void task_apply_nav_direction(uint8_t direction)
 {
   switch (direction) {
     case VISION_NAV_FORWARD:
-      Motor_Move(APP_RETURN_FORWARD_SPEED, 0, 0);
+      Motor_Move(APP_RETURN_FORWARD_SPEED_MM_S, 0.0f, 0.0f);
       break;
     case VISION_NAV_TURN_LEFT:
-      Motor_Move(0, 0, APP_RETURN_TURN_SPEED);
+      Motor_Move(0.0f, 0.0f, APP_RETURN_TURN_SPEED_MM_S);
       break;
     case VISION_NAV_TURN_RIGHT:
-      Motor_Move(0, 0, -APP_RETURN_TURN_SPEED);
+      Motor_Move(0.0f, 0.0f, -APP_RETURN_TURN_SPEED_MM_S);
       break;
     case VISION_NAV_BACKWARD:
-      Motor_Move(-APP_RETURN_BACKWARD_SPEED, 0, 0);
+      Motor_Move(-APP_RETURN_BACKWARD_SPEED_MM_S, 0.0f, 0.0f);
       break;
     default:
       Motor_Stop();
@@ -466,15 +434,17 @@ static void Start(uint32_t now_ms)
       return;
     }
 
-    const EncoderStatus m1 = Encoder_GetStatus(1U);
-    const EncoderStatus m2 = Encoder_GetStatus(2U);
-    start_m1 = m1.position;
-    start_m2 = m2.position;
+    EncoderStatus encoder[3];
+    Encoder_GetAll(encoder);
+    for (uint8_t i = 0U; i < 3U; ++i) {
+      distance_last_count[i] = encoder[i].position;
+    }
+    travel_distance_mm = 0.0f;
+    task_status.distance_mm = 0U;
     match_tick = now_ms;
     match_started = true;
   }
 
-  task_update_distance();
   const MotorDistanceStatus result = Go_distance(APP_INITIAL_FORWARD_DISTANCE_M);
   if (result == MOTOR_DISTANCE_DONE) {
     Motor_Stop();
@@ -503,7 +473,7 @@ static void Find_Object(const VisionData *vision, uint32_t now_ms)
   } else if ((uint32_t)(now_ms - state_tick) < APP_TARGET_WAIT_MS) {
     Motor_Stop();
   } else {
-    Motor_Move(0, 0, APP_SEARCH_ROTATE_SPEED);
+    Motor_Move(0.0f, 0.0f, APP_SEARCH_ROTATE_SPEED_MM_S);
   }
 }
 
@@ -519,7 +489,7 @@ static void Crab_Object(const VisionData *vision, uint32_t now_ms)
 
   if (crab_step == CRAB_BACK) {
     if ((uint32_t)(now_ms - state_tick) < APP_CRAB_BACK_MS) {
-      Motor_Move(-APP_CRAB_ADJUST_SPEED, 0, 0);
+      Motor_Move(-APP_CRAB_ADJUST_SPEED_MM_S, 0.0f, 0.0f);
     } else {
       Motor_Stop();
       task_set_state(TASK_FIND_OBJECT, now_ms);
@@ -545,13 +515,13 @@ static void Crab_Object(const VisionData *vision, uint32_t now_ms)
       task_status.cargo_valid = false;
       task_status.grabbed = false;
       Claw_SetAngle(APP_CLAW_OPEN_ANGLE);
-      task_reset_cargo_confirmation();
+      task_confirmation_reset(&cargo_confirmation);
       crab_step = CRAB_BACK;
       state_tick = now_ms;
     }
     return;
   }
-  task_reset_cargo_confirmation();
+  task_confirmation_reset(&cargo_confirmation);
 
   if (crab_step == CRAB_CLOSE) {
     Motor_Stop();
@@ -590,14 +560,14 @@ static void Crab_Object(const VisionData *vision, uint32_t now_ms)
     return;
   }
 
-  int16_t speed = APP_APPROACH_SPEED;
+  float speed_mm_s = APP_APPROACH_SPEED_MM_S;
   if (vision->distance_mm <= APP_CRAB_SLOW_DISTANCE_MM) {
-    speed = APP_CRAB_SLOW_SPEED;
+    speed_mm_s = APP_CRAB_SLOW_SPEED_MM_S;
   } else if (vision->distance_mm <= APP_CRAB_MID_DISTANCE_MM) {
-    speed = APP_CRAB_MID_SPEED;
+    speed_mm_s = APP_CRAB_MID_SPEED_MM_S;
   }
   Claw_SetAngle(APP_CLAW_OPEN_ANGLE);
-  Motor_Move(speed, 0, task_turn(vision));
+  Motor_Move(speed_mm_s, 0.0f, task_turn(vision));
 }
 
 static void Return_Safe(const VisionData *vision, uint32_t now_ms)
@@ -615,7 +585,7 @@ static void Return_Safe(const VisionData *vision, uint32_t now_ms)
 
   if (!nav_fresh) {
     Motor_Stop();
-    task_reset_nav_confirmation();
+    task_confirmation_reset(&nav_confirmation);
     return;
   }
 
@@ -627,7 +597,7 @@ static void Return_Safe(const VisionData *vision, uint32_t now_ms)
     return;
   }
 
-  task_reset_nav_confirmation();
+  task_confirmation_reset(&nav_confirmation);
   task_apply_nav_direction(vision->nav_direction);
 }
 
@@ -670,7 +640,7 @@ static void Drop_Object(const VisionData *vision, uint32_t now_ms)
       Claw_SetAngle(APP_CLAW_OPEN_ANGLE);
       if ((uint32_t)(now_ms - state_tick) >= APP_CAMERA_SETTLE_MS) {
         inspection_tick = now_ms;
-        task_reset_inspection_confirmation();
+        task_confirmation_reset(&inspection_confirmation);
         task_status.drop_phase = TASK_DROP_VERIFY;
       }
       break;
@@ -678,9 +648,23 @@ static void Drop_Object(const VisionData *vision, uint32_t now_ms)
     case TASK_DROP_VERIFY: {
       Motor_Stop();
       Claw_SetAngle(APP_CLAW_OPEN_ANGLE);
+      if ((uint32_t)(now_ms - inspection_tick) >=
+          APP_DROP_VERIFY_TIMEOUT_MS) {
+        task_confirmation_reset(&inspection_confirmation);
+        if (inspection_retry_count < APP_DROP_VERIFY_RETRIES) {
+          ++inspection_retry_count;
+          Camera_SetAngle(APP_CAMERA_WIDE_ANGLE);
+          task_status.drop_phase = TASK_DROP_RELEASE;
+          state_tick = now_ms;
+        } else {
+          task_set_state(TASK_STOPPED, now_ms);
+        }
+        break;
+      }
+
       const uint8_t inspection = task_inspection_result(vision, now_ms);
       if (inspection == INSPECTION_NONE) {
-        task_reset_inspection_confirmation();
+        task_confirmation_reset(&inspection_confirmation);
         break;
       }
       if (!task_inspection_confirmed(inspection, vision->sequence)) {

@@ -46,6 +46,7 @@
 
 /* Go_distance() accepts metres; internal speed, slowdown and tolerance use millimetres. */
 #define APP_GO_DISTANCE_SPEED_MM_S       300.0f
+#define APP_GO_DISTANCE_MIN_SPEED_MM_S   120.0f
 #define APP_GO_DISTANCE_SLOWDOWN_MM      100.0f
 #define APP_GO_DISTANCE_TOLERANCE_MM     3.0f
 #define APP_GO_DISTANCE_PROGRESS_MM      0.25f
@@ -78,29 +79,34 @@
 #define APP_VISION_MAX_X                 639U
 #define APP_VISION_MAX_Y                 479U
 #define APP_VISION_MIN_DISTANCE_MM       1U
-#define APP_SEARCH_ROTATE_SPEED          220
-#define APP_APPROACH_SPEED               780
-#define APP_CRAB_MID_SPEED               450
-#define APP_CRAB_SLOW_SPEED              220
-#define APP_CRAB_ADJUST_SPEED            180
+#define APP_SEARCH_ROTATE_SPEED_MM_S     164.0f
+#define APP_APPROACH_SPEED_MM_S          582.0f
+#define APP_CRAB_MID_SPEED_MM_S          336.0f
+#define APP_CRAB_SLOW_SPEED_MM_S         164.0f
+#define APP_CRAB_ADJUST_SPEED_MM_S       134.0f
 #define APP_CRAB_MID_DISTANCE_MM         500U
 #define APP_CRAB_SLOW_DISTANCE_MM        250U
 #define APP_CRAB_STOP_DISTANCE_MM        120U
 #define APP_CRAB_CLOSE_WAIT_MS           500U
 #define APP_CRAB_BACK_MS                 250U
 #define APP_STEERING_DEAD_ZONE           4
+#define APP_STEERING_KP_MM_S             2.24f
+#define APP_STEERING_KD_MM_S             1.49f
+#define APP_STEERING_LIMIT_MM_S          239.0f
 #define APP_STEERING_DIRECTION           1.0f
 #define APP_CAMERA_DIRECTION             1.0f
 
 /* Upper-computer-guided return and local delivery sequence. */
 #define APP_NAV_TIMEOUT_MS               200U
-#define APP_RETURN_FORWARD_SPEED         520
-#define APP_RETURN_BACKWARD_SPEED        300
-#define APP_RETURN_TURN_SPEED            240
+#define APP_RETURN_FORWARD_SPEED_MM_S    388.0f
+#define APP_RETURN_BACKWARD_SPEED_MM_S   224.0f
+#define APP_RETURN_TURN_SPEED_MM_S       179.0f
 #define APP_DROP_FORWARD_DISTANCE_M      0.20f
 #define APP_DROP_BACK_DISTANCE_M         0.50f
 #define APP_DROP_RELEASE_WAIT_MS         600U
 #define APP_CAMERA_SETTLE_MS             400U
+#define APP_DROP_VERIFY_TIMEOUT_MS       3000U
+#define APP_DROP_VERIFY_RETRIES          2U
 
 /* This 1.8-inch 128x160 ST7735 panel exposes GRAM origin (0, 0). */
 #define APP_LCD_WIDTH       128U

@@ -10,7 +10,6 @@ typedef struct {
 
 void Encoder_Init(void);
 void Encoder_Sample10ms(void);
-EncoderStatus Encoder_GetStatus(uint8_t id);
-int32_t Encoder_TakeControlDelta(uint8_t id);
+void Encoder_GetAll(EncoderStatus status[3]);
 
 #endif

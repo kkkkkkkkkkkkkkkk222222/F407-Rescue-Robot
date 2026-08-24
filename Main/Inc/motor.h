@@ -24,7 +24,7 @@ typedef enum {
 void Motor_Init(void);
 void Motor_SetSpeed(float target_speed, uint8_t id);
 MotorDistanceStatus Go_distance(float distance_m);
-void Motor_Move(int16_t forward, int16_t lateral, int16_t rotate);
+void Motor_Move(float forward_mm_s, float lateral_mm_s, float rotate_mm_s);
 void Motor_Stop(void);
 void Motor_Update(void);
 MotorStatus Motor_GetStatus(uint8_t id);
