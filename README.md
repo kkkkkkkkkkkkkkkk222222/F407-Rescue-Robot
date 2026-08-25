@@ -1,22 +1,22 @@
-# 当前固件：S1触发定时运动测试
+# 当前固件：IMU闭环旋转180°测试
 
-由于上位机和IMU均未安装，当前配置暂时设置为`APP_ENABLE_MOTION_TEST=1`，`APP_ENABLE_TASK`会自动变为0。该模式不初始化、不读取IMU，也不需要发送赛前配置帧；上电后LCD显示`MOTOR TEST READY`一秒，再进入`MOTION TEST`界面。
+当前配置设置为`APP_ENABLE_MOTION_TEST=1`，`APP_ENABLE_TASK`会自动变为0。该模式不需要上位机赛前配置帧，但会完整初始化IMU660RC：上电时车辆必须保持静止，128个样本零偏校准通过后LCD显示`IMU660RC: OK`一秒，再进入`IMU 180 TEST`界面；校准或通信失败则显示`IMU660RC: ERROR`，并禁止电机启动。
 
 测试步骤：
 
-1. 第一次先架空三只轮子，确认附近无人且线缆不会被卷入；验证三轮方向正确后再落地测试。
-2. LCD显示`WAIT S1`后按一次S1，程序先调用`Motor_Move(-750, 0, 0)`后退3秒：M1约+650 mm/s正转、M2停止、M3约-650 mm/s反转。
-3. 到3秒时切换为`Motor_Move(0, 0, 250)`，原地旋转3秒，随后调用`Motor_Stop()`制动停车并显示`DONE`。
-4. 测试过程中再次按S1会立即取消并停车；任何电机出现反向或堵转故障也会三轮联停。完成后可再次按S1重复整套测试。
-5. LCD实时显示`STATE`、当前`STEP`、阶段时间、目标速度、M1/M2/M3编码器累计值和电机故障状态。
+1. 上电后保持小车和IMU完全静止，等待LCD显示`IMU660RC: OK`一秒；若显示`ERROR`，检查3.3 V、共地和SPI接线，不要启动测试。
+2. LCD显示`WAIT S1`后按一次S1，程序调用`IMU_ZeroYaw()`，再以250 mm/s的旋转速度启动三轮。
+3. 程序每10 ms更新IMU，使用Z轴偏航角的绝对值计算剩余角度；距离180°还有30°时降至120 mm/s，达到179°时主动制动，利用低速段和1°提前量减小惯性过冲。
+4. 测试中再次按S1立即取消并停车；IMU掉线、电机反向/堵转或10秒内未到目标都会停车。完成后可再次按S1重新清零并重复测试。
+5. LCD实时显示状态、偏航角、180°目标、Z轴角速度、当前旋转速度、IMU及电机状态。
 
-后退/旋转时间和速度集中在`Main/Inc/app_config.h`的`APP_MOTION_TEST_*`配置中。测试结束、准备恢复完整任务时，只需将`APP_ENABLE_MOTION_TEST`改为0，`APP_ENABLE_TASK`会自动恢复为1。
+目标角度、提前量、减速区、快慢速度和超时集中在`Main/Inc/app_config.h`的`APP_IMU_TURN_*`配置中。测试结束、准备恢复完整任务时，只需将`APP_ENABLE_MOTION_TEST`改为0，`APP_ENABLE_TASK`会自动恢复为1。
 
 # 代码思路（救援流程与上位机协议）
 
 当前固件实现赛前配置、一键驶出、搜索、分类靠近、抓取合规检查、上位机引导返航、进入安全区、放下目标、低头复核和后退重搜。上位机负责从图像判断路线和安全区位置，F407负责命令超时停车、目的地校验、连续帧确认、编码器定距进入/退出和机构动作；上位机不能直接控制PWM。
 
-IMU660RC已经作为独立底层传感器移植：F407按10 ms释放节拍通过四线软件SPI读取LSM6DSV16X三轴角速度和加速度，并在完成静止零偏校准后积分Z轴偏航角。当前救援状态机还没有用偏航角闭环转向，因此本次移植不会改变任何电机目标、PID、定距或状态跳转；后续实车确认安装方向和正负号后，再把`IMU_GetData().yaw_mdeg`接入转角控制。
+IMU660RC已经作为独立底层传感器移植：F407按10 ms释放节拍通过四线软件SPI读取LSM6DSV16X三轴角速度和加速度，并在完成静止零偏校准后积分Z轴偏航角。当前独立测试已经使用`IMU_GetData().yaw_mdeg`闭环停止在180°；正式救援状态机暂未接入转角闭环，因此关闭测试模式后不会改变原有任务状态跳转。
 
 协议设计采用固定长度、消息类型、递增序号和整帧CRC16。固定帧适合当前STM32的64字节循环DMA；CRC16用于拒绝误码帧；坐标、距离、类别数量和状态放在同一视觉报告中，避免旧协议把不同采样周期的三帧拼在一起。导航采用“连续命令+失联停车”，与[ROS 2控制器的过期速度命令自动停车](https://control.ros.org/master/doc/ros2_controllers/diff_drive_controller/doc/userdoc.html)和[Nav2传感器超时即停车](https://docs.nav2.org/configuration/packages/collision_monitor/configuring-collision-monitor-node.html)的失效安全思路一致。串口设计参考：[ST UART Receive-to-IDLE DMA](https://dev.st.com/stm32cube-docs/hal1-to-hal2-migration/1.0.0/en/docs/markup/drivers_documentation/hal_drivers/uart/hal_uart_exported_functions_io_operation.html)、[Modbus串口CRC规范](https://modbus.org/docs/Modbus_over_serial_line_V1_02.pdf)、[IETF RFC 1662 FCS](https://www.rfc-editor.org/info/rfc1662/)。比赛规则以[2027智能+工程创新赛道官方解析](https://gcxl.edu.cn/new/res/intelligence20260617.pdf)为准。
 
