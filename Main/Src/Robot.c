@@ -37,6 +37,16 @@ static uint8_t motor_control_period_ms;
 static uint8_t lcd_period_ms;
 static bool lcd_ready;
 
+static void format_hex_byte(char text[5], uint8_t value)
+{
+  static const char digits[] = "0123456789ABCDEF";
+  text[0] = '0';
+  text[1] = 'x';
+  text[2] = digits[(value >> 4U) & 0x0FU];
+  text[3] = digits[value & 0x0FU];
+  text[4] = '\0';
+}
+
 #if APP_ENABLE_TASK
 static volatile uint32_t task_release_sequence;
 static volatile uint32_t task_release_ms;
@@ -235,11 +245,18 @@ void Robot_Init(void)
 
   lcd_ready = LCD_Init();
   if (lcd_ready) {
+    const IMUData imu = IMU_GetData();
+    char device_id_text[5];
+    format_hex_byte(device_id_text, imu.device_id);
+
     LCD_FillScreen(LCD_BLACK);
-    LCD_DrawText(imu_ready ? 25U : 19U, 76U,
+    LCD_DrawText(imu_ready ? 25U : 19U, 62U,
                  imu_ready ? "IMU660RC: OK" : "IMU660RC: ERROR",
                  imu_ready ? LCD_GREEN : LCD_RED, LCD_BLACK);
-    HAL_Delay(1000U);
+    LCD_DrawText(13U, 82U, "WHO_AM_I:", LCD_CYAN, LCD_BLACK);
+    LCD_DrawText(79U, 82U, device_id_text,
+                 (imu.device_id == 0x70U) ? LCD_GREEN : LCD_RED, LCD_BLACK);
+    HAL_Delay(imu_ready ? 1000U : 3000U);
     draw_dashboard();
   }
 
