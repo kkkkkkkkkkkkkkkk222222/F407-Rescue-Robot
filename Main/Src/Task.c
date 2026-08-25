@@ -238,9 +238,9 @@ static void task_update_distance(void)
                   (float)signs[i] * millimetres_per_count;
     distance_last_count[i] = encoder[i].position;
   }
-  const float forward_mm = (wheel_mm[2] - wheel_mm[1]) / 1.7320508f;
+  const float forward_mm = (wheel_mm[2] - wheel_mm[0]) / 1.7320508f;
   const float lateral_mm =
-      (-2.0f * wheel_mm[0] + wheel_mm[1] + wheel_mm[2]) / 3.0f;
+      (-wheel_mm[0] + 2.0f * wheel_mm[1] - wheel_mm[2]) / 3.0f;
   travel_distance_mm += sqrtf(forward_mm * forward_mm +
                               lateral_mm * lateral_mm);
   task_status.distance_mm =

@@ -54,7 +54,7 @@ static uint32_t motor_key_change_ms;
 
 #if APP_ENABLE_MOTION_TEST
 static bool motion_test_running;
-static bool motion_test_forward;
+static bool motion_test_rotate;
 static bool motion_test_done;
 static bool motion_key_sample;
 static bool motion_key_stable;
@@ -111,7 +111,7 @@ static void draw_dashboard(void)
     .uart_received = usart3_byte_received,
     .motor_test_running = false,
     .motion_test_running = false,
-    .motion_test_forward = false,
+    .motion_test_rotate = false,
     .motion_test_done = false
   };
 #if APP_ENABLE_AUTOMATIC_MOTOR_TEST && !APP_ENABLE_TASK
@@ -119,7 +119,7 @@ static void draw_dashboard(void)
 #endif
 #if APP_ENABLE_MOTION_TEST
   dashboard.motion_test_running = motion_test_running;
-  dashboard.motion_test_forward = motion_test_forward;
+  dashboard.motion_test_rotate = motion_test_rotate;
   dashboard.motion_test_done = motion_test_done;
 #endif
   LCD_DrawDashboard(&dashboard);
@@ -212,11 +212,10 @@ static bool motion_key_pressed(uint32_t now_ms)
 static void start_motion_test(uint32_t now_ms)
 {
   motion_test_running = true;
-  motion_test_forward = false;
+  motion_test_rotate = false;
   motion_test_done = false;
   motion_phase_start_ms = now_ms;
-  Motor_Move(0.0f, 0.0f,
-             APP_MOTION_TEST_ROTATE_MM_S);
+  Motor_Move(-APP_MOTION_TEST_BACKWARD_MM_S, 0.0f, 0.0f);
 }
 
 static void process_motion_test(uint32_t now_ms)
@@ -228,7 +227,7 @@ static void process_motion_test(uint32_t now_ms)
       Motor_Stop();
     }
     motion_test_running = false;
-    motion_test_forward = false;
+    motion_test_rotate = false;
     return;
   }
 
@@ -236,7 +235,7 @@ static void process_motion_test(uint32_t now_ms)
     if (motion_test_running) {
       Motor_Stop();
       motion_test_running = false;
-      motion_test_forward = false;
+      motion_test_rotate = false;
       motion_test_done = false;
     } else {
       start_motion_test(now_ms);
@@ -248,20 +247,16 @@ static void process_motion_test(uint32_t now_ms)
   }
 
   const uint32_t elapsed_ms = now_ms - motion_phase_start_ms;
-  if (!motion_test_forward &&
-      (elapsed_ms >= APP_MOTION_TEST_ROTATE_MS)) {
-    motion_test_forward = true;
+  if (!motion_test_rotate &&
+      (elapsed_ms >= APP_MOTION_TEST_BACKWARD_MS)) {
+    motion_test_rotate = true;
     motion_phase_start_ms = now_ms;
-    const float wheel_speed =
-        APP_MOTION_TEST_FORWARD_MM_S * 0.8660254f;
-    Motor_SetSpeed(-wheel_speed, 1U);
-    Motor_SetSpeed(0.0f, 2U);
-    Motor_SetSpeed( wheel_speed, 3U);
-  } else if (motion_test_forward &&
-             (elapsed_ms >= APP_MOTION_TEST_FORWARD_MS)) {
+    Motor_Move(0.0f, 0.0f, APP_MOTION_TEST_ROTATE_MM_S);
+  } else if (motion_test_rotate &&
+             (elapsed_ms >= APP_MOTION_TEST_ROTATE_MS)) {
     Motor_Stop();
     motion_test_running = false;
-    motion_test_forward = false;
+    motion_test_rotate = false;
     motion_test_done = true;
   }
 }
@@ -302,7 +297,7 @@ void Robot_Init(void)
 
 #if APP_ENABLE_MOTION_TEST
   motion_test_running = false;
-  motion_test_forward = false;
+  motion_test_rotate = false;
   motion_test_done = false;
   motion_key_sample =
       HAL_GPIO_ReadPin(MOTOR_PWM_KEY_GPIO_Port, MOTOR_PWM_KEY_Pin) == GPIO_PIN_SET;

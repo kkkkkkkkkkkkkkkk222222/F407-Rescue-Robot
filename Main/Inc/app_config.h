@@ -6,11 +6,11 @@
 #define APP_ENABLE_AUTOMATIC_MOTOR_TEST  0
 #define APP_ENABLE_SERVO_SWEEP_TEST      0
 
-/* S1: rotate for 3 s, move forward for 3 s, then stop. */
+/* S1: move backward for 3 s, rotate for 3 s, then stop. */
+#define APP_MOTION_TEST_BACKWARD_MS      3000U
 #define APP_MOTION_TEST_ROTATE_MS        3000U
-#define APP_MOTION_TEST_FORWARD_MS       3000U
+#define APP_MOTION_TEST_BACKWARD_MM_S    750.0f
 #define APP_MOTION_TEST_ROTATE_MM_S      250.0f
-#define APP_MOTION_TEST_FORWARD_MM_S     750.0f
 
 #define APP_WHEEL_DIAMETER_MM            70U
 #define APP_MOTOR_GEAR_RATIO             34U
@@ -32,8 +32,8 @@
 /*
  * Physical layout from the 2026-08-25 test photo:
  * M1 is the lower-left wheel toward the servos, M2 is upper-left, M3 is right.
- * Software forward points toward M1/servos: M1 stops, M2 drives negative,
- * and M3 drives positive. This sign was confirmed from the 2026-08-25 test.
+ * Confirmed chassis axis: forward makes M1 negative, M2 stop and M3 positive.
+ * Backward reverses M1/M3 while M2 remains stopped.
  * Change signs after checking the real installation.
  */
 #define APP_OMNI_M1_MOTOR_SIGN           1

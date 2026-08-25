@@ -536,12 +536,12 @@ static void dashboard_draw_test(const LCDDashboard *dashboard)
   dashboard_write(42U, 20U, 86U, state);
   dashboard_write(42U, 34U, 86U,
                   dashboard->motion_test_running ?
-                      (dashboard->motion_test_forward ? "FORWARD" : "ROTATE") :
+                      (dashboard->motion_test_rotate ? "ROTATE" : "BACKWARD") :
                       "STOP");
   dashboard_write(42U, 48U, 86U, "3S + 3S");
   const long speed = dashboard->motion_test_running ?
-      (long)(dashboard->motion_test_forward ? APP_MOTION_TEST_FORWARD_MM_S :
-                                               APP_MOTION_TEST_ROTATE_MM_S) : 0L;
+      (long)(dashboard->motion_test_rotate ? APP_MOTION_TEST_ROTATE_MM_S :
+                                            APP_MOTION_TEST_BACKWARD_MM_S) : 0L;
   (void)snprintf(text, sizeof(text), "%ld MM/S", speed);
   dashboard_write(42U, 62U, 86U, text);
   for (uint8_t id = 0U; id < 3U; ++id) {

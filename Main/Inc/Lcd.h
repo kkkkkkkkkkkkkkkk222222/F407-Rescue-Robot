@@ -20,7 +20,7 @@ typedef struct {
   bool uart_received;
   bool motor_test_running;
   bool motion_test_running;
-  bool motion_test_forward;
+  bool motion_test_rotate;
   bool motion_test_done;
 } LCDDashboard;
 
