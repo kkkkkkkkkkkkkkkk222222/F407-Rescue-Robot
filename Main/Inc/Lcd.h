@@ -21,7 +21,6 @@ typedef struct {
   bool motor_test_running;
   bool imu_ready;
   int32_t imu_yaw_mdeg;
-  int32_t imu_gyro_z_mdps;
 } LCDDashboard;
 
 bool LCD_Init(void);

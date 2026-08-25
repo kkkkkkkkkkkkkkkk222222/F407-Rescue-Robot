@@ -507,12 +507,10 @@ static void dashboard_draw_test(const LCDDashboard *dashboard)
   if (!layout_drawn) {
     LCD_FillScreen(LCD_BLACK);
 #if APP_ENABLE_MOTION_TEST
-    LCD_DrawText(24U, 4U, "IMU MONITOR", LCD_YELLOW, LCD_BLACK);
-    LCD_DrawText(0U, 20U, "STATE:", LCD_CYAN, LCD_BLACK);
-    LCD_DrawText(0U, 44U, "YAW:", LCD_GREEN, LCD_BLACK);
-    LCD_DrawText(0U, 68U, "GYRO Z:", LCD_GREEN, LCD_BLACK);
-    LCD_DrawText(0U, 92U, "IMU:", LCD_GREEN, LCD_BLACK);
-    LCD_DrawText(0U, 116U, "MOTOR:", LCD_GREEN, LCD_BLACK);
+    LCD_DrawText(30U, 4U, "IMU ANGLE", LCD_YELLOW, LCD_BLACK);
+    LCD_DrawText(0U, 28U, "STATE:", LCD_CYAN, LCD_BLACK);
+    LCD_DrawText(0U, 64U, "YAW:", LCD_GREEN, LCD_BLACK);
+    LCD_DrawText(0U, 100U, "UNIT:", LCD_CYAN, LCD_BLACK);
     LCD_DrawText(6U, 140U, "TURN CAR BY HAND", LCD_YELLOW, LCD_BLACK);
 #else
     LCD_DrawText(6U, 4U, "LCD WHEEL TEST", LCD_YELLOW, LCD_BLACK);
@@ -527,21 +525,16 @@ static void dashboard_draw_test(const LCDDashboard *dashboard)
   }
 
 #if APP_ENABLE_MOTION_TEST
-  const char *state = dashboard->imu_ready ? "MONITOR" : "IMU ERR";
-  dashboard_write(42U, 20U, 86U, state);
+  const char *state = dashboard->imu_ready ? "READY" : "IMU ERR";
+  dashboard_write(42U, 28U, 86U, state);
   const int64_t yaw = dashboard->imu_yaw_mdeg;
   const int64_t yaw_abs = (yaw < 0LL) ? -yaw : yaw;
   (void)snprintf(text, sizeof(text), "%c%lld.%01lld DEG",
                  (yaw < 0LL) ? '-' : '+',
                  (long long)(yaw_abs / 1000LL),
                  (long long)((yaw_abs % 1000LL) / 100LL));
-  dashboard_write(42U, 44U, 86U, text);
-  (void)snprintf(text, sizeof(text), "%ld MDPS",
-                 (long)dashboard->imu_gyro_z_mdps);
-  dashboard_write(42U, 68U, 86U, text);
-  dashboard_write(42U, 92U, 86U,
-                  dashboard->imu_ready ? "OK" : "FAULT");
-  dashboard_write(42U, 116U, 86U, "STOP");
+  dashboard_write(30U, 64U, 98U, text);
+  dashboard_write(42U, 100U, 86U, "DEGREE");
 #else
   Encoder_GetAll(encoders);
   for (uint8_t id = 0U; id < 3U; ++id) {

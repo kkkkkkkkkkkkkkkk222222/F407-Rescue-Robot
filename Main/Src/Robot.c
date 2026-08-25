@@ -47,6 +47,22 @@ static void format_hex_byte(char text[5], uint8_t value)
   text[4] = '\0';
 }
 
+static const char *imu_init_result_text(IMUInitResult result)
+{
+  switch (result) {
+    case IMU_INIT_RESET_ERROR:
+      return "FAIL: RESET";
+    case IMU_INIT_CONFIG_ERROR:
+      return "FAIL: CONFIG";
+    case IMU_INIT_CALIBRATION_ERROR:
+      return "FAIL: CALIB";
+    case IMU_INIT_OK:
+      return "READY";
+    default:
+      return "FAIL: SPI ID";
+  }
+}
+
 #if APP_ENABLE_TASK
 static volatile uint32_t task_release_sequence;
 static volatile uint32_t task_release_ms;
@@ -110,8 +126,7 @@ static void draw_dashboard(void)
     .uart_received = usart3_byte_received,
     .motor_test_running = false,
     .imu_ready = false,
-    .imu_yaw_mdeg = 0,
-    .imu_gyro_z_mdps = 0
+    .imu_yaw_mdeg = 0
   };
 #if APP_ENABLE_AUTOMATIC_MOTOR_TEST && !APP_ENABLE_TASK
   dashboard.motor_test_running = motor_test_running;
@@ -120,7 +135,6 @@ static void draw_dashboard(void)
   const IMUData imu = IMU_GetData();
   dashboard.imu_ready = imu.ready;
   dashboard.imu_yaw_mdeg = imu.yaw_mdeg;
-  dashboard.imu_gyro_z_mdps = imu.gyro_mdps[2];
 #endif
   LCD_DrawDashboard(&dashboard);
 }
@@ -250,12 +264,14 @@ void Robot_Init(void)
     format_hex_byte(device_id_text, imu.device_id);
 
     LCD_FillScreen(LCD_BLACK);
-    LCD_DrawText(imu_ready ? 25U : 19U, 62U,
+    LCD_DrawText(imu_ready ? 25U : 19U, 48U,
                  imu_ready ? "IMU660RC: OK" : "IMU660RC: ERROR",
                  imu_ready ? LCD_GREEN : LCD_RED, LCD_BLACK);
-    LCD_DrawText(13U, 82U, "WHO_AM_I:", LCD_CYAN, LCD_BLACK);
-    LCD_DrawText(79U, 82U, device_id_text,
+    LCD_DrawText(13U, 68U, "WHO_AM_I:", LCD_CYAN, LCD_BLACK);
+    LCD_DrawText(79U, 68U, device_id_text,
                  (imu.device_id == 0x70U) ? LCD_GREEN : LCD_RED, LCD_BLACK);
+    LCD_DrawText(31U, 88U, imu_init_result_text(imu.init_result),
+                 imu_ready ? LCD_GREEN : LCD_RED, LCD_BLACK);
     HAL_Delay(imu_ready ? 1000U : 3000U);
     draw_dashboard();
   }

@@ -229,6 +229,7 @@ static bool calibrate_gyro(void)
 bool IMU_Init(void)
 {
   memset(&imu_data, 0, sizeof(imu_data));
+  imu_data.init_result = IMU_INIT_ID_ERROR;
   memset(gyro_bias_sum, 0, sizeof(gyro_bias_sum));
   yaw_numerator = 0LL;
   last_sample_ms = 0U;
@@ -253,9 +254,14 @@ bool IMU_Init(void)
     return false;
   }
 
+  imu_data.init_result = IMU_INIT_RESET_ERROR;
   if (!spi_write(LSM6DSV16X_CTRL3, LSM6DSV16X_SW_RESET) ||
-      !wait_for_reset() ||
-      !spi_write_checked(LSM6DSV16X_IF_CFG,
+      !wait_for_reset()) {
+    return false;
+  }
+
+  imu_data.init_result = IMU_INIT_CONFIG_ERROR;
+  if (!spi_write_checked(LSM6DSV16X_IF_CFG,
                          LSM6DSV16X_I2C_I3C_DISABLE, 0x01U) ||
       !spi_write_checked(LSM6DSV16X_CTRL3,
                          LSM6DSV16X_BDU_IF_INC, 0x44U) ||
@@ -279,11 +285,13 @@ bool IMU_Init(void)
   }
 
   HAL_Delay(20U);
+  imu_data.init_result = IMU_INIT_CALIBRATION_ERROR;
   if (!calibrate_gyro()) {
     return false;
   }
 
   imu_data.ready = true;
+  imu_data.init_result = IMU_INIT_OK;
   return true;
 }
 
