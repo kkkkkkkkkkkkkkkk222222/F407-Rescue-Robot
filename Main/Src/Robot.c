@@ -37,6 +37,18 @@ static uint8_t motor_control_period_ms;
 static uint8_t lcd_period_ms;
 static bool lcd_ready;
 
+#if APP_ENABLE_MOTION_TEST
+typedef enum {
+  MOTION_TEST_START = 0,
+  MOTION_TEST_TURNING,
+  MOTION_TEST_FORWARD,
+  MOTION_TEST_STOPPED
+} MotionTestStage;
+
+static MotionTestStage motion_test_stage;
+static uint32_t motion_test_stop_ms;
+#endif
+
 static void format_hex_byte(char text[5], uint8_t value)
 {
   static const char digits[] = "0123456789ABCDEF";
@@ -170,6 +182,53 @@ static void run_servo_sweep(uint32_t now_ms)
 }
 #endif
 
+#if APP_ENABLE_MOTION_TEST
+static void run_motion_test(uint32_t now_ms)
+{
+  switch (motion_test_stage) {
+    case MOTION_TEST_START: {
+      const MotorTurnStatus status =
+          Motor_TurnAngle(APP_MOTION_TEST_TURN_DEG);
+      if (status == MOTOR_TURN_RUNNING) {
+        motion_test_stage = MOTION_TEST_TURNING;
+      } else if (status == MOTOR_TURN_DONE) {
+        Motor_Move(APP_MOTION_TEST_FORWARD_MM_S, 0.0f, 0.0f);
+        motion_test_stop_ms = now_ms + APP_MOTION_TEST_FORWARD_TIME_MS;
+        motion_test_stage = MOTION_TEST_FORWARD;
+      } else {
+        Motor_Stop();
+        motion_test_stage = MOTION_TEST_STOPPED;
+      }
+      break;
+    }
+
+    case MOTION_TEST_TURNING: {
+      const MotorTurnStatus status =
+          Motor_TurnAngle(APP_MOTION_TEST_TURN_DEG);
+      if (status == MOTOR_TURN_DONE) {
+        Motor_Move(APP_MOTION_TEST_FORWARD_MM_S, 0.0f, 0.0f);
+        motion_test_stop_ms = now_ms + APP_MOTION_TEST_FORWARD_TIME_MS;
+        motion_test_stage = MOTION_TEST_FORWARD;
+      } else if (status != MOTOR_TURN_RUNNING) {
+        Motor_Stop();
+        motion_test_stage = MOTION_TEST_STOPPED;
+      }
+      break;
+    }
+
+    case MOTION_TEST_FORWARD:
+      if ((int32_t)(now_ms - motion_test_stop_ms) >= 0) {
+        Motor_Stop();
+        motion_test_stage = MOTION_TEST_STOPPED;
+      }
+      break;
+
+    default:
+      break;
+  }
+}
+#endif
+
 #if APP_ENABLE_AUTOMATIC_MOTOR_TEST && !APP_ENABLE_TASK
 static void process_motor_test_key(uint32_t now_ms)
 {
@@ -219,6 +278,11 @@ void Robot_Init(void)
   imu_period_ms = 0U;
   motor_control_period_ms = 0U;
   lcd_period_ms = 0U;
+
+#if APP_ENABLE_MOTION_TEST
+  motion_test_stage = MOTION_TEST_START;
+  motion_test_stop_ms = 0U;
+#endif
 
 #if APP_ENABLE_TASK
   task_release_sequence = 0U;
@@ -313,6 +377,9 @@ void Robot_Process(void)
 
 #if APP_ENABLE_SERVO_SWEEP_TEST && !APP_ENABLE_TASK
   run_servo_sweep(app_milliseconds);
+#endif
+#if APP_ENABLE_MOTION_TEST
+  run_motion_test(app_milliseconds);
 #endif
 }
 
