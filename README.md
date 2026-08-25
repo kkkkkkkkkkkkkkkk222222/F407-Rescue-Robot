@@ -5,7 +5,7 @@
 测试步骤：
 
 1. 上电后保持小车和IMU完全静止，等待LCD显示`IMU660RC: OK`一秒；若显示`ERROR`，检查3.3 V、共地和SPI接线。
-2. 进入`IMU MONITOR`后用手水平旋转整车，LCD每100 ms刷新相对偏航角`YAW`和Z轴角速度`GYRO Z`，IMU仍按10 ms采样。
+2. 进入`IMU MONITOR`后用手水平旋转整车，LCD每100 ms刷新相对偏航角`YAW`和Z轴角速度`GYRO Z`；IMU配置为1000 Hz，并由TIM6每1 ms发布一次主循环采样请求。
 3. `MOTOR`固定显示`STOP`，按S1不会启动电机；测试时只验证零偏、角度方向、累计角度和静止漂移。
 4. 若运行中IMU掉线或连续250 ms没有有效样本，`STATE`显示`IMU ERR`，必须检查接线并复位重新校准。
 
@@ -15,7 +15,7 @@
 
 当前固件实现赛前配置、一键驶出、搜索、分类靠近、抓取合规检查、上位机引导返航、进入安全区、放下目标、低头复核和后退重搜。上位机负责从图像判断路线和安全区位置，F407负责命令超时停车、目的地校验、连续帧确认、编码器定距进入/退出和机构动作；上位机不能直接控制PWM。
 
-IMU660RC已经作为独立底层传感器移植：F407按10 ms释放节拍通过四线软件SPI读取LSM6DSV16X三轴角速度和加速度，并在完成静止零偏校准后积分Z轴偏航角。`Motor_TurnAngle()`已经封装IMU定角度旋转，但当前独立测试只实时显示`IMU_GetData().yaw_mdeg`，不会驱动电机；正式救援状态机也暂未调用该函数。
+IMU660RC已经作为独立底层传感器移植：F407通过5.25 MHz硬件SPI2读取LSM6DSV16X，传感器的陀螺仪和加速度计都工作在高精度1000 Hz模式，TIM6每1 ms发布一次主循环采样请求，并在完成静止零偏校准后积分Z轴偏航角。`Motor_TurnAngle()`已经封装IMU定角度旋转，但当前独立测试只实时显示`IMU_GetData().yaw_mdeg`，不会驱动电机；正式救援状态机也暂未调用该函数。
 
 协议设计采用固定长度、消息类型、递增序号和整帧CRC16。固定帧适合当前STM32的64字节循环DMA；CRC16用于拒绝误码帧；坐标、距离、类别数量和状态放在同一视觉报告中，避免旧协议把不同采样周期的三帧拼在一起。导航采用“连续命令+失联停车”，与[ROS 2控制器的过期速度命令自动停车](https://control.ros.org/master/doc/ros2_controllers/diff_drive_controller/doc/userdoc.html)和[Nav2传感器超时即停车](https://docs.nav2.org/configuration/packages/collision_monitor/configuring-collision-monitor-node.html)的失效安全思路一致。串口设计参考：[ST UART Receive-to-IDLE DMA](https://dev.st.com/stm32cube-docs/hal1-to-hal2-migration/1.0.0/en/docs/markup/drivers_documentation/hal_drivers/uart/hal_uart_exported_functions_io_operation.html)、[Modbus串口CRC规范](https://modbus.org/docs/Modbus_over_serial_line_V1_02.pdf)、[IETF RFC 1662 FCS](https://www.rfc-editor.org/info/rfc1662/)。比赛规则以[2027智能+工程创新赛道官方解析](https://gcxl.edu.cn/new/res/intelligence20260617.pdf)为准。
 
@@ -210,7 +210,7 @@ S4默认开角90度、闭角30度。安装机构后必须先断开机构负载�
 
 LCD所有阶段始终显示当前状态，并把最近一帧通过CRC检查的完整15字节数据拆成`RX0..RX3`四行；其余5行随状态显示配置、时间、累计行驶距离、分类数量、返航方向、导航超时、到区状态、放置阶段或夹内复核结果。`FIND_OBJECT`的`DIST`由三轮编码器增量反解底盘前向/横向位移后累计路径长度，不是摄像头目标距离，也不会因掉头返回而相互抵消；UART状态在最后一个接收字节超过250 ms后显示`TIMEOUT`。动态值每100 ms刷新，只有状态改变时清屏重画布局。所有布局、文案和动态数据显示都封装在`Lcd.c`，`Robot.c`只负责调度刷新。
 
-底层仍为：编码器和速度PID严格每10 ms在TIM6中断执行；IMU每10 ms释放一次主循环采样请求，主循环延迟时合并为最新一次而不补跑旧采样；任务由TIM6严格每20 ms发布、最低优先级PendSV消费，延迟时只执行最新一次；LCD每100 ms刷新；USART3使用64字节循环DMA，不申请动态内存。PendSV可被TIM6、DMA和USART3抢占，高层状态机不会再占用电机实时中断。
+底层仍为：编码器和速度PID严格每10 ms在TIM6中断执行；IMU每1 ms释放一次主循环采样请求，主循环延迟时合并为最新一次而不重复读取已经过去的样本；任务由TIM6严格每20 ms发布、最低优先级PendSV消费，延迟时只执行最新一次；LCD每100 ms刷新；USART3使用64字节循环DMA，不申请动态内存。PendSV可被TIM6、DMA和USART3抢占，高层状态机不会再占用电机实时中断。
 
 ---
 
@@ -268,9 +268,9 @@ Power the target, connect the USB/transmitter side, and verify that Windows show
 ## 当前上电行为
 
 1. M1-M3六路PWM以0占空比启动，四路舵机输出90度，三路硬件编码器开始计数。
-2. IMU660RC先检查`WHO_AM_I=0x70`，随后在车辆静止时采集128个陀螺仪样本校准零偏，正常约需1.1秒。
+2. IMU660RC先检查`WHO_AM_I=0x70`，随后在车辆静止时采集128个陀螺仪样本校准零偏；1000 Hz配置下采样本身约需0.13秒，连同复位和配置仍应保持静止直到LCD给出结果。
 3. LCD初始化完成后显示`IMU660RC: OK`一秒；连接失败时显示`IMU660RC: ERROR`一秒。提示结束后清屏并切换到当前任务状态界面，不执行RGB色块测试。
-4. TIM6提供1 ms基础节拍：每10 ms采样编码器并执行一次电机速度环，同时只释放一次IMU主循环采样请求；自主任务开启时每20 ms向最低优先级PendSV发布一次任务请求；每100 ms只发布一次LCD刷新请求。
+4. TIM6提供1 ms基础节拍：每1 ms发布一次IMU主循环采样请求，每10 ms采样编码器并执行一次电机速度环；自主任务开启时每20 ms向最低优先级PendSV发布一次任务请求；每100 ms只发布一次LCD刷新请求。
 5. USART1已经停用，PA9恢复为空闲引脚；USART3使用PD9 RX和64字节循环DMA接收视觉帧，PD8 TX只发送3帧赛前配置确认。
 6. 当前配置为`APP_ENABLE_TASK=1`、`APP_ENABLE_AUTOMATIC_MOTOR_TEST=0`。上电后停车等待颜色和半区配置；配置确认后等待PA0/S1一键启动。
 
@@ -289,7 +289,7 @@ Power the target, connect the USB/transmitter side, and verify that Windows show
 | M3 | PB10/PB11 TIM2 CH3/CH4；PD12/PD13 TIM4编码器 | 20 kHz，照片右侧轮 |
 | 舵机S1-S4 | PC6-PC9，TIM8 CH1-CH4 | 50 Hz，500-2500 us |
 | LCD | PB13 SCK、PB15 MOSI、PB12 CS、PB14 RESET、PC5 DC、PB1 BL | ST7735，128x160 |
-| IMU660RC | PE2 SCK、PE3 MISO、PE4 MOSI、PC13 CS | 4线软件SPI Mode 3，120 Hz采样 |
+| IMU660RC | PB13 SCK、PC2 MISO、PC3 MOSI、PC13 CS | SPI2硬件全双工，Mode 3，1000 Hz采样 |
 | USART3 | PD8 TX、PD9 RX | 115200 8N1；RX为64字节循环DMA，TX只回3帧配置确认 |
 | 启动按键 | PA0/S1，内部下拉 | 配置成功后30 ms消抖，一键启动任务 |
 
@@ -299,30 +299,30 @@ M4、TIM10/TIM11、PB8/PB9、PD3/PD4和EXTI3已经整体删除，不再存在第
 
 资料包中的IMU660RC使用`LSM6DSV16X`六轴芯片。随包“各单片机例程”目录本身是空的，资料说明明确指出网页下载ZIP不会带Git子模块；本工程因此按同芯片官方轮询示例的“检查ID、复位、配置量程与ODR、查询数据就绪、连续读取输出寄存器”流程移植，并保持当前F407 HAL和工程结构。
 
-底板原理图和PCB工程确认以下引脚已引到H3/H4排针，并且不与三路电机、编码器、LCD、四路舵机、USART或SWD复用。没有使用看似空闲的SPI3：购买的F407开发板原理图显示`PC10/PC11/PC12/PD2`已经硬连板载MicroSD；SPI1的`PB3/PB4/PB5`也已硬连板载W25Q Flash。为避免隐蔽总线冲突，当前采用四个真正空闲GPIO模拟四线SPI。
+底板原理图和PCB工程确认以下引脚已引到H3/H4排针。没有使用看似空闲的SPI3：购买的F407开发板原理图显示`PC10/PC11/PC12/PD2`已经硬连板载MicroSD；SPI1的`PB3/PB4/PB5`也已硬连板载W25Q Flash。当前改用已有的SPI2：`PB13`时钟与LCD共用，LCD继续从`PB15`取得MOSI，IMU从`PC3`取得同一个SPI2_MOSI，`PC2`作为SPI2_MISO；两个设备使用不同CS，不会同时驱动总线。LCD使用Mode 0，IMU使用Mode 3，驱动在每次IMU事务前后等待总线空闲并切换CPOL/CPHA，结束后恢复LCD模式。SPI2从原10.5 MHz改为5.25 MHz，满足LSM6DSV16X最高10 MHz的限制。
 
 | IMU660RC丝印 | F407网络 | 底板排针 | 说明 |
 | --- | --- | --- | --- |
 | `VCC` | `3V3` | H3-1（也可用H4-1） | 使用3.3 V供电，不接电机电源 |
 | `GND` | `GND` | H3-2（也可用H4-2） | 必须与F407共地 |
-| `SCL/SPC` | `PE2` | H4-22 | 软件SPI SCK |
-| `SDA/SDI` | `PE4` | H4-21 | 软件SPI MOSI，F407发往IMU |
-| `SA0/SDO` | `PE3` | H3-22 | 软件SPI MISO，IMU发往F407 |
+| `SCL/SPC` | `PB13` | H4-5 | SPI2 SCK，与LCD共用时钟 |
+| `SDA/SDI` | `PC3` | H3-18 | SPI2 MOSI，F407发往IMU |
+| `SA0/SDO` | `PC2` | H4-18 | SPI2 MISO，IMU发往F407 |
 | `CS` | `PC13` | H3-20 | 低电平选中，空闲保持高电平 |
-| `INT1/INT2` | 不接 | 不接 | 当前采用10 ms轮询，未占用额外引脚 |
+| `INT1/INT2` | 不接 | 不接 | 当前采用1 ms轮询，未占用额外引脚 |
 
 模块安装时应让Z轴垂直车体平面，最好让模块X轴与车头方向一致；否则加速度轴含义和Z轴角速度正负号需要做安装映射。上电后的约1.1秒校准期间必须让小车和模块完全静止，搬动或震动会把真实角速度误当成零偏。
 
-驱动当前配置为：陀螺仪±500 dps、加速度计±4 g、两者120 Hz、BDU和寄存器自动递增开启、陀螺仪LPF1开启。公开接口保持精简：
+原来的`PE2/PE3/PE4`软件SPI接线已经停用，必须按上表重新接线。驱动当前配置为：陀螺仪±500 dps、加速度计±4 g、两者高精度1000 Hz、BDU和寄存器自动递增开启、陀螺仪LPF1开启。公开接口保持精简：
 
 ```c
 bool IMU_Init(void);
-void IMU_Update(uint32_t now_ms);  /* 主循环收到10 ms释放请求后调用 */
+void IMU_Update(uint32_t now_ms);  /* 主循环收到1 ms释放请求后调用 */
 IMUData IMU_GetData(void);         /* mg、mdps、mdeg和诊断计数 */
 void IMU_ZeroYaw(void);            /* 开始一次相对转角动作前清零 */
 ```
 
-`IMU_Update()`不在TIM6中断里执行SPI，只由中断递增释放序号，主循环消费最新请求；这样SPI通信或偶发错误不会拖慢10 ms电机速度环。初始化会读取`WHO_AM_I`、复位芯片并逐项回读关键配置寄存器；128个校准样本的各轴均值和极差还必须落在静止门限内，否则初始化失败，避免车辆上电时被搬动却写入错误零偏。全部检查通过后LCD才显示`IMU660RC: OK`一秒。运行中每250 ms复查一次芯片ID，或连续250 ms没有有效样本，都会锁存故障、令`IMUData.ready=false`并只增加一次`error_count`，只能复位重新初始化；`IMU_GetData()`和`IMU_ZeroYaw()`使用原子快照/临界区，避免64位偏航积分被并发读取撕裂。`yaw_mdeg`是校准后的Z轴角速度积分值，例如`90000`表示相对转过约90°，它仍会随时间缓慢漂移，不能替代磁力计或视觉绝对航向。
+`IMU_Update()`不在TIM6中断里执行SPI，只由中断递增1 ms释放序号，主循环消费最新请求；这样硬件SPI通信或偶发错误不会拖慢10 ms电机速度环。传感器内部ODR是1000 Hz，但该无中断、无FIFO的主循环轮询方案不是硬实时采集器：LCD绘制等操作占用主循环时会合并过期请求，恢复后读取最新样本，不会伪造补采样；可通过`sample_count`实测有效采样率。初始化会读取`WHO_AM_I`、复位芯片，在加速度计和陀螺仪均处于掉电状态时选择1000 Hz高精度ODR，再逐项回读关键配置寄存器；128个校准样本的各轴均值和极差还必须落在静止门限内，否则初始化失败，避免车辆上电时被搬动却写入错误零偏。全部检查通过后LCD才显示`IMU660RC: OK`一秒。运行中每250 ms复查一次芯片ID，或连续250 ms没有有效样本，都会锁存故障、令`IMUData.ready=false`并只增加一次`error_count`，只能复位重新初始化；`IMU_GetData()`和`IMU_ZeroYaw()`使用原子快照/临界区，避免64位偏航积分被并发读取撕裂。`yaw_mdeg`是校准后的Z轴角速度积分值，例如`90000`表示相对转过约90°，它仍会随时间缓慢漂移，不能替代磁力计或视觉绝对航向。
 
 ## 电机与PID
 
