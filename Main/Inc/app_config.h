@@ -2,18 +2,15 @@
 #define APP_CONFIG_H
 
 /* Standalone test modes. Keep only one mode enabled at a time. */
-#define APP_ENABLE_ROTATION_TEST         1
+#define APP_ENABLE_MOTION_TEST           1
 #define APP_ENABLE_AUTOMATIC_MOTOR_TEST  0
 #define APP_ENABLE_SERVO_SWEEP_TEST      0
 
-/* S1: rotate by IMU yaw, slow down near the target, then brake. */
-#define APP_ROTATION_TEST_TARGET_DEG     90U
-#define APP_ROTATION_TEST_DIRECTION      1.0f
-#define APP_ROTATION_TEST_SPEED_MM_S     164.0f
-#define APP_ROTATION_TEST_SLOW_MM_S      120.0f
-#define APP_ROTATION_TEST_SLOW_ZONE_DEG  20U
-#define APP_ROTATION_TEST_TOLERANCE_DEG  2U
-#define APP_ROTATION_TEST_TIMEOUT_MS     8000U
+/* S1: rotate for 1 s, move forward for 1 s, then stop. */
+#define APP_MOTION_TEST_ROTATE_MS        1000U
+#define APP_MOTION_TEST_FORWARD_MS       1000U
+#define APP_MOTION_TEST_ROTATE_MM_S      164.0f
+#define APP_MOTION_TEST_FORWARD_MM_S     300.0f
 
 #define APP_WHEEL_DIAMETER_MM            70U
 #define APP_MOTOR_GEAR_RATIO             34U
@@ -24,12 +21,12 @@
                                           APP_ENCODER_QUADRATURE_FACTOR)
 #define APP_MOTOR_SPEED_TEST_TARGET_MM_S 110.0f
 
-/* The rescue task returns automatically when the rotation test is disabled. */
-#define APP_ENABLE_TASK                  (!APP_ENABLE_ROTATION_TEST)
+/* The rescue task returns automatically when the motion test is disabled. */
+#define APP_ENABLE_TASK                  (!APP_ENABLE_MOTION_TEST)
 
-#if APP_ENABLE_ROTATION_TEST && \
+#if APP_ENABLE_MOTION_TEST && \
     (APP_ENABLE_AUTOMATIC_MOTOR_TEST || APP_ENABLE_SERVO_SWEEP_TEST)
-#error "Rotation test must be the only enabled application mode"
+#error "Motion test must be the only enabled application mode"
 #endif
 
 /*
