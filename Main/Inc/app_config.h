@@ -80,7 +80,8 @@
 #define APP_CLAW_OPEN_ANGLE              90U
 #define APP_CLAW_CLOSE_ANGLE             30U
 
-/* Motor feedback runs at 10 ms; the higher-level task remains at 20 ms. */
+/* IMU polls at 1 kHz; motor feedback runs at 10 ms; task remains at 20 ms. */
+#define APP_IMU_UPDATE_PERIOD_MS         1U
 #define APP_MOTOR_CONTROL_PERIOD_MS      10U
 #define APP_TASK_PERIOD_MS               20U
 #define APP_MATCH_TIME_S                 180U

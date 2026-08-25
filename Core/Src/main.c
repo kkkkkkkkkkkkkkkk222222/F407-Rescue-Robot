@@ -201,12 +201,12 @@ static void MX_SPI2_Init(void)
   /* SPI2 parameter configuration*/
   hspi2.Instance = SPI2;
   hspi2.Init.Mode = SPI_MODE_MASTER;
-  hspi2.Init.Direction = SPI_DIRECTION_1LINE;
+  hspi2.Init.Direction = SPI_DIRECTION_2LINES;
   hspi2.Init.DataSize = SPI_DATASIZE_8BIT;
   hspi2.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi2.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi2.Init.NSS = SPI_NSS_SOFT;
-  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4;
+  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_8;
   hspi2.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi2.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi2.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -715,12 +715,6 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(IMU_CS_GPIO_Port, IMU_CS_Pin, GPIO_PIN_SET);
 
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(IMU_SCK_GPIO_Port, IMU_SCK_Pin, GPIO_PIN_SET);
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(IMU_MOSI_GPIO_Port, IMU_MOSI_Pin, GPIO_PIN_RESET);
-
   /*Configure GPIO pin : TFT_DC_Pin */
   GPIO_InitStruct.Pin = TFT_DC_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -741,19 +735,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(IMU_CS_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : IMU_SCK_Pin IMU_MOSI_Pin */
-  GPIO_InitStruct.Pin = IMU_SCK_Pin|IMU_MOSI_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : IMU_MISO_Pin */
-  GPIO_InitStruct.Pin = IMU_MISO_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
-  HAL_GPIO_Init(IMU_MISO_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : MOTOR_PWM_KEY_Pin */
   GPIO_InitStruct.Pin = MOTOR_PWM_KEY_Pin;

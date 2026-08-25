@@ -95,12 +95,6 @@ void Error_Handler(void);
 #define M3B_GPIO_Port GPIOD
 #define IMU_CS_Pin GPIO_PIN_13
 #define IMU_CS_GPIO_Port GPIOC
-#define IMU_SCK_Pin GPIO_PIN_2
-#define IMU_SCK_GPIO_Port GPIOE
-#define IMU_MISO_Pin GPIO_PIN_3
-#define IMU_MISO_GPIO_Port GPIOE
-#define IMU_MOSI_Pin GPIO_PIN_4
-#define IMU_MOSI_GPIO_Port GPIOE
 #define PWM1_Pin GPIO_PIN_6
 #define PWM1_GPIO_Port GPIOC
 #define PWM2_Pin GPIO_PIN_7

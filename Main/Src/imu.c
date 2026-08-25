@@ -5,7 +5,7 @@
 #include "main.h"
 
 #define IMU_SPI_MAX_DATA            12U
-#define IMU_SPI_DELAY_CYCLES        20U
+#define IMU_SPI_TIMEOUT_MS          2U
 #define IMU_BOOT_TIME_MS            10U
 #define IMU_RESET_TIMEOUT_MS        10U
 #define IMU_CALIBRATION_SAMPLES     128U
@@ -26,12 +26,15 @@
 #define LSM6DSV16X_CTRL8            0x17U
 #define LSM6DSV16X_STATUS_REG       0x1EU
 #define LSM6DSV16X_OUTX_L_G         0x22U
+#define LSM6DSV16X_HAODR_CFG        0x62U
 
 #define LSM6DSV16X_ID               0x70U
 #define LSM6DSV16X_I2C_I3C_DISABLE  0x01U
 #define LSM6DSV16X_SW_RESET         0x01U
 #define LSM6DSV16X_BDU_IF_INC       0x44U
-#define LSM6DSV16X_ODR_120_HZ       0x06U
+#define LSM6DSV16X_HIGH_ACCURACY    0x10U
+#define LSM6DSV16X_ODR_1000_HZ      0x09U
+#define LSM6DSV16X_HAODR_1000_HZ    0x01U
 #define LSM6DSV16X_GY_500_DPS       0x02U
 #define LSM6DSV16X_GY_LPF1_ENABLE   0x01U
 #define LSM6DSV16X_XL_4_G           0x01U
@@ -51,6 +54,8 @@ static bool runtime_poll_started;
 static bool identity_check_started;
 static uint32_t last_successful_sample_ms;
 static uint32_t last_identity_check_ms;
+
+extern SPI_HandleTypeDef hspi2;
 
 static uint32_t imu_enter_critical(void)
 {
@@ -79,38 +84,55 @@ static int32_t divide_round(int64_t value, int64_t divisor)
   return (int32_t)((value - (divisor / 2LL)) / divisor);
 }
 
-static void spi_delay(void)
+static bool spi_set_mode(uint32_t polarity, uint32_t phase)
 {
-  for (volatile uint8_t cycle = 0U; cycle < IMU_SPI_DELAY_CYCLES; ++cycle) {
-    __NOP();
-  }
-}
-
-static uint8_t spi_transfer(uint8_t output)
-{
-  uint8_t input = 0U;
-  for (uint8_t mask = 0x80U; mask != 0U; mask >>= 1U) {
-    HAL_GPIO_WritePin(IMU_SCK_GPIO_Port, IMU_SCK_Pin, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(IMU_MOSI_GPIO_Port, IMU_MOSI_Pin,
-                      (output & mask) != 0U ? GPIO_PIN_SET : GPIO_PIN_RESET);
-    spi_delay();
-    HAL_GPIO_WritePin(IMU_SCK_GPIO_Port, IMU_SCK_Pin, GPIO_PIN_SET);
-    input <<= 1U;
-    if (HAL_GPIO_ReadPin(IMU_MISO_GPIO_Port, IMU_MISO_Pin) == GPIO_PIN_SET) {
-      input |= 1U;
+  const uint32_t deadline = HAL_GetTick() + IMU_SPI_TIMEOUT_MS;
+  while (__HAL_SPI_GET_FLAG(&hspi2, SPI_FLAG_BSY) != RESET) {
+    if ((int32_t)(HAL_GetTick() - deadline) >= 0) {
+      return false;
     }
-    spi_delay();
   }
-  return input;
+
+  __HAL_SPI_DISABLE(&hspi2);
+  MODIFY_REG(hspi2.Instance->CR1, SPI_CR1_CPOL | SPI_CR1_CPHA,
+             polarity | phase);
+  __HAL_SPI_ENABLE(&hspi2);
+  return true;
 }
 
-static void spi_write(uint8_t reg, uint8_t value)
+static bool spi_transfer(const uint8_t *tx, uint8_t *rx, uint16_t length)
 {
-  HAL_GPIO_WritePin(IMU_SCK_GPIO_Port, IMU_SCK_Pin, GPIO_PIN_SET);
+  if ((tx == NULL) || (rx == NULL) || (length == 0U) ||
+      (length > (IMU_SPI_MAX_DATA + 1U))) {
+    return false;
+  }
+
+  /* The LCD uses SPI mode 0; LSM6DSV16X uses mode 3 on the same SPI2 bus. */
+  HAL_GPIO_WritePin(TFT_CS_GPIO_Port, TFT_CS_Pin, GPIO_PIN_SET);
+  if (!spi_set_mode(SPI_POLARITY_HIGH, SPI_PHASE_2EDGE)) {
+    return false;
+  }
+
   HAL_GPIO_WritePin(IMU_CS_GPIO_Port, IMU_CS_Pin, GPIO_PIN_RESET);
-  (void)spi_transfer((uint8_t)(reg & 0x7FU));
-  (void)spi_transfer(value);
+  const HAL_StatusTypeDef status =
+      HAL_SPI_TransmitReceive(&hspi2, (uint8_t *)tx, rx, length,
+                              IMU_SPI_TIMEOUT_MS);
   HAL_GPIO_WritePin(IMU_CS_GPIO_Port, IMU_CS_Pin, GPIO_PIN_SET);
+
+  const bool mode_restored =
+      spi_set_mode(SPI_POLARITY_LOW, SPI_PHASE_1EDGE);
+  return (status == HAL_OK) && mode_restored;
+}
+
+static bool spi_write(uint8_t reg, uint8_t value)
+{
+  const uint8_t tx[2] = {(uint8_t)(reg & 0x7FU), value};
+  uint8_t rx[2] = {0U, 0U};
+  if (!spi_transfer(tx, rx, sizeof(tx))) {
+    ++imu_data.error_count;
+    return false;
+  }
+  return true;
 }
 
 static bool spi_read(uint8_t reg, uint8_t *data, uint16_t length)
@@ -120,22 +142,24 @@ static bool spi_read(uint8_t reg, uint8_t *data, uint16_t length)
     return false;
   }
 
-  HAL_GPIO_WritePin(IMU_SCK_GPIO_Port, IMU_SCK_Pin, GPIO_PIN_SET);
-  HAL_GPIO_WritePin(IMU_CS_GPIO_Port, IMU_CS_Pin, GPIO_PIN_RESET);
-  (void)spi_transfer((uint8_t)(reg | 0x80U));
-  for (uint16_t index = 0U; index < length; ++index) {
-    data[index] = spi_transfer(0xFFU);
+  uint8_t tx[IMU_SPI_MAX_DATA + 1U] = {0U};
+  uint8_t rx[IMU_SPI_MAX_DATA + 1U] = {0U};
+  tx[0] = (uint8_t)(reg | 0x80U);
+  if (!spi_transfer(tx, rx, (uint16_t)(length + 1U))) {
+    ++imu_data.error_count;
+    return false;
   }
-  HAL_GPIO_WritePin(IMU_CS_GPIO_Port, IMU_CS_Pin, GPIO_PIN_SET);
+  memcpy(data, &rx[1], length);
   return true;
 }
 
 static bool spi_write_checked(uint8_t reg, uint8_t value, uint8_t mask)
 {
   uint8_t readback = 0U;
-  spi_write(reg, value);
-  if (!spi_read(reg, &readback, 1U) ||
-      ((readback & mask) != (value & mask))) {
+  if (!spi_write(reg, value) || !spi_read(reg, &readback, 1U)) {
+    return false;
+  }
+  if ((readback & mask) != (value & mask)) {
     ++imu_data.error_count;
     return false;
   }
@@ -254,12 +278,16 @@ bool IMU_Init(void)
     return false;
   }
 
-  spi_write(LSM6DSV16X_CTRL3, LSM6DSV16X_SW_RESET);
-  if (!wait_for_reset() ||
+  if (!spi_write(LSM6DSV16X_CTRL3, LSM6DSV16X_SW_RESET) ||
+      !wait_for_reset() ||
       !spi_write_checked(LSM6DSV16X_IF_CFG,
                          LSM6DSV16X_I2C_I3C_DISABLE, 0x01U) ||
       !spi_write_checked(LSM6DSV16X_CTRL3,
                          LSM6DSV16X_BDU_IF_INC, 0x44U) ||
+      !spi_write_checked(LSM6DSV16X_CTRL1, 0x00U, 0x7FU) ||
+      !spi_write_checked(LSM6DSV16X_CTRL2, 0x00U, 0x7FU) ||
+      !spi_write_checked(LSM6DSV16X_HAODR_CFG,
+                         LSM6DSV16X_HAODR_1000_HZ, 0x03U) ||
       !spi_write_checked(LSM6DSV16X_CTRL6,
                          LSM6DSV16X_GY_500_DPS, 0x0FU) ||
       !spi_write_checked(LSM6DSV16X_CTRL7,
@@ -267,9 +295,11 @@ bool IMU_Init(void)
       !spi_write_checked(LSM6DSV16X_CTRL8,
                          LSM6DSV16X_XL_4_G, 0x03U) ||
       !spi_write_checked(LSM6DSV16X_CTRL1,
-                         LSM6DSV16X_ODR_120_HZ, 0x0FU) ||
+                         LSM6DSV16X_HIGH_ACCURACY |
+                         LSM6DSV16X_ODR_1000_HZ, 0x7FU) ||
       !spi_write_checked(LSM6DSV16X_CTRL2,
-                         LSM6DSV16X_ODR_120_HZ, 0x0FU)) {
+                         LSM6DSV16X_HIGH_ACCURACY |
+                         LSM6DSV16X_ODR_1000_HZ, 0x7FU)) {
     return false;
   }
 

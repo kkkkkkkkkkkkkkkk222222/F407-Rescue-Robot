@@ -32,6 +32,7 @@ static volatile uint32_t lcd_release_sequence;
 static uint32_t lcd_consumed_sequence;
 static volatile uint32_t imu_release_sequence;
 static uint32_t imu_consumed_sequence;
+static uint8_t imu_period_ms;
 static uint8_t motor_control_period_ms;
 static uint8_t lcd_period_ms;
 static bool lcd_ready;
@@ -191,6 +192,7 @@ void Robot_Init(void)
   lcd_consumed_sequence = 0U;
   imu_release_sequence = 0U;
   imu_consumed_sequence = 0U;
+  imu_period_ms = 0U;
   motor_control_period_ms = 0U;
   lcd_period_ms = 0U;
 
@@ -314,6 +316,11 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *timer)
     motor_update_due = true;
   }
 
+  if (++imu_period_ms >= APP_IMU_UPDATE_PERIOD_MS) {
+    imu_period_ms = 0U;
+    ++imu_release_sequence;
+  }
+
 #if APP_ENABLE_TASK
   if (++task_period_ms >= APP_TASK_PERIOD_MS) {
     task_period_ms = 0U;
@@ -326,7 +333,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *timer)
 
   if (motor_update_due) {
     Motor_Update();
-    ++imu_release_sequence;
   }
   if (++lcd_period_ms >= LCD_PERIOD_MS) {
     lcd_period_ms = 0U;
