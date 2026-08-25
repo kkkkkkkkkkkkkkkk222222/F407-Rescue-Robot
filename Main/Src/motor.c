@@ -232,8 +232,8 @@ static void motor_set_forward_speed(float speed_mm_s)
 {
   const float wheel_speed = speed_mm_s * 0.8660254f;
   motor_set_speed_target(0.0f, 1U);
-  motor_set_speed_target(-wheel_speed, 2U);
-  motor_set_speed_target( wheel_speed, 3U);
+  motor_set_speed_target( wheel_speed, 2U);
+  motor_set_speed_target(-wheel_speed, 3U);
 }
 
 static void motor_apply_pwm(uint8_t id, int16_t speed)
@@ -330,7 +330,7 @@ static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
   const float m3_mm = motor_counts_to_mm(
       (float)(encoder[2].position - distance_move.start_m3_count) *
       (float)encoder_signs[2]);
-  const float forward_mm = (m3_mm - m2_mm) / 1.7320508f;
+  const float forward_mm = (m2_mm - m3_mm) / 1.7320508f;
   const float direction = (distance_move.target_mm >= 0.0f) ? 1.0f : -1.0f;
   const float target_mm = distance_move.target_mm * direction;
   const float travelled_mm = forward_mm * direction;
@@ -620,8 +620,8 @@ void Motor_Move(float forward_mm_s, float lateral_mm_s, float rotate_mm_s)
   /* Three-wheel omni inverse kinematics; all arguments and wheels use mm/s. */
   float wheel[3] = {
     -lateral_mm_s + rotate_mm_s,
-    -0.8660254f * forward_mm_s + 0.5f * lateral_mm_s + rotate_mm_s,
-     0.8660254f * forward_mm_s + 0.5f * lateral_mm_s + rotate_mm_s
+     0.8660254f * forward_mm_s + 0.5f * lateral_mm_s + rotate_mm_s,
+    -0.8660254f * forward_mm_s + 0.5f * lateral_mm_s + rotate_mm_s
   };
   float maximum = motor_abs_float(wheel[0]);
   if (motor_abs_float(wheel[1]) > maximum) {
