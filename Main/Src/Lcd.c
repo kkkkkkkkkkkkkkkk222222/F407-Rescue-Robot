@@ -529,10 +529,10 @@ static void dashboard_draw_test(const LCDDashboard *dashboard)
   dashboard_write(42U, 28U, 86U, state);
   const int64_t yaw = dashboard->imu_yaw_mdeg;
   const int64_t yaw_abs = (yaw < 0LL) ? -yaw : yaw;
-  (void)snprintf(text, sizeof(text), "%c%lld.%01lld DEG",
+  (void)snprintf(text, sizeof(text), "%c%ld.%01ld DEG",
                  (yaw < 0LL) ? '-' : '+',
-                 (long long)(yaw_abs / 1000LL),
-                 (long long)((yaw_abs % 1000LL) / 100LL));
+                 (long)(yaw_abs / 1000LL),
+                 (long)((yaw_abs % 1000LL) / 100LL));
   dashboard_write(30U, 64U, 98U, text);
   dashboard_write(42U, 100U, 86U, "DEGREE");
 #else
