@@ -538,7 +538,7 @@ static void dashboard_draw_test(const LCDDashboard *dashboard)
                   dashboard->motion_test_running ?
                       (dashboard->motion_test_forward ? "FORWARD" : "ROTATE") :
                       "STOP");
-  dashboard_write(42U, 48U, 86U, "1S + 1S");
+  dashboard_write(42U, 48U, 86U, "3S + 3S");
   const long speed = dashboard->motion_test_running ?
       (long)(dashboard->motion_test_forward ? APP_MOTION_TEST_FORWARD_MM_S :
                                                APP_MOTION_TEST_ROTATE_MM_S) : 0L;

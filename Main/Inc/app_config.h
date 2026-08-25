@@ -6,9 +6,9 @@
 #define APP_ENABLE_AUTOMATIC_MOTOR_TEST  0
 #define APP_ENABLE_SERVO_SWEEP_TEST      0
 
-/* S1: rotate for 1 s, move forward for 1 s, then stop. */
-#define APP_MOTION_TEST_ROTATE_MS        1000U
-#define APP_MOTION_TEST_FORWARD_MS       1000U
+/* S1: rotate for 3 s, move forward for 3 s, then stop. */
+#define APP_MOTION_TEST_ROTATE_MS        3000U
+#define APP_MOTION_TEST_FORWARD_MS       3000U
 #define APP_MOTION_TEST_ROTATE_MM_S      164.0f
 #define APP_MOTION_TEST_FORWARD_MM_S     300.0f
 
