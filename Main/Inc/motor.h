@@ -21,9 +21,18 @@ typedef enum {
   MOTOR_DISTANCE_INVALID
 } MotorDistanceStatus;
 
+typedef enum {
+  MOTOR_TURN_IDLE = 0,
+  MOTOR_TURN_RUNNING,
+  MOTOR_TURN_DONE,
+  MOTOR_TURN_FAULT,
+  MOTOR_TURN_INVALID
+} MotorTurnStatus;
+
 void Motor_Init(void);
 void Motor_SetSpeed(float target_speed, uint8_t id);
 MotorDistanceStatus Go_distance(float distance_m);
+MotorTurnStatus Motor_TurnAngle(float angle_deg);
 void Motor_Move(float forward_mm_s, float lateral_mm_s, float rotate_mm_s);
 void Motor_Stop(void);
 void Motor_Update(void);

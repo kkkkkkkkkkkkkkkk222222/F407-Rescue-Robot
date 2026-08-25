@@ -1,22 +1,21 @@
-# 当前固件：IMU闭环旋转180°测试
+# 当前固件：IMU实时角度显示测试
 
-当前配置设置为`APP_ENABLE_MOTION_TEST=1`，`APP_ENABLE_TASK`会自动变为0。该模式不需要上位机赛前配置帧，但会完整初始化IMU660RC：上电时车辆必须保持静止，128个样本零偏校准通过后LCD显示`IMU660RC: OK`一秒，再进入`IMU 180 TEST`界面；校准或通信失败则显示`IMU660RC: ERROR`，并禁止电机启动。
+当前配置设置为`APP_ENABLE_MOTION_TEST=1`，`APP_ENABLE_TASK`会自动变为0。该模式不需要上位机赛前配置帧，但会完整初始化IMU660RC：上电时车辆必须保持静止，128个样本零偏校准通过后LCD显示`IMU660RC: OK`一秒，再进入`IMU MONITOR`界面；校准或通信失败则显示`IMU660RC: ERROR`。当前监视测试不会向任何电机发送运动命令。
 
 测试步骤：
 
-1. 上电后保持小车和IMU完全静止，等待LCD显示`IMU660RC: OK`一秒；若显示`ERROR`，检查3.3 V、共地和SPI接线，不要启动测试。
-2. LCD显示`WAIT S1`后按一次S1，程序调用`IMU_ZeroYaw()`，再以250 mm/s的旋转速度启动三轮。
-3. 程序每10 ms更新IMU，使用Z轴偏航角的绝对值计算剩余角度；距离180°还有30°时降至120 mm/s，达到179°时主动制动，利用低速段和1°提前量减小惯性过冲。
-4. 测试中再次按S1立即取消并停车；IMU掉线、电机反向/堵转或10秒内未到目标都会停车。完成后可再次按S1重新清零并重复测试。
-5. LCD实时显示状态、偏航角、180°目标、Z轴角速度、当前旋转速度、IMU及电机状态。
+1. 上电后保持小车和IMU完全静止，等待LCD显示`IMU660RC: OK`一秒；若显示`ERROR`，检查3.3 V、共地和SPI接线。
+2. 进入`IMU MONITOR`后用手水平旋转整车，LCD每100 ms刷新相对偏航角`YAW`和Z轴角速度`GYRO Z`，IMU仍按10 ms采样。
+3. `MOTOR`固定显示`STOP`，按S1不会启动电机；测试时只验证零偏、角度方向、累计角度和静止漂移。
+4. 若运行中IMU掉线或连续250 ms没有有效样本，`STATE`显示`IMU ERR`，必须检查接线并复位重新校准。
 
-目标角度、提前量、减速区、快慢速度和超时集中在`Main/Inc/app_config.h`的`APP_IMU_TURN_*`配置中。测试结束、准备恢复完整任务时，只需将`APP_ENABLE_MOTION_TEST`改为0，`APP_ENABLE_TASK`会自动恢复为1。
+封装好的定角度旋转参数集中在`Main/Inc/app_config.h`的`APP_MOTOR_TURN_*`配置中，但当前监视测试不调用该函数。测试结束、准备恢复完整任务时，只需将`APP_ENABLE_MOTION_TEST`改为0，`APP_ENABLE_TASK`会自动恢复为1。
 
 # 代码思路（救援流程与上位机协议）
 
 当前固件实现赛前配置、一键驶出、搜索、分类靠近、抓取合规检查、上位机引导返航、进入安全区、放下目标、低头复核和后退重搜。上位机负责从图像判断路线和安全区位置，F407负责命令超时停车、目的地校验、连续帧确认、编码器定距进入/退出和机构动作；上位机不能直接控制PWM。
 
-IMU660RC已经作为独立底层传感器移植：F407按10 ms释放节拍通过四线软件SPI读取LSM6DSV16X三轴角速度和加速度，并在完成静止零偏校准后积分Z轴偏航角。当前独立测试已经使用`IMU_GetData().yaw_mdeg`闭环停止在180°；正式救援状态机暂未接入转角闭环，因此关闭测试模式后不会改变原有任务状态跳转。
+IMU660RC已经作为独立底层传感器移植：F407按10 ms释放节拍通过四线软件SPI读取LSM6DSV16X三轴角速度和加速度，并在完成静止零偏校准后积分Z轴偏航角。`Motor_TurnAngle()`已经封装IMU定角度旋转，但当前独立测试只实时显示`IMU_GetData().yaw_mdeg`，不会驱动电机；正式救援状态机也暂未调用该函数。
 
 协议设计采用固定长度、消息类型、递增序号和整帧CRC16。固定帧适合当前STM32的64字节循环DMA；CRC16用于拒绝误码帧；坐标、距离、类别数量和状态放在同一视觉报告中，避免旧协议把不同采样周期的三帧拼在一起。导航采用“连续命令+失联停车”，与[ROS 2控制器的过期速度命令自动停车](https://control.ros.org/master/doc/ros2_controllers/diff_drive_controller/doc/userdoc.html)和[Nav2传感器超时即停车](https://docs.nav2.org/configuration/packages/collision_monitor/configuring-collision-monitor-node.html)的失效安全思路一致。串口设计参考：[ST UART Receive-to-IDLE DMA](https://dev.st.com/stm32cube-docs/hal1-to-hal2-migration/1.0.0/en/docs/markup/drivers_documentation/hal_drivers/uart/hal_uart_exported_functions_io_operation.html)、[Modbus串口CRC规范](https://modbus.org/docs/Modbus_over_serial_line_V1_02.pdf)、[IETF RFC 1662 FCS](https://www.rfc-editor.org/info/rfc1662/)。比赛规则以[2027智能+工程创新赛道官方解析](https://gcxl.edu.cn/new/res/intelligence20260617.pdf)为准。
 
@@ -342,6 +341,7 @@ typedef struct {
 void Motor_Init(void);
 void Motor_SetSpeed(float target_speed, uint8_t id); /* mm/s，id=1..3 */
 MotorDistanceStatus Go_distance(float distance_m);  /* m */
+MotorTurnStatus Motor_TurnAngle(float angle_deg);   /* deg */
 void Motor_Move(float forward_mm_s, float lateral_mm_s, float rotate_mm_s);
 void Motor_Stop(void);
 void Motor_Update(void);                            /* TIM6每10 ms调用 */
@@ -369,7 +369,7 @@ PID修正限幅为±450，所以同方向输出范围为0%-90%。PID已经加入
 
 - 启动/换向后先等待200 ms；之后若编码器连续60 ms与目标反向，记录`DIR`。
 - 启动后先等待500 ms；若上一周期PWM绝对值至少50%，但编码器连续500 ms仍为0，记录`STALL`，用于检测堵转和编码器断线。
-- 任意一个轮子出现`DIR`或`STALL`，三轮立即一起停车；普通恒速测试、`Motor_Move()`和`Go_distance()`使用同一联停规则。
+- 任意一个轮子出现`DIR`或`STALL`，三轮立即一起停车；普通恒速测试、`Motor_Move()`、`Go_distance()`和`Motor_TurnAngle()`使用同一联停规则。
 - 故障会锁存，`Motor_Stop()`不会清除，状态机下一周期也不能重新启动电机。检查接线和机械问题后复位MCU才能恢复。
 - AT8236停车时内部先使用`IN1=IN2=1`低侧制动约60 ms，然后切换到`IN1=IN2=0`高阻滑行/休眠；重复调用`Motor_Stop()`不会无限延长制动，新运动命令会保存目标但必须等剩余制动周期结束后才真正输出。
 
@@ -407,6 +407,24 @@ if (result == MOTOR_DISTANCE_DONE) {
 ```
 
 定距运行时若连续1秒没有获得至少0.25 mm的新进度，会作为`FAULT`三轮联停。`NaN`或无穷大参数返回`INVALID`，不会写入控制状态。
+
+## `Motor_TurnAngle()`
+
+```c
+typedef enum {
+    MOTOR_TURN_IDLE = 0,
+    MOTOR_TURN_RUNNING,
+    MOTOR_TURN_DONE,
+    MOTOR_TURN_FAULT,
+    MOTOR_TURN_INVALID
+} MotorTurnStatus;
+
+MotorTurnStatus result = Motor_TurnAngle(180.0f);
+```
+
+参数单位为度，正数和负数分别选择两个相反的原地旋转方向，允许范围为-360°到+360°。函数第一次调用时检查IMU、清零相对偏航角并启动三轮，此后由10 ms的`Motor_Update()`自动读取IMU并控制停止，调用方只需周期性重复调用以取得状态。剩余30°时由250 mm/s降至120 mm/s，进入1°提前量后制动；IMU故障、电机故障或运行超过10秒均返回`MOTOR_TURN_FAULT`并停车。
+
+完成或故障状态会锁存，处理结果后调用`Motor_Stop()`回到空闲状态，才能开始下一次定角度动作。当前`IMU MONITOR`测试没有调用`Motor_TurnAngle()`，因此小车不会自动旋转。
 
 ## 编码器、并发与视觉
 

@@ -264,6 +264,7 @@ static void dashboard_write(uint16_t x, uint16_t y, uint16_t width,
   LCD_DrawText(x, y, text, LCD_WHITE, LCD_BLACK);
 }
 
+#if APP_ENABLE_TASK || !APP_ENABLE_MOTION_TEST
 static bool dashboard_motor_fault(void)
 {
   for (uint8_t id = 1U; id <= 3U; ++id) {
@@ -275,7 +276,6 @@ static bool dashboard_motor_fault(void)
   return false;
 }
 
-#if APP_ENABLE_TASK || !APP_ENABLE_MOTION_TEST
 static const char *dashboard_uart_text(const LCDDashboard *dashboard)
 {
   if (!dashboard->uart_active) {
@@ -507,15 +507,13 @@ static void dashboard_draw_test(const LCDDashboard *dashboard)
   if (!layout_drawn) {
     LCD_FillScreen(LCD_BLACK);
 #if APP_ENABLE_MOTION_TEST
-    LCD_DrawText(18U, 4U, "IMU 180 TEST", LCD_YELLOW, LCD_BLACK);
+    LCD_DrawText(24U, 4U, "IMU MONITOR", LCD_YELLOW, LCD_BLACK);
     LCD_DrawText(0U, 20U, "STATE:", LCD_CYAN, LCD_BLACK);
-    LCD_DrawText(0U, 38U, "YAW:", LCD_GREEN, LCD_BLACK);
-    LCD_DrawText(0U, 56U, "TARGET:", LCD_GREEN, LCD_BLACK);
-    LCD_DrawText(0U, 74U, "GYRO:", LCD_GREEN, LCD_BLACK);
-    LCD_DrawText(0U, 92U, "SPEED:", LCD_GREEN, LCD_BLACK);
-    LCD_DrawText(0U, 110U, "MOTOR:", LCD_GREEN, LCD_BLACK);
-    LCD_DrawText(0U, 128U, "IMU:", LCD_GREEN, LCD_BLACK);
-    LCD_DrawText(18U, 140U, "S1 START/STOP", LCD_YELLOW, LCD_BLACK);
+    LCD_DrawText(0U, 44U, "YAW:", LCD_GREEN, LCD_BLACK);
+    LCD_DrawText(0U, 68U, "GYRO Z:", LCD_GREEN, LCD_BLACK);
+    LCD_DrawText(0U, 92U, "IMU:", LCD_GREEN, LCD_BLACK);
+    LCD_DrawText(0U, 116U, "MOTOR:", LCD_GREEN, LCD_BLACK);
+    LCD_DrawText(6U, 140U, "TURN CAR BY HAND", LCD_YELLOW, LCD_BLACK);
 #else
     LCD_DrawText(6U, 4U, "LCD WHEEL TEST", LCD_YELLOW, LCD_BLACK);
     LCD_DrawText(0U, 24U, "M1:", LCD_CYAN, LCD_BLACK);
@@ -529,12 +527,7 @@ static void dashboard_draw_test(const LCDDashboard *dashboard)
   }
 
 #if APP_ENABLE_MOTION_TEST
-  const bool motor_fault = dashboard_motor_fault();
-  const char *state = !dashboard->imu_ready ? "IMU ERR" :
-                      motor_fault ? "MOTOR ERR" :
-                      dashboard->motion_test_fault ? "TIMEOUT" :
-                      (dashboard->motion_test_running ? "RUN" :
-                      (dashboard->motion_test_done ? "DONE" : "WAIT S1"));
+  const char *state = dashboard->imu_ready ? "MONITOR" : "IMU ERR";
   dashboard_write(42U, 20U, 86U, state);
   const int64_t yaw = dashboard->imu_yaw_mdeg;
   const int64_t yaw_abs = (yaw < 0LL) ? -yaw : yaw;
@@ -542,19 +535,13 @@ static void dashboard_draw_test(const LCDDashboard *dashboard)
                  (yaw < 0LL) ? '-' : '+',
                  (long long)(yaw_abs / 1000LL),
                  (long long)((yaw_abs % 1000LL) / 100LL));
-  dashboard_write(42U, 38U, 86U, text);
-  dashboard_write(42U, 56U, 86U, "180.0 DEG");
+  dashboard_write(42U, 44U, 86U, text);
   (void)snprintf(text, sizeof(text), "%ld MDPS",
                  (long)dashboard->imu_gyro_z_mdps);
-  dashboard_write(42U, 74U, 86U, text);
-  const long speed = dashboard->motion_test_running ?
-      (long)(dashboard->motion_test_slow ? APP_IMU_TURN_SLOW_MM_S :
-                                           APP_IMU_TURN_FAST_MM_S) : 0L;
-  (void)snprintf(text, sizeof(text), "%ld MM/S", speed);
-  dashboard_write(42U, 92U, 86U, text);
-  dashboard_write(42U, 110U, 86U, motor_fault ? "FAULT" : "OK");
-  dashboard_write(42U, 128U, 86U,
+  dashboard_write(42U, 68U, 86U, text);
+  dashboard_write(42U, 92U, 86U,
                   dashboard->imu_ready ? "OK" : "FAULT");
+  dashboard_write(42U, 116U, 86U, "STOP");
 #else
   Encoder_GetAll(encoders);
   for (uint8_t id = 0U; id < 3U; ++id) {

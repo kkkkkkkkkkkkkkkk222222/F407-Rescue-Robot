@@ -6,13 +6,13 @@
 #define APP_ENABLE_AUTOMATIC_MOTOR_TEST  0
 #define APP_ENABLE_SERVO_SWEEP_TEST      0
 
-/* S1: zero yaw, rotate to 180 degrees with IMU feedback, then stop. */
-#define APP_IMU_TURN_TARGET_MDEG         180000L
-#define APP_IMU_TURN_TOLERANCE_MDEG      1000L
-#define APP_IMU_TURN_SLOWDOWN_MDEG       30000L
-#define APP_IMU_TURN_FAST_MM_S           250.0f
-#define APP_IMU_TURN_SLOW_MM_S           120.0f
-#define APP_IMU_TURN_TIMEOUT_MS          10000U
+/* Non-blocking IMU angle turn used by Motor_TurnAngle(). */
+#define APP_MOTOR_TURN_TOLERANCE_MDEG    1000L
+#define APP_MOTOR_TURN_SLOWDOWN_MDEG     30000L
+#define APP_MOTOR_TURN_FAST_MM_S         250.0f
+#define APP_MOTOR_TURN_SLOW_MM_S         120.0f
+#define APP_MOTOR_TURN_TIMEOUT_MS        10000U
+#define APP_MOTOR_TURN_MAX_DEG           360.0f
 
 #define APP_WHEEL_DIAMETER_MM            70U
 #define APP_MOTOR_GEAR_RATIO             34U

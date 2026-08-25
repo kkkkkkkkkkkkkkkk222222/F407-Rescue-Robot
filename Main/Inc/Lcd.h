@@ -19,10 +19,6 @@ typedef struct {
   bool uart_active;
   bool uart_received;
   bool motor_test_running;
-  bool motion_test_running;
-  bool motion_test_done;
-  bool motion_test_fault;
-  bool motion_test_slow;
   bool imu_ready;
   int32_t imu_yaw_mdeg;
   int32_t imu_gyro_z_mdps;
