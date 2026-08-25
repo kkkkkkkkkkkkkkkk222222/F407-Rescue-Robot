@@ -65,6 +65,13 @@
 #define APP_MOTOR_STALL_GRACE_CYCLES     50U
 #define APP_MOTOR_BRAKE_CYCLES           6U
 
+/* IMU heading hold used only by Motor_MoveAngle(). */
+#define APP_MOTOR_HEADING_KP              4.0f
+#define APP_MOTOR_HEADING_KI              0.02f
+#define APP_MOTOR_HEADING_KD              0.0f
+#define APP_MOTOR_HEADING_LIMIT_MM_S      150.0f
+#define APP_MOTOR_HEADING_INTEGRAL_LIMIT  1500.0f
+
 /* Go_distance() accepts metres; internal speed, slowdown and tolerance use millimetres. */
 #define APP_GO_DISTANCE_SPEED_MM_S       300.0f
 #define APP_GO_DISTANCE_MIN_SPEED_MM_S   120.0f

@@ -14,6 +14,7 @@ extern TIM_HandleTypeDef htim9;
 
 #define MOTOR_COUNT 3U
 #define MOTOR_MAX_SPEED 1000
+#define MOTOR_DEG_TO_RAD 0.01745329252f
 #define MOTOR_DEFAULT_OUTPUT_LIMIT \
   (APP_MOTOR_BASE_PWM + (int32_t)APP_MOTOR_PID_LIMIT)
 
@@ -43,6 +44,13 @@ typedef struct {
   uint32_t start_ms;
 } AngleTurn;
 
+typedef struct {
+  bool active;
+  float forward_mm_s;
+  float lateral_mm_s;
+  int32_t target_yaw_mdeg;
+} DirectionMove;
+
 static const MotorPwm motors[MOTOR_COUNT] = {
   {&htim5, TIM_CHANNEL_3, &htim5, TIM_CHANNEL_4},
   {&htim9, TIM_CHANNEL_1, &htim9, TIM_CHANNEL_2},
@@ -61,8 +69,10 @@ static uint8_t stall_grace_cycles[MOTOR_COUNT];
 static volatile bool direction_faults[MOTOR_COUNT];
 static volatile bool stall_faults[MOTOR_COUNT];
 static Pid_t speed_pids[MOTOR_COUNT];
+static Pid_t heading_pid;
 static volatile DistanceMove distance_move;
 static volatile AngleTurn angle_turn;
+static volatile DirectionMove direction_move;
 static uint8_t brake_cycles_remaining;
 
 static const int8_t motor_signs[MOTOR_COUNT] = {
@@ -78,6 +88,8 @@ static const int8_t encoder_signs[MOTOR_COUNT] = {
 
 static float motor_counts_to_mm_s(float counts);
 static void motor_set_speed_target(float target_speed, uint8_t id);
+static void motor_set_omni_speed(float forward_mm_s, float lateral_mm_s,
+                                 float rotate_mm_s);
 
 static uint32_t motor_enter_critical(void)
 {
@@ -253,6 +265,35 @@ static void motor_set_rotate_speed(float speed_mm_s)
   }
 }
 
+static void motor_set_omni_speed(float forward_mm_s, float lateral_mm_s,
+                                 float rotate_mm_s)
+{
+  float wheel[MOTOR_COUNT] = {
+    -0.8660254f * forward_mm_s - 0.5f * lateral_mm_s + rotate_mm_s,
+     lateral_mm_s + rotate_mm_s,
+     0.8660254f * forward_mm_s - 0.5f * lateral_mm_s + rotate_mm_s
+  };
+  float maximum = motor_abs_float(wheel[0]);
+  for (uint32_t i = 1U; i < MOTOR_COUNT; ++i) {
+    if (motor_abs_float(wheel[i]) > maximum) {
+      maximum = motor_abs_float(wheel[i]);
+    }
+  }
+
+  const float maximum_wheel_speed =
+      motor_counts_to_mm_s((float)APP_MOTOR_MAX_COUNT_10MS);
+  if (maximum > maximum_wheel_speed) {
+    const float scale = maximum_wheel_speed / maximum;
+    for (uint32_t i = 0U; i < MOTOR_COUNT; ++i) {
+      wheel[i] *= scale;
+    }
+  }
+
+  for (uint8_t id = 1U; id <= MOTOR_COUNT; ++id) {
+    motor_set_speed_target(wheel[id - 1U], id);
+  }
+}
+
 static void motor_apply_pwm(uint8_t id, int16_t speed)
 {
   if ((id < 1U) || (id > MOTOR_COUNT)) {
@@ -304,6 +345,8 @@ static void motor_stop_outputs(bool use_brake)
       was_moving = true;
     }
   }
+  direction_move.active = false;
+  Pid_Reset(&heading_pid);
   motor_reset_targets();
 
   if (use_brake && was_moving && (brake_cycles_remaining == 0U) &&
@@ -448,6 +491,38 @@ static void motor_update_angle_turn(void)
   }
 }
 
+static int32_t motor_wrap_heading_error(int64_t error_mdeg)
+{
+  error_mdeg %= 360000LL;
+  if (error_mdeg > 180000LL) {
+    error_mdeg -= 360000LL;
+  } else if (error_mdeg < -180000LL) {
+    error_mdeg += 360000LL;
+  }
+  return (int32_t)error_mdeg;
+}
+
+static void motor_update_direction_move(void)
+{
+  if (!direction_move.active) {
+    return;
+  }
+
+  const IMUData imu = IMU_GetData();
+  if (!imu.ready) {
+    motor_stop_outputs(true);
+    return;
+  }
+
+  const int32_t error_mdeg = motor_wrap_heading_error(
+      (int64_t)direction_move.target_yaw_mdeg - imu.yaw_mdeg);
+  const float rotate_correction =
+      Pid_Update(&heading_pid, (float)error_mdeg / 1000.0f, 0.0f);
+  motor_set_omni_speed(direction_move.forward_mm_s,
+                       direction_move.lateral_mm_s,
+                       rotate_correction);
+}
+
 void Motor_Init(void)
 {
   brake_cycles_remaining = 0U;
@@ -493,6 +568,18 @@ void Motor_Init(void)
   angle_turn.direction = 1;
   angle_turn.target_mdeg = 0;
   angle_turn.start_ms = 0U;
+  direction_move.active = false;
+  direction_move.forward_mm_s = 0.0f;
+  direction_move.lateral_mm_s = 0.0f;
+  direction_move.target_yaw_mdeg = 0;
+  Pid_Init(&heading_pid,
+           APP_MOTOR_HEADING_KP,
+           APP_MOTOR_HEADING_KI,
+           APP_MOTOR_HEADING_KD,
+           -APP_MOTOR_HEADING_LIMIT_MM_S,
+           APP_MOTOR_HEADING_LIMIT_MM_S,
+           -APP_MOTOR_HEADING_INTEGRAL_LIMIT,
+           APP_MOTOR_HEADING_INTEGRAL_LIMIT);
 }
 
 void Motor_Stop(void)
@@ -516,6 +603,7 @@ void Motor_Update(void)
   Encoder_GetAll(encoder);
   motor_update_distance_move(encoder);
   motor_update_angle_turn();
+  motor_update_direction_move();
 
   for (uint8_t id = 1U; id <= MOTOR_COUNT; ++id) {
     const uint32_t index = id - 1U;
@@ -749,31 +837,55 @@ void Motor_Move(float forward_mm_s, float lateral_mm_s, float rotate_mm_s)
   distance_move.slowing = false;
   angle_turn.status = MOTOR_TURN_IDLE;
   angle_turn.slowing = false;
+  direction_move.active = false;
+  Pid_Reset(&heading_pid);
   /* Three-wheel omni inverse kinematics; all arguments and wheels use mm/s. */
-  float wheel[3] = {
-    -0.8660254f * forward_mm_s - 0.5f * lateral_mm_s + rotate_mm_s,
-     lateral_mm_s + rotate_mm_s,
-     0.8660254f * forward_mm_s - 0.5f * lateral_mm_s + rotate_mm_s
-  };
-  float maximum = motor_abs_float(wheel[0]);
-  if (motor_abs_float(wheel[1]) > maximum) {
-    maximum = motor_abs_float(wheel[1]);
-  }
-  if (motor_abs_float(wheel[2]) > maximum) {
-    maximum = motor_abs_float(wheel[2]);
-  }
-  const float maximum_wheel_speed =
-      motor_counts_to_mm_s((float)APP_MOTOR_MAX_COUNT_10MS);
-  if (maximum > maximum_wheel_speed) {
-    const float scale = maximum_wheel_speed / maximum;
-    wheel[0] *= scale;
-    wheel[1] *= scale;
-    wheel[2] *= scale;
+  motor_set_omni_speed(forward_mm_s, lateral_mm_s, rotate_mm_s);
+  motor_leave_critical(primask);
+}
+
+void Motor_MoveAngle(float speed_mm_s, float angle_deg)
+{
+  if (!isfinite(speed_mm_s) || !isfinite(angle_deg)) {
+    return;
   }
 
-  for (uint8_t id = 1U; id <= MOTOR_COUNT; ++id) {
-    motor_set_speed_target(wheel[id - 1U], id);
+  const uint32_t primask = motor_enter_critical();
+  const IMUData imu = IMU_GetData();
+  if (motor_has_fault() || !imu.ready) {
+    motor_stop_outputs(true);
+    motor_leave_critical(primask);
+    return;
   }
+
+  if (speed_mm_s < 0.0f) {
+    speed_mm_s = -speed_mm_s;
+    angle_deg += 180.0f;
+  }
+  if (speed_mm_s == 0.0f) {
+    distance_move.status = MOTOR_DISTANCE_IDLE;
+    angle_turn.status = MOTOR_TURN_IDLE;
+    motor_stop_outputs(true);
+    motor_leave_critical(primask);
+    return;
+  }
+
+  angle_deg = fmodf(angle_deg, 360.0f);
+  const float angle_rad = angle_deg * MOTOR_DEG_TO_RAD;
+  distance_move.status = MOTOR_DISTANCE_IDLE;
+  distance_move.slowing = false;
+  distance_move.no_progress_cycles = 0U;
+  angle_turn.status = MOTOR_TURN_IDLE;
+  angle_turn.slowing = false;
+  motor_stop_outputs(false);
+
+  direction_move.forward_mm_s = speed_mm_s * cosf(angle_rad);
+  direction_move.lateral_mm_s = speed_mm_s * sinf(angle_rad);
+  direction_move.target_yaw_mdeg = imu.yaw_mdeg;
+  Pid_Reset(&heading_pid);
+  direction_move.active = true;
+  motor_set_omni_speed(direction_move.forward_mm_s,
+                       direction_move.lateral_mm_s, 0.0f);
   motor_leave_critical(primask);
 }
 
