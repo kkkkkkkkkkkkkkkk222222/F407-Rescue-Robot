@@ -13,8 +13,8 @@
 #define APP_MOTOR_TURN_SLOW_MM_S         120.0f
 #define APP_MOTOR_TURN_TIMEOUT_MS        10000U
 #define APP_MOTOR_TURN_MAX_DEG           360.0f
-#define APP_MOTION_TEST_SPEED_MM_S       300.0f
-#define APP_MOTION_TEST_ANGLE_DEG        90.0f
+#define APP_MOTION_TEST_SPEED_MM_S       750.0f
+#define APP_MOTION_TEST_ANGLE_DEG        225.0f
 #define APP_MOTION_TEST_TIME_MS          3000U
 
 #define APP_WHEEL_DIAMETER_MM            70U
