@@ -517,7 +517,8 @@ static void motor_update_direction_move(void)
   const int32_t error_mdeg = motor_wrap_heading_error(
       (int64_t)direction_move.target_yaw_mdeg - imu.yaw_mdeg);
   const float rotate_correction =
-      Pid_Update(&heading_pid, (float)error_mdeg / 1000.0f, 0.0f);
+      Pid_Update(&heading_pid, (float)error_mdeg / 1000.0f, 0.0f) *
+      APP_MOTOR_HEADING_OUTPUT_SIGN;
   motor_set_omni_speed(direction_move.forward_mm_s,
                        direction_move.lateral_mm_s,
                        rotate_correction);

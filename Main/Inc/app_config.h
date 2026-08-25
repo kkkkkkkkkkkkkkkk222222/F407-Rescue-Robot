@@ -13,7 +13,7 @@
 #define APP_MOTOR_TURN_SLOW_MM_S         120.0f
 #define APP_MOTOR_TURN_TIMEOUT_MS        10000U
 #define APP_MOTOR_TURN_MAX_DEG           360.0f
-#define APP_MOTION_TEST_SPEED_MM_S       750.0f
+#define APP_MOTION_TEST_SPEED_MM_S       300.0f
 #define APP_MOTION_TEST_ANGLE_DEG        90.0f
 #define APP_MOTION_TEST_TIME_MS          3000U
 
@@ -71,6 +71,8 @@
 #define APP_MOTOR_HEADING_KD              0.0f
 #define APP_MOTOR_HEADING_LIMIT_MM_S      150.0f
 #define APP_MOTOR_HEADING_INTEGRAL_LIMIT  1500.0f
+/* The installed chassis rotates opposite to the IMU positive Z direction. */
+#define APP_MOTOR_HEADING_OUTPUT_SIGN    -1.0f
 
 /* Go_distance() accepts metres; internal speed, slowdown and tolerance use millimetres. */
 #define APP_GO_DISTANCE_SPEED_MM_S       300.0f
