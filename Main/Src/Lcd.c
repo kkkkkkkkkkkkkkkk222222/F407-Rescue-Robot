@@ -508,9 +508,9 @@ static void dashboard_draw_test(const LCDDashboard *dashboard)
     LCD_FillScreen(LCD_BLACK);
 #if APP_ENABLE_MOTION_TEST
     LCD_DrawText(30U, 4U, "IMU ANGLE", LCD_YELLOW, LCD_BLACK);
-    LCD_DrawText(0U, 28U, "STATE:", LCD_CYAN, LCD_BLACK);
-    LCD_DrawText(0U, 64U, "YAW:", LCD_GREEN, LCD_BLACK);
-    LCD_DrawText(0U, 100U, "UNIT:", LCD_CYAN, LCD_BLACK);
+    LCD_DrawText(0U, 24U, "STATE:", LCD_CYAN, LCD_BLACK);
+    LCD_DrawText(0U, 56U, "TOTAL:", LCD_GREEN, LCD_BLACK);
+    LCD_DrawText(0U, 92U, "CURRENT:", LCD_GREEN, LCD_BLACK);
     LCD_DrawText(6U, 140U, "TURN CAR BY HAND", LCD_YELLOW, LCD_BLACK);
 #else
     LCD_DrawText(6U, 4U, "LCD WHEEL TEST", LCD_YELLOW, LCD_BLACK);
@@ -526,15 +526,23 @@ static void dashboard_draw_test(const LCDDashboard *dashboard)
 
 #if APP_ENABLE_MOTION_TEST
   const char *state = dashboard->imu_ready ? "READY" : "IMU ERR";
-  dashboard_write(42U, 28U, 86U, state);
+  dashboard_write(42U, 24U, 86U, state);
   const int64_t yaw = dashboard->imu_yaw_mdeg;
   const int64_t yaw_abs = (yaw < 0LL) ? -yaw : yaw;
   (void)snprintf(text, sizeof(text), "%c%ld.%01ld DEG",
                  (yaw < 0LL) ? '-' : '+',
                  (long)(yaw_abs / 1000LL),
                  (long)((yaw_abs % 1000LL) / 100LL));
-  dashboard_write(30U, 64U, 98U, text);
-  dashboard_write(42U, 100U, 86U, "DEGREE");
+  dashboard_write(42U, 56U, 86U, text);
+
+  int64_t current_yaw = yaw % 360000LL;
+  if (current_yaw < 0LL) {
+    current_yaw += 360000LL;
+  }
+  (void)snprintf(text, sizeof(text), "%ld.%01ld DEG",
+                 (long)(current_yaw / 1000LL),
+                 (long)((current_yaw % 1000LL) / 100LL));
+  dashboard_write(48U, 92U, 80U, text);
 #else
   Encoder_GetAll(encoders);
   for (uint8_t id = 0U; id < 3U; ++id) {
