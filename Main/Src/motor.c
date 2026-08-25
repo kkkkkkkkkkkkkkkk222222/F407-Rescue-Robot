@@ -883,7 +883,9 @@ void Motor_MoveAngle(float speed_mm_s, float angle_deg)
   motor_stop_outputs(false);
 
   direction_move.forward_mm_s = speed_mm_s * cosf(angle_rad);
-  direction_move.lateral_mm_s = speed_mm_s * sinf(angle_rad);
+  /* The installed chassis lateral-positive direction is opposite to the
+   * mathematical +Y axis, so API angles remain 90 deg left and 270 deg right. */
+  direction_move.lateral_mm_s = -speed_mm_s * sinf(angle_rad);
   direction_move.target_yaw_mdeg = imu.yaw_mdeg;
   Pid_Reset(&heading_pid);
   direction_move.active = true;
