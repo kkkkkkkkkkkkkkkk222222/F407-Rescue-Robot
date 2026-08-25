@@ -33,7 +33,10 @@ void Motor_Init(void);
 void Motor_SetSpeed(float target_speed, uint8_t id);
 MotorDistanceStatus Go_distance(float distance_m);
 MotorTurnStatus Motor_TurnAngle(float angle_deg);
-void Motor_Move(float forward_mm_s, float lateral_mm_s, float rotate_mm_s);
+/* yaw_tangent_mm_s is R*omega, so all three inputs use mm/s. */
+void Motor_Move(float forward_mm_s, float lateral_mm_s,
+                float yaw_tangent_mm_s);
+/* 0 deg=forward, 90 deg=left, 180 deg=backward, 270 deg=right. */
 void Motor_MoveAngle(float speed_mm_s, float angle_deg);
 void Motor_Stop(void);
 void Motor_Update(void);

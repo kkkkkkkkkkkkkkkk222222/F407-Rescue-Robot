@@ -1,21 +1,21 @@
-# 当前固件：IMU实时角度显示测试
+# 当前固件：三轮全向移动测试
 
-当前配置设置为`APP_ENABLE_MOTION_TEST=1`，`APP_ENABLE_TASK`会自动变为0。该模式不需要上位机赛前配置帧，但会完整初始化IMU660RC：上电时车辆必须保持静止，128个样本零偏校准通过后LCD显示`IMU660RC: OK`一秒，再进入`IMU MONITOR`界面；校准或通信失败则显示`IMU660RC: ERROR`。当前监视测试不会向任何电机发送运动命令。
+当前配置设置为`APP_ENABLE_MOTION_TEST=1`，`APP_ENABLE_TASK`会自动变为0。该模式不需要上位机赛前配置帧，但会完整初始化IMU660RC：上电时车辆必须保持静止，128个样本零偏校准通过后LCD显示`IMU660RC: OK`一秒；校准或通信失败则显示`IMU660RC: ERROR`。初始化成功后调用三轮全向运动和IMU航向闭环测试。
 
 测试步骤：
 
 1. 上电后保持小车和IMU完全静止，等待LCD显示`IMU660RC: OK`一秒；若显示`ERROR`，检查3.3 V、共地和SPI接线。
-2. 进入`IMU MONITOR`后用手水平旋转整车，LCD每100 ms刷新相对偏航角`YAW`和Z轴角速度`GYRO Z`；IMU配置为1000 Hz，并由TIM6每1 ms发布一次主循环采样请求。
-3. `MOTOR`固定显示`STOP`，按S1不会启动电机；测试时只验证零偏、角度方向、累计角度和静止漂移。
+2. 小车按750 mm/s依次左移、右移、左前、左后、右前、右后，每个方向运行2秒，最后主动制动停车；测试期间给小车留出足够空间并随时准备断开电机电源。
+3. 六段移动共用启动时记录的航向目标。`Motor_MoveAngle()`切换方向时只更新平移速度矢量，不再清空三轮速度PI或重新锁定航向，因此方向切换连续，IMU仍会修正意外自转。
 4. 若运行中IMU掉线或连续250 ms没有有效样本，`STATE`显示`IMU ERR`，必须检查接线并复位重新校准。
 
-封装好的定角度旋转参数集中在`Main/Inc/app_config.h`的`APP_MOTOR_TURN_*`配置中，但当前监视测试不调用该函数。测试结束、准备恢复完整任务时，只需将`APP_ENABLE_MOTION_TEST`改为0，`APP_ENABLE_TASK`会自动恢复为1。
+角度约定为：0°朝舵机方向前进、90°左移、180°后退、270°右移。测试结束、准备恢复完整任务时，只需将`APP_ENABLE_MOTION_TEST`改为0，`APP_ENABLE_TASK`会自动恢复为1。
 
 # 代码思路（救援流程与上位机协议）
 
 当前固件实现赛前配置、一键驶出、搜索、分类靠近、抓取合规检查、上位机引导返航、进入安全区、放下目标、低头复核和后退重搜。上位机负责从图像判断路线和安全区位置，F407负责命令超时停车、目的地校验、连续帧确认、编码器定距进入/退出和机构动作；上位机不能直接控制PWM。
 
-IMU660RC已经作为独立底层传感器移植：F407通过独立的5.25 MHz硬件SPI3读取LSM6DSV16X，传感器的陀螺仪和加速度计都工作在高精度1000 Hz模式，TIM6每1 ms发布一次主循环采样请求，并在完成静止零偏校准后积分Z轴偏航角。`Motor_TurnAngle()`已经封装IMU定角度旋转，但当前独立测试只实时显示`IMU_GetData().yaw_mdeg`，不会驱动电机；正式救援状态机也暂未调用该函数。
+IMU660RC已经作为独立底层传感器移植：F407通过独立的5.25 MHz硬件SPI3读取LSM6DSV16X，传感器的陀螺仪和加速度计都工作在高精度1000 Hz模式，TIM6每1 ms发布一次主循环采样请求，并在完成静止零偏校准后积分Z轴偏航角。`Motor_TurnAngle()`已经封装IMU定角度旋转，`Motor_MoveAngle()`则在任意方向平移期间保持启动航向；正式救援状态机暂未调用这两个航向接口。
 
 协议设计采用固定长度、消息类型、递增序号和整帧CRC16。固定帧适合当前STM32的64字节循环DMA；CRC16用于拒绝误码帧；坐标、距离、类别数量和状态放在同一视觉报告中，避免旧协议把不同采样周期的三帧拼在一起。导航采用“连续命令+失联停车”，与[ROS 2控制器的过期速度命令自动停车](https://control.ros.org/master/doc/ros2_controllers/diff_drive_controller/doc/userdoc.html)和[Nav2传感器超时即停车](https://docs.nav2.org/configuration/packages/collision_monitor/configuring-collision-monitor-node.html)的失效安全思路一致。串口设计参考：[ST UART Receive-to-IDLE DMA](https://dev.st.com/stm32cube-docs/hal1-to-hal2-migration/1.0.0/en/docs/markup/drivers_documentation/hal_drivers/uart/hal_uart_exported_functions_io_operation.html)、[Modbus串口CRC规范](https://modbus.org/docs/Modbus_over_serial_line_V1_02.pdf)、[IETF RFC 1662 FCS](https://www.rfc-editor.org/info/rfc1662/)。比赛规则以[2027智能+工程创新赛道官方解析](https://gcxl.edu.cn/new/res/intelligence20260617.pdf)为准。
 
@@ -342,7 +342,9 @@ void Motor_Init(void);
 void Motor_SetSpeed(float target_speed, uint8_t id); /* mm/s，id=1..3 */
 MotorDistanceStatus Go_distance(float distance_m);  /* m */
 MotorTurnStatus Motor_TurnAngle(float angle_deg);   /* deg */
-void Motor_Move(float forward_mm_s, float lateral_mm_s, float rotate_mm_s);
+void Motor_Move(float forward_mm_s, float lateral_mm_s,
+                float yaw_tangent_mm_s);            /* 三项均为mm/s */
+void Motor_MoveAngle(float speed_mm_s, float angle_deg);
 void Motor_Stop(void);
 void Motor_Update(void);                            /* TIM6每10 ms调用 */
 MotorStatus Motor_GetStatus(uint8_t id);
@@ -364,6 +366,22 @@ output = sign(target) * 450 + PID(target_count - measured_count)
 ```
 
 PID修正限幅为±450，所以同方向输出范围为0%-90%。PID已经加入条件积分抗饱和：输出饱和且误差仍把输出推向饱和方向时停止累积积分；停车、换向和定距进入减速区时复位PID。`APP_MOTOR_MAX_COUNT_10MS=60`对应约0.746 m/s，未来要求1 m/s时必须提高上限并重新整定。
+
+## 三轮全向运动学
+
+本节按[轮趣科技R680/ROS资料包](https://pan.baidu.com/s/186VvHGOcfHoDA3TKxAP9tw)中“ROS机器人通用资料/运动底盘的控制与运动学解析/全向轮底盘”整理。R680车型本身采用阿克曼转向，不能直接套到当前三轮车；本工程只采用资料包里的120°三轮全向轮模型和逐轮速度闭环思路。
+
+以车体坐标`Vx`为朝舵机方向的前进速度、`Vy`为运动学横向速度、`Rω`为旋转在轮周方向产生的切向速度，标准逆运动学为：
+
+```text
+v1 =                         Vy + Rω
+v2 = -sqrt(3)/2 * Vx - 1/2 * Vy + Rω
+v3 =  sqrt(3)/2 * Vx - 1/2 * Vy + Rω
+```
+
+结合实车接线，物理对应关系是`M1=v2、M2=v1、M3=v3`。因此朝舵机方向前进时为`M1=-0.866、M2=0、M3=+0.866`，与此前悬空和落地测试一致。`Motor_Move()`第三项不是度/秒，而是公式中的`Rω`，统一使用mm/s；这样不依赖尚未精确标定的轮心到车体中心距离。三轮目标有任意一个超过编码器配置的轮速上限时，三个目标同时乘同一个比例，保留运动方向和旋转/平移比例，不逐轮单独截断。
+
+`Motor_MoveAngle(speed, angle)`在接口层规定`0°=前、90°=左、180°=后、270°=右`，将速度分解成`Vx/Vy`后进入同一逆运动学。第一次启动记录IMU累计航向，之后10 ms一次用航向PI产生`Rω`修正；运行中重复调用只更新目标速度和方向，不复位航向目标及PI。只有`Motor_Stop()`、IMU故障或切换到其他运动模式才结束本次航向保持。
 
 ## 故障与停车
 

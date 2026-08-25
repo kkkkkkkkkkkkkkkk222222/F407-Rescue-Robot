@@ -15,6 +15,10 @@ extern TIM_HandleTypeDef htim9;
 #define MOTOR_COUNT 3U
 #define MOTOR_MAX_SPEED 1000
 #define MOTOR_DEG_TO_RAD 0.01745329252f
+#define MOTOR_SQRT3_OVER_2 0.86602540378f
+#define MOTOR_ONE_HALF 0.5f
+/* Calibrated on the real chassis: API +90 deg is physical left. */
+#define MOTOR_API_LEFT_TO_BODY_Y -1.0f
 #define MOTOR_DEFAULT_OUTPUT_LIMIT \
   (APP_MOTOR_BASE_PWM + (int32_t)APP_MOTOR_PID_LIMIT)
 
@@ -89,7 +93,7 @@ static const int8_t encoder_signs[MOTOR_COUNT] = {
 static float motor_counts_to_mm_s(float counts);
 static void motor_set_speed_target(float target_speed, uint8_t id);
 static void motor_set_omni_speed(float forward_mm_s, float lateral_mm_s,
-                                 float rotate_mm_s);
+                                 float yaw_tangent_mm_s);
 
 static uint32_t motor_enter_critical(void)
 {
@@ -252,7 +256,7 @@ static void motor_set_speed_target(float target_speed, uint8_t id)
 
 static void motor_set_forward_speed(float speed_mm_s)
 {
-  const float wheel_speed = speed_mm_s * 0.8660254f;
+  const float wheel_speed = speed_mm_s * MOTOR_SQRT3_OVER_2;
   motor_set_speed_target(-wheel_speed, 1U);
   motor_set_speed_target(0.0f, 2U);
   motor_set_speed_target( wheel_speed, 3U);
@@ -266,12 +270,22 @@ static void motor_set_rotate_speed(float speed_mm_s)
 }
 
 static void motor_set_omni_speed(float forward_mm_s, float lateral_mm_s,
-                                 float rotate_mm_s)
+                                 float yaw_tangent_mm_s)
 {
+  /*
+   * Standard 120-degree three-wheel inverse kinematics:
+   *   v1 =  Vy                 + R*w
+   *   v2 = -sqrt(3)/2*Vx-Vy/2 + R*w
+   *   v3 =  sqrt(3)/2*Vx-Vy/2 + R*w
+   * Physical mapping on this chassis is M1=v2, M2=v1, M3=v3. The third
+   * input is therefore R*w expressed as wheel tangential speed in mm/s.
+   */
   float wheel[MOTOR_COUNT] = {
-    -0.8660254f * forward_mm_s - 0.5f * lateral_mm_s + rotate_mm_s,
-     lateral_mm_s + rotate_mm_s,
-     0.8660254f * forward_mm_s - 0.5f * lateral_mm_s + rotate_mm_s
+    -MOTOR_SQRT3_OVER_2 * forward_mm_s -
+        MOTOR_ONE_HALF * lateral_mm_s + yaw_tangent_mm_s,
+     lateral_mm_s + yaw_tangent_mm_s,
+     MOTOR_SQRT3_OVER_2 * forward_mm_s -
+        MOTOR_ONE_HALF * lateral_mm_s + yaw_tangent_mm_s
   };
   float maximum = motor_abs_float(wheel[0]);
   for (uint32_t i = 1U; i < MOTOR_COUNT; ++i) {
@@ -827,12 +841,13 @@ MotorTurnStatus Motor_TurnAngle(float angle_deg)
   return MOTOR_TURN_RUNNING;
 }
 
-void Motor_Move(float forward_mm_s, float lateral_mm_s, float rotate_mm_s)
+void Motor_Move(float forward_mm_s, float lateral_mm_s,
+                float yaw_tangent_mm_s)
 {
   const uint32_t primask = motor_enter_critical();
 
   if (motor_has_fault() || !isfinite(forward_mm_s) ||
-      !isfinite(lateral_mm_s) || !isfinite(rotate_mm_s)) {
+      !isfinite(lateral_mm_s) || !isfinite(yaw_tangent_mm_s)) {
     motor_leave_critical(primask);
     return;
   }
@@ -842,8 +857,8 @@ void Motor_Move(float forward_mm_s, float lateral_mm_s, float rotate_mm_s)
   angle_turn.slowing = false;
   direction_move.active = false;
   Pid_Reset(&heading_pid);
-  /* Three-wheel omni inverse kinematics; all arguments and wheels use mm/s. */
-  motor_set_omni_speed(forward_mm_s, lateral_mm_s, rotate_mm_s);
+  /* All three inputs and all wheel targets use mm/s. */
+  motor_set_omni_speed(forward_mm_s, lateral_mm_s, yaw_tangent_mm_s);
   motor_leave_critical(primask);
 }
 
@@ -875,20 +890,23 @@ void Motor_MoveAngle(float speed_mm_s, float angle_deg)
 
   angle_deg = fmodf(angle_deg, 360.0f);
   const float angle_rad = angle_deg * MOTOR_DEG_TO_RAD;
-  distance_move.status = MOTOR_DISTANCE_IDLE;
-  distance_move.slowing = false;
-  distance_move.no_progress_cycles = 0U;
-  angle_turn.status = MOTOR_TURN_IDLE;
-  angle_turn.slowing = false;
-  motor_stop_outputs(false);
+  const bool starting = !direction_move.active;
+
+  if (starting) {
+    distance_move.status = MOTOR_DISTANCE_IDLE;
+    distance_move.slowing = false;
+    distance_move.no_progress_cycles = 0U;
+    angle_turn.status = MOTOR_TURN_IDLE;
+    angle_turn.slowing = false;
+    motor_stop_outputs(false);
+    direction_move.target_yaw_mdeg = imu.yaw_mdeg;
+    Pid_Reset(&heading_pid);
+    direction_move.active = true;
+  }
 
   direction_move.forward_mm_s = speed_mm_s * cosf(angle_rad);
-  /* The installed chassis lateral-positive direction is opposite to the
-   * mathematical +Y axis, so API angles remain 90 deg left and 270 deg right. */
-  direction_move.lateral_mm_s = -speed_mm_s * sinf(angle_rad);
-  direction_move.target_yaw_mdeg = imu.yaw_mdeg;
-  Pid_Reset(&heading_pid);
-  direction_move.active = true;
+  direction_move.lateral_mm_s =
+      speed_mm_s * sinf(angle_rad) * MOTOR_API_LEFT_TO_BODY_Y;
   motor_set_omni_speed(direction_move.forward_mm_s,
                        direction_move.lateral_mm_s, 0.0f);
   motor_leave_critical(primask);
