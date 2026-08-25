@@ -255,8 +255,8 @@ static void process_motion_test(uint32_t now_ms)
     const float wheel_speed =
         APP_MOTION_TEST_FORWARD_MM_S * 0.8660254f;
     Motor_SetSpeed( wheel_speed, 1U);
-    Motor_SetSpeed(-wheel_speed, 2U);
-    Motor_SetSpeed(0.0f, 3U);
+    Motor_SetSpeed(0.0f, 2U);
+    Motor_SetSpeed(-wheel_speed, 3U);
   } else if (motion_test_forward &&
              (elapsed_ms >= APP_MOTION_TEST_FORWARD_MS)) {
     Motor_Stop();
