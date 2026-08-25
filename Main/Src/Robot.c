@@ -46,6 +46,15 @@ typedef enum {
 
 static MotionTestStage motion_test_stage;
 static uint32_t motion_test_stop_ms;
+static uint8_t motion_test_direction;
+static const float motion_test_angles_deg[] = {
+  90.0f,  /* Left. */
+  270.0f, /* Right. */
+  45.0f,  /* Front-left. */
+  135.0f, /* Back-left. */
+  315.0f, /* Front-right. */
+  225.0f  /* Back-right. */
+};
 #endif
 
 static void format_hex_byte(char text[5], uint8_t value)
@@ -187,15 +196,24 @@ static void run_motion_test(uint32_t now_ms)
   switch (motion_test_stage) {
     case MOTION_TEST_START:
       Motor_MoveAngle(APP_MOTION_TEST_SPEED_MM_S,
-                      APP_MOTION_TEST_ANGLE_DEG);
+                      motion_test_angles_deg[motion_test_direction]);
       motion_test_stop_ms = now_ms + APP_MOTION_TEST_TIME_MS;
       motion_test_stage = MOTION_TEST_MOVING;
       break;
 
     case MOTION_TEST_MOVING:
       if ((int32_t)(now_ms - motion_test_stop_ms) >= 0) {
-        Motor_Stop();
-        motion_test_stage = MOTION_TEST_STOPPED;
+        ++motion_test_direction;
+        if (motion_test_direction <
+            (sizeof(motion_test_angles_deg) /
+             sizeof(motion_test_angles_deg[0]))) {
+          Motor_MoveAngle(APP_MOTION_TEST_SPEED_MM_S,
+                          motion_test_angles_deg[motion_test_direction]);
+          motion_test_stop_ms = now_ms + APP_MOTION_TEST_TIME_MS;
+        } else {
+          Motor_Stop();
+          motion_test_stage = MOTION_TEST_STOPPED;
+        }
       }
       break;
 
@@ -258,6 +276,7 @@ void Robot_Init(void)
 #if APP_ENABLE_MOTION_TEST
   motion_test_stage = MOTION_TEST_START;
   motion_test_stop_ms = 0U;
+  motion_test_direction = 0U;
 #endif
 
 #if APP_ENABLE_TASK
