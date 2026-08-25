@@ -756,8 +756,8 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(IMU_CS_GPIO_Port, IMU_CS_Pin, GPIO_PIN_SET);
 
-  /* Keep the onboard MicroSD deselected while SPI3 is used by the IMU. */
-  HAL_GPIO_WritePin(MICROSD_CS_GPIO_Port, MICROSD_CS_Pin, GPIO_PIN_SET);
+  /* Keep the unused onboard MicroSD SDIO command line inactive. */
+  HAL_GPIO_WritePin(MICROSD_CMD_GPIO_Port, MICROSD_CMD_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin : TFT_DC_Pin */
   GPIO_InitStruct.Pin = TFT_DC_Pin;
@@ -780,12 +780,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(IMU_CS_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : MICROSD_CS_Pin */
-  GPIO_InitStruct.Pin = MICROSD_CS_Pin;
+  /*Configure GPIO pin : MICROSD_CMD_Pin */
+  GPIO_InitStruct.Pin = MICROSD_CMD_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-  HAL_GPIO_Init(MICROSD_CS_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(MICROSD_CMD_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : MOTOR_PWM_KEY_Pin */
   GPIO_InitStruct.Pin = MOTOR_PWM_KEY_Pin;

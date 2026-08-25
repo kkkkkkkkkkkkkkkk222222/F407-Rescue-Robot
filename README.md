@@ -15,7 +15,7 @@
 
 当前固件实现赛前配置、一键驶出、搜索、分类靠近、抓取合规检查、上位机引导返航、进入安全区、放下目标、低头复核和后退重搜。上位机负责从图像判断路线和安全区位置，F407负责命令超时停车、目的地校验、连续帧确认、编码器定距进入/退出和机构动作；上位机不能直接控制PWM。
 
-IMU660RC已经作为独立底层传感器移植：F407通过5.25 MHz硬件SPI2读取LSM6DSV16X，传感器的陀螺仪和加速度计都工作在高精度1000 Hz模式，TIM6每1 ms发布一次主循环采样请求，并在完成静止零偏校准后积分Z轴偏航角。`Motor_TurnAngle()`已经封装IMU定角度旋转，但当前独立测试只实时显示`IMU_GetData().yaw_mdeg`，不会驱动电机；正式救援状态机也暂未调用该函数。
+IMU660RC已经作为独立底层传感器移植：F407通过独立的5.25 MHz硬件SPI3读取LSM6DSV16X，传感器的陀螺仪和加速度计都工作在高精度1000 Hz模式，TIM6每1 ms发布一次主循环采样请求，并在完成静止零偏校准后积分Z轴偏航角。`Motor_TurnAngle()`已经封装IMU定角度旋转，但当前独立测试只实时显示`IMU_GetData().yaw_mdeg`，不会驱动电机；正式救援状态机也暂未调用该函数。
 
 协议设计采用固定长度、消息类型、递增序号和整帧CRC16。固定帧适合当前STM32的64字节循环DMA；CRC16用于拒绝误码帧；坐标、距离、类别数量和状态放在同一视觉报告中，避免旧协议把不同采样周期的三帧拼在一起。导航采用“连续命令+失联停车”，与[ROS 2控制器的过期速度命令自动停车](https://control.ros.org/master/doc/ros2_controllers/diff_drive_controller/doc/userdoc.html)和[Nav2传感器超时即停车](https://docs.nav2.org/configuration/packages/collision_monitor/configuring-collision-monitor-node.html)的失效安全思路一致。串口设计参考：[ST UART Receive-to-IDLE DMA](https://dev.st.com/stm32cube-docs/hal1-to-hal2-migration/1.0.0/en/docs/markup/drivers_documentation/hal_drivers/uart/hal_uart_exported_functions_io_operation.html)、[Modbus串口CRC规范](https://modbus.org/docs/Modbus_over_serial_line_V1_02.pdf)、[IETF RFC 1662 FCS](https://www.rfc-editor.org/info/rfc1662/)。比赛规则以[2027智能+工程创新赛道官方解析](https://gcxl.edu.cn/new/res/intelligence20260617.pdf)为准。
 
@@ -289,7 +289,7 @@ Power the target, connect the USB/transmitter side, and verify that Windows show
 | M3 | PB10/PB11 TIM2 CH3/CH4；PD12/PD13 TIM4编码器 | 20 kHz，照片右侧轮 |
 | 舵机S1-S4 | PC6-PC9，TIM8 CH1-CH4 | 50 Hz，500-2500 us |
 | LCD | PB13 SCK、PB15 MOSI、PB12 CS、PB14 RESET、PC5 DC、PB1 BL | ST7735，128x160 |
-| IMU660RC | PB13 SCK、PC2 MISO、PC3 MOSI、PC13 CS | SPI2硬件全双工，Mode 3，1000 Hz采样 |
+| IMU660RC | PC10 SCK、PC11 MISO、PC12 MOSI、PC13 CS | SPI3硬件全双工，Mode 3，1000 Hz采样 |
 | USART3 | PD8 TX、PD9 RX | 115200 8N1；RX为64字节循环DMA，TX只回3帧配置确认 |
 | 启动按键 | PA0/S1，内部下拉 | 配置成功后30 ms消抖，一键启动任务 |
 
@@ -299,21 +299,21 @@ M4、TIM10/TIM11、PB8/PB9、PD3/PD4和EXTI3已经整体删除，不再存在第
 
 资料包中的IMU660RC使用`LSM6DSV16X`六轴芯片。随包“各单片机例程”目录本身是空的，资料说明明确指出网页下载ZIP不会带Git子模块；本工程因此按同芯片官方轮询示例的“检查ID、复位、配置量程与ODR、查询数据就绪、连续读取输出寄存器”流程移植，并保持当前F407 HAL和工程结构。
 
-底板原理图和PCB工程确认以下引脚已引到H3/H4排针。没有使用看似空闲的SPI3：购买的F407开发板原理图显示`PC10/PC11/PC12/PD2`已经硬连板载MicroSD；SPI1的`PB3/PB4/PB5`也已硬连板载W25Q Flash。当前改用已有的SPI2：`PB13`时钟与LCD共用，LCD继续从`PB15`取得MOSI，IMU从`PC3`取得同一个SPI2_MOSI，`PC2`作为SPI2_MISO；两个设备使用不同CS，不会同时驱动总线。LCD使用Mode 0，IMU使用Mode 3，驱动在每次IMU事务前后等待总线空闲并切换CPOL/CPHA，结束后恢复LCD模式。SPI2从原10.5 MHz改为5.25 MHz，满足LSM6DSV16X最高10 MHz的限制。
+当前明确放弃板载MicroSD功能，将卡座原有的`PC10/PC11/PC12`网络改作IMU专用SPI3。这块板的卡座原本采用SDIO连接，`PD2`是SDIO_CMD而不是普通SPI片选；代码将`PD2`配置为上拉推挽输出并始终保持高电平，同时给SPI3引脚配置弱上拉，避免未使用卡座产生悬空干扰。由于卡座仍然电气连接在这些网络上，测试和比赛时必须保持卡槽为空，不能一边插卡一边运行IMU。IMU使用独立的`PC13`片选。SPI3固定为Mode 3、5.25 MHz，满足LSM6DSV16X最高10 MHz的限制。LCD恢复为原来的SPI2 Mode 0、10.5 MHz，不再与IMU共享总线，也不再进行运行时SPI模式切换。SPI1的`PB3/PB4/PB5`继续留给板载W25Q Flash，没有受到本次修改影响。
 
 | IMU660RC丝印 | F407网络 | 底板排针 | 说明 |
 | --- | --- | --- | --- |
 | `VCC` | `3V3` | H3-1（也可用H4-1） | 使用3.3 V供电，不接电机电源 |
 | `GND` | `GND` | H3-2（也可用H4-2） | 必须与F407共地 |
-| `SCL/SPC` | `PB13` | H4-5 | SPI2 SCK，与LCD共用时钟 |
-| `SDA/SDI` | `PC3` | H3-18 | SPI2 MOSI，F407发往IMU |
-| `SA0/SDO` | `PC2` | H4-18 | SPI2 MISO，IMU发往F407 |
+| `SCL/SPC` | `PC10` | H1-13 | SPI3 SCK，板载卡座也连接此网络 |
+| `SDA/SDI` | `PC12` | H1-14 | SPI3 MOSI，F407发往IMU |
+| `SA0/SDO` | `PC11` | H2-14 | SPI3 MISO，IMU发往F407 |
 | `CS` | `PC13` | H3-20 | 低电平选中，空闲保持高电平 |
 | `INT1/INT2` | 不接 | 不接 | 当前采用1 ms轮询，未占用额外引脚 |
 
 模块安装时应让Z轴垂直车体平面，最好让模块X轴与车头方向一致；否则加速度轴含义和Z轴角速度正负号需要做安装映射。上电后的约1.1秒校准期间必须让小车和模块完全静止，搬动或震动会把真实角速度误当成零偏。
 
-原来的`PE2/PE3/PE4`软件SPI接线已经停用，必须按上表重新接线。驱动当前配置为：陀螺仪±500 dps、加速度计±4 g、两者高精度1000 Hz、BDU和寄存器自动递增开启、陀螺仪LPF1开启。公开接口保持精简：
+原来的`PE2/PE3/PE4`软件SPI接线以及随后使用的`PB13/PC2/PC3` SPI2接线都已停用，必须按上表重新接线。`PD2`是板载MicroSD的SDIO_CMD（H2-16），不要把它接到IMU。驱动当前配置为：陀螺仪±500 dps、加速度计±4 g、两者高精度1000 Hz、BDU和寄存器自动递增开启、陀螺仪LPF1开启。公开接口保持精简：
 
 ```c
 bool IMU_Init(void);
