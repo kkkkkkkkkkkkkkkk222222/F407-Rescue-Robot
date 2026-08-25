@@ -55,7 +55,7 @@ static bool identity_check_started;
 static uint32_t last_successful_sample_ms;
 static uint32_t last_identity_check_ms;
 
-extern SPI_HandleTypeDef hspi2;
+extern SPI_HandleTypeDef hspi3;
 
 static uint32_t imu_enter_critical(void)
 {
@@ -84,22 +84,6 @@ static int32_t divide_round(int64_t value, int64_t divisor)
   return (int32_t)((value - (divisor / 2LL)) / divisor);
 }
 
-static bool spi_set_mode(uint32_t polarity, uint32_t phase)
-{
-  const uint32_t deadline = HAL_GetTick() + IMU_SPI_TIMEOUT_MS;
-  while (__HAL_SPI_GET_FLAG(&hspi2, SPI_FLAG_BSY) != RESET) {
-    if ((int32_t)(HAL_GetTick() - deadline) >= 0) {
-      return false;
-    }
-  }
-
-  __HAL_SPI_DISABLE(&hspi2);
-  MODIFY_REG(hspi2.Instance->CR1, SPI_CR1_CPOL | SPI_CR1_CPHA,
-             polarity | phase);
-  __HAL_SPI_ENABLE(&hspi2);
-  return true;
-}
-
 static bool spi_transfer(const uint8_t *tx, uint8_t *rx, uint16_t length)
 {
   if ((tx == NULL) || (rx == NULL) || (length == 0U) ||
@@ -107,21 +91,12 @@ static bool spi_transfer(const uint8_t *tx, uint8_t *rx, uint16_t length)
     return false;
   }
 
-  /* The LCD uses SPI mode 0; LSM6DSV16X uses mode 3 on the same SPI2 bus. */
-  HAL_GPIO_WritePin(TFT_CS_GPIO_Port, TFT_CS_Pin, GPIO_PIN_SET);
-  if (!spi_set_mode(SPI_POLARITY_HIGH, SPI_PHASE_2EDGE)) {
-    return false;
-  }
-
   HAL_GPIO_WritePin(IMU_CS_GPIO_Port, IMU_CS_Pin, GPIO_PIN_RESET);
   const HAL_StatusTypeDef status =
-      HAL_SPI_TransmitReceive(&hspi2, (uint8_t *)tx, rx, length,
+      HAL_SPI_TransmitReceive(&hspi3, (uint8_t *)tx, rx, length,
                               IMU_SPI_TIMEOUT_MS);
   HAL_GPIO_WritePin(IMU_CS_GPIO_Port, IMU_CS_Pin, GPIO_PIN_SET);
-
-  const bool mode_restored =
-      spi_set_mode(SPI_POLARITY_LOW, SPI_PHASE_1EDGE);
-  return (status == HAL_OK) && mode_restored;
+  return status == HAL_OK;
 }
 
 static bool spi_write(uint8_t reg, uint8_t value)
