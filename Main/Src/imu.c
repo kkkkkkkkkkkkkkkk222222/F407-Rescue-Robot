@@ -9,13 +9,13 @@
 #define IMU_BOOT_TIME_MS            10U
 #define IMU_RESET_TIMEOUT_MS        10U
 #define IMU_SETTLING_TIME_MS        50U
-#define IMU_CALIBRATION_SAMPLES     128U
-#define IMU_CALIBRATION_TIMEOUT_MS  3000U
+#define IMU_CALIBRATION_DISCARD     32U
+#define IMU_CALIBRATION_SAMPLES     512U
+#define IMU_CALIBRATION_TIMEOUT_MS  5000U
 #define IMU_MAX_INTEGRATION_GAP_MS  100U
 #define IMU_RUNTIME_TIMEOUT_MS      250U
 #define IMU_IDENTITY_CHECK_MS       250U
-#define IMU_CAL_MAX_ABS_MEAN_RAW    300LL
-#define IMU_CAL_MAX_RANGE_RAW       200
+#define IMU_CAL_MAX_STDDEV_RAW      25LL
 
 #define LSM6DSV16X_WHO_AM_I         0x0FU
 #define LSM6DSV16X_IF_CFG           0x03U
@@ -173,71 +173,77 @@ static bool wait_for_reset(void)
   return false;
 }
 
-static bool calibrate_gyro(void)
+static bool read_calibration_sample(int16_t gyro[3], int16_t accel[3],
+                                    uint32_t deadline)
 {
-  int64_t sum[3] = {0LL, 0LL, 0LL};
-  int16_t minimum[3] = {INT16_MAX, INT16_MAX, INT16_MAX};
-  int16_t maximum[3] = {INT16_MIN, INT16_MIN, INT16_MIN};
-  uint16_t collected = 0U;
-  const uint32_t deadline = HAL_GetTick() + IMU_CALIBRATION_TIMEOUT_MS;
-
-  while ((collected < IMU_CALIBRATION_SAMPLES) &&
-         ((int32_t)(HAL_GetTick() - deadline) < 0)) {
+  while ((int32_t)(HAL_GetTick() - deadline) < 0) {
     uint8_t status = 0U;
     if (!spi_read(LSM6DSV16X_STATUS_REG, &status, 1U)) {
       return false;
     }
-    if ((status & LSM6DSV16X_DATA_READY) != LSM6DSV16X_DATA_READY) {
-      HAL_Delay(1U);
-      continue;
+    if ((status & LSM6DSV16X_DATA_READY) == LSM6DSV16X_DATA_READY) {
+      return read_raw(gyro, accel);
     }
+    HAL_Delay(1U);
+  }
+  return false;
+}
 
+static bool calibrate_gyro(void)
+{
+  const uint32_t deadline = HAL_GetTick() + IMU_CALIBRATION_TIMEOUT_MS;
+
+  /* Discard the first samples after turn-on so filter transients are excluded. */
+  for (uint16_t sample = 0U; sample < IMU_CALIBRATION_DISCARD; ++sample) {
     int16_t gyro[3];
     int16_t accel[3];
-    if (!read_raw(gyro, accel)) {
-      return false;
-    }
-
-    bool stable = true;
-    for (uint8_t axis = 0U; axis < 3U; ++axis) {
-      sum[axis] += gyro[axis];
-      if (gyro[axis] < minimum[axis]) {
-        minimum[axis] = gyro[axis];
-      }
-      if (gyro[axis] > maximum[axis]) {
-        maximum[axis] = gyro[axis];
-      }
-      if (((int32_t)maximum[axis] - minimum[axis]) >
-          IMU_CAL_MAX_RANGE_RAW) {
-        stable = false;
-      }
-    }
-    if (!stable) {
-      memset(sum, 0, sizeof(sum));
-      for (uint8_t axis = 0U; axis < 3U; ++axis) {
-        minimum[axis] = INT16_MAX;
-        maximum[axis] = INT16_MIN;
-      }
-      collected = 0U;
-      continue;
-    }
-    ++collected;
-  }
-
-  if (collected != IMU_CALIBRATION_SAMPLES) {
-    ++imu_data.error_count;
-    return false;
-  }
-  for (uint8_t axis = 0U; axis < 3U; ++axis) {
-    const int64_t absolute_sum = (sum[axis] < 0LL) ? -sum[axis] : sum[axis];
-    if (absolute_sum >
-        IMU_CAL_MAX_ABS_MEAN_RAW * IMU_CALIBRATION_SAMPLES) {
+    if (!read_calibration_sample(gyro, accel, deadline)) {
       ++imu_data.error_count;
       return false;
     }
-    gyro_bias_sum[axis] = sum[axis];
   }
-  return true;
+
+  while ((int32_t)(HAL_GetTick() - deadline) < 0) {
+    int64_t sum[3] = {0LL, 0LL, 0LL};
+    int64_t sum_squares[3] = {0LL, 0LL, 0LL};
+
+    for (uint16_t sample = 0U; sample < IMU_CALIBRATION_SAMPLES; ++sample) {
+      int16_t gyro[3];
+      int16_t accel[3];
+      if (!read_calibration_sample(gyro, accel, deadline)) {
+        ++imu_data.error_count;
+        return false;
+      }
+      for (uint8_t axis = 0U; axis < 3U; ++axis) {
+        const int64_t value = gyro[axis];
+        sum[axis] += value;
+        sum_squares[axis] += value * value;
+      }
+    }
+
+    bool stationary = true;
+    for (uint8_t axis = 0U; axis < 3U; ++axis) {
+      const int64_t variance_numerator =
+          sum_squares[axis] * IMU_CALIBRATION_SAMPLES -
+          sum[axis] * sum[axis];
+      const int64_t variance_limit =
+          IMU_CAL_MAX_STDDEV_RAW * IMU_CAL_MAX_STDDEV_RAW *
+          IMU_CALIBRATION_SAMPLES * IMU_CALIBRATION_SAMPLES;
+      if (variance_numerator > variance_limit) {
+        stationary = false;
+        break;
+      }
+    }
+    if (stationary) {
+      for (uint8_t axis = 0U; axis < 3U; ++axis) {
+        gyro_bias_sum[axis] = sum[axis];
+      }
+      return true;
+    }
+  }
+
+  ++imu_data.error_count;
+  return false;
 }
 
 bool IMU_Init(void)
