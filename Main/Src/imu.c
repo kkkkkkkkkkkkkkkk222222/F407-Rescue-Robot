@@ -8,8 +8,9 @@
 #define IMU_SPI_TIMEOUT_MS          2U
 #define IMU_BOOT_TIME_MS            10U
 #define IMU_RESET_TIMEOUT_MS        10U
+#define IMU_SETTLING_TIME_MS        50U
 #define IMU_CALIBRATION_SAMPLES     128U
-#define IMU_CALIBRATION_TIMEOUT_MS  2000U
+#define IMU_CALIBRATION_TIMEOUT_MS  3000U
 #define IMU_MAX_INTEGRATION_GAP_MS  100U
 #define IMU_RUNTIME_TIMEOUT_MS      250U
 #define IMU_IDENTITY_CHECK_MS       250U
@@ -196,6 +197,8 @@ static bool calibrate_gyro(void)
     if (!read_raw(gyro, accel)) {
       return false;
     }
+
+    bool stable = true;
     for (uint8_t axis = 0U; axis < 3U; ++axis) {
       sum[axis] += gyro[axis];
       if (gyro[axis] < minimum[axis]) {
@@ -204,6 +207,19 @@ static bool calibrate_gyro(void)
       if (gyro[axis] > maximum[axis]) {
         maximum[axis] = gyro[axis];
       }
+      if (((int32_t)maximum[axis] - minimum[axis]) >
+          IMU_CAL_MAX_RANGE_RAW) {
+        stable = false;
+      }
+    }
+    if (!stable) {
+      memset(sum, 0, sizeof(sum));
+      for (uint8_t axis = 0U; axis < 3U; ++axis) {
+        minimum[axis] = INT16_MAX;
+        maximum[axis] = INT16_MIN;
+      }
+      collected = 0U;
+      continue;
     }
     ++collected;
   }
@@ -214,10 +230,8 @@ static bool calibrate_gyro(void)
   }
   for (uint8_t axis = 0U; axis < 3U; ++axis) {
     const int64_t absolute_sum = (sum[axis] < 0LL) ? -sum[axis] : sum[axis];
-    if ((absolute_sum >
-         IMU_CAL_MAX_ABS_MEAN_RAW * IMU_CALIBRATION_SAMPLES) ||
-        (((int32_t)maximum[axis] - minimum[axis]) >
-         IMU_CAL_MAX_RANGE_RAW)) {
+    if (absolute_sum >
+        IMU_CAL_MAX_ABS_MEAN_RAW * IMU_CALIBRATION_SAMPLES) {
       ++imu_data.error_count;
       return false;
     }
@@ -284,7 +298,7 @@ bool IMU_Init(void)
     return false;
   }
 
-  HAL_Delay(20U);
+  HAL_Delay(IMU_SETTLING_TIME_MS);
   imu_data.init_result = IMU_INIT_CALIBRATION_ERROR;
   if (!calibrate_gyro()) {
     return false;
