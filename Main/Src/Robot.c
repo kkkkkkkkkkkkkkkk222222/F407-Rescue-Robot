@@ -40,8 +40,7 @@ static bool lcd_ready;
 #if APP_ENABLE_MOTION_TEST
 typedef enum {
   MOTION_TEST_START = 0,
-  MOTION_TEST_TURNING,
-  MOTION_TEST_FORWARD,
+  MOTION_TEST_MOVING,
   MOTION_TEST_STOPPED
 } MotionTestStage;
 
@@ -186,37 +185,14 @@ static void run_servo_sweep(uint32_t now_ms)
 static void run_motion_test(uint32_t now_ms)
 {
   switch (motion_test_stage) {
-    case MOTION_TEST_START: {
-      const MotorTurnStatus status =
-          Motor_TurnAngle(APP_MOTION_TEST_TURN_DEG);
-      if (status == MOTOR_TURN_RUNNING) {
-        motion_test_stage = MOTION_TEST_TURNING;
-      } else if (status == MOTOR_TURN_DONE) {
-        Motor_Move(APP_MOTION_TEST_BACKWARD_MM_S, 0.0f, 0.0f);
-        motion_test_stop_ms = now_ms + APP_MOTION_TEST_BACKWARD_TIME_MS;
-        motion_test_stage = MOTION_TEST_FORWARD;
-      } else {
-        Motor_Stop();
-        motion_test_stage = MOTION_TEST_STOPPED;
-      }
+    case MOTION_TEST_START:
+      Motor_MoveAngle(APP_MOTION_TEST_SPEED_MM_S,
+                      APP_MOTION_TEST_ANGLE_DEG);
+      motion_test_stop_ms = now_ms + APP_MOTION_TEST_TIME_MS;
+      motion_test_stage = MOTION_TEST_MOVING;
       break;
-    }
 
-    case MOTION_TEST_TURNING: {
-      const MotorTurnStatus status =
-          Motor_TurnAngle(APP_MOTION_TEST_TURN_DEG);
-      if (status == MOTOR_TURN_DONE) {
-        Motor_Move(APP_MOTION_TEST_BACKWARD_MM_S, 0.0f, 0.0f);
-        motion_test_stop_ms = now_ms + APP_MOTION_TEST_BACKWARD_TIME_MS;
-        motion_test_stage = MOTION_TEST_FORWARD;
-      } else if (status != MOTOR_TURN_RUNNING) {
-        Motor_Stop();
-        motion_test_stage = MOTION_TEST_STOPPED;
-      }
-      break;
-    }
-
-    case MOTION_TEST_FORWARD:
+    case MOTION_TEST_MOVING:
       if ((int32_t)(now_ms - motion_test_stop_ms) >= 0) {
         Motor_Stop();
         motion_test_stage = MOTION_TEST_STOPPED;
