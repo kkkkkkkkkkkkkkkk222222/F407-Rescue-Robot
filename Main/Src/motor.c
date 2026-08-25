@@ -715,6 +715,8 @@ void Motor_SetSpeed(float target_speed, uint8_t id)
   distance_move.slowing = false;
   angle_turn.status = MOTOR_TURN_IDLE;
   angle_turn.slowing = false;
+  direction_move.active = false;
+  Pid_Reset(&heading_pid);
   motor_set_speed_target(target_speed, id);
   motor_leave_critical(primask);
 }
