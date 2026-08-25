@@ -29,8 +29,8 @@ typedef struct {
   float target_mm;
   float slowdown_start_mm;
   float last_progress_mm;
-  int64_t start_m1_count;
   int64_t start_m2_count;
+  int64_t start_m3_count;
   uint16_t no_progress_cycles;
 } DistanceMove;
 
@@ -231,9 +231,9 @@ static void motor_set_speed_target(float target_speed, uint8_t id)
 static void motor_set_forward_speed(float speed_mm_s)
 {
   const float wheel_speed = speed_mm_s * 0.8660254f;
-  motor_set_speed_target(-wheel_speed, 1U);
+  motor_set_speed_target(0.0f, 1U);
   motor_set_speed_target( wheel_speed, 2U);
-  motor_set_speed_target(0.0f, 3U);
+  motor_set_speed_target(-wheel_speed, 3U);
 }
 
 static void motor_apply_pwm(uint8_t id, int16_t speed)
@@ -324,13 +324,13 @@ static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
     return;
   }
 
-  const float m1_mm = motor_counts_to_mm(
-      (float)(encoder[0].position - distance_move.start_m1_count) *
-      (float)encoder_signs[0]);
   const float m2_mm = motor_counts_to_mm(
       (float)(encoder[1].position - distance_move.start_m2_count) *
       (float)encoder_signs[1]);
-  const float forward_mm = (m2_mm - m1_mm) / 1.7320508f;
+  const float m3_mm = motor_counts_to_mm(
+      (float)(encoder[2].position - distance_move.start_m3_count) *
+      (float)encoder_signs[2]);
+  const float forward_mm = (m2_mm - m3_mm) / 1.7320508f;
   const float direction = (distance_move.target_mm >= 0.0f) ? 1.0f : -1.0f;
   const float target_mm = distance_move.target_mm * direction;
   const float travelled_mm = forward_mm * direction;
@@ -341,7 +341,7 @@ static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
     return;
   }
 
-  if ((targets[0] != 0) || (targets[1] != 0)) {
+  if ((targets[1] != 0) || (targets[2] != 0)) {
     const float progress = travelled_mm - distance_move.last_progress_mm;
     if (progress >= APP_GO_DISTANCE_PROGRESS_MM) {
       distance_move.last_progress_mm = travelled_mm;
@@ -350,8 +350,8 @@ static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
       ++distance_move.no_progress_cycles;
     }
     if (distance_move.no_progress_cycles >= APP_GO_DISTANCE_NO_PROGRESS_CYCLES) {
-      stall_faults[0] = true;
       stall_faults[1] = true;
+      stall_faults[2] = true;
       motor_abort_all(MOTOR_DISTANCE_FAULT);
       return;
     }
@@ -362,8 +362,8 @@ static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
   if (remaining_mm < distance_move.slowdown_start_mm) {
     if (!distance_move.slowing) {
       distance_move.slowing = true;
-      Pid_Reset(&speed_pids[0]);
       Pid_Reset(&speed_pids[1]);
+      Pid_Reset(&speed_pids[2]);
     }
 
     const float usable_slowdown =
@@ -418,8 +418,8 @@ void Motor_Init(void)
   distance_move.target_mm = 0.0f;
   distance_move.slowdown_start_mm = 0.0f;
   distance_move.last_progress_mm = 0.0f;
-  distance_move.start_m1_count = 0;
   distance_move.start_m2_count = 0;
+  distance_move.start_m3_count = 0;
   distance_move.no_progress_cycles = 0U;
 }
 
@@ -588,8 +588,8 @@ MotorDistanceStatus Go_distance(float distance_m)
   Encoder_GetAll(encoder);
   const float absolute_distance = motor_abs_float(distance_mm);
   distance_move.target_mm = distance_mm;
-  distance_move.start_m1_count = encoder[0].position;
   distance_move.start_m2_count = encoder[1].position;
+  distance_move.start_m3_count = encoder[2].position;
   distance_move.slowdown_start_mm = APP_GO_DISTANCE_SLOWDOWN_MM;
   if (distance_move.slowdown_start_mm > (absolute_distance * 0.5f)) {
     distance_move.slowdown_start_mm = absolute_distance * 0.5f;
@@ -619,9 +619,9 @@ void Motor_Move(float forward_mm_s, float lateral_mm_s, float rotate_mm_s)
   distance_move.slowing = false;
   /* Three-wheel omni inverse kinematics; all arguments and wheels use mm/s. */
   float wheel[3] = {
-    -0.8660254f * forward_mm_s - 0.5f * lateral_mm_s + rotate_mm_s,
+     lateral_mm_s + rotate_mm_s,
      0.8660254f * forward_mm_s - 0.5f * lateral_mm_s + rotate_mm_s,
-     lateral_mm_s + rotate_mm_s
+    -0.8660254f * forward_mm_s - 0.5f * lateral_mm_s + rotate_mm_s
   };
   float maximum = motor_abs_float(wheel[0]);
   if (motor_abs_float(wheel[1]) > maximum) {

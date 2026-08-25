@@ -30,7 +30,9 @@
 #endif
 
 /*
- * The robot uses the three LED_3 channels: M1/TIM5, M2/TIM9 and M3/TIM2.
+ * Physical layout from the 2026-08-25 test photo:
+ * M1 is the lower-left wheel toward the servos, M2 is upper-left, M3 is right.
+ * Software forward points toward M1/servos, so M1 stops while M2/M3 drive.
  * Change signs after checking the real installation.
  */
 #define APP_OMNI_M1_MOTOR_SIGN           1
