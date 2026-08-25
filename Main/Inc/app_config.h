@@ -30,9 +30,10 @@
 #endif
 
 /*
- * Fixed-orientation photo: M1 bottom, M2 upper-left, M3 upper-right.
- * Software forward points to the lower-right servos. The measured three-wheel
- * combination is M1=+0.5, M2=+0.5 and M3=-1.0 times chassis forward speed.
+ * Physical layout from the 2026-08-25 test photo:
+ * M1 is the lower-left wheel toward the servos, M2 is upper-left, M3 is right.
+ * Software forward points toward M1/servos: M1 stops, M2 drives negative,
+ * and M3 drives positive. This sign was confirmed from the 2026-08-25 test.
  * Change signs after checking the real installation.
  */
 #define APP_OMNI_M1_MOTOR_SIGN           1
