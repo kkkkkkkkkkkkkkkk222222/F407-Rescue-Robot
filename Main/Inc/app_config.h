@@ -9,8 +9,8 @@
 /* S1: rotate for 3 s, move forward for 3 s, then stop. */
 #define APP_MOTION_TEST_ROTATE_MS        3000U
 #define APP_MOTION_TEST_FORWARD_MS       3000U
-#define APP_MOTION_TEST_ROTATE_MM_S      240.0f
-#define APP_MOTION_TEST_FORWARD_MM_S     450.0f
+#define APP_MOTION_TEST_ROTATE_MM_S      328.0f
+#define APP_MOTION_TEST_FORWARD_MM_S     600.0f
 
 #define APP_WHEEL_DIAMETER_MM            70U
 #define APP_MOTOR_GEAR_RATIO             34U
