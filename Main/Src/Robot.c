@@ -192,8 +192,8 @@ static void run_motion_test(uint32_t now_ms)
       if (status == MOTOR_TURN_RUNNING) {
         motion_test_stage = MOTION_TEST_TURNING;
       } else if (status == MOTOR_TURN_DONE) {
-        Motor_Move(APP_MOTION_TEST_FORWARD_MM_S, 0.0f, 0.0f);
-        motion_test_stop_ms = now_ms + APP_MOTION_TEST_FORWARD_TIME_MS;
+        Motor_Move(APP_MOTION_TEST_BACKWARD_MM_S, 0.0f, 0.0f);
+        motion_test_stop_ms = now_ms + APP_MOTION_TEST_BACKWARD_TIME_MS;
         motion_test_stage = MOTION_TEST_FORWARD;
       } else {
         Motor_Stop();
@@ -206,8 +206,8 @@ static void run_motion_test(uint32_t now_ms)
       const MotorTurnStatus status =
           Motor_TurnAngle(APP_MOTION_TEST_TURN_DEG);
       if (status == MOTOR_TURN_DONE) {
-        Motor_Move(APP_MOTION_TEST_FORWARD_MM_S, 0.0f, 0.0f);
-        motion_test_stop_ms = now_ms + APP_MOTION_TEST_FORWARD_TIME_MS;
+        Motor_Move(APP_MOTION_TEST_BACKWARD_MM_S, 0.0f, 0.0f);
+        motion_test_stop_ms = now_ms + APP_MOTION_TEST_BACKWARD_TIME_MS;
         motion_test_stage = MOTION_TEST_FORWARD;
       } else if (status != MOTOR_TURN_RUNNING) {
         Motor_Stop();
