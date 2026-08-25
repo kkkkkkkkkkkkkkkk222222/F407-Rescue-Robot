@@ -16,9 +16,15 @@ typedef struct {
   uint32_t now_ms;
   uint32_t uart_last_rx_ms;
   uint8_t uart_last_byte;
+  int32_t yaw_mdeg;
   bool uart_active;
   bool uart_received;
+  bool imu_ready;
   bool motor_test_running;
+  bool rotation_running;
+  bool rotation_slowing;
+  bool rotation_done;
+  bool rotation_timeout;
 } LCDDashboard;
 
 bool LCD_Init(void);

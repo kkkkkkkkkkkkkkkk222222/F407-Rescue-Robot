@@ -50,6 +50,17 @@ static bool motor_key_stable;
 static uint32_t motor_key_change_ms;
 #endif
 
+#if APP_ENABLE_ROTATION_TEST
+static bool rotation_running;
+static bool rotation_slowing;
+static bool rotation_done;
+static bool rotation_timeout;
+static bool rotation_key_sample;
+static bool rotation_key_stable;
+static uint32_t rotation_key_change_ms;
+static uint32_t rotation_start_ms;
+#endif
+
 static bool vision_start_receive_dma(void)
 {
   if (HAL_UARTEx_ReceiveToIdle_DMA(&huart3, usart3_rx_dma,
@@ -91,19 +102,46 @@ static void vision_parse_dma_range(uint16_t size)
 
 static void draw_dashboard(void)
 {
+  const IMUData imu = IMU_GetData();
   LCDDashboard dashboard = {
     .now_ms = app_milliseconds,
     .uart_last_rx_ms = usart3_last_rx_ms,
     .uart_last_byte = usart3_last_byte,
+    .yaw_mdeg = imu.yaw_mdeg,
     .uart_active = usart3_rx_active,
     .uart_received = usart3_byte_received,
-    .motor_test_running = false
+    .imu_ready = imu.ready,
+    .motor_test_running = false,
+    .rotation_running = false,
+    .rotation_slowing = false,
+    .rotation_done = false,
+    .rotation_timeout = false
   };
 #if APP_ENABLE_AUTOMATIC_MOTOR_TEST && !APP_ENABLE_TASK
   dashboard.motor_test_running = motor_test_running;
 #endif
+#if APP_ENABLE_ROTATION_TEST
+  dashboard.rotation_running = rotation_running;
+  dashboard.rotation_slowing = rotation_slowing;
+  dashboard.rotation_done = rotation_done;
+  dashboard.rotation_timeout = rotation_timeout;
+#endif
   LCD_DrawDashboard(&dashboard);
 }
+
+#if !APP_ENABLE_TASK && \
+    (APP_ENABLE_ROTATION_TEST || APP_ENABLE_AUTOMATIC_MOTOR_TEST)
+static bool robot_motor_has_fault(void)
+{
+  for (uint8_t id = 1U; id <= 3U; ++id) {
+    const MotorStatus motor = Motor_GetStatus(id);
+    if (motor.direction_fault || motor.stall_fault) {
+      return true;
+    }
+  }
+  return false;
+}
+#endif
 
 #if APP_ENABLE_SERVO_SWEEP_TEST && !APP_ENABLE_TASK
 static void run_servo_sweep(uint32_t now_ms)
@@ -124,17 +162,6 @@ static void run_servo_sweep(uint32_t now_ms)
 #endif
 
 #if APP_ENABLE_AUTOMATIC_MOTOR_TEST && !APP_ENABLE_TASK
-static bool motor_test_has_fault(void)
-{
-  for (uint8_t id = 1U; id <= 3U; ++id) {
-    const MotorStatus motor = Motor_GetStatus(id);
-    if (motor.direction_fault || motor.stall_fault) {
-      return true;
-    }
-  }
-  return false;
-}
-
 static void process_motor_test_key(uint32_t now_ms)
 {
   const bool sample =
@@ -153,7 +180,7 @@ static void process_motor_test_key(uint32_t now_ms)
   if (!sample) {
     return;
   }
-  if (motor_test_has_fault()) {
+  if (robot_motor_has_fault()) {
     motor_test_running = false;
   } else if (motor_test_running) {
     Motor_Stop();
@@ -163,6 +190,99 @@ static void process_motor_test_key(uint32_t now_ms)
       Motor_SetSpeed(APP_MOTOR_SPEED_TEST_TARGET_MM_S, id);
     }
     motor_test_running = true;
+  }
+}
+#endif
+
+#if APP_ENABLE_ROTATION_TEST
+static bool rotation_key_pressed(uint32_t now_ms)
+{
+  const bool sample =
+      HAL_GPIO_ReadPin(MOTOR_PWM_KEY_GPIO_Port, MOTOR_PWM_KEY_Pin) == GPIO_PIN_SET;
+
+  if (sample != rotation_key_sample) {
+    rotation_key_sample = sample;
+    rotation_key_change_ms = now_ms;
+  }
+  if ((sample == rotation_key_stable) ||
+      ((uint32_t)(now_ms - rotation_key_change_ms) <
+       APP_MOTOR_KEY_DEBOUNCE_MS)) {
+    return false;
+  }
+  rotation_key_stable = sample;
+  return sample;
+}
+
+static void start_rotation_test(uint32_t now_ms)
+{
+  IMU_ZeroYaw();
+  rotation_running = true;
+  rotation_slowing = false;
+  rotation_done = false;
+  rotation_timeout = false;
+  rotation_start_ms = now_ms;
+  Motor_Move(0.0f, 0.0f,
+             APP_ROTATION_TEST_DIRECTION * APP_ROTATION_TEST_SPEED_MM_S);
+}
+
+static void process_rotation_test(uint32_t now_ms)
+{
+  const IMUData imu = IMU_GetData();
+  const bool pressed = rotation_key_pressed(now_ms);
+
+  if (!imu.ready || robot_motor_has_fault()) {
+    if (rotation_running) {
+      Motor_Stop();
+    }
+    rotation_running = false;
+    rotation_slowing = false;
+    return;
+  }
+
+  if (pressed) {
+    if (rotation_running) {
+      Motor_Stop();
+      rotation_running = false;
+      rotation_slowing = false;
+      rotation_done = false;
+    } else if (!rotation_timeout) {
+      start_rotation_test(now_ms);
+    }
+    return;
+  }
+  if (!rotation_running) {
+    return;
+  }
+
+  if ((uint32_t)(now_ms - rotation_start_ms) >=
+      APP_ROTATION_TEST_TIMEOUT_MS) {
+    Motor_Stop();
+    rotation_running = false;
+    rotation_slowing = false;
+    rotation_done = false;
+    rotation_timeout = true;
+    return;
+  }
+
+  const int64_t yaw = imu.yaw_mdeg;
+  const uint32_t absolute_yaw_mdeg =
+      (uint32_t)((yaw < 0) ? -yaw : yaw);
+  const uint32_t target_mdeg = APP_ROTATION_TEST_TARGET_DEG * 1000U;
+  const uint32_t tolerance_mdeg = APP_ROTATION_TEST_TOLERANCE_DEG * 1000U;
+  if (absolute_yaw_mdeg + tolerance_mdeg >= target_mdeg) {
+    Motor_Stop();
+    rotation_running = false;
+    rotation_slowing = false;
+    rotation_done = true;
+    return;
+  }
+
+  const uint32_t remaining_mdeg = target_mdeg - absolute_yaw_mdeg;
+  if (!rotation_slowing &&
+      (remaining_mdeg <= APP_ROTATION_TEST_SLOW_ZONE_DEG * 1000U)) {
+    rotation_slowing = true;
+    Motor_Move(0.0f, 0.0f,
+               APP_ROTATION_TEST_DIRECTION * APP_ROTATION_TEST_SLOW_MM_S);
   }
 }
 #endif
@@ -196,6 +316,18 @@ void Robot_Init(void)
       HAL_GPIO_ReadPin(MOTOR_PWM_KEY_GPIO_Port, MOTOR_PWM_KEY_Pin) == GPIO_PIN_SET;
   motor_key_stable = motor_key_sample;
   motor_key_change_ms = 0U;
+#endif
+
+#if APP_ENABLE_ROTATION_TEST
+  rotation_running = false;
+  rotation_slowing = false;
+  rotation_done = false;
+  rotation_timeout = false;
+  rotation_key_sample =
+      HAL_GPIO_ReadPin(MOTOR_PWM_KEY_GPIO_Port, MOTOR_PWM_KEY_Pin) == GPIO_PIN_SET;
+  rotation_key_stable = rotation_key_sample;
+  rotation_key_change_ms = 0U;
+  rotation_start_ms = 0U;
 #endif
 
   Vision_Init();
@@ -256,6 +388,9 @@ void Robot_Process(void)
 
 #if APP_ENABLE_AUTOMATIC_MOTOR_TEST && !APP_ENABLE_TASK
   process_motor_test_key(app_milliseconds);
+#endif
+#if APP_ENABLE_ROTATION_TEST
+  process_rotation_test(app_milliseconds);
 #endif
 
   const uint32_t lcd_released = lcd_release_sequence;

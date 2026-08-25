@@ -275,6 +275,7 @@ static bool dashboard_motor_fault(void)
   return false;
 }
 
+#if APP_ENABLE_TASK || !APP_ENABLE_ROTATION_TEST
 static const char *dashboard_uart_text(const LCDDashboard *dashboard)
 {
   if (!dashboard->uart_active) {
@@ -289,6 +290,7 @@ static const char *dashboard_uart_text(const LCDDashboard *dashboard)
   }
   return "TIMEOUT";
 }
+#endif
 
 #if APP_ENABLE_TASK
 static const char *const task_state_names[] = {
@@ -502,6 +504,18 @@ static void dashboard_draw_test(const LCDDashboard *dashboard)
 
   if (!layout_drawn) {
     LCD_FillScreen(LCD_BLACK);
+#if APP_ENABLE_ROTATION_TEST
+    LCD_DrawText(15U, 4U, "ROTATION TEST", LCD_YELLOW, LCD_BLACK);
+    LCD_DrawText(0U, 20U, "STATE:", LCD_CYAN, LCD_BLACK);
+    LCD_DrawText(0U, 34U, "TARGET:", LCD_GREEN, LCD_BLACK);
+    LCD_DrawText(0U, 48U, "YAW:", LCD_GREEN, LCD_BLACK);
+    LCD_DrawText(0U, 62U, "SPEED:", LCD_GREEN, LCD_BLACK);
+    LCD_DrawText(0U, 76U, "M1:", LCD_CYAN, LCD_BLACK);
+    LCD_DrawText(0U, 90U, "M2:", LCD_CYAN, LCD_BLACK);
+    LCD_DrawText(0U, 104U, "M3:", LCD_CYAN, LCD_BLACK);
+    LCD_DrawText(0U, 118U, "MOTOR:", LCD_GREEN, LCD_BLACK);
+    LCD_DrawText(18U, 140U, "S1 START/STOP", LCD_YELLOW, LCD_BLACK);
+#else
     LCD_DrawText(6U, 4U, "LCD WHEEL TEST", LCD_YELLOW, LCD_BLACK);
     LCD_DrawText(0U, 24U, "M1:", LCD_CYAN, LCD_BLACK);
     LCD_DrawText(0U, 38U, "M2:", LCD_CYAN, LCD_BLACK);
@@ -509,10 +523,35 @@ static void dashboard_draw_test(const LCDDashboard *dashboard)
     LCD_DrawText(0U, 86U, "UART3:", LCD_GREEN, LCD_BLACK);
     LCD_DrawText(0U, 104U, "SERVO:", LCD_GREEN, LCD_BLACK);
     LCD_DrawText(0U, 122U, "WHEEL:", LCD_GREEN, LCD_BLACK);
+#endif
     layout_drawn = true;
   }
 
   Encoder_GetAll(encoders);
+#if APP_ENABLE_ROTATION_TEST
+  const bool motor_fault = dashboard_motor_fault();
+  const char *state = !dashboard->imu_ready ? "IMU ERR" :
+                      (motor_fault ? "MOTOR ERR" :
+                      (dashboard->rotation_timeout ? "TIMEOUT" :
+                      (dashboard->rotation_running ?
+                          (dashboard->rotation_slowing ? "SLOW" : "RUN") :
+                      (dashboard->rotation_done ? "DONE" : "WAIT S1"))));
+  dashboard_write(42U, 20U, 86U, state);
+  (void)snprintf(text, sizeof(text), "%u DEG", APP_ROTATION_TEST_TARGET_DEG);
+  dashboard_write(42U, 34U, 86U, text);
+  (void)snprintf(text, sizeof(text), "%ld MDEG", (long)dashboard->yaw_mdeg);
+  dashboard_write(42U, 48U, 86U, text);
+  const long speed = dashboard->rotation_running ?
+      (long)(dashboard->rotation_slowing ? APP_ROTATION_TEST_SLOW_MM_S :
+                                           APP_ROTATION_TEST_SPEED_MM_S) : 0L;
+  (void)snprintf(text, sizeof(text), "%ld MM/S", speed);
+  dashboard_write(42U, 62U, 86U, text);
+  for (uint8_t id = 0U; id < 3U; ++id) {
+    (void)snprintf(text, sizeof(text), "%lld", (long long)encoders[id].position);
+    dashboard_write(24U, (uint16_t)(76U + id * 14U), 104U, text);
+  }
+  dashboard_write(42U, 118U, 86U, motor_fault ? "FAULT" : "OK");
+#else
   for (uint8_t id = 0U; id < 3U; ++id) {
     (void)snprintf(text, sizeof(text), "%lld", (long long)encoders[id].position);
     dashboard_write(24U, (uint16_t)(24U + id * 14U), 104U, text);
@@ -539,6 +578,7 @@ static void dashboard_draw_test(const LCDDashboard *dashboard)
   (void)strcpy(text, "STOP");
 #endif
   dashboard_write(42U, 122U, 86U, text);
+#endif
 }
 #endif
 

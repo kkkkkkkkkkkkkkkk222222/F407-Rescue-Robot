@@ -1,8 +1,20 @@
 #ifndef APP_CONFIG_H
 #define APP_CONFIG_H
 
-/* Optional S1 wheel-speed bench test. Disabled while the autonomous task runs. */
+/* Standalone test modes. Keep only one mode enabled at a time. */
+#define APP_ENABLE_ROTATION_TEST         1
 #define APP_ENABLE_AUTOMATIC_MOTOR_TEST  0
+#define APP_ENABLE_SERVO_SWEEP_TEST      0
+
+/* S1: rotate by IMU yaw, slow down near the target, then brake. */
+#define APP_ROTATION_TEST_TARGET_DEG     90U
+#define APP_ROTATION_TEST_DIRECTION      1.0f
+#define APP_ROTATION_TEST_SPEED_MM_S     164.0f
+#define APP_ROTATION_TEST_SLOW_MM_S      120.0f
+#define APP_ROTATION_TEST_SLOW_ZONE_DEG  20U
+#define APP_ROTATION_TEST_TOLERANCE_DEG  2U
+#define APP_ROTATION_TEST_TIMEOUT_MS     8000U
+
 #define APP_WHEEL_DIAMETER_MM            70U
 #define APP_MOTOR_GEAR_RATIO             34U
 #define APP_ENCODER_LINES_PER_MOTOR_REV  13U
@@ -11,10 +23,14 @@
                                           APP_ENCODER_LINES_PER_MOTOR_REV * \
                                           APP_ENCODER_QUADRATURE_FACTOR)
 #define APP_MOTOR_SPEED_TEST_TARGET_MM_S 110.0f
-#define APP_ENABLE_SERVO_SWEEP_TEST      0
 
-/* LED_3-derived autonomous rescue flow; it takes priority over bench tests. */
-#define APP_ENABLE_TASK                  1
+/* The rescue task returns automatically when the rotation test is disabled. */
+#define APP_ENABLE_TASK                  (!APP_ENABLE_ROTATION_TEST)
+
+#if APP_ENABLE_ROTATION_TEST && \
+    (APP_ENABLE_AUTOMATIC_MOTOR_TEST || APP_ENABLE_SERVO_SWEEP_TEST)
+#error "Rotation test must be the only enabled application mode"
+#endif
 
 /*
  * The robot uses the three LED_3 channels: M1/TIM5, M2/TIM9 and M3/TIM2.
