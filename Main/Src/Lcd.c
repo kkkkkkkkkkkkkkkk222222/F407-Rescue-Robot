@@ -301,10 +301,15 @@ static void dashboard_write(uint16_t x, uint16_t y, uint16_t width,
 #define LOCATION_MAP_X      8
 #define LOCATION_MAP_Y      40
 #define LOCATION_MAP_SIZE   112
+#define LOCATION_TRAIL_SIZE 48U
 
 static int16_t location_last_x;
 static int16_t location_last_y;
 static bool location_marker_drawn;
+static int16_t location_trail_x[LOCATION_TRAIL_SIZE];
+static int16_t location_trail_y[LOCATION_TRAIL_SIZE];
+static uint8_t location_trail_count;
+static uint8_t location_trail_next;
 
 static void location_draw_line(int16_t x0, int16_t y0, int16_t x1, int16_t y1,
                                uint16_t color)
@@ -356,6 +361,20 @@ static int16_t location_map_y(int32_t y_mm)
       ((1500 - y_mm) * (LOCATION_MAP_SIZE - 1) + 1500) / 3000);
 }
 
+static void location_draw_vertical_bumps(uint16_t x, uint16_t y)
+{
+  for (uint16_t i = 0U; i < 3U; ++i) {
+    LCD_FillRect((uint16_t)(x + i * 3U), y, 1U, 9U, LCD_GRAY);
+  }
+}
+
+static void location_draw_horizontal_bumps(uint16_t x, uint16_t y)
+{
+  for (uint16_t i = 0U; i < 3U; ++i) {
+    LCD_FillRect(x, (uint16_t)(y + i * 3U), 9U, 1U, LCD_GRAY);
+  }
+}
+
 static void location_draw_static_map(void)
 {
   const uint16_t right = LOCATION_MAP_X + LOCATION_MAP_SIZE - 1U;
@@ -390,10 +409,41 @@ static void location_draw_static_map(void)
   LCD_FillRect(LOCATION_MAP_X + 55U, bottom - 12U,
                1U, 11U, LCD_BLACK);
 
-  /* The three bumps immediately left of start zone 4. */
-  LCD_FillRect(right - 23U, bottom - 10U, 1U, 9U, LCD_GRAY);
-  LCD_FillRect(right - 20U, bottom - 10U, 1U, 9U, LCD_GRAY);
-  LCD_FillRect(right - 17U, bottom - 10U, 1U, 9U, LCD_GRAY);
+  /* The drawing has three bumps on both field-facing sides of every start. */
+  location_draw_vertical_bumps(LOCATION_MAP_X + 14U, LOCATION_MAP_Y + 1U);
+  location_draw_horizontal_bumps(LOCATION_MAP_X + 1U, LOCATION_MAP_Y + 14U);
+  location_draw_vertical_bumps(right - 20U, LOCATION_MAP_Y + 1U);
+  location_draw_horizontal_bumps(right - 9U, LOCATION_MAP_Y + 14U);
+  location_draw_vertical_bumps(LOCATION_MAP_X + 14U, bottom - 9U);
+  location_draw_horizontal_bumps(LOCATION_MAP_X + 1U, bottom - 20U);
+  location_draw_vertical_bumps(right - 20U, bottom - 9U);
+  location_draw_horizontal_bumps(right - 9U, bottom - 20U);
+}
+
+static void location_add_trail_point(int16_t x, int16_t y)
+{
+  if ((location_trail_count != 0U) &&
+      (location_last_x == x) && (location_last_y == y)) {
+    return;
+  }
+  location_trail_x[location_trail_next] = x;
+  location_trail_y[location_trail_next] = y;
+  location_trail_next = (uint8_t)((location_trail_next + 1U) %
+                                  LOCATION_TRAIL_SIZE);
+  if (location_trail_count < LOCATION_TRAIL_SIZE) {
+    ++location_trail_count;
+  }
+}
+
+static void location_draw_trail(void)
+{
+  const uint8_t first = (location_trail_count < LOCATION_TRAIL_SIZE) ? 0U :
+                        location_trail_next;
+  for (uint8_t i = 0U; i < location_trail_count; ++i) {
+    const uint8_t index = (uint8_t)((first + i) % LOCATION_TRAIL_SIZE);
+    LCD_FillRect((uint16_t)location_trail_x[index],
+                 (uint16_t)location_trail_y[index], 1U, 1U, LCD_GREEN);
+  }
 }
 
 static void dashboard_draw_location(const LCDDashboard *dashboard)
@@ -426,8 +476,12 @@ static void dashboard_draw_location(const LCDDashboard *dashboard)
                  pose->start_zone, state);
   dashboard_write(0U, 20U, 128U, text);
 
-  location_last_x = location_map_x(pose->x_mm);
-  location_last_y = location_map_y(pose->y_mm);
+  const int16_t current_x = location_map_x(pose->x_mm);
+  const int16_t current_y = location_map_y(pose->y_mm);
+  location_add_trail_point(current_x, current_y);
+  location_draw_trail();
+  location_last_x = current_x;
+  location_last_y = current_y;
   LCD_FillRect((uint16_t)(location_last_x - 2),
                (uint16_t)(location_last_y - 2), 5U, 5U,
                pose->valid ? LCD_YELLOW : LCD_RED);
