@@ -40,6 +40,7 @@ static bool lcd_ready;
 #if APP_ENABLE_MOTION_TEST
 typedef enum {
   MOTION_TEST_START = 0,
+  MOTION_TEST_ACCELERATING,
   MOTION_TEST_MOVING,
   MOTION_TEST_STOPPED
 } MotionTestStage;
@@ -159,7 +160,8 @@ static void draw_dashboard(void)
   LCD_DrawDashboard(&dashboard);
 }
 
-#if APP_ENABLE_AUTOMATIC_MOTOR_TEST && !APP_ENABLE_TASK
+#if APP_ENABLE_MOTION_TEST || \
+    (APP_ENABLE_AUTOMATIC_MOTOR_TEST && !APP_ENABLE_TASK)
 static bool robot_motor_has_fault(void)
 {
   for (uint8_t id = 1U; id <= 3U; ++id) {
@@ -193,12 +195,30 @@ static void run_servo_sweep(uint32_t now_ms)
 #if APP_ENABLE_MOTION_TEST
 static void run_motion_test(uint32_t now_ms)
 {
+  if (!IMU_GetData().ready || robot_motor_has_fault()) {
+    Motor_Stop();
+    motion_test_stage = MOTION_TEST_STOPPED;
+    return;
+  }
+
   switch (motion_test_stage) {
     case MOTION_TEST_START:
-      Motor_MoveAngle(APP_MOTION_TEST_SPEED_MM_S,
-                      motion_test_angles_deg[motion_test_direction]);
-      motion_test_stop_ms = now_ms + APP_MOTION_TEST_TIME_MS;
-      motion_test_stage = MOTION_TEST_MOVING;
+      (void)Motor_MoveAngle(APP_MOTION_TEST_SPEED_MM_S,
+                            motion_test_angles_deg[motion_test_direction]);
+      motion_test_stop_ms =
+          now_ms + APP_MOTION_TEST_TRANSITION_TIMEOUT_MS;
+      motion_test_stage = MOTION_TEST_ACCELERATING;
+      break;
+
+    case MOTION_TEST_ACCELERATING:
+      if (Motor_MoveAngle(APP_MOTION_TEST_SPEED_MM_S,
+                          motion_test_angles_deg[motion_test_direction])) {
+        motion_test_stop_ms = now_ms + APP_MOTION_TEST_TIME_MS;
+        motion_test_stage = MOTION_TEST_MOVING;
+      } else if ((int32_t)(now_ms - motion_test_stop_ms) >= 0) {
+        Motor_Stop();
+        motion_test_stage = MOTION_TEST_STOPPED;
+      }
       break;
 
     case MOTION_TEST_MOVING:
@@ -207,9 +227,11 @@ static void run_motion_test(uint32_t now_ms)
         if (motion_test_direction <
             (sizeof(motion_test_angles_deg) /
              sizeof(motion_test_angles_deg[0]))) {
-          Motor_MoveAngle(APP_MOTION_TEST_SPEED_MM_S,
-                          motion_test_angles_deg[motion_test_direction]);
-          motion_test_stop_ms = now_ms + APP_MOTION_TEST_TIME_MS;
+          (void)Motor_MoveAngle(APP_MOTION_TEST_SPEED_MM_S,
+                                motion_test_angles_deg[motion_test_direction]);
+          motion_test_stop_ms =
+              now_ms + APP_MOTION_TEST_TRANSITION_TIMEOUT_MS;
+          motion_test_stage = MOTION_TEST_ACCELERATING;
         } else {
           Motor_Stop();
           motion_test_stage = MOTION_TEST_STOPPED;

@@ -37,7 +37,7 @@ MotorTurnStatus Motor_TurnAngle(float angle_deg);
 void Motor_Move(float forward_mm_s, float lateral_mm_s,
                 float yaw_tangent_mm_s);
 /* 0 deg=forward, 90 deg=left, 180 deg=backward, 270 deg=right. */
-void Motor_MoveAngle(float speed_mm_s, float angle_deg);
+bool Motor_MoveAngle(float speed_mm_s, float angle_deg);
 void Motor_Stop(void);
 void Motor_Update(void);
 MotorStatus Motor_GetStatus(uint8_t id);

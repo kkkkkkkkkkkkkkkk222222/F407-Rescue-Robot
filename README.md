@@ -5,8 +5,8 @@
 测试步骤：
 
 1. 上电后保持小车和IMU完全静止，等待LCD显示`IMU660RC: OK`一秒；若显示`ERROR`，检查3.3 V、共地和SPI接线。
-2. 小车每2秒依次发出750 mm/s的左移、右移、左前、左后、右前、右后目标，最后主动制动停车；每段时间包含加减速过渡，测试期间给小车留出足够空间并随时准备断开电机电源。
-3. 六段移动共用启动时记录的航向目标。普通方向变化使用二维速度矢量斜坡；夹角达到90°或更大时先减速到0，经编码器确认三轮接近停稳后清除旧PI积分，再向新方向加速，IMU继续修正意外自转。
+2. 小车依次执行750 mm/s的左移、右移、左前、左后、右前、右后目标；每段先完成加减速过渡，达到目标矢量后再完整运行2秒，最后主动制动停车。测试期间给小车留出足够空间并随时准备断开电机电源。
+3. 六段移动共用启动时记录的航向目标。夹角小于120°时使用二维速度矢量连续转向；夹角达到120°或更大时先减速到0，经编码器确认三轮接近停稳后清除旧PI积分，再向新方向加速，IMU继续修正意外自转。
 4. 若运行中IMU掉线或连续250 ms没有有效样本，`STATE`显示`IMU ERR`，必须检查接线并复位重新校准。
 
 角度约定为：0°朝舵机方向前进、90°左移、180°后退、270°右移。测试结束、准备恢复完整任务时，只需将`APP_ENABLE_MOTION_TEST`改为0，`APP_ENABLE_TASK`会自动恢复为1。
@@ -344,7 +344,7 @@ MotorDistanceStatus Go_distance(float distance_m);  /* m */
 MotorTurnStatus Motor_TurnAngle(float angle_deg);   /* deg */
 void Motor_Move(float forward_mm_s, float lateral_mm_s,
                 float yaw_tangent_mm_s);            /* 三项均为mm/s */
-void Motor_MoveAngle(float speed_mm_s, float angle_deg);
+bool Motor_MoveAngle(float speed_mm_s, float angle_deg); /* 达到目标矢量返回true */
 void Motor_Stop(void);
 void Motor_Update(void);                            /* TIM6每10 ms调用 */
 MotorStatus Motor_GetStatus(uint8_t id);
@@ -381,7 +381,14 @@ v3 =  sqrt(3)/2 * Vx - 1/2 * Vy + Rω
 
 结合实车接线，物理对应关系是`M1=v2、M2=v1、M3=v3`。因此朝舵机方向前进时为`M1=-0.866、M2=0、M3=+0.866`，与此前悬空和落地测试一致。`Motor_Move()`第三项不是度/秒，而是公式中的`Rω`，统一使用mm/s；这样不依赖尚未精确标定的轮心到车体中心距离。三轮目标有任意一个超过编码器配置的轮速上限时，三个目标同时乘同一个比例，保留运动方向和旋转/平移比例，不逐轮单独截断。
 
-`Motor_MoveAngle(speed, angle)`在接口层规定`0°=前、90°=左、180°=后、270°=右`，将速度分解成`Vx/Vy`后进入同一逆运动学。第一次启动记录IMU累计航向，之后10 ms一次用航向PI产生`Rω`修正。启动和小角度换向采用二维矢量限速，当前加速度为2500 mm/s²；新旧方向夹角达到90°或更大时，以3000 mm/s²先减到0。命令归零后要求三轮实测速度连续3个周期不超过40 mm/s，最多等待400 ms，随后清除三轮速度PI及航向PI积分、保留原目标航向，再向新方向加速。这样不会用固定阻塞延时，也不会让两个坐标轴分别爬升而扭曲斜向角度。只有`Motor_Stop()`、IMU故障或切换到其他运动模式才结束本次航向保持。
+### 平滑转向方案来源与取舍
+
+- 网盘中的轮趣STM32讲义先在固定周期内平滑`VX/VY/VZ`，再调用底盘逆运动学和四个独立速度PI；松开指令时也不是直接把运动量清零。当前工程沿用“先平滑车体速度、再进行轮速分解”的层次，但使用二维同比矢量斜坡，避免分别修改X/Y导致斜向角度暂时失真。[轮趣R680/ROS资料包](https://pan.baidu.com/s/186VvHGOcfHoDA3TKxAP9tw)
+- ROS官方Nav2速度平滑器同样使用固定周期插值、独立加减速度限制、速度死区和同比缩放，并说明高频低延迟里程计才适合闭环平滑。本工程10 ms速度环使用上一平滑指令推进，只有反向零速确认读取同周期编码器，避免编码器低速量化噪声参与每一步斜坡。[Nav2 Velocity Smoother](https://github.com/ros-navigation/navigation2/tree/main/nav2_velocity_smoother)
+- ROS 2全向轮控制器以车体`x/y/yaw`速度为统一输入、用轮速/位置反馈计算底盘状态；移动控制器还提供速度、加速度、减速度和jerk限制。当前F407保留三轮逐轮PI、航向PI和同比轮速限幅；暂不增加jerk状态，因为固定45%起步PWM和当前低速死区会让第三阶轨迹参数难以独立标定，先把可测的加减速度与停稳阈值调准更可靠。[ROS 2 omni wheel controller](https://control.ros.org/kilted/doc/ros2_controllers/omni_wheel_drive_controller/doc/userdoc.html)、[ROS 2移动底盘运动限制](https://control.ros.org/rolling/doc/ros2_controllers/mecanum_drive_controller/doc/userdoc.html)
+- 轮趣R550全向轮版本标称最高速度0.84 m/s，当前测试750 mm/s已经接近同类教育底盘的高速区，因此高速横移不能同时做到“瞬间反向”和“无冲击”；必须为轮子惯性保留过渡时间。[轮趣R550产品手册](https://wheeltec.net/R550.pdf)
+
+`Motor_MoveAngle(speed, angle)`规定`0°=前、90°=左、180°=后、270°=右`，将速度分解成`Vx/Vy`后进入同一逆运动学。第一次启动记录IMU累计航向，之后10 ms一次用航向PI产生`Rω`修正。启动和小角度换向采用二维矢量限速，当前加速度为2500 mm/s²；新旧方向夹角小于120°时直接在速度空间连续过渡，达到120°或更大时以3000 mm/s²先减到0。命令归零后要求三轮实测速度连续3个周期不超过40 mm/s，最多等待400 ms，随后清除三轮速度PI及航向PI积分、保留原目标航向，再向新方向加速。函数在平滑矢量达到目标后返回`true`，当前六方向测试从此时才开始计算该方向的2秒有效运动时间；单次过渡超过2秒则安全停车，避免IMU或控制状态异常时无限等待。只有`Motor_Stop()`、IMU故障或切换到其他运动模式才结束本次航向保持。
 
 ## 故障与停车
 

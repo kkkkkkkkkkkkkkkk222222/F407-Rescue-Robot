@@ -566,7 +566,14 @@ static bool motor_direction_change_requires_stop(float current_forward_mm_s,
                               target_lateral_mm_s * target_lateral_mm_s;
   const float dot = current_forward_mm_s * target_forward_mm_s +
                     current_lateral_mm_s * target_lateral_mm_s;
-  return (current_square > 1.0f) && (target_square > 1.0f) && (dot <= 0.0f);
+  if ((current_square <= 1.0f) || (target_square <= 1.0f)) {
+    return false;
+  }
+
+  const float stop_cosine =
+      cosf(APP_OMNI_STOP_ANGLE_DEG * MOTOR_DEG_TO_RAD);
+  const float magnitude_product = sqrtf(current_square * target_square);
+  return dot <= (magnitude_product * stop_cosine);
 }
 
 static bool motor_wheels_near_zero(void)
@@ -975,10 +982,10 @@ void Motor_Move(float forward_mm_s, float lateral_mm_s,
   motor_leave_critical(primask);
 }
 
-void Motor_MoveAngle(float speed_mm_s, float angle_deg)
+bool Motor_MoveAngle(float speed_mm_s, float angle_deg)
 {
   if (!isfinite(speed_mm_s) || !isfinite(angle_deg)) {
-    return;
+    return false;
   }
 
   const uint32_t primask = motor_enter_critical();
@@ -986,7 +993,7 @@ void Motor_MoveAngle(float speed_mm_s, float angle_deg)
   if (motor_has_fault() || !imu.ready) {
     motor_stop_outputs(true);
     motor_leave_critical(primask);
-    return;
+    return false;
   }
 
   if (speed_mm_s < 0.0f) {
@@ -998,7 +1005,7 @@ void Motor_MoveAngle(float speed_mm_s, float angle_deg)
     angle_turn.status = MOTOR_TURN_IDLE;
     motor_stop_outputs(true);
     motor_leave_critical(primask);
-    return;
+    return true;
   }
 
   angle_deg = fmodf(angle_deg, 360.0f);
@@ -1040,7 +1047,13 @@ void Motor_MoveAngle(float speed_mm_s, float angle_deg)
   if (starting) {
     motor_set_omni_speed(0.0f, 0.0f, 0.0f);
   }
+  const bool ready = !direction_move.reversing &&
+      (motor_abs_float(direction_move.current_forward_mm_s -
+                       direction_move.target_forward_mm_s) <= 0.5f) &&
+      (motor_abs_float(direction_move.current_lateral_mm_s -
+                       direction_move.target_lateral_mm_s) <= 0.5f);
   motor_leave_critical(primask);
+  return ready;
 }
 
 MotorStatus Motor_GetStatus(uint8_t id)

@@ -15,6 +15,7 @@
 #define APP_MOTOR_TURN_MAX_DEG           360.0f
 #define APP_MOTION_TEST_SPEED_MM_S       750.0f
 #define APP_MOTION_TEST_TIME_MS          2000U
+#define APP_MOTION_TEST_TRANSITION_TIMEOUT_MS 2000U
 
 #define APP_WHEEL_DIAMETER_MM            70U
 #define APP_MOTOR_GEAR_RATIO             34U
@@ -76,6 +77,7 @@
 /* Non-blocking vector ramp used by Motor_MoveAngle(). */
 #define APP_OMNI_ACCEL_MM_S2              2500.0f
 #define APP_OMNI_DECEL_MM_S2              3000.0f
+#define APP_OMNI_STOP_ANGLE_DEG           120.0f
 #define APP_OMNI_ZERO_SPEED_MM_S          40
 #define APP_OMNI_ZERO_CONFIRM_CYCLES      3U
 #define APP_OMNI_ZERO_TIMEOUT_CYCLES      40U
