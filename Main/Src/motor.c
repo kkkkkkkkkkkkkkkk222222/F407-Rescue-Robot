@@ -50,9 +50,14 @@ typedef struct {
 
 typedef struct {
   bool active;
-  float forward_mm_s;
-  float lateral_mm_s;
+  bool reversing;
+  float target_forward_mm_s;
+  float target_lateral_mm_s;
+  float current_forward_mm_s;
+  float current_lateral_mm_s;
   int32_t target_yaw_mdeg;
+  uint8_t zero_confirm_cycles;
+  uint16_t zero_wait_cycles;
 } DirectionMove;
 
 static const MotorPwm motors[MOTOR_COUNT] = {
@@ -350,6 +355,19 @@ static void motor_reset_targets(void)
   }
 }
 
+static void motor_clear_direction_move(void)
+{
+  direction_move.active = false;
+  direction_move.reversing = false;
+  direction_move.target_forward_mm_s = 0.0f;
+  direction_move.target_lateral_mm_s = 0.0f;
+  direction_move.current_forward_mm_s = 0.0f;
+  direction_move.current_lateral_mm_s = 0.0f;
+  direction_move.target_yaw_mdeg = 0;
+  direction_move.zero_confirm_cycles = 0U;
+  direction_move.zero_wait_cycles = 0U;
+}
+
 static void motor_stop_outputs(bool use_brake)
 {
   bool was_moving = false;
@@ -359,7 +377,7 @@ static void motor_stop_outputs(bool use_brake)
       was_moving = true;
     }
   }
-  direction_move.active = false;
+  motor_clear_direction_move();
   Pid_Reset(&heading_pid);
   motor_reset_targets();
 
@@ -516,6 +534,51 @@ static int32_t motor_wrap_heading_error(int64_t error_mdeg)
   return (int32_t)error_mdeg;
 }
 
+static bool motor_step_vector(float *forward_mm_s, float *lateral_mm_s,
+                              float target_forward_mm_s,
+                              float target_lateral_mm_s, float max_step_mm_s)
+{
+  const float delta_forward = target_forward_mm_s - *forward_mm_s;
+  const float delta_lateral = target_lateral_mm_s - *lateral_mm_s;
+  const float distance = sqrtf(delta_forward * delta_forward +
+                               delta_lateral * delta_lateral);
+
+  if ((distance <= max_step_mm_s) || (distance <= 0.01f)) {
+    *forward_mm_s = target_forward_mm_s;
+    *lateral_mm_s = target_lateral_mm_s;
+    return true;
+  }
+
+  const float scale = max_step_mm_s / distance;
+  *forward_mm_s += delta_forward * scale;
+  *lateral_mm_s += delta_lateral * scale;
+  return false;
+}
+
+static bool motor_direction_change_requires_stop(float current_forward_mm_s,
+                                                 float current_lateral_mm_s,
+                                                 float target_forward_mm_s,
+                                                 float target_lateral_mm_s)
+{
+  const float current_square = current_forward_mm_s * current_forward_mm_s +
+                               current_lateral_mm_s * current_lateral_mm_s;
+  const float target_square = target_forward_mm_s * target_forward_mm_s +
+                              target_lateral_mm_s * target_lateral_mm_s;
+  const float dot = current_forward_mm_s * target_forward_mm_s +
+                    current_lateral_mm_s * target_lateral_mm_s;
+  return (current_square > 1.0f) && (target_square > 1.0f) && (dot <= 0.0f);
+}
+
+static bool motor_wheels_near_zero(void)
+{
+  for (uint32_t i = 0U; i < MOTOR_COUNT; ++i) {
+    if (motor_abs(measured_speeds_mm_s[i]) > APP_OMNI_ZERO_SPEED_MM_S) {
+      return false;
+    }
+  }
+  return true;
+}
+
 static void motor_update_direction_move(void)
 {
   if (!direction_move.active) {
@@ -528,14 +591,67 @@ static void motor_update_direction_move(void)
     return;
   }
 
+  float current_forward = direction_move.current_forward_mm_s;
+  float current_lateral = direction_move.current_lateral_mm_s;
+
+  if (direction_move.reversing) {
+    const float decel_step = APP_OMNI_DECEL_MM_S2 *
+        (float)APP_MOTOR_CONTROL_PERIOD_MS / 1000.0f;
+    const bool command_is_zero = motor_step_vector(
+        &current_forward, &current_lateral, 0.0f, 0.0f, decel_step);
+    direction_move.current_forward_mm_s = current_forward;
+    direction_move.current_lateral_mm_s = current_lateral;
+
+    if (!command_is_zero) {
+      const int32_t error_mdeg = motor_wrap_heading_error(
+          (int64_t)direction_move.target_yaw_mdeg - imu.yaw_mdeg);
+      const float rotate_correction =
+          Pid_Update(&heading_pid, (float)error_mdeg / 1000.0f, 0.0f) *
+          APP_MOTOR_HEADING_OUTPUT_SIGN;
+      motor_set_omni_speed(current_forward, current_lateral,
+                           rotate_correction);
+      return;
+    }
+
+    /* Suppress heading correction while checking that mechanical inertia has
+     * actually fallen to zero; the original yaw target remains unchanged. */
+    motor_set_omni_speed(0.0f, 0.0f, 0.0f);
+    if (motor_wheels_near_zero()) {
+      if (direction_move.zero_confirm_cycles < UINT8_MAX) {
+        ++direction_move.zero_confirm_cycles;
+      }
+    } else {
+      direction_move.zero_confirm_cycles = 0U;
+    }
+    if (direction_move.zero_wait_cycles < UINT16_MAX) {
+      ++direction_move.zero_wait_cycles;
+    }
+
+    if ((direction_move.zero_confirm_cycles >=
+         APP_OMNI_ZERO_CONFIRM_CYCLES) ||
+        (direction_move.zero_wait_cycles >= APP_OMNI_ZERO_TIMEOUT_CYCLES)) {
+      Pid_Reset(&heading_pid);
+      direction_move.reversing = false;
+      direction_move.zero_confirm_cycles = 0U;
+      direction_move.zero_wait_cycles = 0U;
+    }
+    return;
+  }
+
+  const float accel_step = APP_OMNI_ACCEL_MM_S2 *
+      (float)APP_MOTOR_CONTROL_PERIOD_MS / 1000.0f;
+  (void)motor_step_vector(&current_forward, &current_lateral,
+                          direction_move.target_forward_mm_s,
+                          direction_move.target_lateral_mm_s, accel_step);
+  direction_move.current_forward_mm_s = current_forward;
+  direction_move.current_lateral_mm_s = current_lateral;
+
   const int32_t error_mdeg = motor_wrap_heading_error(
       (int64_t)direction_move.target_yaw_mdeg - imu.yaw_mdeg);
   const float rotate_correction =
       Pid_Update(&heading_pid, (float)error_mdeg / 1000.0f, 0.0f) *
       APP_MOTOR_HEADING_OUTPUT_SIGN;
-  motor_set_omni_speed(direction_move.forward_mm_s,
-                       direction_move.lateral_mm_s,
-                       rotate_correction);
+  motor_set_omni_speed(current_forward, current_lateral, rotate_correction);
 }
 
 void Motor_Init(void)
@@ -583,10 +699,7 @@ void Motor_Init(void)
   angle_turn.direction = 1;
   angle_turn.target_mdeg = 0;
   angle_turn.start_ms = 0U;
-  direction_move.active = false;
-  direction_move.forward_mm_s = 0.0f;
-  direction_move.lateral_mm_s = 0.0f;
-  direction_move.target_yaw_mdeg = 0;
+  motor_clear_direction_move();
   Pid_Init(&heading_pid,
            APP_MOTOR_HEADING_KP,
            APP_MOTOR_HEADING_KI,
@@ -616,16 +729,16 @@ void Motor_Update(void)
   EncoderStatus encoder[MOTOR_COUNT];
 
   Encoder_GetAll(encoder);
-  motor_update_distance_move(encoder);
-  motor_update_angle_turn();
-  motor_update_direction_move();
-
   for (uint8_t id = 1U; id <= MOTOR_COUNT; ++id) {
     const uint32_t index = id - 1U;
     measured_counts[index] = encoder[index].delta_10ms * encoder_signs[index];
     measured_speeds_mm_s[index] =
         motor_round_to_int16(motor_counts_to_mm_s((float)measured_counts[index]));
   }
+
+  motor_update_distance_move(encoder);
+  motor_update_angle_turn();
+  motor_update_direction_move();
 
   if (brake_cycles_remaining > 0U) {
     for (uint8_t id = 1U; id <= MOTOR_COUNT; ++id) {
@@ -730,7 +843,7 @@ void Motor_SetSpeed(float target_speed, uint8_t id)
   distance_move.slowing = false;
   angle_turn.status = MOTOR_TURN_IDLE;
   angle_turn.slowing = false;
-  direction_move.active = false;
+  motor_clear_direction_move();
   Pid_Reset(&heading_pid);
   motor_set_speed_target(target_speed, id);
   motor_leave_critical(primask);
@@ -855,7 +968,7 @@ void Motor_Move(float forward_mm_s, float lateral_mm_s,
   distance_move.slowing = false;
   angle_turn.status = MOTOR_TURN_IDLE;
   angle_turn.slowing = false;
-  direction_move.active = false;
+  motor_clear_direction_move();
   Pid_Reset(&heading_pid);
   /* All three inputs and all wheel targets use mm/s. */
   motor_set_omni_speed(forward_mm_s, lateral_mm_s, yaw_tangent_mm_s);
@@ -891,6 +1004,9 @@ void Motor_MoveAngle(float speed_mm_s, float angle_deg)
   angle_deg = fmodf(angle_deg, 360.0f);
   const float angle_rad = angle_deg * MOTOR_DEG_TO_RAD;
   const bool starting = !direction_move.active;
+  const float target_forward = speed_mm_s * cosf(angle_rad);
+  const float target_lateral =
+      speed_mm_s * sinf(angle_rad) * MOTOR_API_LEFT_TO_BODY_Y;
 
   if (starting) {
     distance_move.status = MOTOR_DISTANCE_IDLE;
@@ -902,13 +1018,28 @@ void Motor_MoveAngle(float speed_mm_s, float angle_deg)
     direction_move.target_yaw_mdeg = imu.yaw_mdeg;
     Pid_Reset(&heading_pid);
     direction_move.active = true;
+  } else {
+    const bool target_changed =
+        (motor_abs_float(target_forward -
+                         direction_move.target_forward_mm_s) > 0.5f) ||
+        (motor_abs_float(target_lateral -
+                         direction_move.target_lateral_mm_s) > 0.5f);
+    if (target_changed && !direction_move.reversing &&
+        motor_direction_change_requires_stop(
+            direction_move.current_forward_mm_s,
+            direction_move.current_lateral_mm_s,
+            target_forward, target_lateral)) {
+      direction_move.reversing = true;
+      direction_move.zero_confirm_cycles = 0U;
+      direction_move.zero_wait_cycles = 0U;
+    }
   }
 
-  direction_move.forward_mm_s = speed_mm_s * cosf(angle_rad);
-  direction_move.lateral_mm_s =
-      speed_mm_s * sinf(angle_rad) * MOTOR_API_LEFT_TO_BODY_Y;
-  motor_set_omni_speed(direction_move.forward_mm_s,
-                       direction_move.lateral_mm_s, 0.0f);
+  direction_move.target_forward_mm_s = target_forward;
+  direction_move.target_lateral_mm_s = target_lateral;
+  if (starting) {
+    motor_set_omni_speed(0.0f, 0.0f, 0.0f);
+  }
   motor_leave_critical(primask);
 }
 

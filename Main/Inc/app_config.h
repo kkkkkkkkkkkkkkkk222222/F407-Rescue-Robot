@@ -73,6 +73,13 @@
 /* The installed chassis rotates opposite to the IMU positive Z direction. */
 #define APP_MOTOR_HEADING_OUTPUT_SIGN    -1.0f
 
+/* Non-blocking vector ramp used by Motor_MoveAngle(). */
+#define APP_OMNI_ACCEL_MM_S2              2500.0f
+#define APP_OMNI_DECEL_MM_S2              3000.0f
+#define APP_OMNI_ZERO_SPEED_MM_S          40
+#define APP_OMNI_ZERO_CONFIRM_CYCLES      3U
+#define APP_OMNI_ZERO_TIMEOUT_CYCLES      40U
+
 /* Go_distance() accepts metres; internal speed, slowdown and tolerance use millimetres. */
 #define APP_GO_DISTANCE_SPEED_MM_S       300.0f
 #define APP_GO_DISTANCE_MIN_SPEED_MM_S   120.0f
