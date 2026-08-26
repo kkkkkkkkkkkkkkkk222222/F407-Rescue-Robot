@@ -69,9 +69,22 @@ static void location_start_pose(LocationStart start, float *x_mm, float *y_mm,
 
   *x_mm = right ? APP_LOCATION_START_CENTER_MM : -APP_LOCATION_START_CENTER_MM;
   *y_mm = top ? APP_LOCATION_START_CENTER_MM : -APP_LOCATION_START_CENTER_MM;
-  /* The real car is parked with its servo/front side facing the outer wall
-   * and backs across the bumps into the field. */
-  *heading_mdeg = right ? 0LL : 180000LL;
+  /* The real car points diagonally out of its corner and backs through the
+   * gap between the two perpendicular bump groups toward the field centre. */
+  switch (start) {
+    case LOCATION_START_1:
+      *heading_mdeg = 135000LL;
+      break;
+    case LOCATION_START_2:
+      *heading_mdeg = 45000LL;
+      break;
+    case LOCATION_START_3:
+      *heading_mdeg = 225000LL;
+      break;
+    default:
+      *heading_mdeg = 315000LL;
+      break;
+  }
 }
 
 void Location_Reset(LocationStart start)
