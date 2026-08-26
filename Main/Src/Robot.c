@@ -41,14 +41,16 @@ static bool lcd_ready;
 typedef enum {
   MOTION_TEST_START = 0,
   MOTION_TEST_ACCELERATING,
-  MOTION_TEST_FORWARD,
+  MOTION_TEST_MOVING,
   MOTION_TEST_BRAKING,
   MOTION_TEST_TURNING,
+  MOTION_TEST_RESTART_WAIT,
   MOTION_TEST_STOPPED
 } MotionTestStage;
 
 static MotionTestStage motion_test_stage;
 static uint32_t motion_test_stop_ms;
+static uint8_t motion_test_round;
 #endif
 
 static void format_hex_byte(char text[5], uint8_t value)
@@ -186,6 +188,18 @@ static void run_servo_sweep(uint32_t now_ms)
 #endif
 
 #if APP_ENABLE_MOTION_TEST
+static void motion_test_finish_turn(uint32_t now_ms)
+{
+  ++motion_test_round;
+  if (motion_test_round < APP_MOTION_TEST_REPEAT_COUNT) {
+    Motor_Stop();
+    motion_test_stop_ms = now_ms + APP_MOTION_TEST_BRAKE_TIME_MS;
+    motion_test_stage = MOTION_TEST_RESTART_WAIT;
+  } else {
+    motion_test_stage = MOTION_TEST_STOPPED;
+  }
+}
+
 static void run_motion_test(uint32_t now_ms)
 {
   if (!IMU_GetData().ready || robot_motor_has_fault()) {
@@ -207,14 +221,14 @@ static void run_motion_test(uint32_t now_ms)
       if (Motor_MoveAngle(APP_MOTION_TEST_SPEED_MM_S,
                           APP_MOTION_TEST_MOVE_ANGLE_DEG)) {
         motion_test_stop_ms = now_ms + APP_MOTION_TEST_MOVE_TIME_MS;
-        motion_test_stage = MOTION_TEST_FORWARD;
+        motion_test_stage = MOTION_TEST_MOVING;
       } else if ((int32_t)(now_ms - motion_test_stop_ms) >= 0) {
         Motor_Stop();
         motion_test_stage = MOTION_TEST_STOPPED;
       }
       break;
 
-    case MOTION_TEST_FORWARD:
+    case MOTION_TEST_MOVING:
       if ((int32_t)(now_ms - motion_test_stop_ms) >= 0) {
         Motor_Stop();
         motion_test_stop_ms = now_ms + APP_MOTION_TEST_BRAKE_TIME_MS;
@@ -229,7 +243,7 @@ static void run_motion_test(uint32_t now_ms)
         if (result == MOTOR_TURN_RUNNING) {
           motion_test_stage = MOTION_TEST_TURNING;
         } else if (result == MOTOR_TURN_DONE) {
-          motion_test_stage = MOTION_TEST_STOPPED;
+          motion_test_finish_turn(now_ms);
         } else {
           Motor_Stop();
           motion_test_stage = MOTION_TEST_STOPPED;
@@ -241,7 +255,7 @@ static void run_motion_test(uint32_t now_ms)
       const MotorTurnStatus result =
           Motor_TurnAngle(APP_MOTION_TEST_TURN_DEG);
       if (result == MOTOR_TURN_DONE) {
-        motion_test_stage = MOTION_TEST_STOPPED;
+        motion_test_finish_turn(now_ms);
       } else if ((result == MOTOR_TURN_FAULT) ||
                  (result == MOTOR_TURN_INVALID)) {
         Motor_Stop();
@@ -249,6 +263,12 @@ static void run_motion_test(uint32_t now_ms)
       }
       break;
     }
+
+    case MOTION_TEST_RESTART_WAIT:
+      if ((int32_t)(now_ms - motion_test_stop_ms) >= 0) {
+        motion_test_stage = MOTION_TEST_START;
+      }
+      break;
 
     default:
       break;
@@ -309,6 +329,7 @@ void Robot_Init(void)
 #if APP_ENABLE_MOTION_TEST
   motion_test_stage = MOTION_TEST_START;
   motion_test_stop_ms = 0U;
+  motion_test_round = 0U;
 #endif
 
 #if APP_ENABLE_TASK
