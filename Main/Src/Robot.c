@@ -202,13 +202,13 @@ static void run_location_demo(uint32_t now_ms)
 
   switch (location_demo_stage) {
     case LOCATION_DEMO_START:
-      (void)Motor_MoveAngle(APP_LOCATION_DEMO_SPEED_MM_S, 0.0f);
+      (void)Motor_MoveAngle(APP_LOCATION_DEMO_SPEED_MM_S, 180.0f);
       location_demo_deadline_ms = now_ms + APP_LOCATION_DEMO_TIMEOUT_MS;
       location_demo_stage = LOCATION_DEMO_ACCELERATING;
       break;
 
     case LOCATION_DEMO_ACCELERATING:
-      if (Motor_MoveAngle(APP_LOCATION_DEMO_SPEED_MM_S, 0.0f)) {
+      if (Motor_MoveAngle(APP_LOCATION_DEMO_SPEED_MM_S, 180.0f)) {
         location_demo_deadline_ms = now_ms + APP_LOCATION_DEMO_TIME_MS;
         location_demo_stage = LOCATION_DEMO_MOVING;
       } else if ((int32_t)(now_ms - location_demo_deadline_ms) >= 0) {

@@ -69,9 +69,9 @@ static void location_start_pose(LocationStart start, float *x_mm, float *y_mm,
 
   *x_mm = right ? APP_LOCATION_START_CENTER_MM : -APP_LOCATION_START_CENTER_MM;
   *y_mm = top ? APP_LOCATION_START_CENTER_MM : -APP_LOCATION_START_CENTER_MM;
-  /* The drawing shows the speed bumps on the field-facing side: left-side
-   * starts leave toward +X and right-side starts leave toward -X. */
-  *heading_mdeg = right ? 180000LL : 0LL;
+  /* The real car is parked with its servo/front side facing the outer wall
+   * and backs across the bumps into the field. */
+  *heading_mdeg = right ? 0LL : 180000LL;
 }
 
 void Location_Reset(LocationStart start)
