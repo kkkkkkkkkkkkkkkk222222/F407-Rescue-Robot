@@ -461,20 +461,20 @@ static void location_draw_robot_triangle(int16_t center_x, int16_t center_y,
   const float left_x = -sinf(heading_rad);
   const float left_y = -cosf(heading_rad);
 
-  /* Body-frame vertices: long nose, wide left rear and short right rear.
-   * All three side lengths differ, and the longest point is the car front. */
+  /* Isosceles marker: the two equal short sides meet at the front point,
+   * while the longer base represents the rear of the car. */
   const int16_t nose_x = (int16_t)(center_x +
-      location_round_pixel(7.0f * forward_x));
+      location_round_pixel(4.0f * forward_x));
   const int16_t nose_y = (int16_t)(center_y +
-      location_round_pixel(7.0f * forward_y));
+      location_round_pixel(4.0f * forward_y));
   const int16_t rear_left_x = (int16_t)(center_x +
-      location_round_pixel(-4.0f * forward_x + 4.0f * left_x));
+      location_round_pixel(-3.0f * forward_x + 6.0f * left_x));
   const int16_t rear_left_y = (int16_t)(center_y +
-      location_round_pixel(-4.0f * forward_y + 4.0f * left_y));
+      location_round_pixel(-3.0f * forward_y + 6.0f * left_y));
   const int16_t rear_right_x = (int16_t)(center_x +
-      location_round_pixel(-3.0f * forward_x - 3.0f * left_x));
+      location_round_pixel(-3.0f * forward_x - 6.0f * left_x));
   const int16_t rear_right_y = (int16_t)(center_y +
-      location_round_pixel(-3.0f * forward_y - 3.0f * left_y));
+      location_round_pixel(-3.0f * forward_y - 6.0f * left_y));
 
   location_draw_line(nose_x, nose_y, rear_left_x, rear_left_y, color);
   location_draw_line(rear_left_x, rear_left_y,
