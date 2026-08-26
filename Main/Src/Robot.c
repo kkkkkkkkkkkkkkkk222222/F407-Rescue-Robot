@@ -196,15 +196,17 @@ static void run_motion_test(uint32_t now_ms)
 
   switch (motion_test_stage) {
     case MOTION_TEST_START:
-      (void)Motor_MoveAngle(APP_MOTION_TEST_SPEED_MM_S, 0.0f);
+      (void)Motor_MoveAngle(APP_MOTION_TEST_SPEED_MM_S,
+                            APP_MOTION_TEST_MOVE_ANGLE_DEG);
       motion_test_stop_ms =
           now_ms + APP_MOTION_TEST_TRANSITION_TIMEOUT_MS;
       motion_test_stage = MOTION_TEST_ACCELERATING;
       break;
 
     case MOTION_TEST_ACCELERATING:
-      if (Motor_MoveAngle(APP_MOTION_TEST_SPEED_MM_S, 0.0f)) {
-        motion_test_stop_ms = now_ms + APP_MOTION_TEST_FORWARD_TIME_MS;
+      if (Motor_MoveAngle(APP_MOTION_TEST_SPEED_MM_S,
+                          APP_MOTION_TEST_MOVE_ANGLE_DEG)) {
+        motion_test_stop_ms = now_ms + APP_MOTION_TEST_MOVE_TIME_MS;
         motion_test_stage = MOTION_TEST_FORWARD;
       } else if ((int32_t)(now_ms - motion_test_stop_ms) >= 0) {
         Motor_Stop();
