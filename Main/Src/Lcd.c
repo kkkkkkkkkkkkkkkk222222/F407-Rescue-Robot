@@ -451,87 +451,56 @@ static int16_t location_round_pixel(float value)
   return (int16_t)(value + ((value >= 0.0f) ? 0.5f : -0.5f));
 }
 
-static int32_t location_triangle_edge(int16_t ax, int16_t ay,
-                                      int16_t bx, int16_t by,
-                                      int16_t px, int16_t py)
+static void location_draw_disc(int16_t center_x, int16_t center_y,
+                               uint8_t radius, uint16_t color)
 {
-  return (int32_t)(px - ax) * (int32_t)(by - ay) -
-         (int32_t)(py - ay) * (int32_t)(bx - ax);
-}
+  const int16_t radius_square = (int16_t)radius * (int16_t)radius;
+  for (int16_t dy = -(int16_t)radius; dy <= (int16_t)radius; ++dy) {
+    int16_t half_width = 0;
+    const int16_t row_y = (int16_t)(center_y + dy);
+    int16_t row_left;
+    int16_t row_right;
 
-static void location_fill_triangle(int16_t x0, int16_t y0,
-                                   int16_t x1, int16_t y1,
-                                   int16_t x2, int16_t y2,
-                                   uint16_t color)
-{
-  int16_t minimum_x = x0;
-  int16_t maximum_x = x0;
-  int16_t minimum_y = y0;
-  int16_t maximum_y = y0;
-  const int16_t xs[2] = {x1, x2};
-  const int16_t ys[2] = {y1, y2};
-  for (uint8_t i = 0U; i < 2U; ++i) {
-    if (xs[i] < minimum_x) minimum_x = xs[i];
-    if (xs[i] > maximum_x) maximum_x = xs[i];
-    if (ys[i] < minimum_y) minimum_y = ys[i];
-    if (ys[i] > maximum_y) maximum_y = ys[i];
-  }
-
-  for (int16_t y = minimum_y; y <= maximum_y; ++y) {
-    int16_t span_start = -1;
-    int16_t span_end = -1;
-    for (int16_t x = minimum_x; x <= maximum_x; ++x) {
-      const int32_t edge0 = location_triangle_edge(x0, y0, x1, y1, x, y);
-      const int32_t edge1 = location_triangle_edge(x1, y1, x2, y2, x, y);
-      const int32_t edge2 = location_triangle_edge(x2, y2, x0, y0, x, y);
-      const bool has_negative = (edge0 < 0) || (edge1 < 0) || (edge2 < 0);
-      const bool has_positive = (edge0 > 0) || (edge1 > 0) || (edge2 > 0);
-      if (!(has_negative && has_positive)) {
-        if (span_start < 0) {
-          span_start = x;
-        }
-        span_end = x;
-      }
+    if ((row_y < 0) || (row_y >= (int16_t)APP_LCD_HEIGHT)) {
+      continue;
     }
-    if ((span_start >= 0) && (y >= 0)) {
-      LCD_FillRect((uint16_t)span_start, (uint16_t)y,
-                   (uint16_t)(span_end - span_start + 1), 1U, color);
+    while (((half_width + 1) * (half_width + 1) + dy * dy) <=
+           radius_square) {
+      ++half_width;
     }
+    row_left = (int16_t)(center_x - half_width);
+    row_right = (int16_t)(center_x + half_width);
+    if ((row_right < 0) || (row_left >= (int16_t)APP_LCD_WIDTH)) {
+      continue;
+    }
+    if (row_left < 0) {
+      row_left = 0;
+    }
+    if (row_right >= (int16_t)APP_LCD_WIDTH) {
+      row_right = (int16_t)APP_LCD_WIDTH - 1;
+    }
+    LCD_FillRect((uint16_t)row_left, (uint16_t)row_y,
+                 (uint16_t)(row_right - row_left + 1), 1U, color);
   }
 }
 
-static void location_draw_robot_triangle(int16_t center_x, int16_t center_y,
-                                         int32_t heading_mdeg,
-                                         uint16_t color)
+static void location_draw_robot_marker(int16_t center_x, int16_t center_y,
+                                       int32_t heading_mdeg, bool valid)
 {
   const float heading_rad = (float)heading_mdeg * 0.001f * 0.01745329252f;
   const float forward_x = cosf(heading_rad);
   const float forward_y = -sinf(heading_rad);
-  const float left_x = -sinf(heading_rad);
-  const float left_y = -cosf(heading_rad);
-
-  /* Isosceles marker: the two equal short sides meet at the front point,
-   * while the longer base represents the rear of the car. */
   const int16_t nose_x = (int16_t)(center_x +
-      location_round_pixel(4.0f * forward_x));
+      location_round_pixel(8.0f * forward_x));
   const int16_t nose_y = (int16_t)(center_y +
-      location_round_pixel(4.0f * forward_y));
-  const int16_t rear_left_x = (int16_t)(center_x +
-      location_round_pixel(-3.0f * forward_x + 6.0f * left_x));
-  const int16_t rear_left_y = (int16_t)(center_y +
-      location_round_pixel(-3.0f * forward_y + 6.0f * left_y));
-  const int16_t rear_right_x = (int16_t)(center_x +
-      location_round_pixel(-3.0f * forward_x - 6.0f * left_x));
-  const int16_t rear_right_y = (int16_t)(center_y +
-      location_round_pixel(-3.0f * forward_y - 6.0f * left_y));
+      location_round_pixel(8.0f * forward_y));
 
-  location_fill_triangle(nose_x, nose_y, rear_left_x, rear_left_y,
-                         rear_right_x, rear_right_y, color);
-  location_draw_line(nose_x, nose_y, rear_left_x, rear_left_y, LCD_WHITE);
-  location_draw_line(rear_left_x, rear_left_y,
-                     rear_right_x, rear_right_y, LCD_WHITE);
-  location_draw_line(rear_right_x, rear_right_y, nose_x, nose_y, LCD_WHITE);
-  LCD_FillRect((uint16_t)nose_x, (uint16_t)nose_y, 2U, 2U, LCD_RED);
+  /* A white rim and bright filled body remain recognizable at every angle.
+   * The separate centered nose disc cannot be lost to polygon rounding. */
+  location_draw_disc(center_x, center_y, 4U, LCD_WHITE);
+  location_draw_disc(center_x, center_y, 3U, valid ? LCD_YELLOW : LCD_RED);
+  location_draw_line(center_x, center_y, nose_x, nose_y, LCD_WHITE);
+  location_draw_disc(nose_x, nose_y, 2U, valid ? LCD_RED : LCD_WHITE);
 }
 
 static void dashboard_draw_location(const LCDDashboard *dashboard)
@@ -545,9 +514,9 @@ static void dashboard_draw_location(const LCDDashboard *dashboard)
     layout_drawn = true;
   }
   if (location_marker_drawn) {
-    const int16_t erase_x = (location_last_x > 8) ? location_last_x - 8 : 0;
-    const int16_t erase_y = (location_last_y > 8) ? location_last_y - 8 : 0;
-    LCD_FillRect((uint16_t)erase_x, (uint16_t)erase_y, 17U, 17U, LCD_BLACK);
+    const int16_t erase_x = (location_last_x > 10) ? location_last_x - 10 : 0;
+    const int16_t erase_y = (location_last_y > 10) ? location_last_y - 10 : 0;
+    LCD_FillRect((uint16_t)erase_x, (uint16_t)erase_y, 21U, 21U, LCD_BLACK);
   }
   location_draw_static_map();
 
@@ -570,8 +539,8 @@ static void dashboard_draw_location(const LCDDashboard *dashboard)
   location_draw_trail();
   location_last_x = current_x;
   location_last_y = current_y;
-  location_draw_robot_triangle(location_last_x, location_last_y, heading,
-                               pose->valid ? LCD_YELLOW : LCD_RED);
+  location_draw_robot_marker(location_last_x, location_last_y, heading,
+                             pose->valid);
   location_marker_drawn = true;
 }
 #endif
