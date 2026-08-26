@@ -2,7 +2,8 @@
 #define APP_CONFIG_H
 
 /* Standalone test modes. Keep only one mode enabled at a time. */
-#define APP_ENABLE_MOTION_TEST           1
+#define APP_ENABLE_MOTION_TEST           0
+#define APP_ENABLE_LOCATION_DEMO         1
 #define APP_ENABLE_AUTOMATIC_MOTOR_TEST  0
 #define APP_ENABLE_SERVO_SWEEP_TEST      0
 
@@ -31,12 +32,27 @@
 #define APP_MOTOR_SPEED_TEST_TARGET_MM_S 110.0f
 
 /* The rescue task returns automatically when the motion test is disabled. */
-#define APP_ENABLE_TASK                  (!APP_ENABLE_MOTION_TEST)
+#define APP_ENABLE_TASK                  (!(APP_ENABLE_MOTION_TEST || \
+                                            APP_ENABLE_LOCATION_DEMO))
 
-#if APP_ENABLE_MOTION_TEST && \
+#if (APP_ENABLE_MOTION_TEST || APP_ENABLE_LOCATION_DEMO) && \
     (APP_ENABLE_AUTOMATIC_MOTOR_TEST || APP_ENABLE_SERVO_SWEEP_TEST)
-#error "Motion test must be the only enabled application mode"
+#error "Standalone test must be the only enabled application mode"
 #endif
+
+#if APP_ENABLE_MOTION_TEST && APP_ENABLE_LOCATION_DEMO
+#error "Motion and location demos cannot run together"
+#endif
+
+/* Coarse field localization and start-zone-4 demonstration. */
+#define APP_LOCATION_FIELD_HALF_MM       1500.0f
+#define APP_LOCATION_START_CENTER_MM     1350.0f
+#define APP_LOCATION_IMU_YAW_SIGN        1.0f
+#define APP_LOCATION_MAX_YAW_STEP_MDEG   30000LL
+#define APP_LOCATION_DEMO_START_ZONE     4U
+#define APP_LOCATION_DEMO_SPEED_MM_S     300.0f
+#define APP_LOCATION_DEMO_TIME_MS        3000U
+#define APP_LOCATION_DEMO_TIMEOUT_MS     2000U
 
 /*
  * Physical layout from the 2026-08-25 test photo:

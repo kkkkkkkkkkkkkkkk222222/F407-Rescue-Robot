@@ -85,6 +85,14 @@ static int32_t divide_round(int64_t value, int64_t divisor)
   return (int32_t)((value - (divisor / 2LL)) / divisor);
 }
 
+static int64_t divide_round64(int64_t value, int64_t divisor)
+{
+  if (value >= 0) {
+    return (value + (divisor / 2LL)) / divisor;
+  }
+  return (value - (divisor / 2LL)) / divisor;
+}
+
 static bool spi_transfer(const uint8_t *tx, uint8_t *rx, uint16_t length)
 {
   if ((tx == NULL) || (rx == NULL) || (length == 0U) ||
@@ -398,7 +406,7 @@ void IMU_Update(uint32_t now_ms)
     const uint32_t elapsed_ms = now_ms - last_sample_ms;
     if (elapsed_ms <= IMU_MAX_INTEGRATION_GAP_MS) {
       yaw_numerator += corrected_gyro[2] * IMU_GYRO_SCALE_NUMERATOR * elapsed_ms;
-      imu_data.yaw_mdeg = divide_round(
+      imu_data.yaw_mdeg = divide_round64(
           yaw_numerator,
           1000LL * IMU_GYRO_SCALE_DENOMINATOR * IMU_CALIBRATION_SAMPLES);
     }

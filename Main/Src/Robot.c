@@ -6,6 +6,7 @@
 #include "encoder.h"
 #include "imu.h"
 #include "Lcd.h"
+#include "Location.h"
 #include "main.h"
 #include "motor.h"
 #include "servo.h"
@@ -51,6 +52,18 @@ typedef enum {
 static MotionTestStage motion_test_stage;
 static uint32_t motion_test_stop_ms;
 static uint8_t motion_test_round;
+#endif
+
+#if APP_ENABLE_LOCATION_DEMO
+typedef enum {
+  LOCATION_DEMO_START = 0,
+  LOCATION_DEMO_ACCELERATING,
+  LOCATION_DEMO_MOVING,
+  LOCATION_DEMO_STOPPED
+} LocationDemoStage;
+
+static LocationDemoStage location_demo_stage;
+static uint32_t location_demo_deadline_ms;
 #endif
 
 static void format_hex_byte(char text[5], uint8_t value)
@@ -142,7 +155,8 @@ static void draw_dashboard(void)
     .uart_received = usart3_byte_received,
     .motor_test_running = false,
     .imu_ready = false,
-    .imu_yaw_mdeg = 0
+    .imu_yaw_mdeg = 0,
+    .location_demo_running = false
   };
 #if APP_ENABLE_AUTOMATIC_MOTOR_TEST && !APP_ENABLE_TASK
   dashboard.motor_test_running = motor_test_running;
@@ -152,10 +166,18 @@ static void draw_dashboard(void)
   dashboard.imu_ready = imu.ready;
   dashboard.imu_yaw_mdeg = imu.yaw_mdeg;
 #endif
+#if APP_ENABLE_LOCATION_DEMO
+  const IMUData imu = IMU_GetData();
+  dashboard.imu_ready = imu.ready;
+  dashboard.imu_yaw_mdeg = imu.yaw_mdeg;
+  dashboard.location = Location_GetPose();
+  dashboard.location_demo_running =
+      location_demo_stage != LOCATION_DEMO_STOPPED;
+#endif
   LCD_DrawDashboard(&dashboard);
 }
 
-#if APP_ENABLE_MOTION_TEST || \
+#if APP_ENABLE_MOTION_TEST || APP_ENABLE_LOCATION_DEMO || \
     (APP_ENABLE_AUTOMATIC_MOTOR_TEST && !APP_ENABLE_TASK)
 static bool robot_motor_has_fault(void)
 {
@@ -166,6 +188,45 @@ static bool robot_motor_has_fault(void)
     }
   }
   return false;
+}
+#endif
+
+#if APP_ENABLE_LOCATION_DEMO
+static void run_location_demo(uint32_t now_ms)
+{
+  if (!IMU_GetData().ready || robot_motor_has_fault()) {
+    Motor_Stop();
+    location_demo_stage = LOCATION_DEMO_STOPPED;
+    return;
+  }
+
+  switch (location_demo_stage) {
+    case LOCATION_DEMO_START:
+      (void)Motor_MoveAngle(APP_LOCATION_DEMO_SPEED_MM_S, 0.0f);
+      location_demo_deadline_ms = now_ms + APP_LOCATION_DEMO_TIMEOUT_MS;
+      location_demo_stage = LOCATION_DEMO_ACCELERATING;
+      break;
+
+    case LOCATION_DEMO_ACCELERATING:
+      if (Motor_MoveAngle(APP_LOCATION_DEMO_SPEED_MM_S, 0.0f)) {
+        location_demo_deadline_ms = now_ms + APP_LOCATION_DEMO_TIME_MS;
+        location_demo_stage = LOCATION_DEMO_MOVING;
+      } else if ((int32_t)(now_ms - location_demo_deadline_ms) >= 0) {
+        Motor_Stop();
+        location_demo_stage = LOCATION_DEMO_STOPPED;
+      }
+      break;
+
+    case LOCATION_DEMO_MOVING:
+      if ((int32_t)(now_ms - location_demo_deadline_ms) >= 0) {
+        Motor_Stop();
+        location_demo_stage = LOCATION_DEMO_STOPPED;
+      }
+      break;
+
+    default:
+      break;
+  }
 }
 #endif
 
@@ -275,7 +336,6 @@ static void run_motion_test(uint32_t now_ms)
   }
 }
 #endif
-
 #if APP_ENABLE_AUTOMATIC_MOTOR_TEST && !APP_ENABLE_TASK
 static void process_motor_test_key(uint32_t now_ms)
 {
@@ -331,6 +391,10 @@ void Robot_Init(void)
   motion_test_stop_ms = 0U;
   motion_test_round = 0U;
 #endif
+#if APP_ENABLE_LOCATION_DEMO
+  location_demo_stage = LOCATION_DEMO_START;
+  location_demo_deadline_ms = 0U;
+#endif
 
 #if APP_ENABLE_TASK
   task_release_sequence = 0U;
@@ -359,6 +423,9 @@ void Robot_Init(void)
   Motor_Init();
   Encoder_Init();
   const bool imu_ready = IMU_Init();
+#if APP_ENABLE_LOCATION_DEMO
+  Location_Init((LocationStart)APP_LOCATION_DEMO_START_ZONE);
+#endif
   /* Initialize the existing servo outputs after the motor and sensor setup. */
   Servo_Init();
 
@@ -429,6 +496,9 @@ void Robot_Process(void)
 #if APP_ENABLE_MOTION_TEST
   run_motion_test(app_milliseconds);
 #endif
+#if APP_ENABLE_LOCATION_DEMO
+  run_location_demo(app_milliseconds);
+#endif
 }
 
 void Robot_RunDeferredTask(void)
@@ -461,6 +531,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *timer)
   if (++motor_control_period_ms >= APP_MOTOR_CONTROL_PERIOD_MS) {
     motor_control_period_ms = 0U;
     Encoder_Sample10ms();
+#if APP_ENABLE_LOCATION_DEMO
+    Location_Update10ms();
+#endif
     motor_update_due = true;
   }
 

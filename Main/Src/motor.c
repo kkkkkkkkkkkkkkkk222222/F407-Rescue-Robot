@@ -45,6 +45,7 @@ typedef struct {
   bool slowing;
   int8_t direction;
   int32_t target_mdeg;
+  int64_t start_yaw_mdeg;
   uint32_t start_ms;
 } AngleTurn;
 
@@ -499,7 +500,7 @@ static void motor_update_angle_turn(void)
     return;
   }
 
-  const int64_t signed_yaw_mdeg = imu.yaw_mdeg;
+  const int64_t signed_yaw_mdeg = imu.yaw_mdeg - angle_turn.start_yaw_mdeg;
   const int64_t yaw_mdeg =
       (signed_yaw_mdeg < 0LL) ? -signed_yaw_mdeg : signed_yaw_mdeg;
   const int64_t remaining_mdeg =
@@ -705,6 +706,7 @@ void Motor_Init(void)
   angle_turn.slowing = false;
   angle_turn.direction = 1;
   angle_turn.target_mdeg = 0;
+  angle_turn.start_yaw_mdeg = 0LL;
   angle_turn.start_ms = 0U;
   motor_clear_direction_move();
   Pid_Init(&heading_pid,
@@ -927,7 +929,8 @@ MotorTurnStatus Motor_TurnAngle(float angle_deg)
     motor_leave_critical(primask);
     return MOTOR_TURN_INVALID;
   }
-  if (motor_has_fault() || !IMU_GetData().ready) {
+  const IMUData imu = IMU_GetData();
+  if (motor_has_fault() || !imu.ready) {
     angle_turn.status = MOTOR_TURN_FAULT;
     angle_turn.slowing = false;
     motor_stop_outputs(true);
@@ -949,11 +952,11 @@ MotorTurnStatus Motor_TurnAngle(float angle_deg)
     return MOTOR_TURN_DONE;
   }
 
-  IMU_ZeroYaw();
   angle_turn.status = MOTOR_TURN_RUNNING;
   angle_turn.slowing = false;
   angle_turn.direction = (angle_deg >= 0.0f) ? 1 : -1;
   angle_turn.target_mdeg = target_mdeg;
+  angle_turn.start_yaw_mdeg = imu.yaw_mdeg;
   angle_turn.start_ms = HAL_GetTick();
   motor_set_rotate_speed(APP_MOTOR_TURN_FAST_MM_S *
                          (float)angle_turn.direction);

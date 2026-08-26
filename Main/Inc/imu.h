@@ -15,7 +15,7 @@ typedef enum {
 typedef struct {
   int32_t accel_mg[3];
   int32_t gyro_mdps[3];
-  int32_t yaw_mdeg;
+  int64_t yaw_mdeg;
   uint32_t sample_count;
   uint32_t error_count;
   uint8_t device_id;

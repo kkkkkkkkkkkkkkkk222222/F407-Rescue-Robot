@@ -1,6 +1,8 @@
 #include "Lcd.h"
 
 #include <stddef.h>
+#include <math.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -264,7 +266,7 @@ static void dashboard_write(uint16_t x, uint16_t y, uint16_t width,
   LCD_DrawText(x, y, text, LCD_WHITE, LCD_BLACK);
 }
 
-#if APP_ENABLE_TASK || !APP_ENABLE_MOTION_TEST
+#if APP_ENABLE_TASK || (!APP_ENABLE_MOTION_TEST && !APP_ENABLE_LOCATION_DEMO)
 static bool dashboard_motor_fault(void)
 {
   for (uint8_t id = 1U; id <= 3U; ++id) {
@@ -289,6 +291,154 @@ static const char *dashboard_uart_text(const LCDDashboard *dashboard)
     return "RX OK";
   }
   return "TIMEOUT";
+}
+#endif
+
+#if APP_ENABLE_LOCATION_DEMO
+static void dashboard_write(uint16_t x, uint16_t y, uint16_t width,
+                            const char *text);
+
+#define LOCATION_MAP_X      8
+#define LOCATION_MAP_Y      40
+#define LOCATION_MAP_SIZE   112
+
+static int16_t location_last_x;
+static int16_t location_last_y;
+static bool location_marker_drawn;
+
+static void location_draw_line(int16_t x0, int16_t y0, int16_t x1, int16_t y1,
+                               uint16_t color)
+{
+  int16_t dx = (int16_t)abs(x1 - x0);
+  const int16_t sx = (x0 < x1) ? 1 : -1;
+  const int16_t dy = (int16_t)-abs(y1 - y0);
+  const int16_t sy = (y0 < y1) ? 1 : -1;
+  int16_t error = (int16_t)(dx + dy);
+
+  for (;;) {
+    if ((x0 >= 0) && (y0 >= 0)) {
+      LCD_FillRect((uint16_t)x0, (uint16_t)y0, 1U, 1U, color);
+    }
+    if ((x0 == x1) && (y0 == y1)) {
+      break;
+    }
+    const int16_t twice_error = (int16_t)(2 * error);
+    if (twice_error >= dy) {
+      error = (int16_t)(error + dy);
+      x0 = (int16_t)(x0 + sx);
+    }
+    if (twice_error <= dx) {
+      error = (int16_t)(error + dx);
+      y0 = (int16_t)(y0 + sy);
+    }
+  }
+}
+
+static int16_t location_map_x(int32_t x_mm)
+{
+  if (x_mm < -1500) {
+    x_mm = -1500;
+  } else if (x_mm > 1500) {
+    x_mm = 1500;
+  }
+  return (int16_t)(LOCATION_MAP_X +
+      ((x_mm + 1500) * (LOCATION_MAP_SIZE - 1) + 1500) / 3000);
+}
+
+static int16_t location_map_y(int32_t y_mm)
+{
+  if (y_mm < -1500) {
+    y_mm = -1500;
+  } else if (y_mm > 1500) {
+    y_mm = 1500;
+  }
+  return (int16_t)(LOCATION_MAP_Y +
+      ((1500 - y_mm) * (LOCATION_MAP_SIZE - 1) + 1500) / 3000);
+}
+
+static void location_draw_static_map(void)
+{
+  const uint16_t right = LOCATION_MAP_X + LOCATION_MAP_SIZE - 1U;
+  const uint16_t bottom = LOCATION_MAP_Y + LOCATION_MAP_SIZE - 1U;
+
+  LCD_FillRect(LOCATION_MAP_X, LOCATION_MAP_Y, LOCATION_MAP_SIZE, 1U, LCD_WHITE);
+  LCD_FillRect(LOCATION_MAP_X, bottom, LOCATION_MAP_SIZE, 1U, LCD_WHITE);
+  LCD_FillRect(LOCATION_MAP_X, LOCATION_MAP_Y, 1U, LOCATION_MAP_SIZE, LCD_WHITE);
+  LCD_FillRect(right, LOCATION_MAP_Y, 1U, LOCATION_MAP_SIZE, LCD_WHITE);
+  LCD_FillRect(LOCATION_MAP_X + 55U, LOCATION_MAP_Y + 1U,
+               1U, LOCATION_MAP_SIZE - 2U, LCD_GRAY);
+  LCD_FillRect(LOCATION_MAP_X + 1U, LOCATION_MAP_Y + 55U,
+               LOCATION_MAP_SIZE - 2U, 1U, LCD_GRAY);
+
+  /* Four 300 mm start zones. */
+  LCD_FillRect(LOCATION_MAP_X + 1U, LOCATION_MAP_Y + 1U, 11U, 11U, LCD_MAGENTA);
+  LCD_FillRect(right - 11U, LOCATION_MAP_Y + 1U, 11U, 11U, LCD_MAGENTA);
+  LCD_FillRect(LOCATION_MAP_X + 1U, bottom - 11U, 11U, 11U, LCD_MAGENTA);
+  LCD_FillRect(right - 11U, bottom - 11U, 11U, 11U, LCD_MAGENTA);
+
+  /* 660 x 360 mm outer safe-zone frame and 600 x 300 mm usable area. */
+  LCD_FillRect(LOCATION_MAP_X + 44U, LOCATION_MAP_Y + 1U,
+               24U, 13U, LCD_MAGENTA);
+  LCD_FillRect(LOCATION_MAP_X + 45U, LOCATION_MAP_Y + 2U,
+               22U, 11U, LCD_RED);
+  LCD_FillRect(LOCATION_MAP_X + 55U, LOCATION_MAP_Y + 2U,
+               1U, 11U, LCD_BLACK);
+  LCD_FillRect(LOCATION_MAP_X + 44U, bottom - 13U,
+               24U, 13U, LCD_MAGENTA);
+  LCD_FillRect(LOCATION_MAP_X + 45U, bottom - 12U,
+               22U, 11U, LCD_CYAN);
+  LCD_FillRect(LOCATION_MAP_X + 55U, bottom - 12U,
+               1U, 11U, LCD_BLACK);
+
+  /* The three bumps immediately left of start zone 4. */
+  LCD_FillRect(right - 23U, bottom - 10U, 1U, 9U, LCD_GRAY);
+  LCD_FillRect(right - 20U, bottom - 10U, 1U, 9U, LCD_GRAY);
+  LCD_FillRect(right - 17U, bottom - 10U, 1U, 9U, LCD_GRAY);
+}
+
+static void dashboard_draw_location(const LCDDashboard *dashboard)
+{
+  static bool layout_drawn;
+  char text[24];
+  const LocationPose *pose = &dashboard->location;
+
+  if (!layout_drawn) {
+    LCD_FillScreen(LCD_BLACK);
+    layout_drawn = true;
+  }
+  if (location_marker_drawn) {
+    const int16_t erase_x = (location_last_x > 6) ? location_last_x - 6 : 0;
+    const int16_t erase_y = (location_last_y > 6) ? location_last_y - 6 : 0;
+    LCD_FillRect((uint16_t)erase_x, (uint16_t)erase_y, 13U, 13U, LCD_BLACK);
+  }
+  location_draw_static_map();
+
+  (void)snprintf(text, sizeof(text), "X:%ld Y:%ld",
+                 (long)pose->x_mm, (long)pose->y_mm);
+  dashboard_write(0U, 4U, 128U, text);
+  const int32_t heading = pose->heading_mdeg;
+  const char *state = !pose->valid ? "IMUERR" :
+                      (!pose->inside_field ? "OUT" :
+                      (dashboard->location_demo_running ? "EXIT" : "STOP"));
+  (void)snprintf(text, sizeof(text), "H:%ld.%01ld Z%u %s",
+                 (long)(heading / 1000L),
+                 (long)((heading % 1000L) / 100L),
+                 pose->start_zone, state);
+  dashboard_write(0U, 20U, 128U, text);
+
+  location_last_x = location_map_x(pose->x_mm);
+  location_last_y = location_map_y(pose->y_mm);
+  LCD_FillRect((uint16_t)(location_last_x - 2),
+               (uint16_t)(location_last_y - 2), 5U, 5U,
+               pose->valid ? LCD_YELLOW : LCD_RED);
+  const float heading_rad = (float)heading * 0.001f * 0.01745329252f;
+  const int16_t arrow_x = (int16_t)(location_last_x +
+      (int16_t)(6.0f * cosf(heading_rad)));
+  const int16_t arrow_y = (int16_t)(location_last_y -
+      (int16_t)(6.0f * sinf(heading_rad)));
+  location_draw_line(location_last_x, location_last_y,
+                     arrow_x, arrow_y, LCD_WHITE);
+  location_marker_drawn = true;
 }
 #endif
 
@@ -495,7 +645,7 @@ static void dashboard_draw_task(const LCDDashboard *dashboard)
       break;
   }
 }
-#else
+#elif !APP_ENABLE_LOCATION_DEMO
 static void dashboard_draw_test(const LCDDashboard *dashboard)
 {
   static bool layout_drawn;
@@ -582,6 +732,8 @@ void LCD_DrawDashboard(const LCDDashboard *dashboard)
   }
 #if APP_ENABLE_TASK
   dashboard_draw_task(dashboard);
+#elif APP_ENABLE_LOCATION_DEMO
+  dashboard_draw_location(dashboard);
 #else
   dashboard_draw_test(dashboard);
 #endif

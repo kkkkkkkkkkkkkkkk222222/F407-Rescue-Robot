@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "Location.h"
+
 #define LCD_BLACK   0x0000U
 #define LCD_BLUE    0x001FU
 #define LCD_RED     0xF800U
@@ -11,6 +13,9 @@
 #define LCD_GREEN   0x07E0U
 #define LCD_YELLOW  0xFFE0U
 #define LCD_CYAN    0x07FFU
+#define LCD_MAGENTA 0xF81FU
+#define LCD_ORANGE  0xFD20U
+#define LCD_GRAY    0x8410U
 
 typedef struct {
   uint32_t now_ms;
@@ -20,7 +25,9 @@ typedef struct {
   bool uart_received;
   bool motor_test_running;
   bool imu_ready;
-  int32_t imu_yaw_mdeg;
+  int64_t imu_yaw_mdeg;
+  bool location_demo_running;
+  LocationPose location;
 } LCDDashboard;
 
 bool LCD_Init(void);
