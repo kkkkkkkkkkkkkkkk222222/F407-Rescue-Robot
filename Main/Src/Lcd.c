@@ -446,6 +446,43 @@ static void location_draw_trail(void)
   }
 }
 
+static int16_t location_round_pixel(float value)
+{
+  return (int16_t)(value + ((value >= 0.0f) ? 0.5f : -0.5f));
+}
+
+static void location_draw_robot_triangle(int16_t center_x, int16_t center_y,
+                                         int32_t heading_mdeg,
+                                         uint16_t color)
+{
+  const float heading_rad = (float)heading_mdeg * 0.001f * 0.01745329252f;
+  const float forward_x = cosf(heading_rad);
+  const float forward_y = -sinf(heading_rad);
+  const float left_x = -sinf(heading_rad);
+  const float left_y = -cosf(heading_rad);
+
+  /* Body-frame vertices: long nose, wide left rear and short right rear.
+   * All three side lengths differ, and the longest point is the car front. */
+  const int16_t nose_x = (int16_t)(center_x +
+      location_round_pixel(7.0f * forward_x));
+  const int16_t nose_y = (int16_t)(center_y +
+      location_round_pixel(7.0f * forward_y));
+  const int16_t rear_left_x = (int16_t)(center_x +
+      location_round_pixel(-4.0f * forward_x + 4.0f * left_x));
+  const int16_t rear_left_y = (int16_t)(center_y +
+      location_round_pixel(-4.0f * forward_y + 4.0f * left_y));
+  const int16_t rear_right_x = (int16_t)(center_x +
+      location_round_pixel(-3.0f * forward_x - 3.0f * left_x));
+  const int16_t rear_right_y = (int16_t)(center_y +
+      location_round_pixel(-3.0f * forward_y - 3.0f * left_y));
+
+  location_draw_line(nose_x, nose_y, rear_left_x, rear_left_y, color);
+  location_draw_line(rear_left_x, rear_left_y,
+                     rear_right_x, rear_right_y, color);
+  location_draw_line(rear_right_x, rear_right_y, nose_x, nose_y, color);
+  LCD_FillRect((uint16_t)nose_x, (uint16_t)nose_y, 2U, 2U, LCD_ORANGE);
+}
+
 static void dashboard_draw_location(const LCDDashboard *dashboard)
 {
   static bool layout_drawn;
@@ -457,9 +494,9 @@ static void dashboard_draw_location(const LCDDashboard *dashboard)
     layout_drawn = true;
   }
   if (location_marker_drawn) {
-    const int16_t erase_x = (location_last_x > 6) ? location_last_x - 6 : 0;
-    const int16_t erase_y = (location_last_y > 6) ? location_last_y - 6 : 0;
-    LCD_FillRect((uint16_t)erase_x, (uint16_t)erase_y, 13U, 13U, LCD_BLACK);
+    const int16_t erase_x = (location_last_x > 8) ? location_last_x - 8 : 0;
+    const int16_t erase_y = (location_last_y > 8) ? location_last_y - 8 : 0;
+    LCD_FillRect((uint16_t)erase_x, (uint16_t)erase_y, 17U, 17U, LCD_BLACK);
   }
   location_draw_static_map();
 
@@ -482,16 +519,8 @@ static void dashboard_draw_location(const LCDDashboard *dashboard)
   location_draw_trail();
   location_last_x = current_x;
   location_last_y = current_y;
-  LCD_FillRect((uint16_t)(location_last_x - 2),
-               (uint16_t)(location_last_y - 2), 5U, 5U,
-               pose->valid ? LCD_YELLOW : LCD_RED);
-  const float heading_rad = (float)heading * 0.001f * 0.01745329252f;
-  const int16_t arrow_x = (int16_t)(location_last_x +
-      (int16_t)(6.0f * cosf(heading_rad)));
-  const int16_t arrow_y = (int16_t)(location_last_y -
-      (int16_t)(6.0f * sinf(heading_rad)));
-  location_draw_line(location_last_x, location_last_y,
-                     arrow_x, arrow_y, LCD_WHITE);
+  location_draw_robot_triangle(location_last_x, location_last_y, heading,
+                               pose->valid ? LCD_YELLOW : LCD_RED);
   location_marker_drawn = true;
 }
 #endif
