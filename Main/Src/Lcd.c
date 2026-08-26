@@ -451,6 +451,55 @@ static int16_t location_round_pixel(float value)
   return (int16_t)(value + ((value >= 0.0f) ? 0.5f : -0.5f));
 }
 
+static int32_t location_triangle_edge(int16_t ax, int16_t ay,
+                                      int16_t bx, int16_t by,
+                                      int16_t px, int16_t py)
+{
+  return (int32_t)(px - ax) * (int32_t)(by - ay) -
+         (int32_t)(py - ay) * (int32_t)(bx - ax);
+}
+
+static void location_fill_triangle(int16_t x0, int16_t y0,
+                                   int16_t x1, int16_t y1,
+                                   int16_t x2, int16_t y2,
+                                   uint16_t color)
+{
+  int16_t minimum_x = x0;
+  int16_t maximum_x = x0;
+  int16_t minimum_y = y0;
+  int16_t maximum_y = y0;
+  const int16_t xs[2] = {x1, x2};
+  const int16_t ys[2] = {y1, y2};
+  for (uint8_t i = 0U; i < 2U; ++i) {
+    if (xs[i] < minimum_x) minimum_x = xs[i];
+    if (xs[i] > maximum_x) maximum_x = xs[i];
+    if (ys[i] < minimum_y) minimum_y = ys[i];
+    if (ys[i] > maximum_y) maximum_y = ys[i];
+  }
+
+  for (int16_t y = minimum_y; y <= maximum_y; ++y) {
+    int16_t span_start = -1;
+    int16_t span_end = -1;
+    for (int16_t x = minimum_x; x <= maximum_x; ++x) {
+      const int32_t edge0 = location_triangle_edge(x0, y0, x1, y1, x, y);
+      const int32_t edge1 = location_triangle_edge(x1, y1, x2, y2, x, y);
+      const int32_t edge2 = location_triangle_edge(x2, y2, x0, y0, x, y);
+      const bool has_negative = (edge0 < 0) || (edge1 < 0) || (edge2 < 0);
+      const bool has_positive = (edge0 > 0) || (edge1 > 0) || (edge2 > 0);
+      if (!(has_negative && has_positive)) {
+        if (span_start < 0) {
+          span_start = x;
+        }
+        span_end = x;
+      }
+    }
+    if ((span_start >= 0) && (y >= 0)) {
+      LCD_FillRect((uint16_t)span_start, (uint16_t)y,
+                   (uint16_t)(span_end - span_start + 1), 1U, color);
+    }
+  }
+}
+
 static void location_draw_robot_triangle(int16_t center_x, int16_t center_y,
                                          int32_t heading_mdeg,
                                          uint16_t color)
@@ -476,11 +525,13 @@ static void location_draw_robot_triangle(int16_t center_x, int16_t center_y,
   const int16_t rear_right_y = (int16_t)(center_y +
       location_round_pixel(-3.0f * forward_y - 6.0f * left_y));
 
-  location_draw_line(nose_x, nose_y, rear_left_x, rear_left_y, color);
+  location_fill_triangle(nose_x, nose_y, rear_left_x, rear_left_y,
+                         rear_right_x, rear_right_y, color);
+  location_draw_line(nose_x, nose_y, rear_left_x, rear_left_y, LCD_WHITE);
   location_draw_line(rear_left_x, rear_left_y,
-                     rear_right_x, rear_right_y, color);
-  location_draw_line(rear_right_x, rear_right_y, nose_x, nose_y, color);
-  LCD_FillRect((uint16_t)nose_x, (uint16_t)nose_y, 2U, 2U, LCD_ORANGE);
+                     rear_right_x, rear_right_y, LCD_WHITE);
+  location_draw_line(rear_right_x, rear_right_y, nose_x, nose_y, LCD_WHITE);
+  LCD_FillRect((uint16_t)nose_x, (uint16_t)nose_y, 2U, 2U, LCD_RED);
 }
 
 static void dashboard_draw_location(const LCDDashboard *dashboard)
