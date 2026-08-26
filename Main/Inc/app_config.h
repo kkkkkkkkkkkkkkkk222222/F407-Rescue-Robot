@@ -47,7 +47,9 @@
 /* Coarse field localization and start-zone-4 demonstration. */
 #define APP_LOCATION_FIELD_HALF_MM       1500.0f
 #define APP_LOCATION_START_CENTER_MM     1350.0f
-#define APP_LOCATION_IMU_YAW_SIGN        1.0f
+/* Installed IMU Z yaw is negative for a positive (counter-clockwise) field
+ * heading change, so localization must invert the measured yaw increment. */
+#define APP_LOCATION_IMU_YAW_SIGN       -1.0f
 #define APP_LOCATION_MAX_YAW_STEP_MDEG   30000LL
 #define APP_LOCATION_DEMO_START_ZONE     4U
 #define APP_LOCATION_DEMO_SPEED_MM_S     300.0f
