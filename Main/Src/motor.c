@@ -56,7 +56,7 @@ typedef struct {
   float target_lateral_mm_s;
   float current_forward_mm_s;
   float current_lateral_mm_s;
-  int32_t target_yaw_mdeg;
+  int64_t target_yaw_mdeg;
   uint8_t zero_confirm_cycles;
   uint16_t zero_wait_cycles;
 } DirectionMove;
