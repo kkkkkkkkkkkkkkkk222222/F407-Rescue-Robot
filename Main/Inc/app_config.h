@@ -55,6 +55,21 @@
 #define APP_LOCATION_DEMO_SPEED_MM_S     300.0f
 #define APP_LOCATION_DEMO_TIME_MS        3000U
 #define APP_LOCATION_DEMO_TIMEOUT_MS     2000U
+/* Location-only route test: leave zone 4, visit the field centre, wait,
+ * then drive into the blue material-placement half of the lower safe zone. */
+#define APP_LOCATION_DEMO_MATERIAL_X_MM  0.0f
+#define APP_LOCATION_DEMO_MATERIAL_Y_MM  0.0f
+#define APP_LOCATION_DEMO_DROP_X_MM      150.0f
+#define APP_LOCATION_DEMO_DROP_Y_MM     -1320.0f
+#define APP_LOCATION_DEMO_TRAVEL_MAX_MM_S 250.0f
+#define APP_LOCATION_DEMO_TRAVEL_MIN_MM_S 110.0f
+#define APP_LOCATION_DEMO_SLOWDOWN_MM    300.0f
+#define APP_LOCATION_DEMO_TOLERANCE_MM   40.0f
+#define APP_LOCATION_DEMO_CONFIRM_CYCLES 5U
+#define APP_LOCATION_DEMO_WAIT_MS        5000U
+#define APP_LOCATION_DEMO_BRAKE_WAIT_MS  150U
+#define APP_LOCATION_DEMO_MOVE_TIMEOUT_MS 20000U
+#define APP_LOCATION_DEMO_CONTROL_MS     20U
 
 /*
  * Physical layout from the 2026-08-25 test photo:

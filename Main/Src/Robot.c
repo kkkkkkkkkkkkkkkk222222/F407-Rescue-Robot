@@ -1,5 +1,6 @@
 #include "Robot.h"
 
+#include <math.h>
 #include <stdbool.h>
 
 #include "app_config.h"
@@ -56,14 +57,20 @@ static uint8_t motion_test_round;
 
 #if APP_ENABLE_LOCATION_DEMO
 typedef enum {
-  LOCATION_DEMO_START = 0,
-  LOCATION_DEMO_ACCELERATING,
-  LOCATION_DEMO_MOVING,
-  LOCATION_DEMO_STOPPED
+  LOCATION_DEMO_BACK_OUT = 0,
+  LOCATION_DEMO_TO_MATERIAL,
+  LOCATION_DEMO_WAIT_MATERIAL,
+  LOCATION_DEMO_TO_DROP,
+  LOCATION_DEMO_FINISHED
 } LocationDemoStage;
 
 static LocationDemoStage location_demo_stage;
-static uint32_t location_demo_deadline_ms;
+static uint32_t location_demo_stage_tick;
+static uint32_t location_demo_next_control_ms;
+static bool location_demo_back_ready;
+static bool location_demo_heading_aligned;
+static bool location_demo_fault;
+static uint8_t location_demo_arrival_count;
 #endif
 
 static void format_hex_byte(char text[5], uint8_t value)
@@ -172,7 +179,8 @@ static void draw_dashboard(void)
   dashboard.imu_yaw_mdeg = imu.yaw_mdeg;
   dashboard.location = Location_GetPose();
   dashboard.location_demo_running =
-      location_demo_stage != LOCATION_DEMO_STOPPED;
+      (location_demo_stage != LOCATION_DEMO_FINISHED) &&
+      !location_demo_fault;
 #endif
   LCD_DrawDashboard(&dashboard);
 }
@@ -192,39 +200,181 @@ static bool robot_motor_has_fault(void)
 #endif
 
 #if APP_ENABLE_LOCATION_DEMO
+static float location_demo_wrap_degrees(float degrees)
+{
+  while (degrees > 180.0f) {
+    degrees -= 360.0f;
+  }
+  while (degrees < -180.0f) {
+    degrees += 360.0f;
+  }
+  return degrees;
+}
+
+static void location_demo_set_stage(LocationDemoStage stage, uint32_t now_ms)
+{
+  location_demo_stage = stage;
+  location_demo_stage_tick = now_ms;
+  location_demo_heading_aligned = false;
+  location_demo_arrival_count = 0U;
+}
+
+static void location_demo_stop_with_fault(uint32_t now_ms)
+{
+  Motor_Stop();
+  location_demo_fault = true;
+  location_demo_stage_tick = now_ms;
+  location_demo_heading_aligned = false;
+  location_demo_arrival_count = 0U;
+}
+
+static bool location_demo_align_to(const LocationPose *pose,
+                                   float target_x_mm, float target_y_mm,
+                                   uint32_t now_ms)
+{
+  if (location_demo_heading_aligned) {
+    return true;
+  }
+
+  const float dx = target_x_mm - (float)pose->x_mm;
+  const float dy = target_y_mm - (float)pose->y_mm;
+  const float target_heading_deg = atan2f(dy, dx) * 57.2957795f;
+  const float current_heading_deg = (float)pose->heading_mdeg * 0.001f;
+  const float turn_deg = location_demo_wrap_degrees(
+      target_heading_deg - current_heading_deg);
+  const MotorTurnStatus result = Motor_TurnAngle(turn_deg);
+
+  if (result == MOTOR_TURN_DONE) {
+    location_demo_heading_aligned = true;
+    return true;
+  }
+  if ((result == MOTOR_TURN_FAULT) ||
+      (result == MOTOR_TURN_INVALID) ||
+      ((uint32_t)(now_ms - location_demo_stage_tick) >=
+       APP_LOCATION_DEMO_MOVE_TIMEOUT_MS)) {
+    location_demo_stop_with_fault(now_ms);
+  }
+  return false;
+}
+
+static bool location_demo_drive_to(const LocationPose *pose,
+                                   float target_x_mm, float target_y_mm)
+{
+  const float dx = target_x_mm - (float)pose->x_mm;
+  const float dy = target_y_mm - (float)pose->y_mm;
+  const float distance_mm = sqrtf(dx * dx + dy * dy);
+
+  if (distance_mm <= APP_LOCATION_DEMO_TOLERANCE_MM) {
+    Motor_Stop();
+    if (location_demo_arrival_count < APP_LOCATION_DEMO_CONFIRM_CYCLES) {
+      ++location_demo_arrival_count;
+    }
+    return location_demo_arrival_count >=
+           APP_LOCATION_DEMO_CONFIRM_CYCLES;
+  }
+  location_demo_arrival_count = 0U;
+
+  float speed_mm_s = APP_LOCATION_DEMO_TRAVEL_MAX_MM_S;
+  if (distance_mm < APP_LOCATION_DEMO_SLOWDOWN_MM) {
+    const float ratio = distance_mm / APP_LOCATION_DEMO_SLOWDOWN_MM;
+    speed_mm_s = APP_LOCATION_DEMO_TRAVEL_MIN_MM_S +
+        (APP_LOCATION_DEMO_TRAVEL_MAX_MM_S -
+         APP_LOCATION_DEMO_TRAVEL_MIN_MM_S) * ratio;
+  }
+
+  const float field_angle_deg = atan2f(dy, dx) * 57.2957795f;
+  const float current_heading_deg = (float)pose->heading_mdeg * 0.001f;
+  const float body_angle_deg = location_demo_wrap_degrees(
+      field_angle_deg - current_heading_deg);
+  (void)Motor_MoveAngle(speed_mm_s, body_angle_deg);
+  return false;
+}
+
 static void run_location_demo(uint32_t now_ms)
 {
-  if (!IMU_GetData().ready || robot_motor_has_fault()) {
+  if ((int32_t)(now_ms - location_demo_next_control_ms) < 0) {
+    return;
+  }
+  location_demo_next_control_ms = now_ms + APP_LOCATION_DEMO_CONTROL_MS;
+
+  const LocationPose pose = Location_GetPose();
+  if (location_demo_fault) {
     Motor_Stop();
-    location_demo_stage = LOCATION_DEMO_STOPPED;
+    return;
+  }
+  if (!IMU_GetData().ready || !pose.valid || robot_motor_has_fault()) {
+    location_demo_stop_with_fault(now_ms);
     return;
   }
 
   switch (location_demo_stage) {
-    case LOCATION_DEMO_START:
-      (void)Motor_MoveAngle(APP_LOCATION_DEMO_SPEED_MM_S, 180.0f);
-      location_demo_deadline_ms = now_ms + APP_LOCATION_DEMO_TIMEOUT_MS;
-      location_demo_stage = LOCATION_DEMO_ACCELERATING;
-      break;
-
-    case LOCATION_DEMO_ACCELERATING:
-      if (Motor_MoveAngle(APP_LOCATION_DEMO_SPEED_MM_S, 180.0f)) {
-        location_demo_deadline_ms = now_ms + APP_LOCATION_DEMO_TIME_MS;
-        location_demo_stage = LOCATION_DEMO_MOVING;
-      } else if ((int32_t)(now_ms - location_demo_deadline_ms) >= 0) {
+    case LOCATION_DEMO_BACK_OUT:
+      if (!location_demo_back_ready) {
+        if (Motor_MoveAngle(APP_LOCATION_DEMO_SPEED_MM_S, 180.0f)) {
+          location_demo_back_ready = true;
+          location_demo_stage_tick = now_ms;
+        } else if ((uint32_t)(now_ms - location_demo_stage_tick) >=
+                   APP_LOCATION_DEMO_TIMEOUT_MS) {
+          location_demo_stop_with_fault(now_ms);
+        }
+      } else if ((uint32_t)(now_ms - location_demo_stage_tick) >=
+                 APP_LOCATION_DEMO_TIME_MS) {
         Motor_Stop();
-        location_demo_stage = LOCATION_DEMO_STOPPED;
+        location_demo_set_stage(LOCATION_DEMO_TO_MATERIAL, now_ms);
       }
       break;
 
-    case LOCATION_DEMO_MOVING:
-      if ((int32_t)(now_ms - location_demo_deadline_ms) >= 0) {
+    case LOCATION_DEMO_TO_MATERIAL:
+      if ((uint32_t)(now_ms - location_demo_stage_tick) <
+          APP_LOCATION_DEMO_BRAKE_WAIT_MS) {
         Motor_Stop();
-        location_demo_stage = LOCATION_DEMO_STOPPED;
+        break;
+      }
+      if (!location_demo_align_to(&pose,
+                                  APP_LOCATION_DEMO_MATERIAL_X_MM,
+                                  APP_LOCATION_DEMO_MATERIAL_Y_MM,
+                                  now_ms)) {
+        break;
+      }
+      if (location_demo_drive_to(&pose,
+                                 APP_LOCATION_DEMO_MATERIAL_X_MM,
+                                 APP_LOCATION_DEMO_MATERIAL_Y_MM)) {
+        Motor_Stop();
+        location_demo_set_stage(LOCATION_DEMO_WAIT_MATERIAL, now_ms);
+      } else if ((uint32_t)(now_ms - location_demo_stage_tick) >=
+                 APP_LOCATION_DEMO_MOVE_TIMEOUT_MS) {
+        location_demo_stop_with_fault(now_ms);
+      }
+      break;
+
+    case LOCATION_DEMO_WAIT_MATERIAL:
+      Motor_Stop();
+      if ((uint32_t)(now_ms - location_demo_stage_tick) >=
+          APP_LOCATION_DEMO_WAIT_MS) {
+        location_demo_set_stage(LOCATION_DEMO_TO_DROP, now_ms);
+      }
+      break;
+
+    case LOCATION_DEMO_TO_DROP:
+      if (!location_demo_align_to(&pose,
+                                  APP_LOCATION_DEMO_DROP_X_MM,
+                                  APP_LOCATION_DEMO_DROP_Y_MM,
+                                  now_ms)) {
+        break;
+      }
+      if (location_demo_drive_to(&pose,
+                                 APP_LOCATION_DEMO_DROP_X_MM,
+                                 APP_LOCATION_DEMO_DROP_Y_MM)) {
+        Motor_Stop();
+        location_demo_set_stage(LOCATION_DEMO_FINISHED, now_ms);
+      } else if ((uint32_t)(now_ms - location_demo_stage_tick) >=
+                 APP_LOCATION_DEMO_MOVE_TIMEOUT_MS) {
+        location_demo_stop_with_fault(now_ms);
       }
       break;
 
     default:
+      Motor_Stop();
       break;
   }
 }
@@ -392,8 +542,13 @@ void Robot_Init(void)
   motion_test_round = 0U;
 #endif
 #if APP_ENABLE_LOCATION_DEMO
-  location_demo_stage = LOCATION_DEMO_START;
-  location_demo_deadline_ms = 0U;
+  location_demo_stage = LOCATION_DEMO_BACK_OUT;
+  location_demo_stage_tick = 0U;
+  location_demo_next_control_ms = 0U;
+  location_demo_back_ready = false;
+  location_demo_heading_aligned = false;
+  location_demo_fault = false;
+  location_demo_arrival_count = 0U;
 #endif
 
 #if APP_ENABLE_TASK

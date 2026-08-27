@@ -503,6 +503,15 @@ static void location_draw_robot_marker(int16_t center_x, int16_t center_y,
   location_draw_disc(nose_x, nose_y, 2U, valid ? LCD_RED : LCD_WHITE);
 }
 
+static void location_draw_target_marker(int32_t x_mm, int32_t y_mm,
+                                        uint16_t color)
+{
+  const int16_t x = location_map_x(x_mm);
+  const int16_t y = location_map_y(y_mm);
+  location_draw_line((int16_t)(x - 3), y, (int16_t)(x + 3), y, color);
+  location_draw_line(x, (int16_t)(y - 3), x, (int16_t)(y + 3), color);
+}
+
 static void dashboard_draw_location(const LCDDashboard *dashboard)
 {
   static bool layout_drawn;
@@ -537,6 +546,16 @@ static void dashboard_draw_location(const LCDDashboard *dashboard)
   const int16_t current_y = location_map_y(pose->y_mm);
   location_add_trail_point(current_x, current_y);
   location_draw_trail();
+  location_draw_target_marker((int32_t)APP_LOCATION_DEMO_MATERIAL_X_MM,
+                              (int32_t)APP_LOCATION_DEMO_MATERIAL_Y_MM,
+                              LCD_CYAN);
+  const int16_t material_x = location_map_x(
+      (int32_t)APP_LOCATION_DEMO_MATERIAL_X_MM);
+  const int16_t material_y = location_map_y(
+      (int32_t)APP_LOCATION_DEMO_MATERIAL_Y_MM);
+  LCD_DrawText((uint16_t)(material_x + 4),
+               (uint16_t)((material_y > 4) ? material_y - 4 : 0),
+               "M", LCD_CYAN, LCD_BLACK);
   location_last_x = current_x;
   location_last_y = current_y;
   location_draw_robot_marker(location_last_x, location_last_y, heading,
