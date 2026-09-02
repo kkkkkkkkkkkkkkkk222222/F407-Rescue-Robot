@@ -85,7 +85,7 @@ bool Claw_Open(uint32_t now_ms)
 bool Claw_Retract(uint32_t now_ms)
 {
   /* Fold the left claw first, then place the right claw on the outside. */
-  return claw_move(CLAW_ACTION_RETRACT, now_ms, 4U, 30U, 2U, 150U);
+  return claw_move(CLAW_ACTION_RETRACT, now_ms, 4U, 30U, 2U, 140U);
 }
 
 bool Claw_Touch(uint32_t now_ms)
