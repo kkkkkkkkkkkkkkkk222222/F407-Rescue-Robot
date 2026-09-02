@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "Location.h"
+#include "vision.h"
 
 #define LCD_BLACK   0x0000U
 #define LCD_BLUE    0x001FU
@@ -28,6 +29,7 @@ typedef struct {
   int64_t imu_yaw_mdeg;
   bool location_demo_running;
   LocationPose location;
+  VisionData vision;
 } LCDDashboard;
 
 bool LCD_Init(void);

@@ -295,7 +295,7 @@ static const char *dashboard_uart_text(const LCDDashboard *dashboard)
 }
 #endif
 
-#if APP_ENABLE_LOCATION_DEMO || APP_ENABLE_TASK
+#if APP_ENABLE_LOCATION_DEMO
 static void dashboard_write(uint16_t x, uint16_t y, uint16_t width,
                             const char *text);
 
@@ -577,23 +577,24 @@ static void draw_location(const LCDDashboard *dashboard)
 static const char *task_state_name(TaskState state)
 {
   static const char *const names[] = {
-    "WAIT", "START", "FIND", "GRAB", "BACK", "DROP", "STOP"
+    "WAITCFG", "START", "SEARCH", "GRAB", "RETURN", "DROP", "STOP"
   };
   return (state <= TASK_STOPPED) ? names[state] : "STOP";
 }
 
-static char cargo_type_code(uint8_t counts)
+static const char *task_uart_state(const LCDDashboard *dashboard)
 {
-  if (VISION_COUNT_DANGER(counts) != 0U) {
-    return 'D';
+  if (!dashboard->uart_active) {
+    return "DMA";
   }
-  if (VISION_COUNT_CASUALTY(counts) != 0U) {
-    return 'H';
+  if (!dashboard->uart_received) {
+    return "WAIT";
   }
-  if (VISION_COUNT_CORE(counts) != 0U) {
-    return 'C';
+  if ((uint32_t)(dashboard->now_ms - dashboard->uart_last_rx_ms) >
+      APP_VISION_TIMEOUT_MS) {
+    return "TMO";
   }
-  return (VISION_COUNT_NORMAL(counts) != 0U) ? 'N' : '-';
+  return "OK";
 }
 
 static char destination_code(TaskDestination destination)
@@ -604,26 +605,87 @@ static char destination_code(TaskDestination destination)
   return (destination == TASK_DEST_CASUALTY) ? 'H' : '-';
 }
 
+static char config_color_code(uint8_t color)
+{
+  if (color == VISION_COLOR_RED) {
+    return 'R';
+  }
+  return (color == VISION_COLOR_BLUE) ? 'B' : '-';
+}
+
+static char navigation_code(uint8_t direction)
+{
+  static const char codes[] = {'H', 'F', 'L', 'R', 'B'};
+  return (direction <= VISION_NAV_BACKWARD) ? codes[direction] : '-';
+}
+
+static const char *drop_phase_name(TaskDropPhase phase)
+{
+  static const char *const names[] = {
+    "ENTER", "REL", "CAM", "CHECK", "BACK", "RETRY"
+  };
+  return (phase <= TASK_DROP_RETRY_BACK) ? names[phase] : "ERR";
+}
+
 static void draw_task(const LCDDashboard *dashboard)
 {
   char text[24];
   const TaskStatus task = Task_GetStatus();
-  const LocationPose *pose = &dashboard->location;
-  const uint8_t count = (task.object_count != 0U) ? task.object_count :
-                        (uint8_t)(VISION_COUNT_NORMAL(task.cargo_counts) +
-                                  VISION_COUNT_CORE(task.cargo_counts) +
-                                  VISION_COUNT_CASUALTY(task.cargo_counts) +
-                                  VISION_COUNT_DANGER(task.cargo_counts));
+  const VisionData *vision = &dashboard->vision;
+  uint32_t frame_age_ms = dashboard->uart_received ?
+      (uint32_t)(dashboard->now_ms - dashboard->uart_last_rx_ms) : 0U;
+  if (frame_age_ms > 999U) {
+    frame_age_ms = 999U;
+  }
 
-  draw_map(pose);
-  (void)snprintf(text, sizeof(text), "T:%us %s O:%c%u",
-                 task.remaining_s, task_state_name(task.state),
-                 cargo_type_code(task.cargo_counts), count);
+  (void)snprintf(text, sizeof(text), "ST:%s T:%us",
+                 task_state_name(task.state), task.remaining_s);
   dashboard_write(0U, 4U, 128U, text);
-  (void)snprintf(text, sizeof(text), "X:%ld Y:%ld D:%c",
-                 (long)pose->x_mm, (long)pose->y_mm,
-                 destination_code(task.destination));
+
+  (void)snprintf(text, sizeof(text), "CFG:%c Z:%u U:%s",
+                 config_color_code(vision->color), vision->start_zone,
+                 task_uart_state(dashboard));
   dashboard_write(0U, 20U, 128U, text);
+
+  if (dashboard->uart_received) {
+    (void)snprintf(text, sizeof(text), "RX:%02X SQ:%02X A:%03lu",
+                   vision->last_frame[2], vision->last_frame[3],
+                   (unsigned long)frame_age_ms);
+  } else {
+    (void)strcpy(text, "RX:-- SQ:-- A:---");
+  }
+  dashboard_write(0U, 36U, 128U, text);
+
+  (void)snprintf(text, sizeof(text), "N:%u C:%u H:%u D:%u",
+                 VISION_COUNT_NORMAL(vision->cargo_counts),
+                 VISION_COUNT_CORE(vision->cargo_counts),
+                 VISION_COUNT_CASUALTY(vision->cargo_counts),
+                 VISION_COUNT_DANGER(vision->cargo_counts));
+  dashboard_write(0U, 52U, 128U, text);
+
+  (void)snprintf(text, sizeof(text), "FOUND:%u GRAB:%u",
+                 vision->found ? 1U : 0U, vision->grabbed ? 1U : 0U);
+  dashboard_write(0U, 68U, 128U, text);
+
+  (void)snprintf(text, sizeof(text), "CLASS:%s UNK:%u",
+                 vision->classification_valid ? "OK" : "NO",
+                 vision->unknown ? 1U : 0U);
+  dashboard_write(0U, 84U, 128U, text);
+
+  (void)snprintf(text, sizeof(text), "VIEW:%u DST:%c",
+                 vision->claw_view ? 1U : 0U,
+                 destination_code(task.destination));
+  dashboard_write(0U, 100U, 128U, text);
+
+  (void)snprintf(text, sizeof(text), "NAV:%c Z:%u FR:%u",
+                 navigation_code(vision->nav_direction),
+                 vision->nav_zone_state, task.nav_fresh ? 1U : 0U);
+  dashboard_write(0U, 116U, 128U, text);
+
+  (void)snprintf(text, sizeof(text), "P:%s F:%u R:%u",
+                 drop_phase_name(task.drop_phase), task.fault,
+                 task.recovery_count);
+  dashboard_write(0U, 132U, 128U, text);
 }
 #elif !APP_ENABLE_LOCATION_DEMO
 static void dashboard_draw_test(const LCDDashboard *dashboard)

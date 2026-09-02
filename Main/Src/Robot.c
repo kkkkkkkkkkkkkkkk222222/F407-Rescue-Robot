@@ -105,6 +105,7 @@ static void draw_dashboard(void)
     .uart_last_byte = uart.last_frame[VISION_FRAME_SIZE - 1U],
     .uart_active = uart_active,
     .uart_received = uart.frame_received,
+    .vision = uart,
     .motor_test_running = false,
     .imu_ready = false,
     .imu_yaw_mdeg = 0,
@@ -118,7 +119,7 @@ static void draw_dashboard(void)
   dashboard.imu_ready = imu.ready;
   dashboard.imu_yaw_mdeg = imu.yaw_mdeg;
 #endif
-#if APP_ENABLE_LOCATION_DEMO || APP_ENABLE_TASK
+#if APP_ENABLE_LOCATION_DEMO
   const IMUData imu = IMU_GetData();
   dashboard.imu_ready = imu.ready;
   dashboard.imu_yaw_mdeg = imu.yaw_mdeg;
