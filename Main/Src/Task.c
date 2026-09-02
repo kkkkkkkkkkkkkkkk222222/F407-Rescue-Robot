@@ -659,17 +659,14 @@ static void task_process_start(uint32_t now_ms)
   }
 
   if (start_step == START_EXIT) {
-    const MotorDistanceStatus result =
-        Go_distance(APP_INITIAL_FORWARD_DISTANCE_M,
-                    APP_INITIAL_FORWARD_SPEED_MM_S);
-    if (result == MOTOR_DISTANCE_DONE) {
-      Motor_Stop();
-      start_step = START_BRAKE;
-      step_started_ms = now_ms;
-    } else if ((result == MOTOR_DISTANCE_FAULT) ||
-               (result == MOTOR_DISTANCE_INVALID)) {
-      task_stop(TASK_FAULT_MOTOR, now_ms);
+    if ((uint32_t)(now_ms - step_started_ms) <
+        APP_START_REVERSE_TIME_MS) {
+      Motor_Move(-APP_START_REVERSE_SPEED_MM_S, 0.0f, 0.0f);
+      return;
     }
+    Motor_Stop();
+    start_step = START_BRAKE;
+    step_started_ms = now_ms;
     return;
   }
 

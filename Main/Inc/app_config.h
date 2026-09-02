@@ -164,8 +164,8 @@
 #define APP_TASK_STATUS_PERIOD_MS       200U
 #define APP_MATCH_TIME_S                 180U
 #define APP_MATCH_TIME_MS                (APP_MATCH_TIME_S * 1000U)
-#define APP_INITIAL_FORWARD_DISTANCE_M   0.7f
-#define APP_INITIAL_FORWARD_SPEED_MM_S  850.0f
+#define APP_START_REVERSE_SPEED_MM_S    850.0f
+#define APP_START_REVERSE_TIME_MS      1000U
 #define APP_START_BRAKE_WAIT_MS          150U
 #define APP_START_TURN_DEG               180.0f
 #define APP_START_SCAN_WAIT_MS          5000U
