@@ -156,8 +156,10 @@ def odometry_body_velocity(
     m1 = odometry["m1_delta"] * metres_per_count
     m2 = odometry["m2_delta"] * metres_per_count
     m3 = odometry["m3_delta"] * metres_per_count
-    forward = (m3 - m1) / math.sqrt(3.0) / dt_s
-    left = (m1 + m3 - 2.0 * m2) / 3.0 / dt_s
+    # Physical port order used by the current chassis firmware:
+    # M1=right wheel, M2=left wheel, M3=rear wheel.
+    forward = (m1 - m2) / math.sqrt(3.0) / dt_s
+    left = (m1 + m2 - 2.0 * m3) / 3.0 / dt_s
     return forward, left
 
 

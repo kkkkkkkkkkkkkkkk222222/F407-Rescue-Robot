@@ -138,9 +138,9 @@ class VisionProtocolTests(unittest.TestCase):
 
         forward, left = protocol.odometry_body_velocity(
             {
-                "m1_delta": -10,
-                "m2_delta": 0,
-                "m3_delta": 10,
+                "m1_delta": 10,
+                "m2_delta": -10,
+                "m3_delta": 0,
                 "dt_ms": 20,
             }
         )
