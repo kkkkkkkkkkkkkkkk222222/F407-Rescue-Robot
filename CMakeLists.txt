@@ -52,7 +52,10 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Main/Src/mechanism.c
     Main/Src/motor.c
     Main/Src/pid.c
+    Main/Src/Rescue.c
+    Main/Src/route_demo.c
     Main/Src/Task.c
+    Main/Src/Uart.c
     Main/Src/servo.c
     Main/Src/vision.c
 )

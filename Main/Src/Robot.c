@@ -9,34 +9,30 @@
 #include "Location.h"
 #include "main.h"
 #include "motor.h"
+#include "route_demo.h"
 #include "servo.h"
 #include "Task.h"
+#include "Uart.h"
 #include "vision.h"
 
 extern TIM_HandleTypeDef htim6;
-extern UART_HandleTypeDef huart3;
 
-#define UART_DMA_RX_SIZE  64U
 #define LCD_PERIOD_MS     100U
-#define UART_RETRY_MS     100U
 
 static volatile uint32_t app_milliseconds;
-static uint8_t usart3_rx_dma[UART_DMA_RX_SIZE];
-static uint16_t usart3_rx_position;
-static volatile uint8_t usart3_last_byte;
-static volatile bool usart3_byte_received;
-static volatile uint32_t usart3_last_rx_ms;
-static volatile bool usart3_rx_active;
-static volatile uint32_t usart3_rx_next_retry_ms;
 
 static volatile uint32_t lcd_release_sequence;
 static uint32_t lcd_consumed_sequence;
 static volatile uint32_t imu_release_sequence;
 static uint32_t imu_consumed_sequence;
+static volatile uint32_t odom_release_sequence;
+static uint32_t odom_consumed_sequence;
+static bool odom_reset_pending;
 static uint8_t imu_period_ms;
 static uint8_t motor_control_period_ms;
 static uint8_t lcd_period_ms;
 static bool lcd_ready;
+static bool uart_active;
 
 #if APP_ENABLE_MOTION_TEST
 typedef enum {
@@ -54,16 +50,10 @@ static uint32_t motion_test_stop_ms;
 static uint8_t motion_test_round;
 #endif
 
-#if APP_ENABLE_LOCATION_DEMO
-typedef enum {
-  LOCATION_DEMO_START = 0,
-  LOCATION_DEMO_ACCELERATING,
-  LOCATION_DEMO_MOVING,
-  LOCATION_DEMO_STOPPED
-} LocationDemoStage;
-
-static LocationDemoStage location_demo_stage;
-static uint32_t location_demo_deadline_ms;
+#if APP_ENABLE_MOVE_SPIN_TEST
+static bool move_spin_test_running;
+static uint32_t move_spin_test_end_ms;
+static uint32_t move_spin_test_next_ms;
 #endif
 
 static void format_hex_byte(char text[5], uint8_t value)
@@ -106,53 +96,15 @@ static bool motor_key_stable;
 static uint32_t motor_key_change_ms;
 #endif
 
-static bool vision_start_receive_dma(void)
-{
-  if (HAL_UARTEx_ReceiveToIdle_DMA(&huart3, usart3_rx_dma,
-                                   UART_DMA_RX_SIZE) == HAL_OK) {
-    __HAL_DMA_DISABLE_IT(huart3.hdmarx, DMA_IT_HT);
-    usart3_rx_active = true;
-    return true;
-  }
-
-  usart3_rx_active = false;
-  (void)HAL_UART_AbortReceive(&huart3);
-  return false;
-}
-
-static void vision_parse_dma_range(uint16_t size)
-{
-  /* Size == buffer size marks the end of one circular-DMA revolution. */
-  if (size == UART_DMA_RX_SIZE) {
-    Vision_ParseBytes(&usart3_rx_dma[usart3_rx_position],
-                      UART_DMA_RX_SIZE - usart3_rx_position,
-                      app_milliseconds);
-    usart3_rx_position = 0U;
-    return;
-  }
-
-  if (size > usart3_rx_position) {
-    Vision_ParseBytes(&usart3_rx_dma[usart3_rx_position],
-                      size - usart3_rx_position, app_milliseconds);
-  } else if (size < usart3_rx_position) {
-    Vision_ParseBytes(&usart3_rx_dma[usart3_rx_position],
-                      UART_DMA_RX_SIZE - usart3_rx_position,
-                      app_milliseconds);
-    if (size != 0U) {
-      Vision_ParseBytes(usart3_rx_dma, size, app_milliseconds);
-    }
-  }
-  usart3_rx_position = size;
-}
-
 static void draw_dashboard(void)
 {
+  const VisionData uart = Vision_GetSnapshot();
   LCDDashboard dashboard = {
     .now_ms = app_milliseconds,
-    .uart_last_rx_ms = usart3_last_rx_ms,
-    .uart_last_byte = usart3_last_byte,
-    .uart_active = usart3_rx_active,
-    .uart_received = usart3_byte_received,
+    .uart_last_rx_ms = uart.last_frame_tick_ms,
+    .uart_last_byte = uart.last_frame[VISION_FRAME_SIZE - 1U],
+    .uart_active = uart_active,
+    .uart_received = uart.frame_received,
     .motor_test_running = false,
     .imu_ready = false,
     .imu_yaw_mdeg = 0,
@@ -161,23 +113,24 @@ static void draw_dashboard(void)
 #if APP_ENABLE_AUTOMATIC_MOTOR_TEST && !APP_ENABLE_TASK
   dashboard.motor_test_running = motor_test_running;
 #endif
-#if APP_ENABLE_MOTION_TEST
+#if APP_ENABLE_MOTION_TEST || APP_ENABLE_MOVE_SPIN_TEST
   const IMUData imu = IMU_GetData();
   dashboard.imu_ready = imu.ready;
   dashboard.imu_yaw_mdeg = imu.yaw_mdeg;
 #endif
-#if APP_ENABLE_LOCATION_DEMO
+#if APP_ENABLE_LOCATION_DEMO || APP_ENABLE_TASK
   const IMUData imu = IMU_GetData();
   dashboard.imu_ready = imu.ready;
   dashboard.imu_yaw_mdeg = imu.yaw_mdeg;
   dashboard.location = Location_GetPose();
-  dashboard.location_demo_running =
-      location_demo_stage != LOCATION_DEMO_STOPPED;
+#endif
+#if APP_ENABLE_LOCATION_DEMO
+  dashboard.location_demo_running = RouteDemo_IsRunning();
 #endif
   LCD_DrawDashboard(&dashboard);
 }
 
-#if APP_ENABLE_MOTION_TEST || APP_ENABLE_LOCATION_DEMO || \
+#if APP_ENABLE_MOTION_TEST || APP_ENABLE_MOVE_SPIN_TEST || \
     (APP_ENABLE_AUTOMATIC_MOTOR_TEST && !APP_ENABLE_TASK)
 static bool robot_motor_has_fault(void)
 {
@@ -191,41 +144,27 @@ static bool robot_motor_has_fault(void)
 }
 #endif
 
-#if APP_ENABLE_LOCATION_DEMO
-static void run_location_demo(uint32_t now_ms)
+#if APP_ENABLE_MOVE_SPIN_TEST
+static void run_move_spin_test(uint32_t now_ms)
 {
-  if (!IMU_GetData().ready || robot_motor_has_fault()) {
-    Motor_Stop();
-    location_demo_stage = LOCATION_DEMO_STOPPED;
+  if (!move_spin_test_running) {
     return;
   }
-
-  switch (location_demo_stage) {
-    case LOCATION_DEMO_START:
-      (void)Motor_MoveAngle(APP_LOCATION_DEMO_SPEED_MM_S, 180.0f);
-      location_demo_deadline_ms = now_ms + APP_LOCATION_DEMO_TIMEOUT_MS;
-      location_demo_stage = LOCATION_DEMO_ACCELERATING;
-      break;
-
-    case LOCATION_DEMO_ACCELERATING:
-      if (Motor_MoveAngle(APP_LOCATION_DEMO_SPEED_MM_S, 180.0f)) {
-        location_demo_deadline_ms = now_ms + APP_LOCATION_DEMO_TIME_MS;
-        location_demo_stage = LOCATION_DEMO_MOVING;
-      } else if ((int32_t)(now_ms - location_demo_deadline_ms) >= 0) {
-        Motor_Stop();
-        location_demo_stage = LOCATION_DEMO_STOPPED;
-      }
-      break;
-
-    case LOCATION_DEMO_MOVING:
-      if ((int32_t)(now_ms - location_demo_deadline_ms) >= 0) {
-        Motor_Stop();
-        location_demo_stage = LOCATION_DEMO_STOPPED;
-      }
-      break;
-
-    default:
-      break;
+  if (!IMU_GetData().ready || robot_motor_has_fault() ||
+      ((int32_t)(now_ms - move_spin_test_end_ms) >= 0)) {
+    Motor_Stop();
+    move_spin_test_running = false;
+    return;
+  }
+  if ((int32_t)(now_ms - move_spin_test_next_ms) < 0) {
+    return;
+  }
+  move_spin_test_next_ms = now_ms + APP_MOVE_SPIN_TEST_CONTROL_MS;
+  if (!Motor_MoveSpin(APP_MOVE_SPIN_TEST_SPEED_MM_S,
+                      APP_MOVE_SPIN_TEST_ANGLE_DEG,
+                      APP_MOVE_SPIN_TEST_YAW_MM_S)) {
+    Motor_Stop();
+    move_spin_test_running = false;
   }
 }
 #endif
@@ -241,7 +180,7 @@ static void run_servo_sweep(uint32_t now_ms)
     return;
   }
   for (uint8_t id = 1U; id <= 4U; ++id) {
-    Servo_Set(id, angles[stage]);
+    Servo_SetAngle(id, angles[stage]);
   }
   stage = (uint8_t)((stage + 1U) % 4U);
   next_change_ms = now_ms + 1500U;
@@ -372,16 +311,13 @@ static void process_motor_test_key(uint32_t now_ms)
 void Robot_Init(void)
 {
   app_milliseconds = 0U;
-  usart3_last_byte = 0U;
-  usart3_byte_received = false;
-  usart3_last_rx_ms = 0U;
-  usart3_rx_active = false;
-  usart3_rx_next_retry_ms = 0U;
-  usart3_rx_position = 0U;
   lcd_release_sequence = 0U;
   lcd_consumed_sequence = 0U;
   imu_release_sequence = 0U;
   imu_consumed_sequence = 0U;
+  odom_release_sequence = 0U;
+  odom_consumed_sequence = 0U;
+  odom_reset_pending = true;
   imu_period_ms = 0U;
   motor_control_period_ms = 0U;
   lcd_period_ms = 0U;
@@ -391,11 +327,11 @@ void Robot_Init(void)
   motion_test_stop_ms = 0U;
   motion_test_round = 0U;
 #endif
-#if APP_ENABLE_LOCATION_DEMO
-  location_demo_stage = LOCATION_DEMO_START;
-  location_demo_deadline_ms = 0U;
+#if APP_ENABLE_MOVE_SPIN_TEST
+  move_spin_test_running = true;
+  move_spin_test_end_ms = APP_MOVE_SPIN_TEST_TIME_MS;
+  move_spin_test_next_ms = 0U;
 #endif
-
 #if APP_ENABLE_TASK
   task_release_sequence = 0U;
   task_release_ms = 0U;
@@ -412,6 +348,7 @@ void Robot_Init(void)
 #endif
 
   Vision_Init();
+  uart_active = Uart_Init();
   HAL_NVIC_SetPriority(TIM6_DAC_IRQn, 4U, 0U);
   HAL_NVIC_EnableIRQ(TIM6_DAC_IRQn);
   HAL_NVIC_SetPriority(USART3_IRQn, 7U, 0U);
@@ -423,17 +360,17 @@ void Robot_Init(void)
   Motor_Init();
   Encoder_Init();
   const bool imu_ready = IMU_Init();
-#if APP_ENABLE_LOCATION_DEMO
+#if APP_ENABLE_TASK
+  /* The real start zone arrives in the validated configuration frame. */
+  Location_Init(LOCATION_START_UNKNOWN);
+#elif APP_ENABLE_LOCATION_DEMO || APP_ENABLE_MOVE_SPIN_TEST
   Location_Init((LocationStart)APP_LOCATION_DEMO_START_ZONE);
 #endif
-  /* Initialize the existing servo outputs after the motor and sensor setup. */
-  Servo_Init();
-
-  if (!vision_start_receive_dma()) {
-    usart3_rx_next_retry_ms = UART_RETRY_MS;
-  }
+#if APP_ENABLE_LOCATION_DEMO
+  RouteDemo_Init();
+#endif
 #if APP_ENABLE_TASK
-  Task_FindObject(app_milliseconds);
+  Task_Process(app_milliseconds);
 #endif
 
   lcd_ready = LCD_Init();
@@ -463,16 +400,25 @@ void Robot_Init(void)
 
 void Robot_Process(void)
 {
-  if (!usart3_rx_active &&
-      ((int32_t)(app_milliseconds - usart3_rx_next_retry_ms) >= 0)) {
-    usart3_rx_position = 0U;
-    Vision_ResetParser();
-    if (!vision_start_receive_dma()) {
-      usart3_rx_next_retry_ms = app_milliseconds + UART_RETRY_MS;
-    }
-  }
-  Vision_Process();
+  uart_active = Uart_Receive(0U);
 
+  const uint32_t odom_released = odom_release_sequence;
+  if (odom_released != odom_consumed_sequence) {
+    EncoderStatus encoder[3];
+    Encoder_GetAll(encoder);
+    VisionOdom odom = {
+      .sample_period_ms = APP_MOTOR_CONTROL_PERIOD_MS,
+      .status = (uint8_t)(0x07U | (odom_reset_pending ? 0x08U : 0U))
+    };
+    for (uint8_t i = 0U; i < 3U; ++i) {
+      odom.position[i] = (uint16_t)encoder[i].position;
+    }
+    odom_consumed_sequence = odom_released;
+    Vision_QueueOdom(&odom);
+    odom_reset_pending = false;
+  }
+
+  Vision_Process();
   const uint32_t imu_released = imu_release_sequence;
   if (imu_released != imu_consumed_sequence) {
     imu_consumed_sequence = imu_released;
@@ -496,8 +442,11 @@ void Robot_Process(void)
 #if APP_ENABLE_MOTION_TEST
   run_motion_test(app_milliseconds);
 #endif
+#if APP_ENABLE_MOVE_SPIN_TEST
+  run_move_spin_test(app_milliseconds);
+#endif
 #if APP_ENABLE_LOCATION_DEMO
-  run_location_demo(app_milliseconds);
+  RouteDemo_Process(app_milliseconds);
 #endif
 }
 
@@ -508,7 +457,7 @@ void Robot_RunDeferredTask(void)
   if (released != task_consumed_sequence) {
     const uint32_t now_ms = task_release_ms;
     task_consumed_sequence = released;
-    Task_FindObject(now_ms);
+    Task_Process(now_ms);
   }
 
   /* Keep PendSV pending if TIM6 released another task period meanwhile. */
@@ -531,7 +480,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *timer)
   if (++motor_control_period_ms >= APP_MOTOR_CONTROL_PERIOD_MS) {
     motor_control_period_ms = 0U;
     Encoder_Sample10ms();
-#if APP_ENABLE_LOCATION_DEMO
+    ++odom_release_sequence;
+#if APP_ENABLE_LOCATION_DEMO || APP_ENABLE_MOVE_SPIN_TEST || APP_ENABLE_TASK
     Location_Update10ms();
 #endif
     motor_update_due = true;
@@ -561,39 +511,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *timer)
   }
 }
 
-void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *uart, uint16_t size)
+uint32_t Robot_GetMilliseconds(void)
 {
-  if ((uart->Instance != USART3) || (size == 0U) ||
-      (size > UART_DMA_RX_SIZE)) {
-    return;
-  }
-
-  usart3_rx_active = true;
-  usart3_last_byte = usart3_rx_dma[size - 1U];
-  usart3_byte_received = true;
-  usart3_last_rx_ms = app_milliseconds;
-  vision_parse_dma_range(size);
-}
-
-void HAL_UART_ErrorCallback(UART_HandleTypeDef *uart)
-{
-  if (uart->Instance != USART3) {
-    return;
-  }
-
-  Vision_OnTxError();
-  usart3_rx_active = false;
-  (void)HAL_UART_AbortReceive(&huart3);
-  usart3_rx_position = 0U;
-  Vision_ResetParser();
-  if (!vision_start_receive_dma()) {
-    usart3_rx_next_retry_ms = app_milliseconds + UART_RETRY_MS;
-  }
-}
-
-void HAL_UART_TxCpltCallback(UART_HandleTypeDef *uart)
-{
-  if (uart->Instance == USART3) {
-    Vision_OnTxComplete();
-  }
+  return app_milliseconds;
 }

@@ -39,7 +39,8 @@ void Pid_Reset(Pid_t *pid)
   pid->started = 0U;
 }
 
-float Pid_Update(Pid_t *pid, float target, float actual)
+static float pid_update(Pid_t *pid, float target, float actual,
+                        float integral_scale, float derivative_scale)
 {
   float derivative = 0.0f;
   float candidate_integral;
@@ -51,11 +52,11 @@ float Pid_Update(Pid_t *pid, float target, float actual)
   }
   error = target - actual;
 
-  candidate_integral = pid_limit(pid->integral + error,
+  candidate_integral = pid_limit(pid->integral + error * integral_scale,
                                  pid->integral_min,
                                  pid->integral_max);
   if (pid->started != 0U) {
-    derivative = error - pid->last_error;
+    derivative = (error - pid->last_error) * derivative_scale;
   }
   pid->last_error = error;
   pid->started = 1U;
@@ -76,4 +77,17 @@ float Pid_Update(Pid_t *pid, float target, float actual)
              pid->kd * derivative;
   }
   return pid_limit(output, pid->output_min, pid->output_max);
+}
+
+float Pid_Update(Pid_t *pid, float target, float actual)
+{
+  return pid_update(pid, target, actual, 1.0f, 1.0f);
+}
+
+float Pid_UpdateDt(Pid_t *pid, float target, float actual, float dt_s)
+{
+  if ((pid == 0) || !(dt_s > 0.0f)) {
+    return 0.0f;
+  }
+  return pid_update(pid, target, actual, dt_s, 1.0f / dt_s);
 }

@@ -29,6 +29,20 @@ typedef enum {
   TASK_DROP_RETRY_BACK
 } TaskDropPhase;
 
+typedef enum {
+  TASK_FAULT_NONE = 0,
+  TASK_FAULT_REMOTE_STOP,
+  TASK_FAULT_MATCH_TIMEOUT,
+  TASK_FAULT_MOTOR,
+  TASK_FAULT_START_TIMEOUT,
+  TASK_FAULT_RETURN_TIMEOUT,
+  TASK_FAULT_DROP_TIMEOUT,
+  TASK_FAULT_DROP_VERIFY,
+  TASK_FAULT_CARGO,
+  TASK_FAULT_INVALID_STATE,
+  TASK_FAULT_RESCUE
+} TaskFault;
+
 typedef struct {
   TaskState state;
   TaskDestination destination;
@@ -39,7 +53,9 @@ typedef struct {
   uint8_t cargo_counts;
   uint8_t object_count;
   uint8_t nav_direction;
+  uint8_t recovery_count;
   TaskDropPhase drop_phase;
+  TaskFault fault;
   bool found;
   bool grabbed;
   bool cargo_valid;
@@ -49,7 +65,7 @@ typedef struct {
   bool claw_empty;
 } TaskStatus;
 
-void Task_FindObject(uint32_t now_ms);
+void Task_Process(uint32_t now_ms);
 TaskStatus Task_GetStatus(void);
 
 #endif

@@ -2,8 +2,7 @@
 
 #include "app_config.h"
 #include "main.h"
-
-extern UART_HandleTypeDef huart3;
+#include "Uart.h"
 
 #define FRAME_TYPE_INDEX       2U
 #define FRAME_SEQUENCE_INDEX   3U
@@ -20,8 +19,14 @@ static uint8_t config_streak;
 static uint8_t config_last_sequence;
 static bool config_sequence_valid;
 static volatile uint8_t ack_remaining;
-static volatile bool ack_busy;
-static uint8_t ack_frame[4] = {
+static volatile bool status_pending;
+static volatile bool odom_pending;
+static uint8_t status_sequence;
+static uint8_t odom_sequence;
+static uint8_t tx_frame[VISION_FRAME_SIZE];
+static uint8_t status_frame[VISION_FRAME_SIZE];
+static uint8_t odom_frame[VISION_FRAME_SIZE];
+static const uint8_t config_ack[4] = {
   VISION_FRAME_HEAD_1, VISION_FRAME_HEAD_2, 0x01U, VISION_FRAME_TAIL
 };
 
@@ -36,6 +41,36 @@ static uint16_t vision_crc16(const uint8_t *data, size_t size)
     }
   }
   return crc;
+}
+
+static uint8_t vision_next_sequence(uint8_t *sequence)
+{
+  const uint32_t primask = __get_PRIMASK();
+  __disable_irq();
+  const uint8_t current = (*sequence)++;
+  if (primask == 0U) {
+    __enable_irq();
+  }
+  return current;
+}
+
+static void vision_build_frame(uint8_t *output,
+                               uint8_t type,
+                               uint8_t sequence,
+                               const uint8_t *payload)
+{
+  output[0] = VISION_FRAME_HEAD_1;
+  output[1] = VISION_FRAME_HEAD_2;
+  output[FRAME_TYPE_INDEX] = type;
+  output[FRAME_SEQUENCE_INDEX] = sequence;
+  for (uint8_t i = 0U; i < VISION_PAYLOAD_SIZE; ++i) {
+    output[FRAME_PAYLOAD_INDEX + i] = payload[i];
+  }
+  const uint16_t crc = vision_crc16(&output[FRAME_TYPE_INDEX],
+                                    FRAME_CRC_INPUT_SIZE);
+  output[FRAME_CRC_LOW_INDEX] = (uint8_t)crc;
+  output[FRAME_CRC_HIGH_INDEX] = (uint8_t)(crc >> 8);
+  output[FRAME_TAIL_INDEX] = VISION_FRAME_TAIL;
 }
 
 static bool vision_config_valid(uint8_t color, uint8_t start_zone)
@@ -82,6 +117,7 @@ static void vision_save_config(const uint8_t *payload, uint8_t sequence)
     config_streak = 1U;
   }
   config_last_sequence = sequence;
+  latest_data.config_sequence = sequence;
   config_sequence_valid = true;
   latest_data.config_ready = config_streak >= APP_CONFIG_CONFIRM_FRAMES;
 }
@@ -129,13 +165,20 @@ static void vision_save_report(const uint8_t *payload,
   latest_data.valid = true;
 }
 
-static void vision_save_event(const uint8_t *payload)
+static void vision_save_event(const uint8_t *payload,
+                              uint8_t sequence,
+                              uint32_t tick_ms)
 {
+  if (!vision_padding_zero(payload, 1U)) {
+    return;
+  }
   if (payload[0] == VISION_EVENT_STOP) {
-    if (vision_padding_zero(payload, 1U)) {
-      latest_data.stop = true;
-      latest_data.valid = false;
-    }
+    latest_data.stop = true;
+    latest_data.valid = false;
+  } else if (payload[0] == VISION_EVENT_RESCUE) {
+    latest_data.rescue_requested = true;
+    latest_data.rescue_sequence = sequence;
+    latest_data.rescue_tick_ms = tick_ms;
   }
 }
 
@@ -183,6 +226,8 @@ static void vision_save_frame(uint32_t tick_ms)
   for (uint8_t i = 0U; i < VISION_FRAME_SIZE; ++i) {
     latest_data.last_frame[i] = frame[i];
   }
+  latest_data.last_frame_tick_ms = tick_ms;
+  latest_data.frame_received = true;
 
   if (type == VISION_MSG_CONFIG) {
     vision_save_config(payload, sequence);
@@ -194,7 +239,7 @@ static void vision_save_frame(uint32_t tick_ms)
     if (type == VISION_MSG_REPORT) {
       vision_save_report(payload, sequence, tick_ms);
     } else if (type == VISION_MSG_EVENT) {
-      vision_save_event(payload);
+      vision_save_event(payload, sequence, tick_ms);
     } else if (type == VISION_MSG_NAV) {
       vision_save_nav(payload, sequence, tick_ms);
     }
@@ -285,20 +330,26 @@ void Vision_Init(void)
   latest_data.distance_mm = 0U;
   latest_data.tick_ms = 0U;
   latest_data.nav_tick_ms = 0U;
+  latest_data.rescue_tick_ms = 0U;
+  latest_data.last_frame_tick_ms = 0U;
   latest_data.color = 0U;
   latest_data.start_zone = 0U;
+  latest_data.config_sequence = 0U;
   latest_data.sequence = 0U;
   latest_data.cargo_counts = 0U;
   latest_data.nav_sequence = 0U;
   latest_data.nav_direction = VISION_NAV_HOLD;
   latest_data.nav_zone_state = 0U;
   latest_data.nav_destination = 0U;
+  latest_data.rescue_sequence = 0U;
   for (uint8_t i = 0U; i < VISION_FRAME_SIZE; ++i) {
     latest_data.last_frame[i] = 0U;
   }
   latest_data.valid = false;
   latest_data.nav_valid = false;
   latest_data.stop = false;
+  latest_data.rescue_requested = false;
+  latest_data.frame_received = false;
   latest_data.config_ready = false;
   latest_data.found = false;
   latest_data.grabbed = false;
@@ -310,7 +361,10 @@ void Vision_Init(void)
   config_last_sequence = 0U;
   config_sequence_valid = false;
   ack_remaining = 0U;
-  ack_busy = false;
+  status_pending = false;
+  odom_pending = false;
+  status_sequence = 0U;
+  odom_sequence = 0U;
   Vision_ResetParser();
 }
 
@@ -367,27 +421,99 @@ void Vision_RequestConfigAck(void)
   ack_remaining = APP_CONFIG_CONFIRM_FRAMES;
 }
 
-void Vision_Process(void)
+void Vision_QueueTaskStatus(const VisionTaskStatus *status)
 {
-  if (ack_busy || (ack_remaining == 0U)) {
+  if (status == 0) {
     return;
   }
 
-  ack_busy = true;
-  if (HAL_UART_Transmit_IT(&huart3, ack_frame, sizeof(ack_frame)) != HAL_OK) {
-    ack_busy = false;
+  const uint8_t payload[VISION_PAYLOAD_SIZE] = {
+    status->state,
+    status->destination,
+    (uint8_t)(status->remaining_s >> 8),
+    (uint8_t)status->remaining_s,
+    status->flags,
+    status->fault,
+    status->recovery_count,
+    status->cargo_counts
+  };
+  uint8_t pending[VISION_FRAME_SIZE];
+  const uint8_t sequence = vision_next_sequence(&status_sequence);
+  vision_build_frame(pending, VISION_MSG_STATUS, sequence, payload);
+
+  const uint32_t copy_primask = __get_PRIMASK();
+  __disable_irq();
+  for (uint8_t i = 0U; i < VISION_FRAME_SIZE; ++i) {
+    status_frame[i] = pending[i];
+  }
+  status_pending = true;
+  if (copy_primask == 0U) {
+    __enable_irq();
   }
 }
 
-void Vision_OnTxComplete(void)
+void Vision_QueueOdom(const VisionOdom *odom)
+{
+  if ((odom == 0) || (odom->sample_period_ms == 0U)) {
+    return;
+  }
+
+  const uint8_t payload[VISION_PAYLOAD_SIZE] = {
+    (uint8_t)(odom->position[0] >> 8),
+    (uint8_t)odom->position[0],
+    (uint8_t)(odom->position[1] >> 8),
+    (uint8_t)odom->position[1],
+    (uint8_t)(odom->position[2] >> 8),
+    (uint8_t)odom->position[2],
+    odom->sample_period_ms,
+    odom->status
+  };
+  uint8_t pending[VISION_FRAME_SIZE];
+  vision_build_frame(pending, VISION_MSG_ODOM,
+                     vision_next_sequence(&odom_sequence), payload);
+
+  const uint32_t primask = __get_PRIMASK();
+  __disable_irq();
+  for (uint8_t i = 0U; i < VISION_FRAME_SIZE; ++i) {
+    odom_frame[i] = pending[i];
+  }
+  odom_pending = true;
+  if (primask == 0U) {
+    __enable_irq();
+  }
+}
+
+void Vision_Process(void)
 {
   if (ack_remaining > 0U) {
-    --ack_remaining;
+    if (Uart_Send(config_ack, sizeof(config_ack))) {
+      --ack_remaining;
+    }
+  } else if (odom_pending) {
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    for (uint8_t i = 0U; i < VISION_FRAME_SIZE; ++i) {
+      tx_frame[i] = odom_frame[i];
+    }
+    odom_pending = false;
+    if (primask == 0U) {
+      __enable_irq();
+    }
+    if (!Uart_Send(tx_frame, sizeof(tx_frame))) {
+      odom_pending = true;
+    }
+  } else if (status_pending) {
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    for (uint8_t i = 0U; i < VISION_FRAME_SIZE; ++i) {
+      tx_frame[i] = status_frame[i];
+    }
+    status_pending = false;
+    if (primask == 0U) {
+      __enable_irq();
+    }
+    if (!Uart_Send(tx_frame, sizeof(tx_frame))) {
+      status_pending = true;
+    }
   }
-  ack_busy = false;
-}
-
-void Vision_OnTxError(void)
-{
-  ack_busy = false;
 }

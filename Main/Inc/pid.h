@@ -21,5 +21,6 @@ void Pid_Init(Pid_t *pid, float kp, float ki, float kd,
               float integral_min, float integral_max);
 void Pid_Reset(Pid_t *pid);
 float Pid_Update(Pid_t *pid, float target, float actual);
+float Pid_UpdateDt(Pid_t *pid, float target, float actual, float dt_s);
 
 #endif

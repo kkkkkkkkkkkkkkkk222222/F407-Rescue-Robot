@@ -16,8 +16,22 @@
 #define VISION_MSG_REPORT         0x12U
 #define VISION_MSG_EVENT          0x13U
 #define VISION_MSG_NAV            0x14U
+#define VISION_MSG_ODOM           0x15U
+#define VISION_MSG_STATUS         0x16U
 
 #define VISION_EVENT_STOP         0x01U
+#define VISION_EVENT_RESCUE       0x02U
+
+#define VISION_ACK_ACCEPTED       0x00U
+
+#define VISION_STATUS_MATCH_STARTED    0x01U
+#define VISION_STATUS_FOUND            0x02U
+#define VISION_STATUS_GRABBED          0x04U
+#define VISION_STATUS_CARGO_VALID      0x08U
+#define VISION_STATUS_NORMAL_DELIVERED 0x10U
+#define VISION_STATUS_NAV_FRESH        0x20U
+#define VISION_STATUS_NEAR_SAFE        0x40U
+#define VISION_STATUS_CLAW_EMPTY       0x80U
 
 #define VISION_DEST_MATERIAL      0x01U
 #define VISION_DEST_CASUALTY      0x02U
@@ -59,18 +73,24 @@ typedef struct {
   uint16_t distance_mm;
   uint32_t tick_ms;
   uint32_t nav_tick_ms;
+  uint32_t rescue_tick_ms;
+  uint32_t last_frame_tick_ms;
   uint8_t color;
   uint8_t start_zone;
+  uint8_t config_sequence;
   uint8_t sequence;
   uint8_t cargo_counts;
   uint8_t nav_sequence;
   uint8_t nav_direction;
   uint8_t nav_zone_state;
   uint8_t nav_destination;
+  uint8_t rescue_sequence;
   uint8_t last_frame[VISION_FRAME_SIZE];
   bool valid;
   bool nav_valid;
   bool stop;
+  bool rescue_requested;
+  bool frame_received;
   bool config_ready;
   bool found;
   bool grabbed;
@@ -79,6 +99,22 @@ typedef struct {
   bool unknown;
   bool claw_view;
 } VisionData;
+
+typedef struct {
+  uint16_t remaining_s;
+  uint8_t state;
+  uint8_t destination;
+  uint8_t flags;
+  uint8_t fault;
+  uint8_t recovery_count;
+  uint8_t cargo_counts;
+} VisionTaskStatus;
+
+typedef struct {
+  uint16_t position[3];
+  uint8_t sample_period_ms;
+  uint8_t status;
+} VisionOdom;
 
 void Vision_Init(void);
 void Vision_ResetParser(void);
@@ -89,8 +125,8 @@ bool Vision_NavIsFresh(const VisionData *data,
                        uint32_t now_ms,
                        uint32_t timeout_ms);
 void Vision_RequestConfigAck(void);
+void Vision_QueueTaskStatus(const VisionTaskStatus *status);
+void Vision_QueueOdom(const VisionOdom *odom);
 void Vision_Process(void);
-void Vision_OnTxComplete(void);
-void Vision_OnTxError(void);
 
 #endif

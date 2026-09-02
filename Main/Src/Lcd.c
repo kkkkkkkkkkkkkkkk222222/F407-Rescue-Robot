@@ -81,10 +81,6 @@ static const uint8_t font_5x7[64][5] = {
   ['_' - ' '] = {0x40, 0x40, 0x40, 0x40, 0x40},
 };
 
-#if APP_ENABLE_TASK
-static uint8_t task_layout = 0xFFU;
-#endif
-
 static void select_lcd(void)
 {
   HAL_GPIO_WritePin(TFT_CS_GPIO_Port, TFT_CS_Pin, GPIO_PIN_RESET);
@@ -266,7 +262,9 @@ static void dashboard_write(uint16_t x, uint16_t y, uint16_t width,
   LCD_DrawText(x, y, text, LCD_WHITE, LCD_BLACK);
 }
 
-#if APP_ENABLE_TASK || (!APP_ENABLE_MOTION_TEST && !APP_ENABLE_LOCATION_DEMO)
+#if APP_ENABLE_AUTOMATIC_MOTOR_TEST && !APP_ENABLE_TASK && \
+    !APP_ENABLE_MOTION_TEST && !APP_ENABLE_MOVE_SPIN_TEST && \
+    !APP_ENABLE_LOCATION_DEMO
 static bool dashboard_motor_fault(void)
 {
   for (uint8_t id = 1U; id <= 3U; ++id) {
@@ -277,7 +275,10 @@ static bool dashboard_motor_fault(void)
   }
   return false;
 }
+#endif
 
+#if !APP_ENABLE_TASK && !APP_ENABLE_MOTION_TEST && \
+    !APP_ENABLE_MOVE_SPIN_TEST && !APP_ENABLE_LOCATION_DEMO
 static const char *dashboard_uart_text(const LCDDashboard *dashboard)
 {
   if (!dashboard->uart_active) {
@@ -294,7 +295,7 @@ static const char *dashboard_uart_text(const LCDDashboard *dashboard)
 }
 #endif
 
-#if APP_ENABLE_LOCATION_DEMO
+#if APP_ENABLE_LOCATION_DEMO || APP_ENABLE_TASK
 static void dashboard_write(uint16_t x, uint16_t y, uint16_t width,
                             const char *text);
 
@@ -503,11 +504,18 @@ static void location_draw_robot_marker(int16_t center_x, int16_t center_y,
   location_draw_disc(nose_x, nose_y, 2U, valid ? LCD_RED : LCD_WHITE);
 }
 
-static void dashboard_draw_location(const LCDDashboard *dashboard)
+static void location_draw_target_marker(int32_t x_mm, int32_t y_mm,
+                                        uint16_t color)
+{
+  const int16_t x = location_map_x(x_mm);
+  const int16_t y = location_map_y(y_mm);
+  location_draw_line((int16_t)(x - 3), y, (int16_t)(x + 3), y, color);
+  location_draw_line(x, (int16_t)(y - 3), x, (int16_t)(y + 3), color);
+}
+
+static void draw_map(const LocationPose *pose)
 {
   static bool layout_drawn;
-  char text[24];
-  const LocationPose *pose = &dashboard->location;
 
   if (!layout_drawn) {
     LCD_FillScreen(LCD_BLACK);
@@ -520,264 +528,137 @@ static void dashboard_draw_location(const LCDDashboard *dashboard)
   }
   location_draw_static_map();
 
-  (void)snprintf(text, sizeof(text), "X:%ld Y:%ld",
-                 (long)pose->x_mm, (long)pose->y_mm);
-  dashboard_write(0U, 4U, 128U, text);
+  const int16_t current_x = location_map_x(pose->x_mm);
+  const int16_t current_y = location_map_y(pose->y_mm);
+  location_add_trail_point(current_x, current_y);
+  location_draw_trail();
+  location_draw_target_marker((int32_t)APP_LOCATION_DEMO_MATERIAL_X_MM,
+                              (int32_t)APP_LOCATION_DEMO_MATERIAL_Y_MM,
+                              LCD_CYAN);
+  const int16_t material_x = location_map_x(
+      (int32_t)APP_LOCATION_DEMO_MATERIAL_X_MM);
+  const int16_t material_y = location_map_y(
+      (int32_t)APP_LOCATION_DEMO_MATERIAL_Y_MM);
+  LCD_DrawText((uint16_t)(material_x + 4),
+               (uint16_t)((material_y > 4) ? material_y - 4 : 0),
+               "M", LCD_CYAN, LCD_BLACK);
+  location_last_x = current_x;
+  location_last_y = current_y;
+  location_draw_robot_marker(location_last_x, location_last_y,
+                              pose->heading_mdeg,
+                              pose->valid);
+  location_marker_drawn = true;
+}
+
+#if APP_ENABLE_LOCATION_DEMO
+static void draw_location(const LCDDashboard *dashboard)
+{
+  char text[24];
+  const LocationPose *pose = &dashboard->location;
   const int32_t heading = pose->heading_mdeg;
   const char *state = !pose->valid ? "IMUERR" :
                       (!pose->inside_field ? "OUT" :
                       (dashboard->location_demo_running ? "EXIT" : "STOP"));
+
+  draw_map(pose);
+  (void)snprintf(text, sizeof(text), "X:%ld Y:%ld",
+                 (long)pose->x_mm, (long)pose->y_mm);
+  dashboard_write(0U, 4U, 128U, text);
   (void)snprintf(text, sizeof(text), "H:%ld.%01ld Z%u %s",
                  (long)(heading / 1000L),
                  (long)((heading % 1000L) / 100L),
                  pose->start_zone, state);
   dashboard_write(0U, 20U, 128U, text);
-
-  const int16_t current_x = location_map_x(pose->x_mm);
-  const int16_t current_y = location_map_y(pose->y_mm);
-  location_add_trail_point(current_x, current_y);
-  location_draw_trail();
-  location_last_x = current_x;
-  location_last_y = current_y;
-  location_draw_robot_marker(location_last_x, location_last_y, heading,
-                             pose->valid);
-  location_marker_drawn = true;
 }
+#endif
 #endif
 
 #if APP_ENABLE_TASK
-static const char *const task_state_names[] = {
-  "WAIT_CONFIG", "START",       "FIND_OBJECT", "CRAB_OBJECT",
-  "RETURN_SAFE", "DROP_OBJECT", "STOPPED"
-};
-
-static const char *const task_labels[][5] = {
-  {"COLOR:", "ZONE:",  "CFG:",   "UART:",  "MOTOR:"},
-  {"TIME:",  "DIST:",  "SPEED:", "ZONE:",  "MOTOR:"},
-  {"TIME:",  "FOUND:", "DIST:",  "TYPE:",  "MOTOR:"},
-  {"TIME:",  "GRAB:",  "COUNT:", "LOAD:",  "MOTOR:"},
-  {"TIME:",  "CARGO:", "DEST:",  "NEAR:",  "NAV:"},
-  {"TIME:",  "PHASE:", "CHECK:", "CARGO:", "MOTOR:"},
-  {"TIME:",  "FOUND:", "GRAB:",  "COUNT:", "MOTOR:"}
-};
-
-static void dashboard_draw_task_layout(TaskState state)
-{
-  const uint8_t state_index = (state <= TASK_STOPPED) ? (uint8_t)state :
-                                                        (uint8_t)TASK_STOPPED;
-  LCD_FillScreen(LCD_BLACK);
-  LCD_DrawText(15U, 4U, "RESCUE TASK", LCD_YELLOW, LCD_BLACK);
-  LCD_DrawText(0U, 20U, "STATE:", LCD_CYAN, LCD_BLACK);
-  LCD_DrawText(0U, 34U, "RX0:", LCD_CYAN, LCD_BLACK);
-  LCD_DrawText(0U, 48U, "RX1:", LCD_CYAN, LCD_BLACK);
-  LCD_DrawText(0U, 62U, "RX2:", LCD_CYAN, LCD_BLACK);
-  LCD_DrawText(0U, 76U, "RX3:", LCD_CYAN, LCD_BLACK);
-  for (uint8_t line = 0U; line < 5U; ++line) {
-    LCD_DrawText(0U, (uint16_t)(94U + line * 14U),
-                 task_labels[state_index][line], LCD_GREEN, LCD_BLACK);
-  }
-  task_layout = state_index;
-}
-
-static void dashboard_write_value(uint8_t line, const char *text)
-{
-  dashboard_write(42U, (uint16_t)(94U + line * 14U), 86U, text);
-}
-
-static void dashboard_write_rx(uint8_t line, const char *text)
-{
-  dashboard_write(30U, (uint16_t)(34U + line * 14U), 98U, text);
-}
-
-static void dashboard_format_counts(char *text, size_t size, uint8_t counts)
-{
-  (void)snprintf(text, size, "N%u C%u H%u D%u",
-                 VISION_COUNT_NORMAL(counts), VISION_COUNT_CORE(counts),
-                 VISION_COUNT_CASUALTY(counts), VISION_COUNT_DANGER(counts));
-}
-
-static const char *dashboard_nav_text(uint8_t direction)
-{
-  switch (direction) {
-    case VISION_NAV_FORWARD:
-      return "FORWARD";
-    case VISION_NAV_TURN_LEFT:
-      return "LEFT";
-    case VISION_NAV_TURN_RIGHT:
-      return "RIGHT";
-    case VISION_NAV_BACKWARD:
-      return "BACK";
-    default:
-      return "HOLD";
-  }
-}
-
-static const char *dashboard_drop_text(TaskDropPhase phase)
+static const char *task_name(TaskState state)
 {
   static const char *const names[] = {
-    "ENTER", "RELEASE", "CAMERA", "VERIFY", "LEAVE", "RETRY"
+    "WAIT", "START", "FIND", "GRAB", "BACK", "DROP", "STOP"
   };
-  return (phase <= TASK_DROP_RETRY_BACK) ? names[phase] : "ERROR";
+  return (state <= TASK_STOPPED) ? names[state] : "STOP";
 }
 
-static void dashboard_draw_frame(const VisionData *vision)
+static char target_code(uint8_t counts)
 {
-  char text[18];
-  if ((vision->last_frame[0] != VISION_FRAME_HEAD_1) ||
-      (vision->last_frame[1] != VISION_FRAME_HEAD_2) ||
-      (vision->last_frame[VISION_FRAME_SIZE - 1U] != VISION_FRAME_TAIL)) {
-    dashboard_write_rx(0U, "-- -- -- --");
-    dashboard_write_rx(1U, "-- -- -- --");
-    dashboard_write_rx(2U, "-- -- -- --");
-    dashboard_write_rx(3U, "-- -- --");
-    return;
+  if (VISION_COUNT_DANGER(counts) != 0U) {
+    return 'D';
   }
-
-  for (uint8_t line = 0U; line < 3U; ++line) {
-    const uint8_t offset = (uint8_t)(line * 4U);
-    (void)snprintf(text, sizeof(text), "%02X %02X %02X %02X",
-                   vision->last_frame[offset], vision->last_frame[offset + 1U],
-                   vision->last_frame[offset + 2U], vision->last_frame[offset + 3U]);
-    dashboard_write_rx(line, text);
+  if (VISION_COUNT_CASUALTY(counts) != 0U) {
+    return 'H';
   }
-  (void)snprintf(text, sizeof(text), "%02X %02X %02X",
-                 vision->last_frame[12], vision->last_frame[13],
-                 vision->last_frame[14]);
-  dashboard_write_rx(3U, text);
+  if (VISION_COUNT_CORE(counts) != 0U) {
+    return 'C';
+  }
+  return (VISION_COUNT_NORMAL(counts) != 0U) ? 'N' : '-';
 }
 
-static void dashboard_draw_task(const LCDDashboard *dashboard)
+static char dest_code(TaskDestination dest)
+{
+  if (dest == TASK_DEST_MATERIAL) {
+    return 'M';
+  }
+  return (dest == TASK_DEST_CASUALTY) ? 'H' : '-';
+}
+
+static void draw_task(const LCDDashboard *dashboard)
 {
   char text[24];
   const TaskStatus task = Task_GetStatus();
-  const VisionData vision = Vision_GetSnapshot();
-  const uint8_t state = (task.state <= TASK_STOPPED) ? (uint8_t)task.state :
-                                                       (uint8_t)TASK_STOPPED;
-  const bool motor_fault = dashboard_motor_fault();
+  const LocationPose *pose = &dashboard->location;
+  const uint8_t count = (task.object_count != 0U) ? task.object_count :
+                        (uint8_t)(VISION_COUNT_NORMAL(task.cargo_counts) +
+                                  VISION_COUNT_CORE(task.cargo_counts) +
+                                  VISION_COUNT_CASUALTY(task.cargo_counts) +
+                                  VISION_COUNT_DANGER(task.cargo_counts));
 
-  if (task_layout != state) {
-    dashboard_draw_task_layout((TaskState)state);
-  }
-  dashboard_write(42U, 20U, 86U, task_state_names[state]);
-  dashboard_draw_frame(&vision);
-
-  switch ((TaskState)state) {
-    case TASK_WAIT_CONFIG:
-      dashboard_write_value(0U, task.color == VISION_COLOR_RED ? "RED" :
-                                (task.color == VISION_COLOR_BLUE ? "BLUE" : "--"));
-      if (task.start_zone == 0U) {
-        dashboard_write_value(1U, "--");
-      } else {
-        (void)snprintf(text, sizeof(text), "%u", task.start_zone);
-        dashboard_write_value(1U, text);
-      }
-      dashboard_write_value(2U, vision.config_ready ? "OK" : "WAIT 3");
-      dashboard_write_value(3U, dashboard_uart_text(dashboard));
-      dashboard_write_value(4U, motor_fault ? "FAULT" : "OK");
-      break;
-
-    case TASK_START:
-      (void)snprintf(text, sizeof(text), "%us", task.remaining_s);
-      dashboard_write_value(0U, text);
-      (void)snprintf(text, sizeof(text), "%lumm", (unsigned long)task.distance_mm);
-      dashboard_write_value(1U, text);
-      (void)snprintf(text, sizeof(text), "%ldMM/S",
-                     (long)APP_GO_DISTANCE_SPEED_MM_S);
-      dashboard_write_value(2U, text);
-      (void)snprintf(text, sizeof(text), "%u", task.start_zone);
-      dashboard_write_value(3U, text);
-      dashboard_write_value(4U, motor_fault ? "FAULT" : "OK");
-      break;
-
-    case TASK_FIND_OBJECT:
-      (void)snprintf(text, sizeof(text), "%us", task.remaining_s);
-      dashboard_write_value(0U, text);
-      dashboard_write_value(1U, task.found ? "YES" : "NO");
-      (void)snprintf(text, sizeof(text), "%lumm", (unsigned long)task.distance_mm);
-      dashboard_write_value(2U, text);
-      dashboard_format_counts(text, sizeof(text), task.cargo_counts);
-      dashboard_write_value(3U, text);
-      dashboard_write_value(4U, motor_fault ? "FAULT" : "OK");
-      break;
-
-    case TASK_CRAB_OBJECT:
-      (void)snprintf(text, sizeof(text), "%us", task.remaining_s);
-      dashboard_write_value(0U, text);
-      dashboard_write_value(1U, task.grabbed ? "YES" : "NO");
-      (void)snprintf(text, sizeof(text), "%u", task.object_count);
-      dashboard_write_value(2U, text);
-      dashboard_write_value(3U, vision.unknown ? "UNKNOWN" :
-                                (VISION_COUNT_DANGER(task.cargo_counts) != 0U ? "DANGER" :
-                                (task.cargo_valid ? "VALID" :
-                                (task.grabbed ? "VERIFY" : "APPROACH"))));
-      dashboard_write_value(4U, motor_fault ? "FAULT" : "OK");
-      break;
-
-    case TASK_RETURN_SAFE:
-      (void)snprintf(text, sizeof(text), "%us", task.remaining_s);
-      dashboard_write_value(0U, text);
-      dashboard_format_counts(text, sizeof(text), task.cargo_counts);
-      dashboard_write_value(1U, text);
-      dashboard_write_value(2U, task.destination == TASK_DEST_MATERIAL ? "MATERIAL" :
-                                (task.destination == TASK_DEST_CASUALTY ? "CASUALTY" : "--"));
-      dashboard_write_value(3U, task.near_safe ? "YES" : "NO");
-      dashboard_write_value(4U, task.nav_fresh ? dashboard_nav_text(task.nav_direction) :
-                                                "TIMEOUT");
-      break;
-
-    case TASK_DROP_OBJECT:
-      (void)snprintf(text, sizeof(text), "%us", task.remaining_s);
-      dashboard_write_value(0U, text);
-      dashboard_write_value(1U, dashboard_drop_text(task.drop_phase));
-      dashboard_write_value(2U, task.drop_phase < TASK_DROP_VERIFY ? "WAIT" :
-                                (task.claw_empty ? "EMPTY" :
-                                (task.drop_phase == TASK_DROP_RETRY_BACK ? "LOADED" : "VISION")));
-      dashboard_format_counts(text, sizeof(text), task.cargo_counts);
-      dashboard_write_value(3U, text);
-      dashboard_write_value(4U, motor_fault ? "FAULT" : "OK");
-      break;
-
-    default:
-      (void)snprintf(text, sizeof(text), "%us", task.remaining_s);
-      dashboard_write_value(0U, text);
-      dashboard_write_value(1U, task.found ? "YES" : "NO");
-      dashboard_write_value(2U, task.grabbed ? "YES" : "NO");
-      (void)snprintf(text, sizeof(text), "%u", task.object_count);
-      dashboard_write_value(3U, text);
-      dashboard_write_value(4U, motor_fault ? "FAULT" : "OK");
-      break;
-  }
+  draw_map(pose);
+  (void)snprintf(text, sizeof(text), "T:%us %s O:%c%u",
+                 task.remaining_s, task_name(task.state),
+                 target_code(task.cargo_counts), count);
+  dashboard_write(0U, 4U, 128U, text);
+  (void)snprintf(text, sizeof(text), "X:%ld Y:%ld D:%c",
+                 (long)pose->x_mm, (long)pose->y_mm,
+                 dest_code(task.destination));
+  dashboard_write(0U, 20U, 128U, text);
 }
 #elif !APP_ENABLE_LOCATION_DEMO
 static void dashboard_draw_test(const LCDDashboard *dashboard)
 {
   static bool layout_drawn;
   char text[24];
-#if !APP_ENABLE_MOTION_TEST
+#if !APP_ENABLE_MOTION_TEST && !APP_ENABLE_MOVE_SPIN_TEST
   EncoderStatus encoders[3];
 #endif
 
   if (!layout_drawn) {
     LCD_FillScreen(LCD_BLACK);
-#if APP_ENABLE_MOTION_TEST
-    LCD_DrawText(30U, 4U, "IMU ANGLE", LCD_YELLOW, LCD_BLACK);
+#if APP_ENABLE_MOTION_TEST || APP_ENABLE_MOVE_SPIN_TEST
+    LCD_DrawText(24U, 4U, "MOVE + SPIN", LCD_YELLOW, LCD_BLACK);
     LCD_DrawText(0U, 24U, "STATE:", LCD_CYAN, LCD_BLACK);
     LCD_DrawText(0U, 56U, "TOTAL:", LCD_GREEN, LCD_BLACK);
     LCD_DrawText(0U, 92U, "CURRENT:", LCD_GREEN, LCD_BLACK);
+#if APP_ENABLE_MOVE_SPIN_TEST
+    LCD_DrawText(6U, 140U, "LEFT + POSITIVE", LCD_YELLOW, LCD_BLACK);
+#else
     LCD_DrawText(6U, 140U, "TURN CAR BY HAND", LCD_YELLOW, LCD_BLACK);
+#endif
 #else
     LCD_DrawText(6U, 4U, "LCD WHEEL TEST", LCD_YELLOW, LCD_BLACK);
     LCD_DrawText(0U, 24U, "M1:", LCD_CYAN, LCD_BLACK);
     LCD_DrawText(0U, 38U, "M2:", LCD_CYAN, LCD_BLACK);
     LCD_DrawText(0U, 52U, "M3:", LCD_CYAN, LCD_BLACK);
-    LCD_DrawText(0U, 86U, "UART3:", LCD_GREEN, LCD_BLACK);
+    LCD_DrawText(0U, 86U, "COM2:", LCD_GREEN, LCD_BLACK);
     LCD_DrawText(0U, 104U, "SERVO:", LCD_GREEN, LCD_BLACK);
     LCD_DrawText(0U, 122U, "WHEEL:", LCD_GREEN, LCD_BLACK);
 #endif
     layout_drawn = true;
   }
 
-#if APP_ENABLE_MOTION_TEST
+#if APP_ENABLE_MOTION_TEST || APP_ENABLE_MOVE_SPIN_TEST
   const char *state = dashboard->imu_ready ? "READY" : "IMU ERR";
   dashboard_write(42U, 24U, 86U, state);
   const int64_t yaw = dashboard->imu_yaw_mdeg;
@@ -834,9 +715,9 @@ void LCD_DrawDashboard(const LCDDashboard *dashboard)
     return;
   }
 #if APP_ENABLE_TASK
-  dashboard_draw_task(dashboard);
+  draw_task(dashboard);
 #elif APP_ENABLE_LOCATION_DEMO
-  dashboard_draw_location(dashboard);
+  draw_location(dashboard);
 #else
   dashboard_draw_test(dashboard);
 #endif

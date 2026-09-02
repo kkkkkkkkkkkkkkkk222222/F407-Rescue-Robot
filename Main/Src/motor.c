@@ -5,6 +5,7 @@
 #include "app_config.h"
 #include "encoder.h"
 #include "imu.h"
+#include "Location.h"
 #include "main.h"
 #include "pid.h"
 
@@ -33,10 +34,11 @@ typedef struct {
   MotorDistanceStatus status;
   bool slowing;
   float target_mm;
+  float max_speed_mm_s;
   float slowdown_start_mm;
   float last_progress_mm;
   int64_t start_m1_count;
-  int64_t start_m3_count;
+  int64_t start_m2_count;
   uint16_t no_progress_cycles;
 } DistanceMove;
 
@@ -61,6 +63,17 @@ typedef struct {
   uint16_t zero_wait_cycles;
 } DirectionMove;
 
+typedef struct {
+  bool active;
+  float start_x_mm;
+  float start_y_mm;
+  float field_angle_rad;
+  float direction_deg;
+  float current_speed_mm_s;
+  float current_yaw_mm_s;
+  uint32_t last_update_ms;
+} SpinMove;
+
 static const MotorPwm motors[MOTOR_COUNT] = {
   {&htim5, TIM_CHANNEL_3, &htim5, TIM_CHANNEL_4},
   {&htim9, TIM_CHANNEL_1, &htim9, TIM_CHANNEL_2},
@@ -83,6 +96,7 @@ static Pid_t heading_pid;
 static volatile DistanceMove distance_move;
 static volatile AngleTurn angle_turn;
 static volatile DirectionMove direction_move;
+static volatile SpinMove spin_move;
 static uint8_t brake_cycles_remaining;
 
 static const int8_t motor_signs[MOTOR_COUNT] = {
@@ -123,6 +137,39 @@ static int32_t motor_abs(int32_t value)
 static float motor_abs_float(float value)
 {
   return (value < 0.0f) ? -value : value;
+}
+
+static float motor_clamp_float(float value, float minimum, float maximum)
+{
+  if (value < minimum) {
+    return minimum;
+  }
+  if (value > maximum) {
+    return maximum;
+  }
+  return value;
+}
+
+static float motor_step_toward(float current, float target, float step)
+{
+  if (current < target) {
+    return (current + step < target) ? current + step : target;
+  }
+  if (current > target) {
+    return (current - step > target) ? current - step : target;
+  }
+  return target;
+}
+
+static float motor_wrap_angle_deg(float angle_deg)
+{
+  angle_deg = fmodf(angle_deg, 360.0f);
+  if (angle_deg > 180.0f) {
+    angle_deg -= 360.0f;
+  } else if (angle_deg <= -180.0f) {
+    angle_deg += 360.0f;
+  }
+  return angle_deg;
 }
 
 static int16_t motor_limit(int32_t value)
@@ -263,9 +310,9 @@ static void motor_set_speed_target(float target_speed, uint8_t id)
 static void motor_set_forward_speed(float speed_mm_s)
 {
   const float wheel_speed = speed_mm_s * MOTOR_SQRT3_OVER_2;
-  motor_set_speed_target(-wheel_speed, 1U);
-  motor_set_speed_target(0.0f, 2U);
-  motor_set_speed_target( wheel_speed, 3U);
+  motor_set_speed_target( wheel_speed, 1U);
+  motor_set_speed_target(-wheel_speed, 2U);
+  motor_set_speed_target(0.0f, 3U);
 }
 
 static void motor_set_rotate_speed(float speed_mm_s)
@@ -283,15 +330,16 @@ static void motor_set_omni_speed(float forward_mm_s, float lateral_mm_s,
    *   v1 =  Vy                 + R*w
    *   v2 = -sqrt(3)/2*Vx-Vy/2 + R*w
    *   v3 =  sqrt(3)/2*Vx-Vy/2 + R*w
-   * Physical mapping on this chassis is M1=v2, M2=v1, M3=v3. The third
+   * Physical mapping on this chassis is M1=v3 (right), M2=v2 (left),
+   * M3=v1 (rear). The third
    * input is therefore R*w expressed as wheel tangential speed in mm/s.
    */
   float wheel[MOTOR_COUNT] = {
+     MOTOR_SQRT3_OVER_2 * forward_mm_s -
+        MOTOR_ONE_HALF * lateral_mm_s + yaw_tangent_mm_s,
     -MOTOR_SQRT3_OVER_2 * forward_mm_s -
         MOTOR_ONE_HALF * lateral_mm_s + yaw_tangent_mm_s,
-     lateral_mm_s + yaw_tangent_mm_s,
-     MOTOR_SQRT3_OVER_2 * forward_mm_s -
-        MOTOR_ONE_HALF * lateral_mm_s + yaw_tangent_mm_s
+     lateral_mm_s + yaw_tangent_mm_s
   };
   float maximum = motor_abs_float(wheel[0]);
   for (uint32_t i = 1U; i < MOTOR_COUNT; ++i) {
@@ -369,6 +417,18 @@ static void motor_clear_direction_move(void)
   direction_move.zero_wait_cycles = 0U;
 }
 
+static void motor_clear_spin_move(void)
+{
+  spin_move.active = false;
+  spin_move.start_x_mm = 0.0f;
+  spin_move.start_y_mm = 0.0f;
+  spin_move.field_angle_rad = 0.0f;
+  spin_move.direction_deg = 0.0f;
+  spin_move.current_speed_mm_s = 0.0f;
+  spin_move.current_yaw_mm_s = 0.0f;
+  spin_move.last_update_ms = 0U;
+}
+
 static void motor_stop_outputs(bool use_brake)
 {
   bool was_moving = false;
@@ -379,6 +439,7 @@ static void motor_stop_outputs(bool use_brake)
     }
   }
   motor_clear_direction_move();
+  motor_clear_spin_move();
   Pid_Reset(&heading_pid);
   motor_reset_targets();
 
@@ -424,10 +485,10 @@ static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
   const float m1_mm = motor_counts_to_mm(
       (float)(encoder[0].position - distance_move.start_m1_count) *
       (float)encoder_signs[0]);
-  const float m3_mm = motor_counts_to_mm(
-      (float)(encoder[2].position - distance_move.start_m3_count) *
-      (float)encoder_signs[2]);
-  const float forward_mm = (m3_mm - m1_mm) / 1.7320508f;
+  const float m2_mm = motor_counts_to_mm(
+      (float)(encoder[1].position - distance_move.start_m2_count) *
+      (float)encoder_signs[1]);
+  const float forward_mm = (m1_mm - m2_mm) / 1.7320508f;
   const float direction = (distance_move.target_mm >= 0.0f) ? 1.0f : -1.0f;
   const float target_mm = distance_move.target_mm * direction;
   const float travelled_mm = forward_mm * direction;
@@ -438,7 +499,7 @@ static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
     return;
   }
 
-  if ((targets[0] != 0) || (targets[2] != 0)) {
+  if ((targets[0] != 0) || (targets[1] != 0)) {
     const float progress = travelled_mm - distance_move.last_progress_mm;
     if (progress >= APP_GO_DISTANCE_PROGRESS_MM) {
       distance_move.last_progress_mm = travelled_mm;
@@ -448,19 +509,22 @@ static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
     }
     if (distance_move.no_progress_cycles >= APP_GO_DISTANCE_NO_PROGRESS_CYCLES) {
       stall_faults[0] = true;
-      stall_faults[2] = true;
+      stall_faults[1] = true;
       motor_abort_all(MOTOR_DISTANCE_FAULT);
       return;
     }
   }
 
-  float speed_mm_s = APP_GO_DISTANCE_SPEED_MM_S;
+  const float minimum_speed_mm_s =
+      (distance_move.max_speed_mm_s < APP_GO_DISTANCE_MIN_SPEED_MM_S) ?
+      distance_move.max_speed_mm_s : APP_GO_DISTANCE_MIN_SPEED_MM_S;
+  float speed_mm_s = distance_move.max_speed_mm_s;
 
   if (remaining_mm < distance_move.slowdown_start_mm) {
     if (!distance_move.slowing) {
       distance_move.slowing = true;
       Pid_Reset(&speed_pids[0]);
-      Pid_Reset(&speed_pids[2]);
+      Pid_Reset(&speed_pids[1]);
     }
 
     const float usable_slowdown =
@@ -471,8 +535,8 @@ static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
     } else if (ratio > 1.0f) {
       ratio = 1.0f;
     }
-    speed_mm_s = APP_GO_DISTANCE_MIN_SPEED_MM_S +
-        (APP_GO_DISTANCE_SPEED_MM_S - APP_GO_DISTANCE_MIN_SPEED_MM_S) * ratio;
+    speed_mm_s = minimum_speed_mm_s +
+        (distance_move.max_speed_mm_s - minimum_speed_mm_s) * ratio;
   }
 
   motor_set_forward_speed(speed_mm_s * direction);
@@ -697,10 +761,11 @@ void Motor_Init(void)
   distance_move.status = MOTOR_DISTANCE_IDLE;
   distance_move.slowing = false;
   distance_move.target_mm = 0.0f;
+  distance_move.max_speed_mm_s = APP_GO_DISTANCE_SPEED_MM_S;
   distance_move.slowdown_start_mm = 0.0f;
   distance_move.last_progress_mm = 0.0f;
   distance_move.start_m1_count = 0;
-  distance_move.start_m3_count = 0;
+  distance_move.start_m2_count = 0;
   distance_move.no_progress_cycles = 0U;
   angle_turn.status = MOTOR_TURN_IDLE;
   angle_turn.slowing = false;
@@ -709,6 +774,7 @@ void Motor_Init(void)
   angle_turn.start_yaw_mdeg = 0LL;
   angle_turn.start_ms = 0U;
   motor_clear_direction_move();
+  motor_clear_spin_move();
   Pid_Init(&heading_pid,
            APP_MOTOR_HEADING_KP,
            APP_MOTOR_HEADING_KI,
@@ -816,10 +882,29 @@ void Motor_Update(void)
     correction = Pid_Update(&speed_pids[index],
                             target_counts_per_update[index],
                             (float)measured);
-    const int32_t base_pwm =
-        (targets[index] > 0) ? APP_MOTOR_BASE_PWM : -APP_MOTOR_BASE_PWM;
+    int32_t base_pwm;
+    int32_t output_limit;
+    if (spin_move.active) {
+      /* During field-oriented spinning, each target sweeps through a wide
+       * range every revolution. A fixed base PWM makes the slow wheel much
+       * too fast and the fast wheel too slow. The reference three-wheel code
+       * maps each wheel target magnitude to PWM; retain encoder PID feedback
+       * on top of that feed-forward and allow active braking on overspeed. */
+      const float normalized = motor_abs_float((float)targets[index]) /
+                               (float)MOTOR_MAX_SPEED;
+      const float feedforward = APP_MOVE_SPIN_FF_STATIC_PWM +
+          (APP_MOVE_SPIN_FF_MAX_PWM - APP_MOVE_SPIN_FF_STATIC_PWM) *
+          normalized;
+      base_pwm = (targets[index] > 0) ? (int32_t)feedforward :
+                                       -(int32_t)feedforward;
+      correction *= APP_MOVE_SPIN_PID_BOOST;
+      output_limit = APP_MOVE_SPIN_OUTPUT_LIMIT_PWM;
+    } else {
+      base_pwm = (targets[index] > 0) ? APP_MOTOR_BASE_PWM :
+                                       -APP_MOTOR_BASE_PWM;
+      output_limit = motor_default_output_limit();
+    }
     int32_t output = base_pwm + (int32_t)correction;
-    const int32_t output_limit = motor_default_output_limit();
     if (output > output_limit) {
       output = output_limit;
     } else if (output < -output_limit) {
@@ -853,12 +938,13 @@ void Motor_SetSpeed(float target_speed, uint8_t id)
   angle_turn.status = MOTOR_TURN_IDLE;
   angle_turn.slowing = false;
   motor_clear_direction_move();
+  motor_clear_spin_move();
   Pid_Reset(&heading_pid);
   motor_set_speed_target(target_speed, id);
   motor_leave_critical(primask);
 }
 
-MotorDistanceStatus Go_distance(float distance_m)
+MotorDistanceStatus Go_distance(float distance_m, float max_speed_mm_s)
 {
   const uint32_t primask = motor_enter_critical();
   if (distance_move.status != MOTOR_DISTANCE_IDLE) {
@@ -870,7 +956,9 @@ MotorDistanceStatus Go_distance(float distance_m)
     motor_leave_critical(primask);
     return MOTOR_DISTANCE_INVALID;
   }
-  if (!isfinite(distance_m)) {
+  if (!isfinite(distance_m) || !isfinite(max_speed_mm_s) ||
+      (max_speed_mm_s <= 0.0f) ||
+      (max_speed_mm_s > (float)MOTOR_MAX_SPEED)) {
     motor_leave_critical(primask);
     return MOTOR_DISTANCE_INVALID;
   }
@@ -897,9 +985,11 @@ MotorDistanceStatus Go_distance(float distance_m)
   Encoder_GetAll(encoder);
   const float absolute_distance = motor_abs_float(distance_mm);
   distance_move.target_mm = distance_mm;
+  distance_move.max_speed_mm_s = max_speed_mm_s;
   distance_move.start_m1_count = encoder[0].position;
-  distance_move.start_m3_count = encoder[2].position;
-  distance_move.slowdown_start_mm = APP_GO_DISTANCE_SLOWDOWN_MM;
+  distance_move.start_m2_count = encoder[1].position;
+  distance_move.slowdown_start_mm = APP_GO_DISTANCE_SLOWDOWN_MM *
+      max_speed_mm_s / APP_GO_DISTANCE_SPEED_MM_S;
   if (distance_move.slowdown_start_mm > (absolute_distance * 0.5f)) {
     distance_move.slowdown_start_mm = absolute_distance * 0.5f;
   }
@@ -979,10 +1069,154 @@ void Motor_Move(float forward_mm_s, float lateral_mm_s,
   angle_turn.status = MOTOR_TURN_IDLE;
   angle_turn.slowing = false;
   motor_clear_direction_move();
+  motor_clear_spin_move();
   Pid_Reset(&heading_pid);
   /* All three inputs and all wheel targets use mm/s. */
   motor_set_omni_speed(forward_mm_s, lateral_mm_s, yaw_tangent_mm_s);
   motor_leave_critical(primask);
+}
+
+bool Motor_MoveSpin(float speed_mm_s, float direction_deg,
+                    float yaw_tangent_mm_s)
+{
+  if (!isfinite(speed_mm_s) || !isfinite(direction_deg) ||
+      !isfinite(yaw_tangent_mm_s)) {
+    return false;
+  }
+
+  const uint32_t primask = motor_enter_critical();
+  const LocationPose pose = Location_GetPose();
+  const IMUData imu = IMU_GetData();
+  if (motor_has_fault() || !pose.valid || !imu.ready) {
+    motor_stop_outputs(true);
+    motor_leave_critical(primask);
+    return false;
+  }
+
+  if (speed_mm_s < 0.0f) {
+    speed_mm_s = -speed_mm_s;
+    direction_deg += 180.0f;
+  }
+  if ((speed_mm_s == 0.0f) && (yaw_tangent_mm_s == 0.0f)) {
+    motor_stop_outputs(true);
+    motor_leave_critical(primask);
+    return true;
+  }
+
+  direction_deg = motor_wrap_angle_deg(direction_deg);
+  const float heading_deg = (float)pose.heading_mdeg * 0.001f;
+  const float heading_rad = heading_deg * MOTOR_DEG_TO_RAD;
+  const float field_yaw_rate_deg_s = (float)imu.gyro_mdps[2] * 0.001f *
+                                     APP_LOCATION_IMU_YAW_SIGN;
+  const float control_heading_rad =
+      (heading_deg + field_yaw_rate_deg_s *
+       APP_MOVE_SPIN_HEADING_LEAD_MS * 0.001f) * MOTOR_DEG_TO_RAD;
+  const uint32_t now_ms = HAL_GetTick();
+
+  if (!spin_move.active) {
+    distance_move.status = MOTOR_DISTANCE_IDLE;
+    distance_move.slowing = false;
+    distance_move.no_progress_cycles = 0U;
+    angle_turn.status = MOTOR_TURN_IDLE;
+    angle_turn.slowing = false;
+    motor_clear_direction_move();
+    Pid_Reset(&heading_pid);
+    spin_move.start_x_mm = (float)pose.x_mm;
+    spin_move.start_y_mm = (float)pose.y_mm;
+    spin_move.field_angle_rad = heading_rad +
+                                direction_deg * MOTOR_DEG_TO_RAD;
+    spin_move.direction_deg = direction_deg;
+    spin_move.current_speed_mm_s = 0.0f;
+    spin_move.current_yaw_mm_s = 0.0f;
+    spin_move.last_update_ms = now_ms;
+    spin_move.active = true;
+  } else if (motor_abs_float(motor_wrap_angle_deg(
+                 direction_deg - spin_move.direction_deg)) > 0.5f) {
+    /* A new direction starts a new floor-fixed line at the current pose. */
+    spin_move.start_x_mm = (float)pose.x_mm;
+    spin_move.start_y_mm = (float)pose.y_mm;
+    spin_move.field_angle_rad = heading_rad +
+                                direction_deg * MOTOR_DEG_TO_RAD;
+    spin_move.direction_deg = direction_deg;
+  }
+
+  uint32_t elapsed_ms = now_ms - spin_move.last_update_ms;
+  if (elapsed_ms > APP_MOVE_SPIN_MAX_UPDATE_MS) {
+    elapsed_ms = APP_MOVE_SPIN_MAX_UPDATE_MS;
+  }
+  spin_move.last_update_ms = now_ms;
+  const float elapsed_s = (float)elapsed_ms * 0.001f;
+  spin_move.current_speed_mm_s = motor_step_toward(
+      spin_move.current_speed_mm_s, speed_mm_s,
+      APP_MOVE_SPIN_ACCEL_MM_S2 * elapsed_s);
+  spin_move.current_yaw_mm_s = motor_step_toward(
+      spin_move.current_yaw_mm_s, yaw_tangent_mm_s,
+      APP_MOVE_SPIN_YAW_ACCEL_MM_S2 * elapsed_s);
+
+  /*
+   * RM-style field-oriented control:
+   *   1. Keep the requested translation vector fixed on the floor.
+   *   2. Correct accumulated cross-track error from Location odometry.
+   *   3. Rotate the field vector into the current chassis frame.
+   *   4. Add the same R*w term to all three wheel targets below.
+   *
+   * This is deliberately based on Location's heading and wheel ordering, so
+   * the inverse transform is exactly paired with Location_Update10ms().
+   */
+  const float line_cos = cosf(spin_move.field_angle_rad);
+  const float line_sin = sinf(spin_move.field_angle_rad);
+  const float line_normal_x = -line_sin;
+  const float line_normal_y = line_cos;
+  const float displacement_x = (float)pose.x_mm - spin_move.start_x_mm;
+  const float displacement_y = (float)pose.y_mm - spin_move.start_y_mm;
+  const float cross_track_mm = displacement_x * line_normal_x +
+                               displacement_y * line_normal_y;
+  float correction_mm_s = -APP_MOVE_SPIN_LINE_KP * cross_track_mm;
+  correction_mm_s = motor_clamp_float(
+      correction_mm_s, -APP_MOVE_SPIN_LINE_MAX_MM_S,
+      APP_MOVE_SPIN_LINE_MAX_MM_S);
+
+  float field_x_mm_s = spin_move.current_speed_mm_s * line_cos +
+                       correction_mm_s * line_normal_x;
+  float field_y_mm_s = spin_move.current_speed_mm_s * line_sin +
+                       correction_mm_s * line_normal_y;
+
+  /* Preserve the requested high spin rate when translation and correction
+   * compete for wheel-speed headroom. The generic mixer still performs the
+   * final exact per-wheel limit. */
+  const float maximum_wheel_speed =
+      motor_counts_to_mm_s((float)APP_MOTOR_MAX_COUNT_10MS);
+  const float yaw_limit = maximum_wheel_speed -
+                          APP_MOVE_SPIN_WHEEL_MARGIN_MM_S;
+  const float yaw_mm_s = motor_clamp_float(
+      spin_move.current_yaw_mm_s, -yaw_limit, yaw_limit);
+  float translation_limit = yaw_limit - motor_abs_float(yaw_mm_s);
+  if (translation_limit < 0.0f) {
+    translation_limit = 0.0f;
+  }
+  const float field_speed = sqrtf(field_x_mm_s * field_x_mm_s +
+                                  field_y_mm_s * field_y_mm_s);
+  if ((field_speed > translation_limit) && (field_speed > 0.0f)) {
+    const float scale = translation_limit / field_speed;
+    field_x_mm_s *= scale;
+    field_y_mm_s *= scale;
+  }
+
+  /* Predict the heading at which the geared wheels will realize this target.
+   * RM's current-controlled motors need almost no lead; this DC gearmotor
+   * chassis needs a small lead because its three speed targets rotate rapidly. */
+  const float heading_cos = cosf(control_heading_rad);
+  const float heading_sin = sinf(control_heading_rad);
+  const float forward_mm_s = heading_cos * field_x_mm_s +
+                             heading_sin * field_y_mm_s;
+  const float physical_left_mm_s = -heading_sin * field_x_mm_s +
+                                    heading_cos * field_y_mm_s;
+  const float lateral_mm_s = physical_left_mm_s *
+                             MOTOR_API_LEFT_TO_BODY_Y;
+
+  motor_set_omni_speed(forward_mm_s, lateral_mm_s, yaw_mm_s);
+  motor_leave_critical(primask);
+  return true;
 }
 
 bool Motor_MoveAngle(float speed_mm_s, float angle_deg)

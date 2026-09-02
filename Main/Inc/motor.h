@@ -31,11 +31,15 @@ typedef enum {
 
 void Motor_Init(void);
 void Motor_SetSpeed(float target_speed, uint8_t id);
-MotorDistanceStatus Go_distance(float distance_m);
+MotorDistanceStatus Go_distance(float distance_m, float max_speed_mm_s);
 MotorTurnStatus Motor_TurnAngle(float angle_deg);
 /* yaw_tangent_mm_s is R*omega, so all three inputs use mm/s. */
 void Motor_Move(float forward_mm_s, float lateral_mm_s,
                 float yaw_tangent_mm_s);
+/* Keep translation on one Location-assisted floor line while the chassis
+ * spins. 0 deg=initial forward, 90 deg=initial left. */
+bool Motor_MoveSpin(float speed_mm_s, float direction_deg,
+                    float yaw_tangent_mm_s);
 /* 0 deg=forward, 90 deg=left, 180 deg=backward, 270 deg=right. */
 bool Motor_MoveAngle(float speed_mm_s, float angle_deg);
 void Motor_Stop(void);

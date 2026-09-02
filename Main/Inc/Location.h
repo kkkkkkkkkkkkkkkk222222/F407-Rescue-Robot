@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 typedef enum {
+  LOCATION_START_UNKNOWN = 0,
   LOCATION_START_1 = 1,
   LOCATION_START_2,
   LOCATION_START_3,

@@ -15,11 +15,11 @@ void Servo_Init(void)
     if (HAL_TIM_PWM_Start(&htim8, channels[i]) != HAL_OK) {
       Error_Handler();
     }
-    Servo_Set((uint8_t)(i + 1U), 90U);
+    Servo_SetAngle((uint8_t)(i + 1U), 90U);
   }
 }
 
-void Servo_Set(uint8_t id, uint8_t angle)
+void Servo_SetAngle(uint8_t id, uint8_t angle)
 {
   if ((id < 1U) || (id > 4U)) {
     return;

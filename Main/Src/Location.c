@@ -90,7 +90,18 @@ static void location_start_pose(LocationStart start, float *x_mm, float *y_mm,
 void Location_Reset(LocationStart start)
 {
   if ((start < LOCATION_START_1) || (start > LOCATION_START_4)) {
-    start = LOCATION_START_4;
+    const IMUData imu = IMU_GetData();
+    const uint32_t primask = location_enter_critical();
+    location.x_mm = 0.0f;
+    location.y_mm = 0.0f;
+    location.path_mm = 0.0f;
+    location.heading_unwrapped_mdeg = 0LL;
+    location.previous_imu_yaw_mdeg = imu.yaw_mdeg;
+    location.start_zone = (uint8_t)LOCATION_START_UNKNOWN;
+    location.imu_sample_valid = imu.ready;
+    location.valid = false;
+    location_leave_critical(primask);
+    return;
   }
 
   const IMUData imu = IMU_GetData();
@@ -121,6 +132,14 @@ void Location_Update10ms(void)
   EncoderStatus encoder[3];
   const IMUData imu = IMU_GetData();
   Encoder_GetAll(encoder);
+
+  if ((location.start_zone < (uint8_t)LOCATION_START_1) ||
+      (location.start_zone > (uint8_t)LOCATION_START_4)) {
+    location.previous_imu_yaw_mdeg = imu.yaw_mdeg;
+    location.imu_sample_valid = imu.ready;
+    location.valid = false;
+    return;
+  }
 
   if (!imu.ready) {
     location.valid = false;
@@ -158,11 +177,11 @@ void Location_Update10ms(void)
   const float m2_mm = location_counts_to_mm(m2_counts);
   const float m3_mm = location_counts_to_mm(m3_counts);
 
-  /* Forward kinematics matched to motor.c: M1=v2, M2=v1, M3=v3.
+  /* Forward kinematics matched to motor.c: M1=v3, M2=v2, M3=v1.
    * The second equation is physical left, hence the sign is opposite to the
    * mathematical Vy used by Motor_Move(). Common wheel rotation cancels. */
-  const float forward_mm = (m3_mm - m1_mm) / LOCATION_SQRT3;
-  const float left_mm = (m1_mm + m3_mm - 2.0f * m2_mm) / 3.0f;
+  const float forward_mm = (m1_mm - m2_mm) / LOCATION_SQRT3;
+  const float left_mm = (m1_mm + m2_mm - 2.0f * m3_mm) / 3.0f;
   const float middle_heading_rad =
       ((float)previous_heading_mdeg + 0.5f * (float)yaw_step_mdeg) *
       0.001f * LOCATION_DEG_RAD;

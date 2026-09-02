@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 void Servo_Init(void);
-void Servo_Set(uint8_t id, uint8_t angle);
+void Servo_SetAngle(uint8_t id, uint8_t angle);
 uint8_t Servo_GetAngle(uint8_t id);
 
 #endif

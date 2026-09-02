@@ -59,7 +59,9 @@
 
 /* USER CODE BEGIN EV */
 extern TIM_HandleTypeDef htim6;
+extern DMA_HandleTypeDef hdma_usart1_rx;
 extern DMA_HandleTypeDef hdma_usart3_rx;
+extern UART_HandleTypeDef huart1;
 extern UART_HandleTypeDef huart3;
 /* USER CODE END EV */
 
@@ -201,6 +203,11 @@ void SysTick_Handler(void)
 /* please refer to the startup file (startup_stm32f4xx.s).                    */
 /******************************************************************************/
 
+void DMA2_Stream2_IRQHandler(void)
+{
+  HAL_DMA_IRQHandler(&hdma_usart1_rx);
+}
+
 void DMA1_Stream1_IRQHandler(void)
 {
   HAL_DMA_IRQHandler(&hdma_usart3_rx);
@@ -209,6 +216,11 @@ void DMA1_Stream1_IRQHandler(void)
 void TIM6_DAC_IRQHandler(void)
 {
   HAL_TIM_IRQHandler(&htim6);
+}
+
+void USART1_IRQHandler(void)
+{
+  HAL_UART_IRQHandler(&huart1);
 }
 
 void USART3_IRQHandler(void)

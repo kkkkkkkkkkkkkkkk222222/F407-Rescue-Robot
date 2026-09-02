@@ -18,7 +18,7 @@
 - 三路硬件编码器网络为 PE9/PE11、PA6/PA7、PD12/PD13。
 - 第四路编码器实际为 PD3/PD4；PC6-PC9 实际接四路舵机。
 - 四组 AT8236 输入分别为 PA2/PA3、PE5/PE6、PB10/PB11、PB8/PB9。
-- USART3 的 MCU 侧为 PD8 TX、PD9 RX；连接 RDK 时需要 TX 对 RX、RX 对 TX，并共地。
+- 新PCB的“串口1”是USART3（PD8 TX、PD9 RX），当前用于RDK X5通信，115200 8N1；“串口2”是USART1（PA9 TX、PA10 RX），当前保留。连接时需要TX对RX、RX对TX，并共地。
 - TFT 连接为 PB13 SCK、PB15 MOSI、PB12 CS、PB14 RESET、PC5 DC/RS、PB1 BL。开发板原理图只标出了排针网络名，功能顺序按成品板配套 TFT 接口与原始 GPIO 标签确认。
 
 ## 原方案文档中的冲突
@@ -35,4 +35,4 @@
 - TIM8：PSC 167、ARR 19999，得到 50 Hz 和 1 us 计数分辨率。
 - TIM9：PSC 1、ARR 4199，得到 20 kHz。
 - TIM10/TIM11：PSC 0、ARR 8399，得到 20 kHz；原配置实际为 50 Hz，不适合电机。
-- TIM6、EXTI3、USART3：补齐中断向量和 NVIC 使能。
+- TIM6、DMA1 Stream1、USART3：中断向量和NVIC已配置；USART3 RX使用循环DMA。USART1原配置保留但不参与当前RDK通信。
