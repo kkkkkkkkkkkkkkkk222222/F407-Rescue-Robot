@@ -23,7 +23,8 @@ class VisionProtocolTests(unittest.TestCase):
                 512,
                 350,
                 protocol.pack_counts(1, 0, 0, 0),
-                protocol.FLAG_FOUND | protocol.FLAG_CLASS_VALID,
+                protocol.FLAG_FOUND | protocol.FLAG_CLASS_VALID |
+                protocol.FLAG_DISTANCE_VALID,
             ),
             protocol.nav_frame(
                 0x20,
@@ -60,14 +61,25 @@ class VisionProtocolTests(unittest.TestCase):
             protocol.pack_counts(4, 0, 0, 0)
 
     def test_contradictory_reports_are_rejected(self) -> None:
+        frame = protocol.report_frame(
+            1, 640, 512, 0, protocol.pack_counts(1, 0, 0, 0),
+            protocol.FLAG_FOUND | protocol.FLAG_CLASS_VALID,
+        )
+        self.assertEqual(frame[4:8], bytes((0x02, 0x80, 0x02, 0x00)))
         with self.assertRaises(ValueError):
             protocol.report_frame(
-                1, 640, 512, 0, 0,
+                2, 640, 512, 350,
+                protocol.pack_counts(1, 0, 0, 0),
                 protocol.FLAG_FOUND | protocol.FLAG_CLASS_VALID,
             )
+        protocol.report_frame(
+            3, 640, 512, 350, protocol.pack_counts(1, 0, 0, 0),
+            protocol.FLAG_FOUND | protocol.FLAG_CLASS_VALID |
+            protocol.FLAG_DISTANCE_VALID,
+        )
         with self.assertRaises(ValueError):
             protocol.report_frame(
-                2, 0, 0, 0, protocol.pack_counts(1, 0, 0, 0), 0,
+                4, 0, 0, 0, protocol.pack_counts(1, 0, 0, 0), 0,
             )
 
     def test_near_safe_requires_hold(self) -> None:

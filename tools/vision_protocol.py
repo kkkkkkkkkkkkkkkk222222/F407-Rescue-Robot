@@ -38,6 +38,7 @@ FLAG_GRABBED = 0x04
 FLAG_CLASS_VALID = 0x08
 FLAG_UNKNOWN = 0x10
 FLAG_CLAW_VIEW = 0x20
+FLAG_DISTANCE_VALID = 0x40
 
 STATUS_MATCH_STARTED = 0x01
 STATUS_FOUND = 0x02
@@ -187,13 +188,18 @@ def report_frame(
         raise ValueError("x/y are outside the 1280x1024 image")
     if not 0 <= distance_mm <= 0xFFFF:
         raise ValueError("distance_mm must be 0..65535")
-    if not 0 <= flags <= 0x3F:
-        raise ValueError("flags may only use bits 0..5")
+    if not 0 <= flags <= 0x7F:
+        raise ValueError("flags may only use bits 0..6")
     found = bool(flags & FLAG_FOUND)
-    if found and distance_mm == 0:
-        raise ValueError("a found target must have distance_mm in 1..65535")
+    distance_valid = bool(flags & FLAG_DISTANCE_VALID)
+    if found and distance_valid and distance_mm == 0:
+        raise ValueError("a valid distance must be in 1..65535 mm")
+    if found and not distance_valid and distance_mm != 0:
+        raise ValueError("distance_mm must be zero when distance is invalid")
     if not found and (counts or flags & (FLAG_NEAR | FLAG_GRABBED | FLAG_UNKNOWN)):
         raise ValueError("a no-target report cannot contain counts/near/grabbed/unknown")
+    if not found and (distance_mm or distance_valid):
+        raise ValueError("a no-target report cannot contain distance data")
     payload = (
         x.to_bytes(2, "big")
         + y.to_bytes(2, "big")

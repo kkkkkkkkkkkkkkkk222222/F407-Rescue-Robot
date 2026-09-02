@@ -66,6 +66,7 @@
 #define VISION_REPORT_CLASS_VALID 0x08U
 #define VISION_REPORT_UNKNOWN     0x10U
 #define VISION_REPORT_CLAW_VIEW   0x20U
+#define VISION_REPORT_DISTANCE_VALID 0x40U
 
 typedef struct {
   uint16_t x;
@@ -95,6 +96,7 @@ typedef struct {
   bool found;
   bool grabbed;
   bool near;
+  bool distance_valid;
   bool classification_valid;
   bool unknown;
   bool claw_view;

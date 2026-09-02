@@ -139,13 +139,18 @@ static void vision_save_report(const uint8_t *payload,
   const bool near = (flags & VISION_REPORT_NEAR) != 0U;
   const bool unknown = (flags & VISION_REPORT_UNKNOWN) != 0U;
   const bool claw_view = (flags & VISION_REPORT_CLAW_VIEW) != 0U;
+  const bool distance_valid =
+      (flags & VISION_REPORT_DISTANCE_VALID) != 0U;
   const bool coordinates_valid = (x <= APP_VISION_MAX_X) &&
                                  (y <= APP_VISION_MAX_Y);
 
-  if (((flags & 0xC0U) != 0U) ||
+  if (((flags & 0x80U) != 0U) ||
       (found && !coordinates_valid) ||
-      (found && (distance < APP_VISION_MIN_DISTANCE_MM)) ||
-      (!found && ((payload[6] != 0U) || near || grabbed || unknown))) {
+      (found && distance_valid &&
+       (distance < APP_VISION_MIN_DISTANCE_MM)) ||
+      (found && !distance_valid && (distance != 0U)) ||
+      (!found && ((payload[6] != 0U) || (distance != 0U) || near || grabbed ||
+                  unknown || distance_valid))) {
     return;
   }
 
@@ -157,6 +162,7 @@ static void vision_save_report(const uint8_t *payload,
   latest_data.cargo_counts = payload[6];
   latest_data.found = found;
   latest_data.near = near;
+  latest_data.distance_valid = distance_valid;
   latest_data.grabbed = grabbed;
   latest_data.classification_valid =
       (flags & VISION_REPORT_CLASS_VALID) != 0U;
@@ -354,6 +360,7 @@ void Vision_Init(void)
   latest_data.found = false;
   latest_data.grabbed = false;
   latest_data.near = false;
+  latest_data.distance_valid = false;
   latest_data.classification_valid = false;
   latest_data.unknown = false;
   latest_data.claw_view = false;

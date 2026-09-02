@@ -132,7 +132,7 @@ int main(void)
   MX_USART1_UART_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
-#if APP_ENABLE_TASK
+#if APP_ENABLE_TASK || APP_ENABLE_CENTERING_TASK
   Servo_Init();
 #endif
 
