@@ -7,7 +7,7 @@
 #define APP_ENABLE_MOVE_SPIN_TEST        0
 #define APP_ENABLE_AUTOMATIC_MOTOR_TEST  0
 #define APP_ENABLE_SERVO_SWEEP_TEST      0
-#define APP_ENABLE_TASK                  0
+#define APP_ENABLE_TASK                  1
 
 /* Non-blocking IMU angle turn used by Motor_TurnAngle(). */
 #define APP_MOTOR_TURN_TOLERANCE_MDEG    1000L
