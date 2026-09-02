@@ -44,8 +44,6 @@ typedef struct {
 static volatile TaskStatus task_status;
 static bool task_initialized;
 static bool match_started;
-static bool key_sample;
-static bool key_stable;
 static GrabPhase grab_phase;
 static StartStep start_step;
 static uint8_t inspection_retry_count;
@@ -62,7 +60,6 @@ static FrameConfirmation inspection_confirmation;
 static uint32_t match_started_ms;
 static uint32_t phase_started_ms;
 static uint32_t step_started_ms;
-static uint32_t key_changed_ms;
 static uint32_t inspection_started_ms;
 static uint32_t grab_last_valid_ms;
 static uint32_t status_sent_ms;
@@ -296,10 +293,6 @@ static void task_initialize(uint32_t now_ms)
   task_status.claw_empty = false;
 
   match_started = false;
-  key_sample =
-      HAL_GPIO_ReadPin(MOTOR_PWM_KEY_GPIO_Port, MOTOR_PWM_KEY_Pin) == GPIO_PIN_SET;
-  key_stable = key_sample;
-  key_changed_ms = now_ms;
   grab_phase = GRAB_PHASE_APPROACH;
   start_step = START_EXIT;
   task_confirmation_reset(&cargo_confirmation);
@@ -333,23 +326,6 @@ static void task_initialize(uint32_t now_ms)
   drop_release_complete = false;
   drop_claw_closed = false;
   task_initialized = true;
-}
-
-static bool task_key_pressed(uint32_t now_ms)
-{
-  const bool sample =
-      HAL_GPIO_ReadPin(MOTOR_PWM_KEY_GPIO_Port, MOTOR_PWM_KEY_Pin) == GPIO_PIN_SET;
-
-  if (sample != key_sample) {
-    key_sample = sample;
-    key_changed_ms = now_ms;
-  }
-  if ((sample == key_stable) ||
-      ((uint32_t)(now_ms - key_changed_ms) < APP_MOTOR_KEY_DEBOUNCE_MS)) {
-    return false;
-  }
-  key_stable = sample;
-  return key_stable;
 }
 
 static void task_update_match_time(uint32_t now_ms)
@@ -635,10 +611,6 @@ static void task_process_start(uint32_t now_ms)
 {
   if (!match_started) {
     Motor_Stop();
-    if (!task_key_pressed(now_ms)) {
-      return;
-    }
-
     EncoderStatus encoder[3];
     Encoder_GetAll(encoder);
     for (uint8_t i = 0U; i < 3U; ++i) {
