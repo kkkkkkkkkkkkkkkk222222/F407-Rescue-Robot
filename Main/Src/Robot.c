@@ -390,6 +390,9 @@ void Robot_Init(void)
     LCD_DrawText(31U, 88U, imu_init_result_text(imu.init_result),
                  imu_ready ? LCD_GREEN : LCD_RED, LCD_BLACK);
     HAL_Delay(imu_ready ? 1000U : 3000U);
+    /* Clear every startup-screen pixel, including the gaps between dashboard
+     * rows, before switching to the periodically updated task view. */
+    LCD_FillScreen(LCD_BLACK);
     draw_dashboard();
   }
 
