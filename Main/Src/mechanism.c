@@ -8,7 +8,6 @@ static uint8_t camera_angle = 90U;
 typedef enum {
   CLAW_ACTION_NONE = 0,
   CLAW_ACTION_OPEN,
-  CLAW_ACTION_RETRACT,
   CLAW_ACTION_TOUCH
 } ClawAction;
 
@@ -80,12 +79,6 @@ bool Claw_Open(uint32_t now_ms)
 {
   /* Move the left claw clear before opening the right claw. */
   return claw_move(CLAW_ACTION_OPEN, now_ms, 4U, 180U, 2U, 0U);
-}
-
-bool Claw_Retract(uint32_t now_ms)
-{
-  /* Fold the left claw first, then place the right claw on the outside. */
-  return claw_move(CLAW_ACTION_RETRACT, now_ms, 4U, 23U, 2U, 145U);
 }
 
 bool Claw_Touch(uint32_t now_ms)

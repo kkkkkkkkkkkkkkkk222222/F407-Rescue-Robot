@@ -8,7 +8,6 @@ void Mechanism_Init(void);
 void Camera_SetAngle(uint8_t angle);
 uint8_t Camera_GetAngle(void);
 bool Claw_Open(uint32_t now_ms);
-bool Claw_Retract(uint32_t now_ms);
 bool Claw_Touch(uint32_t now_ms);
 
 #endif

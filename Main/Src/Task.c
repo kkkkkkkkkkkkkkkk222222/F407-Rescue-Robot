@@ -49,7 +49,6 @@ static StartStep start_step;
 static uint8_t inspection_retry_count;
 static uint8_t rescue_retry_count;
 static bool rescue_active;
-static bool task_claw_retracted;
 static bool drop_release_complete;
 static bool drop_claw_closed;
 static bool steering_active;
@@ -322,7 +321,6 @@ static void task_initialize(uint32_t now_ms)
   inspection_retry_count = 0U;
   rescue_retry_count = 0U;
   rescue_active = false;
-  task_claw_retracted = false;
   drop_release_complete = false;
   drop_claw_closed = false;
   task_initialized = true;
@@ -1117,17 +1115,6 @@ void Task_Process(uint32_t now_ms)
 {
   if (!task_initialized) {
     task_initialize(now_ms);
-  }
-
-  /* The vehicle must remain stationary until both claws have reached the
-   * collision-safe retracted pose (servo 2 first, then servo 4). */
-  if (!task_claw_retracted) {
-    Motor_Stop();
-    if (Claw_Retract(now_ms)) {
-      task_claw_retracted = true;
-    }
-    task_publish_status_if_due(now_ms);
-    return;
   }
 
   const VisionData vision = Vision_GetSnapshot();
