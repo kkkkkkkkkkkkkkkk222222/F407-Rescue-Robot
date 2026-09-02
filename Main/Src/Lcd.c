@@ -258,8 +258,25 @@ void LCD_DrawText(uint16_t x, uint16_t y, const char *text, uint16_t color, uint
 static void dashboard_write(uint16_t x, uint16_t y, uint16_t width,
                             const char *text)
 {
-  LCD_FillRect(x, y, width, 8U, LCD_BLACK);
-  LCD_DrawText(x, y, text, LCD_WHITE, LCD_BLACK);
+  if ((text == NULL) || (x >= APP_LCD_WIDTH) ||
+      (((uint32_t)y + 8U) > APP_LCD_HEIGHT)) {
+    return;
+  }
+
+  const uint16_t available_width = APP_LCD_WIDTH - x;
+  if (width > available_width) {
+    width = available_width;
+  }
+
+  /* Draw a fixed-width row directly over the old row. Padding with spaces
+   * removes characters left by a shorter value without exposing a black row
+   * between the erase and redraw operations. */
+  const uint16_t character_count = width / 6U;
+  for (uint16_t i = 0U; i < character_count; ++i) {
+    const char character = (*text != '\0') ? *text++ : ' ';
+    draw_character((uint16_t)(x + i * 6U), y, character,
+                   LCD_WHITE, LCD_BLACK);
+  }
 }
 
 #if APP_ENABLE_AUTOMATIC_MOTOR_TEST && !APP_ENABLE_TASK && \
