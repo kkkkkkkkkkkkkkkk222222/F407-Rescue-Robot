@@ -181,10 +181,10 @@
 #define APP_DROP_TOTAL_TIMEOUT_MS      20000U
 #define APP_TASK_RESCUE_MAX_RETRIES       2U
 #define APP_VISION_TIMEOUT_MS            250U
-#define APP_CONFIG_CONFIRM_FRAMES        3U
-#define APP_CARGO_CONFIRM_FRAMES         3U
-#define APP_NAV_CONFIRM_FRAMES           3U
-#define APP_DROP_CONFIRM_FRAMES          3U
+#define APP_CONFIG_CONFIRM_FRAMES        1U
+#define APP_CARGO_CONFIRM_FRAMES         1U
+#define APP_NAV_CONFIRM_FRAMES           1U
+#define APP_DROP_CONFIRM_FRAMES          1U
 #define APP_VISION_TARGET_X              640U
 #define APP_VISION_TARGET_Y              512U
 #define APP_VISION_MAX_X                1279U
