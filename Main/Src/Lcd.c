@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "app_config.h"
+#include "CenteringTask.h"
 #include "encoder.h"
 #include "main.h"
 #include "motor.h"
@@ -280,7 +281,8 @@ static void dashboard_write(uint16_t x, uint16_t y, uint16_t width,
 }
 
 #if APP_ENABLE_AUTOMATIC_MOTOR_TEST && !APP_ENABLE_TASK && \
-    !APP_ENABLE_MOTION_TEST && !APP_ENABLE_MOVE_SPIN_TEST && \
+    !APP_ENABLE_CENTERING_TASK && !APP_ENABLE_MOTION_TEST && \
+    !APP_ENABLE_MOVE_SPIN_TEST && \
     !APP_ENABLE_LOCATION_DEMO
 static bool dashboard_motor_fault(void)
 {
@@ -294,8 +296,9 @@ static bool dashboard_motor_fault(void)
 }
 #endif
 
-#if !APP_ENABLE_TASK && !APP_ENABLE_MOTION_TEST && \
-    !APP_ENABLE_MOVE_SPIN_TEST && !APP_ENABLE_LOCATION_DEMO
+#if !APP_ENABLE_TASK && !APP_ENABLE_CENTERING_TASK && \
+    !APP_ENABLE_MOTION_TEST && !APP_ENABLE_MOVE_SPIN_TEST && \
+    !APP_ENABLE_LOCATION_DEMO
 static const char *dashboard_uart_text(const LCDDashboard *dashboard)
 {
   if (!dashboard->uart_active) {
@@ -654,6 +657,58 @@ static void draw_task(const LCDDashboard *dashboard)
                  VISION_COUNT_DANGER(vision->cargo_counts));
   dashboard_write(0U, 108U, 128U, text);
 }
+#elif APP_ENABLE_CENTERING_TASK
+static const char *centering_state_name(CenteringState state)
+{
+  static const char *const names[] = {
+    "WAIT", "TRACK", "CENTER", "FAULT"
+  };
+  return (state <= CENTERING_MOTOR_FAULT) ? names[state] : "FAULT";
+}
+
+static const char *centering_uart_state(const LCDDashboard *dashboard)
+{
+  if (!dashboard->uart_active) {
+    return "DMA";
+  }
+  if (!dashboard->uart_received) {
+    return "WAIT";
+  }
+  if ((uint32_t)(dashboard->now_ms - dashboard->uart_last_rx_ms) >
+      APP_VISION_TIMEOUT_MS) {
+    return "TMO";
+  }
+  return "OK";
+}
+
+static void draw_centering_task(const LCDDashboard *dashboard)
+{
+  char text[24];
+  const CenteringTaskStatus status = CenteringTask_GetStatus();
+  const VisionData *vision = &dashboard->vision;
+  const bool report_fresh =
+      Vision_IsFresh(vision, dashboard->now_ms, APP_VISION_TIMEOUT_MS);
+
+  (void)snprintf(text, sizeof(text), "TRACK:%s",
+                 centering_state_name(status.state));
+  dashboard_write(0U, 12U, 128U, text);
+
+  if (report_fresh) {
+    (void)snprintf(text, sizeof(text), "X:%04u Y:%04u",
+                   vision->x, vision->y);
+  } else {
+    (void)strcpy(text, "X:---- Y:----");
+  }
+  dashboard_write(0U, 44U, 128U, text);
+
+  (void)snprintf(text, sizeof(text), "CAM:%03u ROT:%+04d",
+                 status.camera_angle, status.rotation_mm_s);
+  dashboard_write(0U, 76U, 128U, text);
+
+  (void)snprintf(text, sizeof(text), "UART:%s",
+                 centering_uart_state(dashboard));
+  dashboard_write(0U, 108U, 128U, text);
+}
 #elif !APP_ENABLE_LOCATION_DEMO
 static void dashboard_draw_test(const LCDDashboard *dashboard)
 {
@@ -745,6 +800,8 @@ void LCD_DrawDashboard(const LCDDashboard *dashboard)
   }
 #if APP_ENABLE_TASK
   draw_task(dashboard);
+#elif APP_ENABLE_CENTERING_TASK
+  draw_centering_task(dashboard);
 #elif APP_ENABLE_LOCATION_DEMO
   draw_location(dashboard);
 #else

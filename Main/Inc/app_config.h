@@ -7,7 +7,8 @@
 #define APP_ENABLE_MOVE_SPIN_TEST        0
 #define APP_ENABLE_AUTOMATIC_MOTOR_TEST  0
 #define APP_ENABLE_SERVO_SWEEP_TEST      0
-#define APP_ENABLE_TASK                  1
+#define APP_ENABLE_TASK                  0
+#define APP_ENABLE_CENTERING_TASK        1
 
 /* Non-blocking IMU angle turn used by Motor_TurnAngle(). */
 #define APP_MOTOR_TURN_TOLERANCE_MDEG    1000L
@@ -54,15 +55,11 @@
 #define APP_MOVE_SPIN_OUTPUT_LIMIT_PWM      1000
 #define APP_MOVE_SPIN_HEADING_LEAD_MS         55.0f
 
-#if (APP_ENABLE_MOTION_TEST || APP_ENABLE_LOCATION_DEMO || \
-     APP_ENABLE_MOVE_SPIN_TEST) && \
-    (APP_ENABLE_AUTOMATIC_MOTOR_TEST || APP_ENABLE_SERVO_SWEEP_TEST)
-#error "Standalone test must be the only enabled application mode"
-#endif
-
 #if (APP_ENABLE_MOTION_TEST + APP_ENABLE_LOCATION_DEMO + \
-     APP_ENABLE_MOVE_SPIN_TEST) > 1
-#error "Only one motion/location standalone test can run"
+     APP_ENABLE_MOVE_SPIN_TEST + APP_ENABLE_AUTOMATIC_MOTOR_TEST + \
+     APP_ENABLE_SERVO_SWEEP_TEST + APP_ENABLE_TASK + \
+     APP_ENABLE_CENTERING_TASK) > 1
+#error "Only one application mode can run"
 #endif
 
 /* Coarse field localization and start-zone-4 demonstration. */
@@ -216,6 +213,9 @@
 #define APP_VISION_PID_DEFAULT_DT_S        0.040f
 #define APP_VISION_PID_MIN_DT_S            0.020f
 #define APP_VISION_PID_MAX_DT_S            0.100f
+#define APP_CENTERING_CAMERA_MIN_ANGLE       0U
+#define APP_CENTERING_CAMERA_MAX_ANGLE     165U
+#define APP_CENTERING_CAMERA_START_ANGLE    90U
 /* Upper-computer-guided return and local delivery sequence. */
 #define APP_NAV_TIMEOUT_MS               200U
 #define APP_RETURN_FORWARD_SPEED_MM_S    776.0f
