@@ -14,11 +14,13 @@
 #include "vision.h"
 
 typedef enum {
-  CRAB_APPROACH = 0,
-  CRAB_OPEN,
-  CRAB_GRAB,
-  CRAB_BACK
-} CrabStep;
+  GRAB_PHASE_APPROACH = 0,
+  GRAB_PHASE_OPEN,
+  GRAB_PHASE_CLOSE,
+  GRAB_PHASE_CONFIRM,
+  GRAB_PHASE_RECOVER_CLOSE,
+  GRAB_PHASE_RECOVER_BACK
+} GrabPhase;
 
 typedef enum {
   START_EXIT = 0,
@@ -44,16 +46,14 @@ static bool task_initialized;
 static bool match_started;
 static bool key_sample;
 static bool key_stable;
-static CrabStep crab_step;
+static GrabPhase grab_phase;
 static StartStep start_step;
 static uint8_t inspection_retry_count;
 static uint8_t rescue_retry_count;
 static bool rescue_active;
 static bool task_claw_retracted;
-static bool crab_claw_ready;
-static bool crab_grab_ready;
-static bool drop_claw_ready;
-static bool drop_claw_grabbed;
+static bool drop_release_complete;
+static bool drop_claw_closed;
 static bool steering_active;
 static FrameConfirmation cargo_confirmation;
 static FrameConfirmation candidate_confirmation;
@@ -64,7 +64,7 @@ static uint32_t phase_started_ms;
 static uint32_t step_started_ms;
 static uint32_t key_changed_ms;
 static uint32_t inspection_started_ms;
-static uint32_t crab_last_valid_ms;
+static uint32_t grab_last_valid_ms;
 static uint32_t status_sent_ms;
 static TaskState status_state;
 static TaskFault status_fault;
@@ -81,15 +81,12 @@ static float travel_distance_mm;
 static Pid_t steering_pid;
 static Pid_t camera_pid;
 static float camera_angle;
-static uint8_t camera_sequence;
-static bool camera_sequence_valid;
-static uint32_t camera_tick_ms;
-static uint8_t steering_sequence;
-static bool steering_sequence_valid;
-static uint32_t steering_tick_ms;
+static uint8_t tracking_sequence;
+static bool tracking_sequence_valid;
+static uint32_t tracking_tick_ms;
 static float steering_output_mm_s;
 
-static void task_set_state(TaskState state, uint32_t now_ms);
+static void task_enter_state(TaskState state, uint32_t now_ms);
 
 static void task_stop(TaskFault fault, uint32_t now_ms)
 {
@@ -97,7 +94,7 @@ static void task_stop(TaskFault fault, uint32_t now_ms)
     return;
   }
   task_status.fault = fault;
-  task_set_state(TASK_STOPPED, now_ms);
+  task_enter_state(TASK_STOPPED, now_ms);
 }
 
 static uint8_t task_total_count(uint8_t counts)
@@ -108,7 +105,7 @@ static uint8_t task_total_count(uint8_t counts)
                    VISION_COUNT_DANGER(counts));
 }
 
-static void task_publish_status(uint32_t now_ms)
+static void task_publish_status_if_due(uint32_t now_ms)
 {
   const bool changed = (task_status.state != status_state) ||
                        (task_status.fault != status_fault);
@@ -176,7 +173,7 @@ static bool task_confirmation_update(FrameConfirmation *confirmation,
   return confirmation->streak >= required_frames;
 }
 
-static void task_set_state(TaskState state, uint32_t now_ms)
+static void task_enter_state(TaskState state, uint32_t now_ms)
 {
   task_status.state = state;
   phase_started_ms = now_ms;
@@ -193,7 +190,7 @@ static void task_set_state(TaskState state, uint32_t now_ms)
     task_status.near_safe = false;
     task_status.claw_empty = false;
     task_status.nav_direction = VISION_NAV_HOLD;
-    crab_step = CRAB_APPROACH;
+    grab_phase = GRAB_PHASE_APPROACH;
     rescue_retry_count = 0U;
     rescue_active = false;
     rescue_sequence_valid = false;
@@ -204,8 +201,7 @@ static void task_set_state(TaskState state, uint32_t now_ms)
     task_confirmation_reset(&candidate_confirmation);
     Camera_SetAngle(90U);
     camera_angle = 90.0f;
-    camera_sequence_valid = false;
-    steering_sequence_valid = false;
+    tracking_sequence_valid = false;
     steering_active = false;
     steering_output_mm_s = 0.0f;
     Pid_Reset(&steering_pid);
@@ -214,18 +210,15 @@ static void task_set_state(TaskState state, uint32_t now_ms)
   } else if (state == TASK_START) {
     Camera_SetAngle(90U);
     camera_angle = 90.0f;
-    camera_sequence_valid = false;
+    tracking_sequence_valid = false;
     Pid_Reset(&camera_pid);
     start_step = START_EXIT;
-  } else if (state == TASK_CRAB_OBJECT) {
+  } else if (state == TASK_GRAB_OBJECT) {
     Pid_Reset(&steering_pid);
     Pid_Reset(&camera_pid);
-    crab_step = CRAB_APPROACH;
-    crab_claw_ready = false;
-    crab_grab_ready = false;
-    crab_last_valid_ms = now_ms;
-    camera_sequence_valid = false;
-    steering_sequence_valid = false;
+    grab_phase = GRAB_PHASE_APPROACH;
+    grab_last_valid_ms = now_ms;
+    tracking_sequence_valid = false;
     steering_active = false;
     steering_output_mm_s = 0.0f;
     task_confirmation_reset(&cargo_confirmation);
@@ -249,8 +242,8 @@ static void task_set_state(TaskState state, uint32_t now_ms)
     task_status.claw_empty = false;
     task_status.nav_direction = VISION_NAV_HOLD;
     inspection_retry_count = 0U;
-    drop_claw_ready = false;
-    drop_claw_grabbed = false;
+    drop_release_complete = false;
+    drop_claw_closed = false;
     task_confirmation_reset(&inspection_confirmation);
   } else if (state == TASK_STOPPED) {
     Motor_Stop();
@@ -275,12 +268,9 @@ static void task_initialize(uint32_t now_ms)
   Servo_SetAngle(1U, 55U);
   Rescue_Init();
   camera_angle = (float)Camera_GetAngle();
-  camera_sequence = 0U;
-  camera_sequence_valid = false;
-  camera_tick_ms = 0U;
-  steering_sequence = 0U;
-  steering_sequence_valid = false;
-  steering_tick_ms = 0U;
+  tracking_sequence = 0U;
+  tracking_sequence_valid = false;
+  tracking_tick_ms = 0U;
   steering_output_mm_s = 0.0f;
   steering_active = false;
   Motor_Stop();
@@ -310,7 +300,7 @@ static void task_initialize(uint32_t now_ms)
       HAL_GPIO_ReadPin(MOTOR_PWM_KEY_GPIO_Port, MOTOR_PWM_KEY_Pin) == GPIO_PIN_SET;
   key_stable = key_sample;
   key_changed_ms = now_ms;
-  crab_step = CRAB_APPROACH;
+  grab_phase = GRAB_PHASE_APPROACH;
   start_step = START_EXIT;
   task_confirmation_reset(&cargo_confirmation);
   task_confirmation_reset(&candidate_confirmation);
@@ -320,7 +310,7 @@ static void task_initialize(uint32_t now_ms)
   phase_started_ms = now_ms;
   step_started_ms = now_ms;
   inspection_started_ms = now_ms;
-  crab_last_valid_ms = now_ms;
+  grab_last_valid_ms = now_ms;
   status_sent_ms = now_ms - APP_TASK_STATUS_PERIOD_MS;
   status_state = TASK_STOPPED;
   status_fault = TASK_FAULT_INVALID_STATE;
@@ -340,10 +330,8 @@ static void task_initialize(uint32_t now_ms)
   rescue_retry_count = 0U;
   rescue_active = false;
   task_claw_retracted = false;
-  crab_claw_ready = false;
-  crab_grab_ready = false;
-  drop_claw_ready = false;
-  drop_claw_grabbed = false;
+  drop_release_complete = false;
+  drop_claw_closed = false;
   task_initialized = true;
 }
 
@@ -364,7 +352,7 @@ static bool task_key_pressed(uint32_t now_ms)
   return key_stable;
 }
 
-static void task_update_time(uint32_t now_ms)
+static void task_update_match_time(uint32_t now_ms)
 {
   if (!match_started) {
     task_status.remaining_s = APP_MATCH_TIME_S;
@@ -381,7 +369,7 @@ static void task_update_time(uint32_t now_ms)
   }
 }
 
-static void task_update_distance(void)
+static void task_update_travel_distance(void)
 {
   EncoderStatus encoder[3];
   Encoder_GetAll(encoder);
@@ -425,53 +413,40 @@ static float task_vision_dt(uint32_t tick_ms, uint32_t previous_tick_ms,
   return dt_s;
 }
 
-static void task_track_camera(const VisionData *vision)
+static float task_update_visual_tracking(const VisionData *vision)
 {
-  if (camera_sequence_valid && (vision->sequence == camera_sequence)) {
-    return;
-  }
-  const float dt_s = task_vision_dt(vision->tick_ms, camera_tick_ms,
-                                    camera_sequence_valid);
-  camera_sequence = vision->sequence;
-  camera_sequence_valid = true;
-  camera_tick_ms = vision->tick_ms;
-
-  const int32_t error_px = (int32_t)APP_VISION_TARGET_Y - vision->y;
-  if ((error_px >= -APP_CAMERA_DEAD_ZONE) &&
-      (error_px <= APP_CAMERA_DEAD_ZONE)) {
-    Pid_Reset(&camera_pid);
-    return;
-  }
-
-  /* Larger servo-3 angles look farther down. A target below image centre
-   * therefore needs the opposite sign of the pixel-space PID output. */
-  const float change = -Pid_UpdateDt(&camera_pid,
-                                     (float)APP_VISION_TARGET_Y,
-                                     (float)vision->y,
-                                     dt_s);
-  camera_angle += change;
-  if (camera_angle < 90.0f) {
-    camera_angle = 90.0f;
-  } else if (camera_angle > 165.0f) {
-    camera_angle = 165.0f;
-  }
-  Camera_SetAngle((uint8_t)(camera_angle + 0.5f));
-}
-
-static float task_turn(const VisionData *vision)
-{
-  if (steering_sequence_valid &&
-      (vision->sequence == steering_sequence)) {
+  if (tracking_sequence_valid &&
+      (vision->sequence == tracking_sequence)) {
     return steering_output_mm_s;
   }
-  const float dt_s = task_vision_dt(vision->tick_ms, steering_tick_ms,
-                                    steering_sequence_valid);
-  steering_sequence = vision->sequence;
-  steering_sequence_valid = true;
-  steering_tick_ms = vision->tick_ms;
+  const float dt_s = task_vision_dt(vision->tick_ms, tracking_tick_ms,
+                                    tracking_sequence_valid);
+  tracking_sequence = vision->sequence;
+  tracking_sequence_valid = true;
+  tracking_tick_ms = vision->tick_ms;
 
-  const int32_t error = (int32_t)APP_VISION_TARGET_X - vision->x;
-  const int32_t magnitude = (error < 0) ? -error : error;
+  const int32_t camera_error = (int32_t)APP_VISION_TARGET_Y - vision->y;
+  if ((camera_error >= -APP_CAMERA_DEAD_ZONE) &&
+      (camera_error <= APP_CAMERA_DEAD_ZONE)) {
+    Pid_Reset(&camera_pid);
+  } else {
+    /* Larger servo-3 angles look farther down. A target below image centre
+     * therefore needs the opposite sign of the pixel-space PID output. */
+    camera_angle -= Pid_UpdateDt(&camera_pid,
+                                 (float)APP_VISION_TARGET_Y,
+                                 (float)vision->y,
+                                 dt_s);
+    if (camera_angle < 90.0f) {
+      camera_angle = 90.0f;
+    } else if (camera_angle > 165.0f) {
+      camera_angle = 165.0f;
+    }
+    Camera_SetAngle((uint8_t)(camera_angle + 0.5f));
+  }
+
+  const int32_t steering_error = (int32_t)APP_VISION_TARGET_X - vision->x;
+  const int32_t magnitude =
+      (steering_error < 0) ? -steering_error : steering_error;
   if ((steering_active &&
        (magnitude <= APP_STEERING_EXIT_DEAD_ZONE)) ||
       (!steering_active &&
@@ -496,13 +471,13 @@ static float task_turn(const VisionData *vision)
   return steering_output_mm_s;
 }
 
-static bool task_report_fresh(const VisionData *vision, uint32_t now_ms)
+static bool task_is_report_fresh(const VisionData *vision, uint32_t now_ms)
 {
   return (vision->tick_ms != 0U) &&
          ((uint32_t)(now_ms - vision->tick_ms) <= APP_VISION_TIMEOUT_MS);
 }
 
-static bool task_candidate_allowed(const VisionData *vision)
+static bool task_is_candidate_allowed(const VisionData *vision)
 {
   const uint8_t counts = vision->cargo_counts;
   if (!vision->classification_valid || vision->unknown ||
@@ -518,7 +493,7 @@ static bool task_candidate_allowed(const VisionData *vision)
   return true;
 }
 
-static bool task_cargo_allowed(uint8_t counts, TaskDestination *destination)
+static bool task_classify_cargo(uint8_t counts, TaskDestination *destination)
 {
   const uint8_t normal = VISION_COUNT_NORMAL(counts);
   const uint8_t core = VISION_COUNT_CORE(counts);
@@ -590,7 +565,7 @@ static bool task_inspection_confirmed(uint8_t result, uint8_t sequence)
                                   APP_DROP_CONFIRM_FRAMES);
 }
 
-static bool task_motor_has_fault(void)
+static bool task_has_motor_fault(void)
 {
   for (uint8_t id = 1U; id <= 3U; ++id) {
     const MotorStatus motor = Motor_GetStatus(id);
@@ -601,7 +576,7 @@ static bool task_motor_has_fault(void)
   return false;
 }
 
-static void task_apply_nav_direction(uint8_t direction)
+static void task_apply_navigation(uint8_t direction)
 {
   switch (direction) {
     case VISION_NAV_FORWARD:
@@ -627,7 +602,7 @@ static uint8_t task_inspection_result(const VisionData *vision,
 {
   const bool received_after_camera =
       (int32_t)(vision->tick_ms - inspection_started_ms) > 0;
-  if (!task_report_fresh(vision, now_ms) || !vision->valid ||
+  if (!task_is_report_fresh(vision, now_ms) || !vision->valid ||
       !vision->claw_view || !received_after_camera ||
       !vision->classification_valid || vision->unknown) {
     return INSPECTION_NONE;
@@ -642,7 +617,7 @@ static uint8_t task_inspection_result(const VisionData *vision,
   return INSPECTION_NONE;
 }
 
-static void task_wait_config(const VisionData *vision, uint32_t now_ms)
+static void task_process_wait_config(const VisionData *vision, uint32_t now_ms)
 {
   Motor_Stop();
   if (!vision->config_ready) {
@@ -653,10 +628,10 @@ static void task_wait_config(const VisionData *vision, uint32_t now_ms)
   task_status.start_zone = vision->start_zone;
   Location_Reset((LocationStart)vision->start_zone);
   Vision_RequestConfigAck();
-  task_set_state(TASK_START, now_ms);
+  task_enter_state(TASK_START, now_ms);
 }
 
-static void task_leave_start(uint32_t now_ms)
+static void task_process_start(uint32_t now_ms)
 {
   if (!match_started) {
     Motor_Stop();
@@ -735,14 +710,14 @@ static void task_leave_start(uint32_t now_ms)
   if ((uint32_t)(now_ms - step_started_ms) >= APP_START_SCAN_WAIT_MS) {
     Mechanism_Init();
     camera_angle = (float)Camera_GetAngle();
-    task_set_state(TASK_FIND_OBJECT, now_ms);
+    task_enter_state(TASK_FIND_OBJECT, now_ms);
   }
 }
 
-static void task_search_target(const VisionData *vision, uint32_t now_ms)
+static void task_process_search(const VisionData *vision, uint32_t now_ms)
 {
   const bool found = Vision_IsFresh(vision, now_ms, APP_VISION_TIMEOUT_MS);
-  const bool allowed = found && task_candidate_allowed(vision);
+  const bool allowed = found && task_is_candidate_allowed(vision);
   task_status.found = found;
   task_status.grabbed = false;
   task_status.cargo_valid = false;
@@ -752,7 +727,7 @@ static void task_search_target(const VisionData *vision, uint32_t now_ms)
   if (allowed) {
     Motor_Stop();
     if (task_candidate_confirmed(vision)) {
-      task_set_state(TASK_CRAB_OBJECT, now_ms);
+      task_enter_state(TASK_GRAB_OBJECT, now_ms);
     }
     return;
   }
@@ -810,9 +785,9 @@ static void task_search_target(const VisionData *vision, uint32_t now_ms)
              (float)search_direction * APP_SEARCH_ROTATE_SPEED_MM_S);
 }
 
-static void task_capture_target(const VisionData *vision, uint32_t now_ms)
+static void task_process_grab(const VisionData *vision, uint32_t now_ms)
 {
-  const bool report_fresh = task_report_fresh(vision, now_ms);
+  const bool report_fresh = task_is_report_fresh(vision, now_ms);
   const bool found = Vision_IsFresh(vision, now_ms, APP_VISION_TIMEOUT_MS);
   const bool grabbed = report_fresh && vision->grabbed;
   task_status.found = found;
@@ -820,73 +795,72 @@ static void task_capture_target(const VisionData *vision, uint32_t now_ms)
   task_status.cargo_counts = report_fresh ? vision->cargo_counts : 0U;
   task_status.object_count = task_total_count(task_status.cargo_counts);
 
-  if ((crab_step == CRAB_APPROACH) &&
+  if ((grab_phase == GRAB_PHASE_APPROACH) &&
       ((uint32_t)(now_ms - phase_started_ms) >=
-       APP_CRAB_APPROACH_TIMEOUT_MS)) {
+       APP_GRAB_APPROACH_TIMEOUT_MS)) {
     Motor_Stop();
     if (task_status.recovery_count < UINT8_MAX) {
       ++task_status.recovery_count;
     }
-    crab_step = CRAB_BACK;
-    crab_claw_ready = false;
+    grab_phase = GRAB_PHASE_RECOVER_CLOSE;
   }
 
-  if (crab_step == CRAB_BACK) {
+  if (grab_phase == GRAB_PHASE_RECOVER_CLOSE) {
     Motor_Stop();
-    if (!crab_claw_ready) {
-      if (Claw_Touch(now_ms)) {
-        crab_claw_ready = true;
-        step_started_ms = now_ms;
-      }
-      return;
-    }
-    if ((uint32_t)(now_ms - step_started_ms) < APP_CRAB_BACK_MS) {
-      Motor_Move(-APP_CRAB_ADJUST_SPEED_MM_S, 0.0f, 0.0f);
-    } else {
-      Motor_Stop();
-      task_set_state(TASK_FIND_OBJECT, now_ms);
-    }
-    return;
-  }
-
-  if (crab_step == CRAB_OPEN) {
-    Motor_Stop();
-    Camera_SetAngle(150U);
-    camera_angle = 150.0f;
-    if ((uint32_t)(now_ms - step_started_ms) >=
-        APP_CRAB_MECHANISM_TIMEOUT_MS) {
-      crab_step = CRAB_BACK;
-      crab_claw_ready = false;
-      return;
-    }
-    if (Claw_Open(now_ms)) {
-      crab_claw_ready = true;
-      crab_step = CRAB_GRAB;
-      crab_grab_ready = false;
+    if (Claw_Touch(now_ms)) {
+      grab_phase = GRAB_PHASE_RECOVER_BACK;
       step_started_ms = now_ms;
     }
     return;
   }
 
-  if (crab_step == CRAB_GRAB) {
+  if (grab_phase == GRAB_PHASE_RECOVER_BACK) {
+    if ((uint32_t)(now_ms - step_started_ms) <
+        APP_GRAB_RECOVERY_TIME_MS) {
+      Motor_Move(-APP_GRAB_RECOVERY_SPEED_MM_S, 0.0f, 0.0f);
+    } else {
+      Motor_Stop();
+      task_enter_state(TASK_FIND_OBJECT, now_ms);
+    }
+    return;
+  }
+
+  if (grab_phase == GRAB_PHASE_OPEN) {
     Motor_Stop();
     Camera_SetAngle(150U);
     camera_angle = 150.0f;
-
-    if (!crab_grab_ready) {
-      if ((uint32_t)(now_ms - step_started_ms) >=
-          APP_CRAB_MECHANISM_TIMEOUT_MS) {
-        crab_step = CRAB_BACK;
-        crab_claw_ready = false;
-        return;
-      }
-      if (Claw_Touch(now_ms)) {
-        crab_grab_ready = true;
-        step_started_ms = now_ms;
-      }
+    if ((uint32_t)(now_ms - step_started_ms) >=
+        APP_GRAB_MECHANISM_TIMEOUT_MS) {
+      grab_phase = GRAB_PHASE_RECOVER_CLOSE;
       return;
     }
+    if (Claw_Open(now_ms)) {
+      grab_phase = GRAB_PHASE_CLOSE;
+      step_started_ms = now_ms;
+    }
+    return;
+  }
 
+  if (grab_phase == GRAB_PHASE_CLOSE) {
+    Motor_Stop();
+    Camera_SetAngle(150U);
+    camera_angle = 150.0f;
+    if ((uint32_t)(now_ms - step_started_ms) >=
+        APP_GRAB_MECHANISM_TIMEOUT_MS) {
+      grab_phase = GRAB_PHASE_RECOVER_CLOSE;
+      return;
+    }
+    if (Claw_Touch(now_ms)) {
+      grab_phase = GRAB_PHASE_CONFIRM;
+      step_started_ms = now_ms;
+    }
+    return;
+  }
+
+  if (grab_phase == GRAB_PHASE_CONFIRM) {
+    Motor_Stop();
+    Camera_SetAngle(150U);
+    camera_angle = 150.0f;
     if (grabbed) {
       TaskDestination destination = TASK_DEST_NONE;
       if (!task_cargo_confirmed(vision)) {
@@ -894,61 +868,58 @@ static void task_capture_target(const VisionData *vision, uint32_t now_ms)
       }
 
       const bool allowed = vision->classification_valid && !vision->unknown &&
-          task_cargo_allowed(vision->cargo_counts, &destination);
+          task_classify_cargo(vision->cargo_counts, &destination);
       if (allowed) {
         task_status.destination = destination;
         task_status.cargo_valid = true;
-        task_set_state(TASK_RETURN_SAFE, now_ms);
+        task_enter_state(TASK_RETURN_SAFE, now_ms);
       } else {
         task_status.cargo_valid = false;
         task_status.grabbed = false;
         task_confirmation_reset(&cargo_confirmation);
-        crab_step = CRAB_BACK;
-        crab_claw_ready = false;
+        grab_phase = GRAB_PHASE_RECOVER_CLOSE;
       }
       return;
     }
 
-    if ((uint32_t)(now_ms - step_started_ms) >= APP_CRAB_GRAB_WAIT_MS) {
-      crab_step = CRAB_BACK;
-      crab_claw_ready = false;
+    if ((uint32_t)(now_ms - step_started_ms) >=
+        APP_GRAB_CONFIRM_WAIT_MS) {
+      grab_phase = GRAB_PHASE_RECOVER_CLOSE;
     }
     return;
   }
   task_confirmation_reset(&cargo_confirmation);
 
-  if (!found || !task_candidate_allowed(vision)) {
+  if (!found || !task_is_candidate_allowed(vision)) {
     Motor_Stop();
-    if ((uint32_t)(now_ms - crab_last_valid_ms) >=
-        APP_CRAB_TARGET_LOSS_GRACE_MS) {
-      crab_step = CRAB_BACK;
-      crab_claw_ready = false;
+    if ((uint32_t)(now_ms - grab_last_valid_ms) >=
+        APP_GRAB_TARGET_LOSS_GRACE_MS) {
+      grab_phase = GRAB_PHASE_RECOVER_CLOSE;
     }
     return;
   }
-  crab_last_valid_ms = vision->tick_ms;
+  grab_last_valid_ms = vision->tick_ms;
 
-  task_track_camera(vision);
+  const float steering_mm_s = task_update_visual_tracking(vision);
   if (camera_angle >= 150.0f) {
     Motor_Stop();
     Camera_SetAngle(150U);
     camera_angle = 150.0f;
-    crab_step = CRAB_OPEN;
-    crab_claw_ready = false;
+    grab_phase = GRAB_PHASE_OPEN;
     step_started_ms = now_ms;
     return;
   }
 
   float speed_mm_s = APP_APPROACH_SPEED_MM_S;
-  if (vision->distance_mm <= APP_CRAB_SLOW_DISTANCE_MM) {
-    speed_mm_s = APP_CRAB_SLOW_SPEED_MM_S;
-  } else if (vision->distance_mm <= APP_CRAB_MID_DISTANCE_MM) {
-    speed_mm_s = APP_CRAB_MID_SPEED_MM_S;
+  if (vision->distance_mm <= APP_GRAB_SLOW_DISTANCE_MM) {
+    speed_mm_s = APP_GRAB_SLOW_SPEED_MM_S;
+  } else if (vision->distance_mm <= APP_GRAB_MID_DISTANCE_MM) {
+    speed_mm_s = APP_GRAB_MID_SPEED_MM_S;
   }
-  Motor_Move(speed_mm_s, 0.0f, task_turn(vision));
+  Motor_Move(speed_mm_s, 0.0f, steering_mm_s);
 }
 
-static void task_return_zone(const VisionData *vision, uint32_t now_ms)
+static void task_process_return(const VisionData *vision, uint32_t now_ms)
 {
   if (rescue_active) {
     const RescueStatus rescue = Rescue_Process(now_ms);
@@ -1016,7 +987,7 @@ static void task_return_zone(const VisionData *vision, uint32_t now_ms)
   if (task_status.near_safe) {
     Motor_Stop();
     if (task_nav_near_confirmed(vision)) {
-      task_set_state(TASK_DROP_OBJECT, now_ms);
+      task_enter_state(TASK_DROP_OBJECT, now_ms);
     }
     return;
   }
@@ -1024,7 +995,7 @@ static void task_return_zone(const VisionData *vision, uint32_t now_ms)
   task_confirmation_reset(&nav_confirmation);
   /* Keep executing the last validated command during a short camera or
    * transport dropout instead of repeatedly braking and restarting. */
-  task_apply_nav_direction(task_status.nav_direction);
+  task_apply_navigation(task_status.nav_direction);
 }
 
 static bool task_distance_failed(MotorDistanceStatus result)
@@ -1033,7 +1004,7 @@ static bool task_distance_failed(MotorDistanceStatus result)
          (result == MOTOR_DISTANCE_INVALID);
 }
 
-static void task_drop_target(const VisionData *vision, uint32_t now_ms)
+static void task_process_drop(const VisionData *vision, uint32_t now_ms)
 {
   MotorDistanceStatus result;
 
@@ -1050,7 +1021,7 @@ static void task_drop_target(const VisionData *vision, uint32_t now_ms)
       if (result == MOTOR_DISTANCE_DONE) {
         Motor_Stop();
         task_status.drop_phase = TASK_DROP_RELEASE;
-        drop_claw_ready = false;
+        drop_release_complete = false;
       } else if (task_distance_failed(result)) {
         task_stop(TASK_FAULT_MOTOR, now_ms);
       }
@@ -1058,9 +1029,9 @@ static void task_drop_target(const VisionData *vision, uint32_t now_ms)
 
     case TASK_DROP_RELEASE:
       Motor_Stop();
-      if (!drop_claw_ready) {
+      if (!drop_release_complete) {
         if (Claw_Open(now_ms)) {
-          drop_claw_ready = true;
+          drop_release_complete = true;
           step_started_ms = now_ms;
         }
         break;
@@ -1090,7 +1061,7 @@ static void task_drop_target(const VisionData *vision, uint32_t now_ms)
           ++inspection_retry_count;
           Camera_SetAngle(90U);
           task_status.drop_phase = TASK_DROP_RELEASE;
-          drop_claw_ready = false;
+          drop_release_complete = false;
         } else {
           task_stop(TASK_FAULT_DROP_VERIFY, now_ms);
         }
@@ -1119,23 +1090,23 @@ static void task_drop_target(const VisionData *vision, uint32_t now_ms)
         task_status.claw_empty = false;
         task_status.cargo_counts = vision->cargo_counts;
         task_status.object_count = task_total_count(vision->cargo_counts);
-        if (!task_cargo_allowed(vision->cargo_counts, &destination)) {
+        if (!task_classify_cargo(vision->cargo_counts, &destination)) {
           task_stop(TASK_FAULT_CARGO, now_ms);
           break;
         }
         task_status.destination = destination;
         task_status.drop_phase = TASK_DROP_RETRY_BACK;
-        drop_claw_grabbed = false;
+        drop_claw_closed = false;
       }
       step_started_ms = now_ms;
       break;
     }
 
     case TASK_DROP_BACK:
-      if (!drop_claw_grabbed) {
+      if (!drop_claw_closed) {
         Motor_Stop();
         if (Claw_Touch(now_ms)) {
-          drop_claw_grabbed = true;
+          drop_claw_closed = true;
         }
         break;
       }
@@ -1143,17 +1114,17 @@ static void task_drop_target(const VisionData *vision, uint32_t now_ms)
                            APP_GO_DISTANCE_SPEED_MM_S);
       if (result == MOTOR_DISTANCE_DONE) {
         Motor_Stop();
-        task_set_state(TASK_FIND_OBJECT, now_ms);
+        task_enter_state(TASK_FIND_OBJECT, now_ms);
       } else if (task_distance_failed(result)) {
         task_stop(TASK_FAULT_MOTOR, now_ms);
       }
       break;
 
     case TASK_DROP_RETRY_BACK:
-      if (!drop_claw_grabbed) {
+      if (!drop_claw_closed) {
         Motor_Stop();
         if (Claw_Touch(now_ms)) {
-          drop_claw_grabbed = true;
+          drop_claw_closed = true;
         }
         break;
       }
@@ -1161,7 +1132,7 @@ static void task_drop_target(const VisionData *vision, uint32_t now_ms)
                            APP_GO_DISTANCE_SPEED_MM_S);
       if (result == MOTOR_DISTANCE_DONE) {
         Motor_Stop();
-        task_set_state(TASK_RETURN_SAFE, now_ms);
+        task_enter_state(TASK_RETURN_SAFE, now_ms);
       } else if (task_distance_failed(result)) {
         task_stop(TASK_FAULT_MOTOR, now_ms);
       }
@@ -1186,52 +1157,52 @@ void Task_Process(uint32_t now_ms)
     if (Claw_Retract(now_ms)) {
       task_claw_retracted = true;
     }
-    task_publish_status(now_ms);
+    task_publish_status_if_due(now_ms);
     return;
   }
 
   const VisionData vision = Vision_GetSnapshot();
-  task_update_time(now_ms);
+  task_update_match_time(now_ms);
   if (match_started) {
-    task_update_distance();
+    task_update_travel_distance();
   }
 
   if (vision.stop) {
     task_stop(TASK_FAULT_REMOTE_STOP, now_ms);
   }
-  if (task_motor_has_fault()) {
+  if (task_has_motor_fault()) {
     task_stop(TASK_FAULT_MOTOR, now_ms);
   }
   if (task_status.state == TASK_STOPPED) {
     Motor_Stop();
-    task_publish_status(now_ms);
+    task_publish_status_if_due(now_ms);
     return;
   }
 
   switch (task_status.state) {
     case TASK_WAIT_CONFIG:
-      task_wait_config(&vision, now_ms);
+      task_process_wait_config(&vision, now_ms);
       break;
     case TASK_START:
-      task_leave_start(now_ms);
+      task_process_start(now_ms);
       break;
     case TASK_FIND_OBJECT:
-      task_search_target(&vision, now_ms);
+      task_process_search(&vision, now_ms);
       break;
-    case TASK_CRAB_OBJECT:
-      task_capture_target(&vision, now_ms);
+    case TASK_GRAB_OBJECT:
+      task_process_grab(&vision, now_ms);
       break;
     case TASK_RETURN_SAFE:
-      task_return_zone(&vision, now_ms);
+      task_process_return(&vision, now_ms);
       break;
     case TASK_DROP_OBJECT:
-      task_drop_target(&vision, now_ms);
+      task_process_drop(&vision, now_ms);
       break;
     default:
       task_stop(TASK_FAULT_INVALID_STATE, now_ms);
       break;
   }
-  task_publish_status(now_ms);
+  task_publish_status_if_due(now_ms);
 }
 
 TaskStatus Task_GetStatus(void)

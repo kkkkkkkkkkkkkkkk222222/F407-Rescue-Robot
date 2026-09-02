@@ -574,7 +574,7 @@ static void draw_location(const LCDDashboard *dashboard)
 #endif
 
 #if APP_ENABLE_TASK
-static const char *task_name(TaskState state)
+static const char *task_state_name(TaskState state)
 {
   static const char *const names[] = {
     "WAIT", "START", "FIND", "GRAB", "BACK", "DROP", "STOP"
@@ -582,7 +582,7 @@ static const char *task_name(TaskState state)
   return (state <= TASK_STOPPED) ? names[state] : "STOP";
 }
 
-static char target_code(uint8_t counts)
+static char cargo_type_code(uint8_t counts)
 {
   if (VISION_COUNT_DANGER(counts) != 0U) {
     return 'D';
@@ -596,12 +596,12 @@ static char target_code(uint8_t counts)
   return (VISION_COUNT_NORMAL(counts) != 0U) ? 'N' : '-';
 }
 
-static char dest_code(TaskDestination dest)
+static char destination_code(TaskDestination destination)
 {
-  if (dest == TASK_DEST_MATERIAL) {
+  if (destination == TASK_DEST_MATERIAL) {
     return 'M';
   }
-  return (dest == TASK_DEST_CASUALTY) ? 'H' : '-';
+  return (destination == TASK_DEST_CASUALTY) ? 'H' : '-';
 }
 
 static void draw_task(const LCDDashboard *dashboard)
@@ -617,12 +617,12 @@ static void draw_task(const LCDDashboard *dashboard)
 
   draw_map(pose);
   (void)snprintf(text, sizeof(text), "T:%us %s O:%c%u",
-                 task.remaining_s, task_name(task.state),
-                 target_code(task.cargo_counts), count);
+                 task.remaining_s, task_state_name(task.state),
+                 cargo_type_code(task.cargo_counts), count);
   dashboard_write(0U, 4U, 128U, text);
   (void)snprintf(text, sizeof(text), "X:%ld Y:%ld D:%c",
                  (long)pose->x_mm, (long)pose->y_mm,
-                 dest_code(task.destination));
+                 destination_code(task.destination));
   dashboard_write(0U, 20U, 128U, text);
 }
 #elif !APP_ENABLE_LOCATION_DEMO
