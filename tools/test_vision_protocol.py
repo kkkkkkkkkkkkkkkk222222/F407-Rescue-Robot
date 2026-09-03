@@ -1,142 +1,119 @@
-import unittest
 import math
+import unittest
 
 from tools import vision_protocol as protocol
 
 
 class VisionProtocolTests(unittest.TestCase):
-    def test_uart_baud_matches_firmware(self) -> None:
+    def test_uart_and_config_match_upper_computer(self) -> None:
         self.assertEqual(protocol.UART_BAUD, 115_200)
-
-    def test_config_frame_matches_readme(self) -> None:
-        frame = protocol.config_frame(0, 0x11, 1)
         self.assertEqual(
-            frame.hex(" ").upper(),
+            protocol.config_frame(0, 0x11, 1).hex(" ").upper(),
             "A3 B3 11 00 11 01 00 00 00 00 00 00 F0 57 C3",
         )
 
-    def test_every_frame_has_valid_envelope_and_crc(self) -> None:
-        frames = (
-            protocol.report_frame(
-                0x10,
-                640,
-                512,
-                350,
-                protocol.pack_counts(1, 0, 0, 0),
-                protocol.FLAG_FOUND | protocol.FLAG_CLASS_VALID,
-            ),
-            protocol.nav_frame(
-                0x20,
-                protocol.NAV_FORWARD,
-                protocol.NAV_EN_ROUTE,
-                protocol.DEST_MATERIAL,
-            ),
-            protocol.stop_frame(0x30),
-            protocol.rescue_frame(0x31),
-            protocol.build_frame(
-                protocol.MSG_STATUS,
-                0x41,
-                bytes((3, 1, 0, 120, 0x0F, 0, 2, 1)),
-            ),
-            protocol.build_frame(
-                protocol.MSG_ODOM,
-                0x42,
-                bytes((0, 12, 0xFF, 0xF8, 0, 4, 10, 7)),
-            ),
+    def test_native_resolution_report_matches_upper_computer(self) -> None:
+        frame = protocol.report_frame(
+            0x10, 640, 512, 0, 1,
+            protocol.FLAG_FOUND | protocol.FLAG_CLASS_VALID,
         )
-        for frame in frames:
-            with self.subTest(frame=frame.hex()):
-                self.assertEqual(len(frame), 15)
-                self.assertEqual(frame[:2], protocol.FRAME_HEAD)
-                self.assertEqual(frame[-1], protocol.FRAME_TAIL)
-                self.assertEqual(
-                    int.from_bytes(frame[12:14], "little"),
-                    protocol.crc16_modbus(frame[2:12]),
-                )
-
-    def test_counts_pack_four_two_bit_fields(self) -> None:
-        self.assertEqual(protocol.pack_counts(1, 2, 3, 0), 0x39)
-        with self.assertRaises(ValueError):
-            protocol.pack_counts(4, 0, 0, 0)
-
-    def test_contradictory_reports_are_rejected(self) -> None:
-        with self.assertRaises(ValueError):
-            protocol.report_frame(
-                1, 640, 512, 0, 0,
-                protocol.FLAG_FOUND | protocol.FLAG_CLASS_VALID,
-            )
-        with self.assertRaises(ValueError):
-            protocol.report_frame(
-                2, 0, 0, 0, protocol.pack_counts(1, 0, 0, 0), 0,
-            )
-
-    def test_near_safe_requires_hold(self) -> None:
-        with self.assertRaises(ValueError):
-            protocol.nav_frame(
-                1,
-                protocol.NAV_FORWARD,
-                protocol.NAV_NEAR_SAFE,
-                protocol.DEST_MATERIAL,
-            )
-
-    def test_rescue_event_value(self) -> None:
-        frame = protocol.rescue_frame(0x5A)
-        self.assertEqual(frame[2], protocol.MSG_EVENT)
-        self.assertEqual(frame[3], 0x5A)
         self.assertEqual(
-            frame[4:12], bytes((protocol.EVENT_RESCUE,) + (0,) * 7)
+            frame.hex(" ").upper(),
+            "A3 B3 12 10 02 80 02 00 00 00 01 09 DD FD C3",
         )
 
-    def test_parse_full_config_ack(self) -> None:
-        self.assertEqual(protocol.parse_config_ack(protocol.CONFIG_ACK),
-                         {"accepted": True})
-
-    def test_parse_task_status(self) -> None:
-        frame = protocol.build_frame(
-            protocol.MSG_STATUS,
-            10,
-            bytes((4, 2, 0, 95, 0x2D, 5, 3, 0x10)),
+    def test_distance_valid_report_matches_upper_computer(self) -> None:
+        frame = protocol.report_frame(
+            0x10, 640, 512, 350, 1,
+            protocol.FLAG_FOUND | protocol.FLAG_CLASS_VALID |
+            protocol.FLAG_DISTANCE_VALID,
         )
-        status = protocol.parse_status(frame)
-        self.assertEqual(status["state"], 4)
-        self.assertEqual(status["destination"], 2)
-        self.assertEqual(status["remaining_s"], 95)
-        self.assertTrue(status["match_started"])
-        self.assertTrue(status["grabbed"])
-        self.assertTrue(status["cargo_valid"])
-        self.assertTrue(status["nav_fresh"])
-        self.assertEqual(status["fault"], 5)
-        self.assertEqual(status["recovery_count"], 3)
+        self.assertEqual(
+            frame.hex(" ").upper(),
+            "A3 B3 12 10 02 80 02 00 01 5E 01 49 BC 23 C3",
+        )
 
-    def test_parse_odometry(self) -> None:
+    def test_no_target_payload_is_all_zero(self) -> None:
+        frame = protocol.report_frame(0x11, 0, 0, 0, 0, 0)
+        self.assertEqual(frame[4:12], bytes(8))
+        with self.assertRaises(ValueError):
+            protocol.report_frame(0x12, 1, 0, 0, 0, 0)
+
+    def test_native_resolution_bounds(self) -> None:
+        protocol.report_frame(1, 1279, 1023, 0, 1,
+                              protocol.FLAG_FOUND |
+                              protocol.FLAG_CLASS_VALID)
+        with self.assertRaises(ValueError):
+            protocol.report_frame(2, 1280, 0, 0, 1,
+                                  protocol.FLAG_FOUND)
+
+    def test_mission_waypoint_matches_upper_computer(self) -> None:
+        frame = protocol.mission_frame(
+            0x20,
+            protocol.CMD_NAVIGATE_WAYPOINT,
+            protocol.CMD_VALID | protocol.CMD_DRIVE_STRAIGHT |
+            protocol.CMD_RED_SIDE,
+            0, 950, 9000,
+        )
+        self.assertEqual(
+            frame.hex(" ").upper(),
+            "A3 B3 18 20 03 0B 00 00 03 B6 23 28 6B E0 C3",
+        )
+
+    def test_stm_status_matches_upper_computer(self) -> None:
+        frame = protocol.stm_status_frame(9, 0x09, 2, 7350, 8, 0)
+        self.assertEqual(
+            frame.hex(" ").upper(),
+            "A3 B3 17 09 09 02 1C B6 08 00 00 00 80 54 C3",
+        )
+        status = protocol.parse_stm_status(frame)
+        self.assertTrue(status["claw_visible"])
+        self.assertTrue(status["auto_approach"])
+        self.assertEqual(status["camera_pitch_cdeg"], 7350)
+        self.assertEqual(status["acknowledged_sequence"], 8)
+
+    def test_fused_pose_signed_coordinates(self) -> None:
+        frame = protocol.fused_pose_frame(
+            0x43, 1200, -350, 9000, 0x33, 0x94,
+        )
+        pose = protocol.parse_fused_pose(frame)
+        self.assertEqual(pose["x_mm"], 1200)
+        self.assertEqual(pose["y_mm"], -350)
+        self.assertEqual(pose["heading_cdeg"], 9000)
+
+    def test_odometry_and_body_velocity(self) -> None:
         frame = bytes.fromhex(
             "A3 B3 15 00 12 34 56 78 9A BC 0A 07 90 F6 C3"
         )
-        self.assertEqual(
-            protocol.parse_odometry(frame),
-            {
-                "sequence": 0,
-                "m1_count": 0x1234,
-                "m2_count": 0x5678,
-                "m3_count": 0x9ABC,
-                "dt_ms": 10,
-                "status": 0x07,
-            },
-        )
-
+        self.assertEqual(protocol.parse_odometry(frame)["dt_ms"], 10)
         forward, left = protocol.odometry_body_velocity(
-            {
-                "m1_delta": -10,
-                "m2_delta": 0,
-                "m3_delta": 10,
-                "dt_ms": 20,
-            }
+            {"m1_delta": -10, "m2_delta": 0,
+             "m3_delta": 10, "dt_ms": 20}
         )
         metres_per_count = math.pi * 0.070 / 1768
         self.assertAlmostEqual(
             forward, 20 * metres_per_count / math.sqrt(3) / 0.020
         )
         self.assertAlmostEqual(left, 0.0)
+
+    def test_all_supported_frames_have_valid_crc(self) -> None:
+        frames = (
+            protocol.config_frame(1, 0x12, 4),
+            protocol.report_frame(2, 640, 512, 0, 1,
+                                  protocol.FLAG_FOUND |
+                                  protocol.FLAG_CLASS_VALID),
+            protocol.fused_pose_frame(3, 0, 0, 0, 3, 0),
+            protocol.mission_frame(4, protocol.CMD_GRAB_CONFIRMED),
+            protocol.stm_status_frame(5, 0, 1, 9000, 4, 0),
+            protocol.build_frame(protocol.MSG_ODOM, 6,
+                                 bytes((0, 1, 0, 2, 0, 3, 10, 7))),
+        )
+        for frame in frames:
+            with self.subTest(frame=frame.hex()):
+                self.assertEqual(
+                    int.from_bytes(frame[12:14], "little"),
+                    protocol.crc16_modbus(frame[2:12]),
+                )
 
 
 if __name__ == "__main__":

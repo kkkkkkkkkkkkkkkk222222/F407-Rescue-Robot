@@ -21,7 +21,6 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "app_config.h"
 #include "Robot.h"
 #include "servo.h"
 /* USER CODE END Includes */
@@ -132,10 +131,7 @@ int main(void)
   MX_USART1_UART_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
-#if APP_ENABLE_TASK
   Servo_Init();
-#endif
-
   Robot_Init();
   /* USER CODE END 2 */
 

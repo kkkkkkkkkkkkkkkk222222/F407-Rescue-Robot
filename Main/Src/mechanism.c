@@ -76,6 +76,16 @@ uint8_t Camera_GetAngle(void)
   return camera_angle;
 }
 
+void Lift_SetStartPosition(void)
+{
+  Servo_SetAngle(1U, APP_LIFT_START_ANGLE);
+}
+
+void Lift_SetTravelPosition(void)
+{
+  Servo_SetAngle(1U, APP_LIFT_TRAVEL_ANGLE);
+}
+
 bool Claw_Open(uint32_t now_ms)
 {
   /* Move the left claw clear before opening the right claw. */
@@ -85,7 +95,7 @@ bool Claw_Open(uint32_t now_ms)
 bool Claw_Retract(uint32_t now_ms)
 {
   /* Fold the left claw first, then place the right claw on the outside. */
-  return claw_move(CLAW_ACTION_RETRACT, now_ms, 4U, 30U, 2U, 140U);
+  return claw_move(CLAW_ACTION_RETRACT, now_ms, 4U, 23U, 2U, 147U);
 }
 
 bool Claw_Touch(uint32_t now_ms)

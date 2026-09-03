@@ -75,8 +75,9 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 
 # A successful firmware link is the user's explicit backup point. The script
-# creates a dated local commit, summarizes the changed modules and pushes it to
-# GitHub. Network/authentication failures are reported but never block flashing.
+# creates a dated local commit, pushes it, and verifies that the upstream branch
+# matches HEAD. Any backup failure stops the build so a launch task cannot flash
+# firmware that has not reached GitHub.
 find_program(POWERSHELL_EXECUTABLE NAMES pwsh powershell)
 
 # Add linked libraries
@@ -89,8 +90,17 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:${CMAKE_PROJECT_NAME}> ${CMAKE_PROJECT_NAME}.hex
     COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:${CMAKE_PROJECT_NAME}> ${CMAKE_PROJECT_NAME}.bin
+    COMMENT "Generating firmware images"
+)
+
+# Custom targets without outputs run on every default build, even when the ELF
+# is already up to date. This makes every pre-flash build verify GitHub rather
+# than limiting the check to builds that happened to relink the firmware.
+add_custom_target(github_backup ALL
     COMMAND ${POWERSHELL_EXECUTABLE} -NoProfile -ExecutionPolicy Bypass
             -File ${CMAKE_SOURCE_DIR}/tools/AutoBackup.ps1
             -Repository ${CMAKE_SOURCE_DIR}
-    COMMENT "Generating firmware images and backing up source changes"
+    DEPENDS ${CMAKE_PROJECT_NAME}
+    COMMENT "Committing, pushing, and verifying GitHub backup"
+    VERBATIM
 )

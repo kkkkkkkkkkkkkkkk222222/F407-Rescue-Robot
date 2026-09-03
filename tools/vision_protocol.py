@@ -1,4 +1,4 @@
-"""Reference encoder for the STM32F407 rescue UART protocol."""
+"""Reference encoder/decoder for the shijue_fangan F407 UART protocol."""
 
 from __future__ import annotations
 
@@ -11,42 +11,38 @@ UART_BAUD = 115_200
 
 MSG_CONFIG = 0x11
 MSG_REPORT = 0x12
-MSG_EVENT = 0x13
-MSG_NAV = 0x14
 MSG_ODOM = 0x15
-MSG_STATUS = 0x16
+MSG_FUSED_POSE = 0x16
+MSG_STM_STATUS = 0x17
+MSG_MISSION = 0x18
 CONFIG_ACK = bytes((0xA3, 0xB3, 0x01, 0xC3))
 
-EVENT_STOP = 0x01
-EVENT_RESCUE = 0x02
-
-DEST_MATERIAL = 0x01
-DEST_CASUALTY = 0x02
-
-NAV_HOLD = 0x00
-NAV_FORWARD = 0x01
-NAV_TURN_LEFT = 0x02
-NAV_TURN_RIGHT = 0x03
-NAV_BACKWARD = 0x04
-
-NAV_EN_ROUTE = 0x01
-NAV_NEAR_SAFE = 0x02
+IMAGE_WIDTH = 1280
+IMAGE_HEIGHT = 1024
 
 FLAG_FOUND = 0x01
 FLAG_NEAR = 0x02
-FLAG_GRABBED = 0x04
 FLAG_CLASS_VALID = 0x08
-FLAG_UNKNOWN = 0x10
-FLAG_CLAW_VIEW = 0x20
+FLAG_DISTANCE_VALID = 0x40
 
-STATUS_MATCH_STARTED = 0x01
-STATUS_FOUND = 0x02
-STATUS_GRABBED = 0x04
-STATUS_CARGO_VALID = 0x08
-STATUS_NORMAL_DELIVERED = 0x10
-STATUS_NAV_FRESH = 0x20
-STATUS_NEAR_SAFE = 0x40
-STATUS_CLAW_EMPTY = 0x80
+STM_CLAW_VISIBLE = 0x01
+STM_GRIPPER_CLOSED = 0x02
+STM_MOTORS_ACTIVE = 0x04
+STM_AUTO_APPROACH = 0x08
+STM_FAULT = 0x80
+
+CMD_STOP = 0x00
+CMD_GRAB_CONFIRMED = 0x02
+CMD_NAVIGATE_WAYPOINT = 0x03
+CMD_ALIGN_SAFE_ZONE = 0x04
+CMD_ENTER_SAFE_ZONE = 0x05
+CMD_TASK_COMPLETE = 0x06
+CMD_ABORT = 0x07
+
+CMD_VALID = 0x01
+CMD_DRIVE_STRAIGHT = 0x02
+CMD_USE_FINAL_HEADING = 0x04
+CMD_RED_SIDE = 0x08
 
 
 def crc16_modbus(data: bytes) -> int:
@@ -60,34 +56,32 @@ def crc16_modbus(data: bytes) -> int:
 
 def build_frame(message_type: int, sequence: int, payload: bytes) -> bytes:
     if message_type not in (
-        MSG_CONFIG, MSG_REPORT, MSG_EVENT, MSG_NAV, MSG_ODOM, MSG_STATUS,
+        MSG_CONFIG, MSG_REPORT, MSG_ODOM, MSG_FUSED_POSE,
+        MSG_STM_STATUS, MSG_MISSION,
     ):
         raise ValueError("unsupported message type")
     if not 0 <= sequence <= 0xFF:
         raise ValueError("sequence must be 0..255")
     if len(payload) != PAYLOAD_SIZE:
         raise ValueError("payload must contain exactly 8 bytes")
-
     protected = bytes((message_type, sequence)) + payload
     crc = crc16_modbus(protected)
     return FRAME_HEAD + protected + crc.to_bytes(2, "little") + bytes((FRAME_TAIL,))
 
 
 def parse_frame(frame: bytes) -> tuple[int, int, bytes]:
-    """Validate one complete frame and return (type, sequence, payload)."""
     if len(frame) != 15:
         raise ValueError("frame must contain exactly 15 bytes")
     if frame[:2] != FRAME_HEAD or frame[-1] != FRAME_TAIL:
         raise ValueError("invalid frame envelope")
-    expected = int.from_bytes(frame[12:14], "little")
-    if crc16_modbus(frame[2:12]) != expected:
+    if crc16_modbus(frame[2:12]) != int.from_bytes(frame[12:14], "little"):
         raise ValueError("invalid frame CRC")
-    message_type = frame[2]
-    if message_type not in (
-        MSG_CONFIG, MSG_REPORT, MSG_EVENT, MSG_NAV, MSG_ODOM, MSG_STATUS,
+    if frame[2] not in (
+        MSG_CONFIG, MSG_REPORT, MSG_ODOM, MSG_FUSED_POSE,
+        MSG_STM_STATUS, MSG_MISSION,
     ):
         raise ValueError("unsupported message type")
-    return message_type, frame[3], frame[4:12]
+    return frame[2], frame[3], frame[4:12]
 
 
 def parse_config_ack(frame: bytes) -> dict[str, bool]:
@@ -96,68 +90,10 @@ def parse_config_ack(frame: bytes) -> dict[str, bool]:
     return {"accepted": True}
 
 
-def parse_status(frame: bytes) -> dict[str, int | bool]:
-    message_type, sequence, payload = parse_frame(frame)
-    if message_type != MSG_STATUS:
-        raise ValueError("not a task status frame")
-    flags = payload[4]
-    return {
-        "sequence": sequence,
-        "state": payload[0],
-        "destination": payload[1],
-        "remaining_s": int.from_bytes(payload[2:4], "big"),
-        "match_started": bool(flags & STATUS_MATCH_STARTED),
-        "found": bool(flags & STATUS_FOUND),
-        "grabbed": bool(flags & STATUS_GRABBED),
-        "cargo_valid": bool(flags & STATUS_CARGO_VALID),
-        "normal_delivered": bool(flags & STATUS_NORMAL_DELIVERED),
-        "nav_fresh": bool(flags & STATUS_NAV_FRESH),
-        "near_safe": bool(flags & STATUS_NEAR_SAFE),
-        "claw_empty": bool(flags & STATUS_CLAW_EMPTY),
-        "fault": payload[5],
-        "recovery_count": payload[6],
-        "cargo_counts": payload[7],
-    }
-
-
-def parse_odometry(frame: bytes) -> dict[str, int]:
-    """Decode raw cumulative low-16-bit encoder counts."""
-    message_type, sequence, payload = parse_frame(frame)
-    if message_type != MSG_ODOM:
-        raise ValueError("not an odometry frame")
-    dt_ms = payload[6]
-    if dt_ms == 0:
-        raise ValueError("odometry dt_ms must be non-zero")
-    return {
-        "sequence": sequence,
-        "m1_count": int.from_bytes(payload[0:2], "big"),
-        "m2_count": int.from_bytes(payload[2:4], "big"),
-        "m3_count": int.from_bytes(payload[4:6], "big"),
-        "dt_ms": dt_ms,
-        "status": payload[7],
-    }
-
-
-def odometry_body_velocity(
-    odometry: dict[str, int],
-    wheel_diameter_mm: float = 70.0,
-    counts_per_wheel_rev: int = 1768,
-) -> tuple[float, float]:
-    """Return (forward, left) chassis velocity in m/s for T265 mapping."""
-    if wheel_diameter_mm <= 0 or counts_per_wheel_rev <= 0:
-        raise ValueError("wheel geometry must be positive")
-    dt_s = odometry["dt_ms"] * 0.001
-    if dt_s <= 0:
-        raise ValueError("odometry dt_ms must be non-zero")
-    metres_per_count = (
-        math.pi * wheel_diameter_mm * 0.001 / counts_per_wheel_rev
-    )
-    m1 = odometry["m1_delta"] * metres_per_count
-    m2 = odometry["m2_delta"] * metres_per_count
-    m3 = odometry["m3_delta"] * metres_per_count
-    forward = (m3 - m1) / math.sqrt(3.0) / dt_s
-    left = (m1 + m3 - 2.0 * m2) / 3.0 / dt_s
-    return forward, left
+def config_frame(sequence: int, color: int, zone: int) -> bytes:
+    if color not in (0x11, 0x12) or zone not in range(1, 5):
+        raise ValueError("invalid color or start zone")
+    return build_frame(MSG_CONFIG, sequence, bytes((color, zone, 0, 0, 0, 0, 0, 0)))
 
 
 def pack_counts(normal: int, core: int, casualty: int, danger: int) -> int:
@@ -165,14 +101,6 @@ def pack_counts(normal: int, core: int, casualty: int, danger: int) -> int:
     if any(value < 0 or value > 3 for value in counts):
         raise ValueError("each object count must be 0..3")
     return normal | (core << 2) | (casualty << 4) | (danger << 6)
-
-
-def config_frame(sequence: int, color: int, zone: int) -> bytes:
-    if color not in (0x11, 0x12):
-        raise ValueError("color must be 0x11 (red) or 0x12 (blue)")
-    if zone not in range(1, 5):
-        raise ValueError("zone must be 1..4")
-    return build_frame(MSG_CONFIG, sequence, bytes((color, zone, 0, 0, 0, 0, 0, 0)))
 
 
 def report_frame(
@@ -183,70 +111,162 @@ def report_frame(
     counts: int,
     flags: int,
 ) -> bytes:
-    if not 0 <= x <= 1279 or not 0 <= y <= 1023:
-        raise ValueError("x/y are outside the 1280x1024 image")
-    if not 0 <= distance_mm <= 0xFFFF:
-        raise ValueError("distance_mm must be 0..65535")
-    if not 0 <= flags <= 0x3F:
-        raise ValueError("flags may only use bits 0..5")
+    if not 0 <= x < IMAGE_WIDTH or not 0 <= y < IMAGE_HEIGHT:
+        raise ValueError("target pixel is outside the native 1280x1024 image")
+    if not 0 <= distance_mm <= 0xFFFF or not 0 <= counts <= 0xFF:
+        raise ValueError("invalid distance or count byte")
+    if flags & ~0x4B:
+        raise ValueError("unsupported vision-report flag")
     found = bool(flags & FLAG_FOUND)
-    if found and distance_mm == 0:
-        raise ValueError("a found target must have distance_mm in 1..65535")
-    if not found and (counts or flags & (FLAG_NEAR | FLAG_GRABBED | FLAG_UNKNOWN)):
-        raise ValueError("a no-target report cannot contain counts/near/grabbed/unknown")
+    distance_valid = bool(flags & FLAG_DISTANCE_VALID)
+    if distance_valid and distance_mm == 0:
+        raise ValueError("a valid distance must be non-zero")
+    if not distance_valid and distance_mm != 0:
+        raise ValueError("distance must be zero when invalid")
+    if not found and (x or y or distance_mm or counts or flags):
+        raise ValueError("a no-target report must have an all-zero payload")
     payload = (
-        x.to_bytes(2, "big")
-        + y.to_bytes(2, "big")
-        + distance_mm.to_bytes(2, "big")
-        + bytes((counts, flags))
+        x.to_bytes(2, "big") + y.to_bytes(2, "big")
+        + distance_mm.to_bytes(2, "big") + bytes((counts, flags))
     )
     return build_frame(MSG_REPORT, sequence, payload)
 
 
-def stop_frame(sequence: int) -> bytes:
-    return build_frame(MSG_EVENT, sequence, bytes((EVENT_STOP, 0, 0, 0, 0, 0, 0, 0)))
-
-
-def rescue_frame(sequence: int) -> bytes:
-    """Request one upper-computer-authorized 1 s fast reverse recovery."""
-    payload = bytes((EVENT_RESCUE, 0, 0, 0, 0, 0, 0, 0))
-    return build_frame(MSG_EVENT, sequence, payload)
-
-
-def nav_frame(
+def fused_pose_frame(
     sequence: int,
-    direction: int,
-    zone_state: int,
-    destination: int,
+    x_mm: int,
+    y_mm: int,
+    heading_cdeg: int,
+    status: int,
+    confidence_and_sigma: int,
 ) -> bytes:
-    if direction not in (NAV_HOLD, NAV_FORWARD, NAV_TURN_LEFT,
-                          NAV_TURN_RIGHT, NAV_BACKWARD):
-        raise ValueError("invalid navigation direction")
-    if zone_state not in (NAV_EN_ROUTE, NAV_NEAR_SAFE):
-        raise ValueError("invalid safe-zone state")
-    if destination not in (DEST_MATERIAL, DEST_CASUALTY):
-        raise ValueError("invalid destination")
-    if zone_state == NAV_NEAR_SAFE and direction != NAV_HOLD:
-        raise ValueError("near-safe frames must command HOLD")
-    payload = bytes((direction, zone_state, destination, 0, 0, 0, 0, 0))
-    return build_frame(MSG_NAV, sequence, payload)
+    if not -32768 <= x_mm <= 32767 or not -32768 <= y_mm <= 32767:
+        raise ValueError("x_mm/y_mm must fit int16")
+    if not 0 <= heading_cdeg < 36000 or not 0 <= status <= 0x7F:
+        raise ValueError("invalid heading or status")
+    payload = (
+        x_mm.to_bytes(2, "big", signed=True)
+        + y_mm.to_bytes(2, "big", signed=True)
+        + heading_cdeg.to_bytes(2, "big")
+        + bytes((status, confidence_and_sigma))
+    )
+    return build_frame(MSG_FUSED_POSE, sequence, payload)
+
+
+def parse_fused_pose(frame: bytes) -> dict[str, int]:
+    message_type, sequence, payload = parse_frame(frame)
+    if message_type != MSG_FUSED_POSE:
+        raise ValueError("not a fused-pose frame")
+    return {
+        "sequence": sequence,
+        "x_mm": int.from_bytes(payload[0:2], "big", signed=True),
+        "y_mm": int.from_bytes(payload[2:4], "big", signed=True),
+        "heading_cdeg": int.from_bytes(payload[4:6], "big"),
+        "status": payload[6],
+        "tracker_confidence": payload[7] & 0x03,
+        "mapper_confidence": (payload[7] >> 2) & 0x03,
+        "position_sigma_cm": (payload[7] >> 4) & 0x0F,
+    }
+
+
+def stm_status_frame(
+    sequence: int,
+    flags: int,
+    mode: int,
+    camera_pitch_cdeg: int,
+    acknowledged_sequence: int,
+    fault_code: int,
+) -> bytes:
+    if not 0 <= camera_pitch_cdeg <= 18000:
+        raise ValueError("camera pitch must be in 0..18000 cdeg")
+    payload = bytes((flags, mode)) + camera_pitch_cdeg.to_bytes(2, "big") + bytes(
+        (acknowledged_sequence, fault_code, 0, 0)
+    )
+    return build_frame(MSG_STM_STATUS, sequence, payload)
+
+
+def parse_stm_status(frame: bytes) -> dict[str, int | bool]:
+    message_type, sequence, payload = parse_frame(frame)
+    if message_type != MSG_STM_STATUS or payload[6:8] != bytes(2):
+        raise ValueError("not a valid STM32 status frame")
+    flags = payload[0]
+    return {
+        "sequence": sequence,
+        "flags": flags,
+        "mode": payload[1],
+        "camera_pitch_cdeg": int.from_bytes(payload[2:4], "big"),
+        "acknowledged_sequence": payload[4],
+        "fault_code": payload[5],
+        "claw_visible": bool(flags & STM_CLAW_VISIBLE),
+        "gripper_closed": bool(flags & STM_GRIPPER_CLOSED),
+        "motors_active": bool(flags & STM_MOTORS_ACTIVE),
+        "auto_approach": bool(flags & STM_AUTO_APPROACH),
+        "fault": bool(flags & STM_FAULT),
+    }
+
+
+def mission_frame(
+    sequence: int,
+    command: int,
+    flags: int = CMD_VALID,
+    target_x_mm: int = 0,
+    target_y_mm: int = 0,
+    heading_cdeg: int = 0,
+) -> bytes:
+    if command not in (CMD_STOP, CMD_GRAB_CONFIRMED, CMD_NAVIGATE_WAYPOINT,
+                       CMD_ALIGN_SAFE_ZONE, CMD_ENTER_SAFE_ZONE,
+                       CMD_TASK_COMPLETE, CMD_ABORT):
+        raise ValueError("invalid mission command")
+    if not flags & CMD_VALID or flags & 0xF0:
+        raise ValueError("invalid mission flags")
+    if not -32768 <= target_x_mm <= 32767 or not -32768 <= target_y_mm <= 32767:
+        raise ValueError("mission target must fit int16")
+    if not 0 <= heading_cdeg < 36000:
+        raise ValueError("heading must be in 0..35999 cdeg")
+    payload = (
+        bytes((command, flags))
+        + target_x_mm.to_bytes(2, "big", signed=True)
+        + target_y_mm.to_bytes(2, "big", signed=True)
+        + heading_cdeg.to_bytes(2, "big")
+    )
+    return build_frame(MSG_MISSION, sequence, payload)
+
+
+def parse_odometry(frame: bytes) -> dict[str, int]:
+    message_type, sequence, payload = parse_frame(frame)
+    if message_type != MSG_ODOM or payload[6] == 0:
+        raise ValueError("not a valid odometry frame")
+    return {
+        "sequence": sequence,
+        "m1_count": int.from_bytes(payload[0:2], "big"),
+        "m2_count": int.from_bytes(payload[2:4], "big"),
+        "m3_count": int.from_bytes(payload[4:6], "big"),
+        "dt_ms": payload[6],
+        "status": payload[7],
+    }
+
+
+def odometry_body_velocity(
+    odometry: dict[str, int], wheel_diameter_mm: float = 70.0,
+    counts_per_wheel_rev: int = 1768,
+) -> tuple[float, float]:
+    dt_s = odometry["dt_ms"] * 0.001
+    metres_per_count = math.pi * wheel_diameter_mm * 0.001 / counts_per_wheel_rev
+    m1 = odometry["m1_delta"] * metres_per_count
+    m2 = odometry["m2_delta"] * metres_per_count
+    m3 = odometry["m3_delta"] * metres_per_count
+    return ((m3 - m1) / math.sqrt(3.0) / dt_s,
+            (m1 + m3 - 2.0 * m2) / 3.0 / dt_s)
 
 
 if __name__ == "__main__":
     examples = (
         config_frame(0, 0x11, 1),
-        report_frame(
-            0x10,
-            640,
-            512,
-            350,
-            pack_counts(1, 0, 0, 0),
-            FLAG_FOUND | FLAG_CLASS_VALID,
-        ),
-        nav_frame(0x20, NAV_FORWARD, NAV_EN_ROUTE, DEST_MATERIAL),
-        nav_frame(0x21, NAV_HOLD, NAV_NEAR_SAFE, DEST_MATERIAL),
-        rescue_frame(0x22),
-        stop_frame(0x30),
+        report_frame(0x10, 640, 512, 0, 1, FLAG_FOUND | FLAG_CLASS_VALID),
+        mission_frame(0x20, CMD_NAVIGATE_WAYPOINT,
+                      CMD_VALID | CMD_DRIVE_STRAIGHT | CMD_RED_SIDE,
+                      0, 950, 9000),
+        stm_status_frame(9, 0x09, 2, 7350, 8, 0),
     )
-    for frame in examples:
-        print(frame.hex(" ").upper())
+    for example in examples:
+        print(example.hex(" ").upper())

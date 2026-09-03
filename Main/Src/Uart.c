@@ -52,6 +52,15 @@ static bool uart_data_is_odom(const uint8_t *data, uint16_t size)
          (data[VISION_FRAME_SIZE - 1U] == VISION_FRAME_TAIL);
 }
 
+static bool uart_data_is_status(const uint8_t *data, uint16_t size)
+{
+  return (size == VISION_FRAME_SIZE) &&
+         (data[0] == VISION_FRAME_HEAD_1) &&
+         (data[1] == VISION_FRAME_HEAD_2) &&
+         (data[2] == VISION_MSG_STM_STATUS) &&
+         (data[VISION_FRAME_SIZE - 1U] == VISION_FRAME_TAIL);
+}
+
 static void uart_start_tx(void)
 {
   if ((tx_active_slot >= 0) ||
@@ -160,7 +169,8 @@ bool Uart_Send(const uint8_t *data, uint16_t size)
 
   /* Keep control ACKs and the newest cumulative odometry snapshot. */
   if ((slot < 0) &&
-      (uart_is_ack(data, size) || uart_data_is_odom(data, size))) {
+      (uart_is_ack(data, size) || uart_data_is_odom(data, size) ||
+       uart_data_is_status(data, size))) {
     uint32_t oldest_order = UINT32_MAX;
     for (uint8_t i = 0U; i < UART_TX_QUEUE_SIZE; ++i) {
       if (((int8_t)i != tx_active_slot) && uart_is_odom(&tx_queue[i]) &&

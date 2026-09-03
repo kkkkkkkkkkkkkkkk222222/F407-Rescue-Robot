@@ -596,10 +596,32 @@ static void draw_location(const LCDDashboard *dashboard)
 #if APP_ENABLE_TASK
 static const char *task_state_name(TaskState state)
 {
-  static const char *const names[] = {
-    "WAITCFG", "START", "SEARCH", "GRAB", "RETURN", "DROP", "STOP"
-  };
-  return (state <= TASK_STOPPED) ? names[state] : "STOP";
+  switch (state) {
+    case TASK_WAIT_CONFIG:       return "WAITCFG";
+    case TASK_START:             return "START";
+    case TASK_OPEN_CLAW:         return "OPEN";
+    case TASK_SEARCH:            return "SEARCH";
+    case TASK_APPROACH:          return "APPROACH";
+    case TASK_GRAB_OBSERVE:      return "WATCH";
+    case TASK_GRAB_RAISE_WAIT:   return "RAISE";
+    case TASK_GRAB_ROTATE:       return "SCAN";
+    case TASK_CLOSE_CLAW:        return "CLOSE";
+    case TASK_WAIT_NAVIGATION:   return "WAITNAV";
+    case TASK_NAVIGATE:          return "NAV";
+    case TASK_ALIGN_SAFE_ZONE:   return "ALIGN";
+    case TASK_OPEN_FOR_RAM:      return "OPENRAM";
+    case TASK_RAM_BACK:          return "RAMBACK";
+    case TASK_RAM_FORWARD:       return "RAMFWD";
+    case TASK_RAM_VERIFY:        return "CHECK";
+    case TASK_EXIT_SAFE_ZONE:    return "EXITSAFE";
+    case TASK_FACE_FIELD_CENTER: return "CENTER";
+    case TASK_PILE_APPROACH:     return "PILEIN";
+    case TASK_SCATTER_POSITIVE:  return "SPIN+";
+    case TASK_SCATTER_PAUSE:     return "PAUSE";
+    case TASK_SCATTER_NEGATIVE:  return "SPIN-";
+    case TASK_SCATTER_EXIT:      return "PILEOUT";
+    default:                     return "STOP";
+  }
 }
 
 static const char *task_uart_state(const LCDDashboard *dashboard)
@@ -650,11 +672,8 @@ static void draw_task(const LCDDashboard *dashboard)
                  task_uart_state(dashboard));
   dashboard_write(0U, 76U, 128U, text);
 
-  (void)snprintf(text, sizeof(text), "N:%u C:%u H:%u D:%u",
-                 VISION_COUNT_NORMAL(vision->cargo_counts),
-                 VISION_COUNT_CORE(vision->cargo_counts),
-                 VISION_COUNT_CASUALTY(vision->cargo_counts),
-                 VISION_COUNT_DANGER(vision->cargo_counts));
+  (void)snprintf(text, sizeof(text), "ANGLE:%03u",
+                 task.camera_angle);
   dashboard_write(0U, 108U, 128U, text);
 }
 #elif APP_ENABLE_CENTERING_TASK

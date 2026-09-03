@@ -7,27 +7,30 @@
 typedef enum {
   TASK_WAIT_CONFIG = 0,
   TASK_START,
-  TASK_FIND_OBJECT,
-  TASK_GRAB_OBJECT,
-  TASK_RETURN_SAFE,
-  TASK_DROP_OBJECT,
-  TASK_STOPPED
+  TASK_OPEN_CLAW,
+  TASK_SEARCH,
+  TASK_APPROACH,
+  TASK_GRAB_OBSERVE,
+  TASK_GRAB_RAISE_WAIT,
+  TASK_GRAB_ROTATE,
+  TASK_CLOSE_CLAW,
+  TASK_WAIT_NAVIGATION,
+  TASK_NAVIGATE,
+  TASK_ALIGN_SAFE_ZONE,
+  TASK_OPEN_FOR_RAM,
+  TASK_RAM_BACK,
+  TASK_RAM_FORWARD,
+  TASK_RAM_VERIFY,
+  TASK_EXIT_SAFE_ZONE,
+  TASK_FACE_FIELD_CENTER,
+  TASK_STOPPED,
+  /* Appended to preserve every protocol-visible state number above. */
+  TASK_PILE_APPROACH,
+  TASK_SCATTER_POSITIVE,
+  TASK_SCATTER_PAUSE,
+  TASK_SCATTER_NEGATIVE,
+  TASK_SCATTER_EXIT
 } TaskState;
-
-typedef enum {
-  TASK_DEST_NONE = 0,
-  TASK_DEST_MATERIAL = 1,
-  TASK_DEST_CASUALTY = 2
-} TaskDestination;
-
-typedef enum {
-  TASK_DROP_ENTER = 0,
-  TASK_DROP_RELEASE,
-  TASK_DROP_CAMERA,
-  TASK_DROP_VERIFY,
-  TASK_DROP_BACK,
-  TASK_DROP_RETRY_BACK
-} TaskDropPhase;
 
 typedef enum {
   TASK_FAULT_NONE = 0,
@@ -35,34 +38,23 @@ typedef enum {
   TASK_FAULT_MATCH_TIMEOUT,
   TASK_FAULT_MOTOR,
   TASK_FAULT_START_TIMEOUT,
-  TASK_FAULT_RETURN_TIMEOUT,
-  TASK_FAULT_DROP_TIMEOUT,
-  TASK_FAULT_DROP_VERIFY,
-  TASK_FAULT_CARGO,
-  TASK_FAULT_INVALID_STATE,
-  TASK_FAULT_RESCUE
+  TASK_FAULT_POSE_TIMEOUT,
+  TASK_FAULT_COMMAND_TIMEOUT,
+  TASK_FAULT_RAM,
+  TASK_FAULT_INVALID_STATE
 } TaskFault;
 
 typedef struct {
   TaskState state;
-  TaskDestination destination;
-  uint16_t remaining_s;
-  uint32_t distance_mm;
-  uint8_t color;
-  uint8_t start_zone;
-  uint8_t cargo_counts;
-  uint8_t object_count;
-  uint8_t nav_direction;
-  uint8_t recovery_count;
-  TaskDropPhase drop_phase;
   TaskFault fault;
+  uint16_t remaining_s;
+  uint8_t acknowledged_sequence;
+  uint8_t camera_angle;
   bool found;
-  bool grabbed;
-  bool cargo_valid;
-  bool normal_delivered;
-  bool nav_fresh;
-  bool near_safe;
-  bool claw_empty;
+  bool claw_visible;
+  bool gripper_closed;
+  bool motors_active;
+  bool auto_approach;
 } TaskStatus;
 
 void Task_Process(uint32_t now_ms);

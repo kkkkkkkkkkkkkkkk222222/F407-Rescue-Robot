@@ -43,6 +43,21 @@ static uint16_t vision_crc16(const uint8_t *data, size_t size)
   return crc;
 }
 
+static uint16_t vision_u16_be(const uint8_t *data)
+{
+  return (uint16_t)(((uint16_t)data[0] << 8) | data[1]);
+}
+
+static bool vision_padding_zero(const uint8_t *payload, uint8_t first)
+{
+  for (uint8_t i = first; i < VISION_PAYLOAD_SIZE; ++i) {
+    if (payload[i] != 0U) {
+      return false;
+    }
+  }
+  return true;
+}
+
 static uint8_t vision_next_sequence(uint8_t *sequence)
 {
   const uint32_t primask = __get_PRIMASK();
@@ -54,10 +69,8 @@ static uint8_t vision_next_sequence(uint8_t *sequence)
   return current;
 }
 
-static void vision_build_frame(uint8_t *output,
-                               uint8_t type,
-                               uint8_t sequence,
-                               const uint8_t *payload)
+static void vision_build_frame(uint8_t *output, uint8_t type,
+                               uint8_t sequence, const uint8_t *payload)
 {
   output[0] = VISION_FRAME_HEAD_1;
   output[1] = VISION_FRAME_HEAD_2;
@@ -73,32 +86,19 @@ static void vision_build_frame(uint8_t *output,
   output[FRAME_TAIL_INDEX] = VISION_FRAME_TAIL;
 }
 
-static bool vision_config_valid(uint8_t color, uint8_t start_zone)
-{
-  return ((color == VISION_COLOR_RED) || (color == VISION_COLOR_BLUE)) &&
-         (start_zone >= VISION_ZONE_1) && (start_zone <= VISION_ZONE_4);
-}
-
-static bool vision_padding_zero(const uint8_t *payload, uint8_t first)
-{
-  for (uint8_t i = first; i < VISION_PAYLOAD_SIZE; ++i) {
-    if (payload[i] != 0U) {
-      return false;
-    }
-  }
-  return true;
-}
-
 static void vision_save_config(const uint8_t *payload, uint8_t sequence)
 {
   const uint8_t color = payload[0];
-  const uint8_t start_zone = payload[1];
+  const uint8_t zone = payload[1];
+  const bool valid =
+      ((color == VISION_COLOR_RED) || (color == VISION_COLOR_BLUE)) &&
+      (zone >= VISION_ZONE_1) && (zone <= VISION_ZONE_4) &&
+      vision_padding_zero(payload, 2U);
 
   if (latest_data.config_ready) {
     return;
   }
-  if (!vision_config_valid(color, start_zone) ||
-      !vision_padding_zero(payload, 2U)) {
+  if (!valid) {
     config_streak = 0U;
     config_sequence_valid = false;
     return;
@@ -106,14 +106,13 @@ static void vision_save_config(const uint8_t *payload, uint8_t sequence)
 
   if (config_sequence_valid &&
       (sequence == (uint8_t)(config_last_sequence + 1U)) &&
-      (color == latest_data.color) &&
-      (start_zone == latest_data.start_zone)) {
+      (color == latest_data.color) && (zone == latest_data.start_zone)) {
     if (config_streak < APP_CONFIG_CONFIRM_FRAMES) {
       ++config_streak;
     }
   } else {
     latest_data.color = color;
-    latest_data.start_zone = start_zone;
+    latest_data.start_zone = zone;
     config_streak = 1U;
   }
   config_last_sequence = sequence;
@@ -122,30 +121,27 @@ static void vision_save_config(const uint8_t *payload, uint8_t sequence)
   latest_data.config_ready = config_streak >= APP_CONFIG_CONFIRM_FRAMES;
 }
 
-static void vision_save_report(const uint8_t *payload,
-                               uint8_t sequence,
+static void vision_save_report(const uint8_t *payload, uint8_t sequence,
                                uint32_t tick_ms)
 {
   if ((latest_data.tick_ms != 0U) &&
       (sequence == latest_data.sequence)) {
     return;
   }
-  const uint16_t x = ((uint16_t)payload[0] << 8) | payload[1];
-  const uint16_t y = ((uint16_t)payload[2] << 8) | payload[3];
-  const uint16_t distance = ((uint16_t)payload[4] << 8) | payload[5];
+
+  const uint16_t x = vision_u16_be(&payload[0]);
+  const uint16_t y = vision_u16_be(&payload[2]);
+  const uint16_t distance = vision_u16_be(&payload[4]);
   const uint8_t flags = payload[7];
   const bool found = (flags & VISION_REPORT_FOUND) != 0U;
-  const bool grabbed = (flags & VISION_REPORT_GRABBED) != 0U;
-  const bool near = (flags & VISION_REPORT_NEAR) != 0U;
-  const bool unknown = (flags & VISION_REPORT_UNKNOWN) != 0U;
-  const bool claw_view = (flags & VISION_REPORT_CLAW_VIEW) != 0U;
-  const bool coordinates_valid = (x <= APP_VISION_MAX_X) &&
-                                 (y <= APP_VISION_MAX_Y);
+  const bool distance_valid =
+      (flags & VISION_REPORT_DISTANCE_VALID) != 0U;
 
-  if (((flags & 0xC0U) != 0U) ||
-      (found && !coordinates_valid) ||
-      (found && (distance < APP_VISION_MIN_DISTANCE_MM)) ||
-      (!found && ((payload[6] != 0U) || near || grabbed || unknown))) {
+  if (((flags & 0xB4U) != 0U) ||
+      (found && ((x > APP_VISION_MAX_X) || (y > APP_VISION_MAX_Y))) ||
+      (distance_valid && (distance == 0U)) ||
+      (!distance_valid && (distance != 0U)) ||
+      (!found && !vision_padding_zero(payload, 0U))) {
     return;
   }
 
@@ -153,66 +149,73 @@ static void vision_save_report(const uint8_t *payload,
   latest_data.y = y;
   latest_data.distance_mm = distance;
   latest_data.tick_ms = tick_ms;
+  ++latest_data.report_generation;
   latest_data.sequence = sequence;
   latest_data.cargo_counts = payload[6];
   latest_data.found = found;
-  latest_data.near = near;
-  latest_data.grabbed = grabbed;
+  latest_data.near = (flags & VISION_REPORT_NEAR) != 0U;
   latest_data.classification_valid =
       (flags & VISION_REPORT_CLASS_VALID) != 0U;
-  latest_data.unknown = unknown;
-  latest_data.claw_view = claw_view;
+  latest_data.distance_valid = distance_valid;
   latest_data.valid = true;
 }
 
-static void vision_save_event(const uint8_t *payload,
-                              uint8_t sequence,
-                              uint32_t tick_ms)
+static void vision_save_fused_pose(const uint8_t *payload, uint8_t sequence,
+                                   uint32_t tick_ms)
 {
-  if (!vision_padding_zero(payload, 1U)) {
+  volatile VisionFusedPose *pose = &latest_data.fused_pose;
+  if (pose->received && (pose->sequence == sequence)) {
     return;
   }
-  if (payload[0] == VISION_EVENT_STOP) {
-    latest_data.stop = true;
-    latest_data.valid = false;
-  } else if (payload[0] == VISION_EVENT_RESCUE) {
-    latest_data.rescue_requested = true;
-    latest_data.rescue_sequence = sequence;
-    latest_data.rescue_tick_ms = tick_ms;
+  const uint16_t heading = vision_u16_be(&payload[4]);
+  if ((heading >= 36000U) || ((payload[6] & 0x80U) != 0U)) {
+    return;
   }
+
+  pose->x_mm = (int16_t)vision_u16_be(&payload[0]);
+  pose->y_mm = (int16_t)vision_u16_be(&payload[2]);
+  pose->heading_cdeg = heading;
+  pose->status = payload[6];
+  pose->tracker_confidence = payload[7] & 0x03U;
+  pose->mapper_confidence = (payload[7] >> 2) & 0x03U;
+  pose->position_sigma_cm = (payload[7] >> 4) & 0x0FU;
+  pose->sequence = sequence;
+  pose->tick_ms = tick_ms;
+  pose->received = true;
 }
 
-static void vision_save_nav(const uint8_t *payload,
-                            uint8_t sequence,
-                            uint32_t tick_ms)
+static bool vision_mission_code_valid(uint8_t command)
 {
-  if (latest_data.nav_valid &&
-      (sequence == latest_data.nav_sequence)) {
-    return;
-  }
-  const uint8_t direction = payload[0];
-  const uint8_t zone_state = payload[1];
-  const uint8_t destination = payload[2];
-  const bool direction_valid = direction <= VISION_NAV_BACKWARD;
-  const bool zone_valid = (zone_state == VISION_NAV_EN_ROUTE) ||
-                          (zone_state == VISION_NAV_NEAR_SAFE);
-  const bool destination_valid =
-      (destination == VISION_DEST_MATERIAL) ||
-      (destination == VISION_DEST_CASUALTY);
+  return (command == VISION_CMD_STOP) ||
+         ((command >= VISION_CMD_GRAB_CONFIRMED) &&
+          (command <= VISION_CMD_ABORT));
+}
 
-  if (!direction_valid || !zone_valid || !destination_valid ||
-      !vision_padding_zero(payload, 3U) ||
-      ((zone_state == VISION_NAV_NEAR_SAFE) &&
-       (direction != VISION_NAV_HOLD))) {
+static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
+                                uint32_t tick_ms)
+{
+  volatile VisionMissionCommand *command = &latest_data.mission;
+  if (command->received && (command->sequence == sequence)) {
     return;
   }
 
-  latest_data.nav_sequence = sequence;
-  latest_data.nav_direction = direction;
-  latest_data.nav_zone_state = zone_state;
-  latest_data.nav_destination = destination;
-  latest_data.nav_tick_ms = tick_ms;
-  latest_data.nav_valid = true;
+  const uint8_t code = payload[0];
+  const uint8_t flags = payload[1];
+  const uint16_t heading = vision_u16_be(&payload[6]);
+  if (!vision_mission_code_valid(code) ||
+      ((flags & VISION_CMD_VALID) == 0U) ||
+      ((flags & 0xF0U) != 0U) || (heading >= 36000U)) {
+    return;
+  }
+
+  command->command = code;
+  command->flags = flags;
+  command->target_x_mm = (int16_t)vision_u16_be(&payload[2]);
+  command->target_y_mm = (int16_t)vision_u16_be(&payload[4]);
+  command->heading_cdeg = heading;
+  command->sequence = sequence;
+  command->tick_ms = tick_ms;
+  command->received = true;
 }
 
 static void vision_save_frame(uint32_t tick_ms)
@@ -231,18 +234,12 @@ static void vision_save_frame(uint32_t tick_ms)
 
   if (type == VISION_MSG_CONFIG) {
     vision_save_config(payload, sequence);
-  } else {
-    if (!latest_data.config_ready) {
-      config_streak = 0U;
-      config_sequence_valid = false;
-    }
-    if (type == VISION_MSG_REPORT) {
-      vision_save_report(payload, sequence, tick_ms);
-    } else if (type == VISION_MSG_EVENT) {
-      vision_save_event(payload, sequence, tick_ms);
-    } else if (type == VISION_MSG_NAV) {
-      vision_save_nav(payload, sequence, tick_ms);
-    }
+  } else if (type == VISION_MSG_REPORT) {
+    vision_save_report(payload, sequence, tick_ms);
+  } else if (type == VISION_MSG_FUSED_POSE) {
+    vision_save_fused_pose(payload, sequence, tick_ms);
+  } else if (type == VISION_MSG_MISSION) {
+    vision_save_mission(payload, sequence, tick_ms);
   }
 
   if (primask == 0U) {
@@ -252,17 +249,16 @@ static void vision_save_frame(uint32_t tick_ms)
 
 static bool vision_frame_valid(void)
 {
-  const uint16_t expected_crc =
+  const uint16_t received_crc =
       (uint16_t)frame[FRAME_CRC_LOW_INDEX] |
       ((uint16_t)frame[FRAME_CRC_HIGH_INDEX] << 8);
   const uint8_t type = frame[FRAME_TYPE_INDEX];
   return (frame[FRAME_TAIL_INDEX] == VISION_FRAME_TAIL) &&
-         ((type == VISION_MSG_CONFIG) ||
-          (type == VISION_MSG_REPORT) ||
-          (type == VISION_MSG_EVENT) ||
-          (type == VISION_MSG_NAV)) &&
+         ((type == VISION_MSG_CONFIG) || (type == VISION_MSG_REPORT) ||
+          (type == VISION_MSG_FUSED_POSE) ||
+          (type == VISION_MSG_MISSION)) &&
          (vision_crc16(&frame[FRAME_TYPE_INDEX], FRAME_CRC_INPUT_SIZE) ==
-          expected_crc);
+          received_crc);
 }
 
 static void vision_resync_frame(void)
@@ -274,7 +270,6 @@ static void vision_resync_frame(void)
       start = i;
     }
   }
-
   if (start < VISION_FRAME_SIZE) {
     frame_index = (uint8_t)(VISION_FRAME_SIZE - start);
     for (uint8_t i = 0U; i < frame_index; ++i) {
@@ -292,16 +287,13 @@ static void vision_parse_byte(uint8_t value, uint32_t tick_ms)
 {
   if (frame_index == 0U) {
     if (value == VISION_FRAME_HEAD_1) {
-      frame[0] = value;
-      frame_index = 1U;
+      frame[frame_index++] = value;
     }
     return;
   }
-
   if (frame_index == 1U) {
     if (value == VISION_FRAME_HEAD_2) {
-      frame[1] = value;
-      frame_index = 2U;
+      frame[frame_index++] = value;
     } else if (value != VISION_FRAME_HEAD_1) {
       frame_index = 0U;
     }
@@ -314,10 +306,6 @@ static void vision_parse_byte(uint8_t value, uint32_t tick_ms)
       vision_save_frame(tick_ms);
       frame_index = 0U;
     } else {
-      if (!latest_data.config_ready) {
-        config_streak = 0U;
-        config_sequence_valid = false;
-      }
       vision_resync_frame();
     }
   }
@@ -325,38 +313,7 @@ static void vision_parse_byte(uint8_t value, uint32_t tick_ms)
 
 void Vision_Init(void)
 {
-  latest_data.x = 0U;
-  latest_data.y = 0U;
-  latest_data.distance_mm = 0U;
-  latest_data.tick_ms = 0U;
-  latest_data.nav_tick_ms = 0U;
-  latest_data.rescue_tick_ms = 0U;
-  latest_data.last_frame_tick_ms = 0U;
-  latest_data.color = 0U;
-  latest_data.start_zone = 0U;
-  latest_data.config_sequence = 0U;
-  latest_data.sequence = 0U;
-  latest_data.cargo_counts = 0U;
-  latest_data.nav_sequence = 0U;
-  latest_data.nav_direction = VISION_NAV_HOLD;
-  latest_data.nav_zone_state = 0U;
-  latest_data.nav_destination = 0U;
-  latest_data.rescue_sequence = 0U;
-  for (uint8_t i = 0U; i < VISION_FRAME_SIZE; ++i) {
-    latest_data.last_frame[i] = 0U;
-  }
-  latest_data.valid = false;
-  latest_data.nav_valid = false;
-  latest_data.stop = false;
-  latest_data.rescue_requested = false;
-  latest_data.frame_received = false;
-  latest_data.config_ready = false;
-  latest_data.found = false;
-  latest_data.grabbed = false;
-  latest_data.near = false;
-  latest_data.classification_valid = false;
-  latest_data.unknown = false;
-  latest_data.claw_view = false;
+  latest_data = (VisionData){0};
   config_streak = 0U;
   config_last_sequence = 0U;
   config_sequence_valid = false;
@@ -371,10 +328,6 @@ void Vision_Init(void)
 void Vision_ResetParser(void)
 {
   frame_index = 0U;
-  if (!latest_data.config_ready) {
-    config_streak = 0U;
-    config_sequence_valid = false;
-  }
 }
 
 void Vision_ParseBytes(const uint8_t *data, size_t size, uint32_t tick_ms)
@@ -391,7 +344,6 @@ VisionData Vision_GetSnapshot(void)
 {
   VisionData snapshot;
   const uint32_t primask = __get_PRIMASK();
-
   __disable_irq();
   snapshot = latest_data;
   if (primask == 0U) {
@@ -400,20 +352,33 @@ VisionData Vision_GetSnapshot(void)
   return snapshot;
 }
 
-bool Vision_IsFresh(const VisionData *data, uint32_t now_ms, uint32_t timeout_ms)
+bool Vision_ReportIsFresh(const VisionData *data, uint32_t now_ms,
+                          uint32_t timeout_ms)
 {
-  return (data != 0) && data->valid && data->found &&
-         (data->tick_ms != 0U) &&
+  return (data != 0) && data->valid && (data->tick_ms != 0U) &&
          ((uint32_t)(now_ms - data->tick_ms) <= timeout_ms);
 }
 
-bool Vision_NavIsFresh(const VisionData *data,
-                       uint32_t now_ms,
-                       uint32_t timeout_ms)
+bool Vision_IsFresh(const VisionData *data, uint32_t now_ms,
+                    uint32_t timeout_ms)
 {
-  return (data != 0) && data->nav_valid &&
-         (data->nav_tick_ms != 0U) &&
-         ((uint32_t)(now_ms - data->nav_tick_ms) <= timeout_ms);
+  return Vision_ReportIsFresh(data, now_ms, timeout_ms) && data->found;
+}
+
+bool Vision_FusedPoseIsFresh(const VisionFusedPose *pose, uint32_t now_ms,
+                             uint32_t timeout_ms)
+{
+  return (pose != 0) && pose->received &&
+         ((pose->status & VISION_POSE_VALID) != 0U) &&
+         ((uint32_t)(now_ms - pose->tick_ms) <= timeout_ms);
+}
+
+bool Vision_MissionIsFresh(const VisionMissionCommand *command,
+                           uint32_t now_ms, uint32_t timeout_ms)
+{
+  return (command != 0) && command->received &&
+         ((command->flags & VISION_CMD_VALID) != 0U) &&
+         ((uint32_t)(now_ms - command->tick_ms) <= timeout_ms);
 }
 
 void Vision_RequestConfigAck(void)
@@ -421,33 +386,32 @@ void Vision_RequestConfigAck(void)
   ack_remaining = APP_CONFIG_CONFIRM_FRAMES;
 }
 
-void Vision_QueueTaskStatus(const VisionTaskStatus *status)
+void Vision_QueueStmStatus(const VisionStmStatus *status)
 {
   if (status == 0) {
     return;
   }
-
   const uint8_t payload[VISION_PAYLOAD_SIZE] = {
-    status->state,
-    status->destination,
-    (uint8_t)(status->remaining_s >> 8),
-    (uint8_t)status->remaining_s,
     status->flags,
-    status->fault,
-    status->recovery_count,
-    status->cargo_counts
+    status->mode,
+    (uint8_t)(status->camera_pitch_cdeg >> 8),
+    (uint8_t)status->camera_pitch_cdeg,
+    status->acknowledged_sequence,
+    status->fault_code,
+    0U,
+    0U
   };
   uint8_t pending[VISION_FRAME_SIZE];
-  const uint8_t sequence = vision_next_sequence(&status_sequence);
-  vision_build_frame(pending, VISION_MSG_STATUS, sequence, payload);
+  vision_build_frame(pending, VISION_MSG_STM_STATUS,
+                     vision_next_sequence(&status_sequence), payload);
 
-  const uint32_t copy_primask = __get_PRIMASK();
+  const uint32_t primask = __get_PRIMASK();
   __disable_irq();
   for (uint8_t i = 0U; i < VISION_FRAME_SIZE; ++i) {
     status_frame[i] = pending[i];
   }
   status_pending = true;
-  if (copy_primask == 0U) {
+  if (primask == 0U) {
     __enable_irq();
   }
 }
@@ -457,16 +421,11 @@ void Vision_QueueOdom(const VisionOdom *odom)
   if ((odom == 0) || (odom->sample_period_ms == 0U)) {
     return;
   }
-
   const uint8_t payload[VISION_PAYLOAD_SIZE] = {
-    (uint8_t)(odom->position[0] >> 8),
-    (uint8_t)odom->position[0],
-    (uint8_t)(odom->position[1] >> 8),
-    (uint8_t)odom->position[1],
-    (uint8_t)(odom->position[2] >> 8),
-    (uint8_t)odom->position[2],
-    odom->sample_period_ms,
-    odom->status
+    (uint8_t)(odom->position[0] >> 8), (uint8_t)odom->position[0],
+    (uint8_t)(odom->position[1] >> 8), (uint8_t)odom->position[1],
+    (uint8_t)(odom->position[2] >> 8), (uint8_t)odom->position[2],
+    odom->sample_period_ms, odom->status
   };
   uint8_t pending[VISION_FRAME_SIZE];
   vision_build_frame(pending, VISION_MSG_ODOM,
@@ -483,37 +442,32 @@ void Vision_QueueOdom(const VisionOdom *odom)
   }
 }
 
+static void vision_send_pending(volatile bool *pending,
+                                const uint8_t *source)
+{
+  const uint32_t primask = __get_PRIMASK();
+  __disable_irq();
+  for (uint8_t i = 0U; i < VISION_FRAME_SIZE; ++i) {
+    tx_frame[i] = source[i];
+  }
+  *pending = false;
+  if (primask == 0U) {
+    __enable_irq();
+  }
+  if (!Uart_Send(tx_frame, sizeof(tx_frame))) {
+    *pending = true;
+  }
+}
+
 void Vision_Process(void)
 {
   if (ack_remaining > 0U) {
     if (Uart_Send(config_ack, sizeof(config_ack))) {
       --ack_remaining;
     }
-  } else if (odom_pending) {
-    const uint32_t primask = __get_PRIMASK();
-    __disable_irq();
-    for (uint8_t i = 0U; i < VISION_FRAME_SIZE; ++i) {
-      tx_frame[i] = odom_frame[i];
-    }
-    odom_pending = false;
-    if (primask == 0U) {
-      __enable_irq();
-    }
-    if (!Uart_Send(tx_frame, sizeof(tx_frame))) {
-      odom_pending = true;
-    }
   } else if (status_pending) {
-    const uint32_t primask = __get_PRIMASK();
-    __disable_irq();
-    for (uint8_t i = 0U; i < VISION_FRAME_SIZE; ++i) {
-      tx_frame[i] = status_frame[i];
-    }
-    status_pending = false;
-    if (primask == 0U) {
-      __enable_irq();
-    }
-    if (!Uart_Send(tx_frame, sizeof(tx_frame))) {
-      status_pending = true;
-    }
+    vision_send_pending(&status_pending, status_frame);
+  } else if (odom_pending) {
+    vision_send_pending(&odom_pending, odom_frame);
   }
 }

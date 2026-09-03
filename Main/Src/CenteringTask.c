@@ -68,7 +68,8 @@ void CenteringTask_Init(uint32_t now_ms)
            APP_CAMERA_KP_DEG_PER_PX,
            APP_CAMERA_KI_DEG_PER_PX_S,
            APP_CAMERA_KD_DEG_S_PER_PX,
-           -2.0f, 2.0f,
+           -APP_CENTERING_CAMERA_STEP_LIMIT_DEG,
+           APP_CENTERING_CAMERA_STEP_LIMIT_DEG,
            -APP_CAMERA_INTEGRAL_LIMIT_PX_S,
            APP_CAMERA_INTEGRAL_LIMIT_PX_S);
 
