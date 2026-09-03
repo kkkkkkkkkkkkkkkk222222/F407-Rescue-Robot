@@ -33,14 +33,18 @@ typedef struct {
 typedef struct {
   MotorDistanceStatus status;
   bool slowing;
+  bool waiting_for_stop;
   float target_mm;
   float max_speed_mm_s;
+  float current_speed_mm_s;
   float slowdown_start_mm;
   float last_progress_mm;
   int64_t start_m1_count;
   int64_t start_m2_count;
   int64_t target_yaw_mdeg;
   uint16_t no_progress_cycles;
+  uint16_t zero_wait_cycles;
+  uint8_t zero_confirm_cycles;
 } DistanceMove;
 
 typedef struct {
@@ -454,7 +458,11 @@ static void motor_finish_distance(MotorDistanceStatus status, bool use_brake)
 {
   distance_move.status = status;
   distance_move.slowing = false;
+  distance_move.waiting_for_stop = false;
+  distance_move.current_speed_mm_s = 0.0f;
   distance_move.no_progress_cycles = 0U;
+  distance_move.zero_wait_cycles = 0U;
+  distance_move.zero_confirm_cycles = 0U;
   motor_stop_outputs(use_brake);
 }
 
@@ -480,6 +488,48 @@ static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
   if (!imu.ready) {
     motor_finish_distance(MOTOR_DISTANCE_FAULT, true);
     return;
+  }
+
+  if (distance_move.waiting_for_stop) {
+    if (brake_cycles_remaining > 0U) {
+      return;
+    }
+    bool stopped = true;
+    for (uint32_t i = 0U; i < MOTOR_COUNT; ++i) {
+      const float speed_mm_s = motor_counts_to_mm_s(
+          (float)encoder[i].delta_10ms);
+      if (motor_abs_float(speed_mm_s) >
+          (float)APP_OMNI_ZERO_SPEED_MM_S) {
+        stopped = false;
+        break;
+      }
+    }
+    if (stopped) {
+      if (distance_move.zero_confirm_cycles < UINT8_MAX) {
+        ++distance_move.zero_confirm_cycles;
+      }
+    } else {
+      distance_move.zero_confirm_cycles = 0U;
+    }
+    if (distance_move.zero_wait_cycles < UINT16_MAX) {
+      ++distance_move.zero_wait_cycles;
+    }
+    if (distance_move.zero_wait_cycles >=
+        APP_OMNI_ZERO_TIMEOUT_CYCLES) {
+      motor_finish_distance(MOTOR_DISTANCE_FAULT, true);
+      return;
+    }
+    if (distance_move.zero_confirm_cycles <
+        APP_OMNI_ZERO_CONFIRM_CYCLES) {
+      return;
+    }
+
+    distance_move.start_m1_count = encoder[0].position;
+    distance_move.start_m2_count = encoder[1].position;
+    distance_move.target_yaw_mdeg = imu.yaw_mdeg;
+    distance_move.waiting_for_stop = false;
+    distance_move.zero_wait_cycles = 0U;
+    distance_move.zero_confirm_cycles = 0U;
   }
 
   const float m1_mm = motor_counts_to_mm(
@@ -518,7 +568,7 @@ static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
   const float minimum_speed_mm_s =
       (distance_move.max_speed_mm_s < APP_GO_DISTANCE_MIN_SPEED_MM_S) ?
       distance_move.max_speed_mm_s : APP_GO_DISTANCE_MIN_SPEED_MM_S;
-  float speed_mm_s = distance_move.max_speed_mm_s;
+  float requested_speed_mm_s = distance_move.max_speed_mm_s;
 
   if (remaining_mm < distance_move.slowdown_start_mm) {
     if (!distance_move.slowing) {
@@ -535,16 +585,26 @@ static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
     } else if (ratio > 1.0f) {
       ratio = 1.0f;
     }
-    speed_mm_s = minimum_speed_mm_s +
+    requested_speed_mm_s = minimum_speed_mm_s +
         (distance_move.max_speed_mm_s - minimum_speed_mm_s) * ratio;
   }
+
+  const float rate_mm_s2 =
+      (requested_speed_mm_s >= distance_move.current_speed_mm_s) ?
+      APP_GO_DISTANCE_ACCEL_MM_S2 : APP_GO_DISTANCE_DECEL_MM_S2;
+  const float speed_step_mm_s = rate_mm_s2 *
+      ((float)APP_MOTOR_CONTROL_PERIOD_MS * 0.001f);
+  distance_move.current_speed_mm_s = motor_step_toward(
+      distance_move.current_speed_mm_s, requested_speed_mm_s,
+      speed_step_mm_s);
 
   const int32_t heading_error_mdeg = motor_wrap_heading_error(
       distance_move.target_yaw_mdeg - imu.yaw_mdeg);
   const float rotate_correction =
       Pid_Update(&heading_pid, (float)heading_error_mdeg / 1000.0f, 0.0f) *
       APP_MOTOR_HEADING_OUTPUT_SIGN;
-  motor_set_omni_speed(speed_mm_s * direction, 0.0f, rotate_correction);
+  motor_set_omni_speed(distance_move.current_speed_mm_s * direction,
+                       0.0f, rotate_correction);
 }
 
 static void motor_update_angle_turn(void)
@@ -765,14 +825,18 @@ void Motor_Init(void)
   }
   distance_move.status = MOTOR_DISTANCE_IDLE;
   distance_move.slowing = false;
+  distance_move.waiting_for_stop = false;
   distance_move.target_mm = 0.0f;
   distance_move.max_speed_mm_s = APP_GO_DISTANCE_SPEED_MM_S;
+  distance_move.current_speed_mm_s = 0.0f;
   distance_move.slowdown_start_mm = 0.0f;
   distance_move.last_progress_mm = 0.0f;
   distance_move.start_m1_count = 0;
   distance_move.start_m2_count = 0;
   distance_move.target_yaw_mdeg = 0LL;
   distance_move.no_progress_cycles = 0U;
+  distance_move.zero_wait_cycles = 0U;
+  distance_move.zero_confirm_cycles = 0U;
   angle_turn.status = MOTOR_TURN_IDLE;
   angle_turn.slowing = false;
   angle_turn.direction = 1;
@@ -796,7 +860,11 @@ void Motor_Stop(void)
   const uint32_t primask = motor_enter_critical();
   distance_move.status = MOTOR_DISTANCE_IDLE;
   distance_move.slowing = false;
+  distance_move.waiting_for_stop = false;
+  distance_move.current_speed_mm_s = 0.0f;
   distance_move.no_progress_cycles = 0U;
+  distance_move.zero_wait_cycles = 0U;
+  distance_move.zero_confirm_cycles = 0U;
   angle_turn.status = MOTOR_TURN_IDLE;
   angle_turn.slowing = false;
   motor_stop_outputs(true);
@@ -950,7 +1018,8 @@ void Motor_SetSpeed(float target_speed, uint8_t id)
   motor_leave_critical(primask);
 }
 
-MotorDistanceStatus Go_distance(float distance_m, float max_speed_mm_s)
+MotorDistanceStatus Motor_MoveDistance(float distance_m,
+                                       float max_speed_mm_s)
 {
   const uint32_t primask = motor_enter_critical();
   if (distance_move.status != MOTOR_DISTANCE_IDLE) {
@@ -993,9 +1062,10 @@ MotorDistanceStatus Go_distance(float distance_m, float max_speed_mm_s)
   const float absolute_distance = motor_abs_float(distance_mm);
   distance_move.target_mm = distance_mm;
   distance_move.max_speed_mm_s = max_speed_mm_s;
-  distance_move.start_m1_count = encoder[0].position;
-  distance_move.start_m2_count = encoder[1].position;
-  distance_move.target_yaw_mdeg = imu.yaw_mdeg;
+  distance_move.current_speed_mm_s = 0.0f;
+  distance_move.start_m1_count = 0;
+  distance_move.start_m2_count = 0;
+  distance_move.target_yaw_mdeg = 0;
   distance_move.slowdown_start_mm = APP_GO_DISTANCE_SLOWDOWN_MM *
       max_speed_mm_s / APP_GO_DISTANCE_SPEED_MM_S;
   if (distance_move.slowdown_start_mm > (absolute_distance * 0.5f)) {
@@ -1006,7 +1076,10 @@ MotorDistanceStatus Go_distance(float distance_m, float max_speed_mm_s)
   }
   distance_move.last_progress_mm = 0.0f;
   distance_move.no_progress_cycles = 0U;
+  distance_move.zero_wait_cycles = 0U;
+  distance_move.zero_confirm_cycles = 0U;
   distance_move.slowing = false;
+  distance_move.waiting_for_stop = true;
   distance_move.status = MOTOR_DISTANCE_RUNNING;
   motor_update_distance_move(encoder);
   motor_leave_critical(primask);

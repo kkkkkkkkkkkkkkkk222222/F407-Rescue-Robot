@@ -16,13 +16,13 @@
 
 该方案属于轮式航迹推算，不是绝对定位。全向轮滚子打滑、越减速带悬空、70 mm轮径误差、1768计数/圈误差和陀螺仪零偏都会随行驶距离累积；赛事文件还明确说明外围围栏不是定位基准。正式比赛应在视觉模块装好后，用已知安全区/出发区边界或场地图像周期性调用`Location_Reset()`或增加坐标校正，不能只凭该粗定位高速盲走。ROS 2官方全向轮控制器同样用轮位置/速度反馈计算里程计，并把轮半径列为决定速度与位移尺度的关键参数；三轮全向平台的系统误差需要通过多方向标定轨迹校正。[ROS 2 omni wheel controller](https://control.ros.org/rolling/doc/ros2_controllers/omni_wheel_drive_controller/doc/userdoc.html)、[三轮全向里程计系统误差研究](https://www.mdpi.com/2076-3417/12/5/2606)、[三轮全向运动学研究](https://doi.org/10.57417/jrnal.11.2_134)
 
-Task模式上电时Location保持未配置状态，不再假定4号位；收到1帧合法赛前配置后，程序用`Location_Reset((LocationStart)start_zone)`按1～4号出发区建立对应初始坐标和航向。协议层现已接收并保存T265融合位姿，但当前视觉居中Task和本地`Location`仍不使用它，运行中的本地位置继续由编码器和IMU推算。
+Task模式上电时Location保持未配置状态，不再假定4号位；收到1帧合法赛前配置后，程序用`Location_Reset((LocationStart)start_zone)`按1～4号出发区建立对应初始坐标和航向。本地`Location`仍只由编码器和IMU推算；安全区导航和SEARCH边界预测优先使用上位机下发的T265融合位姿，融合位姿不可用时只有SEARCH边界判断和回正允许退回本地位姿，安全区导航仍会超时停车。
 
 # 历史设计（已停用，仅供追溯）
 
 当前固件实现赛前配置、一键驶出、搜索、分类靠近、抓取合规检查、上位机引导返航、进入安全区、放下目标、低头复核和后退重搜。上位机负责从图像判断路线和安全区位置，F407负责命令超时停车、目的地校验、单帧合法性确认、编码器定距进入/退出和机构动作；上位机不能直接控制PWM。
 
-IMU660RC已经作为独立底层传感器移植：F407通过独立的5.25 MHz硬件SPI3读取LSM6DSV16X，传感器的陀螺仪和加速度计都工作在高精度1000 Hz模式，TIM6每1 ms发布一次主循环采样请求，并在完成静止零偏校准后积分Z轴偏航角。`Motor_TurnAngle()`封装IMU定角度旋转，`Motor_MoveAngle()`在任意方向平移期间保持启动航向，`Go_distance()`则把同一航向闭环叠加到编码器定距动作；当前Task已使用这些接口。
+IMU660RC已经作为独立底层传感器移植：F407通过独立的5.25 MHz硬件SPI3读取LSM6DSV16X，传感器的陀螺仪和加速度计都工作在高精度1000 Hz模式，TIM6每1 ms发布一次主循环采样请求，并在完成静止零偏校准后积分Z轴偏航角。`Motor_TurnAngle()`封装IMU定角度旋转，`Motor_MoveAngle()`在任意方向平移期间保持启动航向，`Motor_MoveDistance()`则把同一航向闭环叠加到编码器定距动作；当前Task已使用这些接口。
 
 协议设计采用固定长度、消息类型、递增序号和整帧CRC16。固定帧适合当前STM32的64字节循环DMA；CRC16用于拒绝误码帧；坐标、距离、类别数量和状态放在同一视觉报告中，避免旧协议把不同采样周期的三帧拼在一起。导航采用“连续命令+失联停车”，与[ROS 2控制器的过期速度命令自动停车](https://control.ros.org/master/doc/ros2_controllers/diff_drive_controller/doc/userdoc.html)和[Nav2传感器超时即停车](https://docs.nav2.org/configuration/packages/collision_monitor/configuring-collision-monitor-node.html)的失效安全思路一致。串口设计参考：[ST UART Receive-to-IDLE DMA](https://dev.st.com/stm32cube-docs/hal1-to-hal2-migration/1.0.0/en/docs/markup/drivers_documentation/hal_drivers/uart/hal_uart_exported_functions_io_operation.html)、[Modbus串口CRC规范](https://modbus.org/docs/Modbus_over_serial_line_V1_02.pdf)、[IETF RFC 1662 FCS](https://www.rfc-editor.org/info/rfc1662/)。比赛规则以[2027智能+工程创新赛道官方解析](https://gcxl.edu.cn/new/res/intelligence20260617.pdf)为准。
 
@@ -255,15 +255,15 @@ F407执行以下硬规则：
 TIM6每20 ms发布一次`Task_Process(now_ms)`运行请求，由最低优先级PendSV非阻塞执行：
 
 1. `WAIT_CONFIG`：停车等待1帧合法配置并回复1次ACK。
-2. `START`：Task运行后先停车，依次将左爪舵机4转到23°、右爪舵机2转到145°形成Retract收缩姿态；收到1帧合法配置后自动启动180秒倒计时。程序以850 mm/s使用编码器累计路程倒车1.70 m，并调用`Motor_MoveAngle(..., 180.0f)`保持启动时IMU航向；剩余300 mm和100 mm时分级减速，进入10 mm容差后制动。随后舵机1恢复85°，夹爪形成Touch姿态，调用`Motor_TurnAngle(180.0f)`并停车等待5000 ms。
+2. `START`：Task运行后先停车，依次将左爪舵机4转到23°、右爪舵机2转到147°形成Retract收缩姿态；收到1帧合法配置后自动启动180秒倒计时。程序以850 mm/s使用编码器累计路程倒车1.70 m，并调用`Motor_MoveAngle(..., 180.0f)`保持启动时IMU航向；剩余300 mm和100 mm时分级减速，进入10 mm容差后制动。随后舵机1恢复85°，夹爪形成Touch姿态，调用`Motor_TurnAngle(180.0f)`并停车等待5000 ms。
 3. `DISPERSE`：夹爪先打开到左128°、右52°，再前进0.20 m进入物体堆；以500 mm/s正向旋转360°，制动250 ms后反向旋转360°，然后后退0.30 m拉开观察距离。
-4. `FIND_OBJECT`：摄像头保持120°。进入每一轮搜索时记录最后一个合法视觉报告的本地接收代次，只有收到代次更新的新报告后才允许X/Y触发目标锁定；开局倒车、入堆和撞散期间收到的坐标不会参与运动控制。等待700 ms后以160 mm/s原地搜索；累计实际航向转满360°仍未找到目标，就前进0.80 m并从新位置继续搜索。只接近当前阶段允许且分类明确的单个目标。
-5. `GRAB_OBJECT`：Task起始搜索角为120°；收到1帧合法目标报告后先保持Touch姿态，按X修正底盘并由舵机3根据目标Y坐标执行视觉PID。水平和摄像头PID都只在新视觉`SEQ`到达时更新，并按实际帧间隔计算I/D。舵机3低于140°时丢失目标，先停车500 ms，再进入`REACQ`以120 mm/s原地旋转；每转一圈抬高摄像头10°，恢复目标后继续APPROACH，不返回SEARCH，最长25秒后故障停车。舵机3达到150°后立即停车并进入抓取观察，随后根据上位机`GRAB_CONFIRMED`合爪。
-6. `RETURN_SAFE`：夹紧目标后等待上位机`TYPE=0x18`导航命令和`TYPE=0x16`融合位姿。F407先对准安全区前置点，再以800 mm/s直行，距离500 mm内降到250 mm/s；任务命令超过250 ms或融合位姿超过150 ms立即停车。
-7. `DELIVER`：完成安全区入口对正后，持续收到`ENTER_SAFE_ZONE`才允许打开夹爪、以250 mm/s后退0.30 m并以850 mm/s前冲0.55 m。打开、后退和前冲期间每20 ms检查命令新鲜度；失联立即停车。未送入就重复，收到`TASK_COMPLETE`后后退0.45 m、转向场地中心并重新搜索。
+4. `FIND_OBJECT`：摄像头保持120°。进入每一轮搜索时记录最后一个合法视觉报告的本地接收代次，只有收到代次更新的新报告后才允许X/Y触发目标锁定；开局倒车、入堆和撞散期间收到的坐标不会参与运动控制。等待700 ms后以160 mm/s原地搜索；累计实际航向转满360°仍未找到目标时，先预测前进0.80 m后的落点。落点距离场地边界不足200 mm就先转向场地中心，防止继续向场外推进。只接近当前阶段允许且分类明确的单个目标。
+5. `GRAB_OBJECT`：Task起始搜索角为120°；收到1帧合法目标报告后先保持Touch姿态，按X修正底盘并由舵机3根据目标Y坐标执行视觉PID。水平和摄像头PID都只在新视觉`SEQ`到达时更新，并按实际帧间隔计算I/D。舵机3低于140°时丢失目标，先停车500 ms，再沿目标最后出现的方向进入`REACQ`；每转一圈反向并抬高摄像头10°，恢复目标后继续APPROACH，不返回SEARCH，最长25秒后故障停车。舵机3达到150°后立即停车并进入抓取观察，随后根据上位机`GRAB_CONFIRMED`合爪。
+6. `RETURN_SAFE`：夹紧目标后等待上位机`TYPE=0x18`导航命令和`TYPE=0x16`融合位姿。F407先对准安全区前置点，再以800 mm/s直行，距离500 mm内降到250 mm/s；行驶期间持续更新目标方位，偏差达到7°时停车重新对正并等待100 ms再继续。有效T265距离连续1.5秒没有减少至少20 mm时按打滑或受阻故障停车；任务命令超过250 ms或融合位姿超过150 ms也会立即停车。
+7. `DELIVER`：完成安全区入口对正后，持续收到`ENTER_SAFE_ZONE`才允许打开夹爪、以250 mm/s后退0.30 m；制动等待200 ms后再软启动前冲0.55 m，最高850 mm/s。打开、后退、换向等待和前冲期间每20 ms检查命令新鲜度；失联立即停车。未送入就重复，收到`TASK_COMPLETE`后后退0.45 m、转向场地中心并重新搜索。
 8. `STOPPED`：180秒结束、上位机`STOP/ABORT`、电机/位姿/任务命令故障或目标重捕获失败后保持停车。
 
-当前夹爪角度为：收缩左23°/右145°，Touch左80°/右100°，Open左128°/右52°。安装机构后必须先断开机构负载标定角度，确认不会顶死舵机。
+当前夹爪角度为：收缩左23°/右147°，Touch左80°/右100°，Open左128°/右52°。安装机构后必须先断开机构负载标定角度，确认不会顶死舵机。
 
 Task模式LCD不绘制场地图或目标距离，只保留当前任务状态、上位机视觉报告中的X/Y坐标、颜色/出发区/串口状态和摄像头角度。超过250 ms没有新的有效目标时X/Y显示`----`；串口超过250 ms未收到任何新帧时显示`TMO`。动态值每100 ms刷新，固定宽度文字直接覆盖旧内容，不先清空整行，以减少闪烁。
 
@@ -398,7 +398,7 @@ typedef struct {
 
 void Motor_Init(void);
 void Motor_SetSpeed(float target_speed, uint8_t id); /* mm/s，id=1..3 */
-MotorDistanceStatus Go_distance(float distance_m, float max_speed_mm_s);
+MotorDistanceStatus Motor_MoveDistance(float distance_m, float max_speed_mm_s);
 MotorTurnStatus Motor_TurnAngle(float angle_deg);   /* deg */
 void Motor_Move(float forward_mm_s, float lateral_mm_s,
                 float yaw_tangent_mm_s);            /* 三项均为mm/s */
@@ -452,13 +452,13 @@ v3 =  sqrt(3)/2 * Vx - 1/2 * Vy + Rω
 
 - 启动/换向后先等待200 ms；之后若编码器连续60 ms与目标反向，记录`DIR`。
 - 启动后先等待500 ms；若上一周期PWM绝对值至少50%，但编码器连续500 ms仍为0，记录`STALL`，用于检测堵转和编码器断线。
-- 任意一个轮子出现`DIR`或`STALL`，三轮立即一起停车；普通恒速测试、`Motor_Move()`、`Go_distance()`和`Motor_TurnAngle()`使用同一联停规则。
+- 任意一个轮子出现`DIR`或`STALL`，三轮立即一起停车；普通恒速测试、`Motor_Move()`、`Motor_MoveDistance()`和`Motor_TurnAngle()`使用同一联停规则。
 - 故障会锁存，`Motor_Stop()`不会清除，状态机下一周期也不能重新启动电机。检查接线和机械问题后复位MCU才能恢复。
 - AT8236停车时内部先使用`IN1=IN2=1`低侧制动约60 ms，然后切换到`IN1=IN2=0`高阻滑行/休眠；重复调用`Motor_Stop()`不会无限延长制动，新运动命令会保存目标但必须等剩余制动周期结束后才真正输出。
 
 电机、编码器和舵机的HAL启动失败会进入`Error_Handler()`，不会再静默继续运行。
 
-## `Go_distance()`
+## `Motor_MoveDistance()`
 
 返回状态：
 
@@ -478,12 +478,12 @@ typedef enum {
 forward_distance = (M1_distance - M2_distance) / sqrt(3)
 ```
 
-估算底盘前进距离。正式前进轮速比例为`M1=+0.866、M2=-0.866、M3=0`，后退时M1/M2符号相反；横移比例为`M1=-0.5、M2=-0.5、M3=+1.0`，原地旋转仍为三轮同号。Task开局退出安全区使用本地`Location.path_mm`累计三轮编码器解算出的平移路程，并由`Motor_MoveAngle()`锁住IMU航向，在1.70 m终点前分级减速。所有`Go_distance()`动作现在都会锁存开始时IMU航向，10 ms一次叠加航向PI修正；编码器前向解算仍独立决定剩余距离、减速和3 mm容差制动，因此旋转修正不会被累计成前进距离。
+估算底盘前进距离。正式前进轮速比例为`M1=+0.866、M2=-0.866、M3=0`，后退时M1/M2符号相反；横移比例为`M1=-0.5、M2=-0.5、M3=+1.0`，原地旋转仍为三轮同号。Task开局退出安全区使用本地`Location.path_mm`累计三轮编码器解算出的平移路程，并由`Motor_MoveAngle()`锁住IMU航向，在1.70 m终点前分级减速。每次`Motor_MoveDistance()`启动时先确认三轮速度连续3个10 ms周期不超过40 mm/s，最多等待400 ms，再锁存编码器起点和IMU航向；运行中10 ms一次叠加航向PI修正，并以3,000 mm/s²目标速度软启动、3,500 mm/s²减速。编码器前向解算仍独立决定剩余距离和3 mm容差制动，因此上一动作的惯性和旋转修正不会被累计成前进距离。
 
 完成、故障状态会锁存，循环调用不会再次启动：
 
 ```c
-MotorDistanceStatus result = Go_distance(0.5f, 300.0f);
+MotorDistanceStatus result = Motor_MoveDistance(0.5f, 300.0f);
 if (result == MOTOR_DISTANCE_DONE) {
     Motor_Stop(); /* 确认完成、回到IDLE，之后才能启动下一段 */
 }
