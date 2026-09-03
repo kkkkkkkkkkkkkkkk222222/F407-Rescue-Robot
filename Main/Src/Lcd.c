@@ -620,6 +620,7 @@ static const char *task_state_name(TaskState state)
     case TASK_SCATTER_PAUSE:     return "PAUSE";
     case TASK_SCATTER_NEGATIVE:  return "SPIN-";
     case TASK_SCATTER_EXIT:      return "PILEOUT";
+    case TASK_APPROACH_RECOVER:  return "REACQ";
     default:                     return "STOP";
   }
 }

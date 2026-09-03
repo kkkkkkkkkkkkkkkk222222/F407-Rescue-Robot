@@ -31,6 +31,7 @@ typedef enum {
 
 void Motor_Init(void);
 void Motor_SetSpeed(float target_speed, uint8_t id);
+/* Encoder distance control with IMU heading hold; positive is forward. */
 MotorDistanceStatus Go_distance(float distance_m, float max_speed_mm_s);
 MotorTurnStatus Motor_TurnAngle(float angle_deg);
 /* yaw_tangent_mm_s is R*omega, so all three inputs use mm/s. */

@@ -125,7 +125,7 @@
 #define APP_MOTOR_STALL_GRACE_CYCLES     50U
 #define APP_MOTOR_BRAKE_CYCLES           6U
 
-/* IMU heading hold used only by Motor_MoveAngle(). */
+/* IMU heading hold shared by Motor_MoveAngle() and Go_distance(). */
 #define APP_MOTOR_HEADING_KP              4.0f
 #define APP_MOTOR_HEADING_KI              0.02f
 #define APP_MOTOR_HEADING_KD              0.0f
@@ -142,7 +142,8 @@
 #define APP_OMNI_ZERO_CONFIRM_CYCLES      3U
 #define APP_OMNI_ZERO_TIMEOUT_CYCLES      40U
 
-/* Go_distance() accepts metres; internal speed, slowdown and tolerance use millimetres. */
+/* Go_distance() accepts metres, holds its starting IMU yaw, and uses
+ * millimetres internally for speed, slowdown and tolerance. */
 #define APP_GO_DISTANCE_SPEED_MM_S       300.0f
 #define APP_GO_DISTANCE_MIN_SPEED_MM_S   120.0f
 #define APP_GO_DISTANCE_SLOWDOWN_MM      100.0f
@@ -162,7 +163,7 @@
 #define APP_MATCH_TIME_S                 180U
 #define APP_MATCH_TIME_MS                (APP_MATCH_TIME_S * 1000U)
 #define APP_START_REVERSE_DISTANCE_MM  1700U
-#define APP_START_REVERSE_SPEED_MM_S    650.0f
+#define APP_START_REVERSE_SPEED_MM_S    850.0f
 #define APP_START_REVERSE_MID_SPEED_MM_S 350.0f
 #define APP_START_REVERSE_SLOW_SPEED_MM_S 160.0f
 #define APP_START_REVERSE_MID_REMAINING_MM 300U
@@ -196,6 +197,10 @@
 #define APP_GRAB_SLOW_SPEED_MM_S         125.0f
 #define APP_GRAB_MID_DISTANCE_MM         500U
 #define APP_GRAB_SLOW_DISTANCE_MM        250U
+#define APP_APPROACH_LOSS_HOLD_MS         500U
+#define APP_APPROACH_RECOVERY_ROTATE_MM_S 120.0f
+#define APP_APPROACH_RECOVERY_SETTLE_MS   500U
+#define APP_APPROACH_RECOVERY_TIMEOUT_MS 25000U
 #define APP_STEERING_EXIT_DEAD_ZONE       8
 #define APP_STEERING_ENTER_DEAD_ZONE     16
 #define APP_STEERING_KP_MM_S             1.12f
@@ -228,7 +233,7 @@
 #define APP_GRAB_CAMERA_MIN_ANGLE         90U
 #define APP_GRAB_RAISE_OBSERVE_MS       1000U
 #define APP_GRAB_SCAN_ROTATE_MM_S        100.0f
-#define APP_NAV_FAST_SPEED_MM_S          650.0f
+#define APP_NAV_FAST_SPEED_MM_S          800.0f
 #define APP_NAV_SLOW_SPEED_MM_S          250.0f
 #define APP_NAV_SLOW_DISTANCE_MM         500.0f
 #define APP_NAV_TARGET_HOLD_MM           100.0f
@@ -238,7 +243,7 @@
 #define APP_RAM_BACK_DISTANCE_M            0.30f
 #define APP_RAM_BACK_SPEED_MM_S           250.0f
 #define APP_RAM_FORWARD_DISTANCE_M         0.55f
-#define APP_RAM_FORWARD_SPEED_MM_S        750.0f
+#define APP_RAM_FORWARD_SPEED_MM_S        850.0f
 #define APP_RAM_VERIFY_WAIT_MS            600U
 #define APP_SAFE_EXIT_DISTANCE_M            0.45f
 #define APP_SAFE_EXIT_SPEED_MM_S          300.0f
