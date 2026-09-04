@@ -51,7 +51,9 @@ typedef struct {
   TaskFault fault;
   uint16_t remaining_s;
   uint8_t acknowledged_sequence;
+  uint8_t last_command;
   uint8_t camera_angle;
+  bool command_received;
   bool found;
   bool claw_visible;
   bool gripper_closed;

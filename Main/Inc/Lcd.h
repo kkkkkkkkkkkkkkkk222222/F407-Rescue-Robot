@@ -28,6 +28,9 @@ typedef struct {
   bool imu_ready;
   int64_t imu_yaw_mdeg;
   bool location_demo_running;
+  bool debug_mode;
+  uint8_t debug_servo_id;
+  uint8_t debug_servo_angle;
   LocationPose location;
   VisionData vision;
 } LCDDashboard;

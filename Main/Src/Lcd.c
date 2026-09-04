@@ -10,6 +10,7 @@
 #include "CenteringTask.h"
 #include "encoder.h"
 #include "main.h"
+#include "mechanism.h"
 #include "motor.h"
 #include "Task.h"
 #include "vision.h"
@@ -640,12 +641,39 @@ static const char *task_uart_state(const LCDDashboard *dashboard)
   return "OK";
 }
 
-static char config_color_code(uint8_t color)
+static const char *task_command_name(uint8_t command, bool received)
 {
-  if (color == VISION_COLOR_RED) {
-    return 'R';
+  if (!received) {
+    return "NONE";
   }
-  return (color == VISION_COLOR_BLUE) ? 'B' : '-';
+  switch (command) {
+    case VISION_CMD_STOP:              return "STOP";
+    case VISION_CMD_GRAB_CONFIRMED:    return "GRAB";
+    case VISION_CMD_NAVIGATE_WAYPOINT: return "NAV";
+    case VISION_CMD_ALIGN_SAFE_ZONE:   return "ALIGN";
+    case VISION_CMD_ENTER_SAFE_ZONE:   return "ENTER";
+    case VISION_CMD_TASK_COMPLETE:     return "DONE";
+    case VISION_CMD_ABORT:             return "ABORT";
+    default:                           return "INVALID";
+  }
+}
+
+static const char *task_command_state(const LCDDashboard *dashboard)
+{
+  const VisionMissionCommand *command = &dashboard->vision.mission;
+  if (!command->received) {
+    return task_uart_state(dashboard);
+  }
+  if (Vision_MissionIsFresh(command, dashboard->now_ms,
+                            APP_MISSION_COMMAND_TIMEOUT_MS)) {
+    return "OK";
+  }
+  if ((command->command == VISION_CMD_NAVIGATE_WAYPOINT) &&
+      Vision_MissionIsFresh(command, dashboard->now_ms,
+                            APP_NAV_COMMAND_GRACE_MS)) {
+    return "HOLD";
+  }
+  return "TMO";
 }
 
 static void draw_task(const LCDDashboard *dashboard)
@@ -656,8 +684,12 @@ static void draw_task(const LCDDashboard *dashboard)
   const bool report_fresh =
       Vision_IsFresh(vision, dashboard->now_ms, APP_VISION_TIMEOUT_MS);
 
-  (void)snprintf(text, sizeof(text), "STATE:%s T:%us",
-                 task_state_name(task.state), task.remaining_s);
+  if (dashboard->debug_mode) {
+    (void)strcpy(text, "MODE:DEBUG");
+  } else {
+    (void)snprintf(text, sizeof(text), "STATE:%s T:%us",
+                   task_state_name(task.state), task.remaining_s);
+  }
   dashboard_write(0U, 12U, 128U, text);
 
   if (report_fresh) {
@@ -668,13 +700,23 @@ static void draw_task(const LCDDashboard *dashboard)
   }
   dashboard_write(0U, 44U, 128U, text);
 
-  (void)snprintf(text, sizeof(text), "CFG:%c Z:%u UART:%s",
-                 config_color_code(vision->color), vision->start_zone,
-                 task_uart_state(dashboard));
+  (void)snprintf(text, sizeof(text), "CMD:%s %s",
+                 task_command_name(
+                     dashboard->debug_mode ? vision->mission.command :
+                                             task.last_command,
+                     dashboard->debug_mode ? vision->mission.received :
+                                             task.command_received),
+                 task_command_state(dashboard));
   dashboard_write(0U, 76U, 128U, text);
 
-  (void)snprintf(text, sizeof(text), "ANGLE:%03u",
-                 task.camera_angle);
+  if (dashboard->debug_mode) {
+    (void)snprintf(text, sizeof(text), "S%u:%03u Angle:%03u",
+                   dashboard->debug_servo_id,
+                   dashboard->debug_servo_angle,
+                   Camera_GetAngle());
+  } else {
+    (void)snprintf(text, sizeof(text), "Angle:%03u", task.camera_angle);
+  }
   dashboard_write(0U, 108U, 128U, text);
 }
 #elif APP_ENABLE_CENTERING_TASK

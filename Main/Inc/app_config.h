@@ -9,6 +9,9 @@
 #define APP_ENABLE_SERVO_SWEEP_TEST      0
 #define APP_ENABLE_TASK                  1
 #define APP_ENABLE_CENTERING_TASK        0
+/* USART1 (PCB serial port 2) text console. It can suspend TASK and position
+ * one servo at a time without changing the USART3 RDK protocol. */
+#define APP_ENABLE_RUNTIME_SERVO_DEBUG   1
 
 /* Non-blocking IMU angle turn used by Motor_TurnAngle(). */
 #define APP_MOTOR_TURN_TOLERANCE_MDEG    1000L
@@ -176,6 +179,10 @@
 #define APP_START_SCAN_WAIT_MS          5000U
 #define APP_TARGET_WAIT_MS               700U
 #define APP_START_TIMEOUT_MS           30000U
+/* Temporary handoff switch: keep the original pile-scatter states available,
+ * but go straight from the open claw to SEARCH while the centre contains a
+ * single object. */
+#define APP_ENABLE_START_SCATTER           0
 #define APP_PILE_APPROACH_DISTANCE_M      0.20f
 #define APP_PILE_APPROACH_SPEED_MM_S     250.0f
 #define APP_SCATTER_ROTATE_SPEED_MM_S    500.0f
@@ -229,7 +236,8 @@
 /* Native-resolution mission flow shared with shijue_fangan/mission_test. */
 #define APP_FUSED_POSE_TIMEOUT_MS        150U
 #define APP_MISSION_COMMAND_TIMEOUT_MS   250U
-#define APP_GRAB_VIEW_ANGLE              150U
+#define APP_NAV_COMMAND_GRACE_MS         1000U
+#define APP_GRAB_VIEW_ANGLE              140U
 #define APP_GRAB_LOSS_FORCE_ANGLE_MIN    140U
 #define APP_GRAB_INITIAL_OBSERVE_MS      500U
 #define APP_GRAB_CAMERA_RAISE_STEP_DEG    10U
@@ -262,6 +270,7 @@
 #define APP_LCD_HEIGHT      160U
 #define APP_LCD_X_OFFSET    0U
 #define APP_LCD_Y_OFFSET    0U
+#define APP_LCD_GRAB_HOLD_MS 1000U
 
 #define APP_MOTOR_KEY_DEBOUNCE_MS        30U
 

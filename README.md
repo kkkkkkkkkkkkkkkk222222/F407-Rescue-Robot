@@ -1,6 +1,6 @@
 # 当前固件：普通物资抓取与安全区投送Task
 
-当前只启用完整`Task`，所有测试模式和独立`CenteringTask`均关闭。固件已对齐`danmo-teng/shijue_fangan`最新任务协议：视觉坐标为原生1280×1024、中心`(640,512)`；接收`TYPE=0x11/0x12/0x16/0x18`，发送`TYPE=0x15/0x17`。详细状态机、恢复观察流程、消息字段和安全看门狗见[MISSION_PROTOCOL.md](MISSION_PROTOCOL.md)。
+当前只启用完整`Task`，所有测试模式和独立`CenteringTask`均关闭。固件已对齐`danmo-teng/shijue_fangan@337aed0`任务协议：视觉坐标为原生1280×1024、中心`(640,512)`；接收`TYPE=0x11/0x12/0x16/0x18`，发送`TYPE=0x15/0x17`。当前临时关闭开局打散，倒车1.70 m并转向、开爪后直接搜索；抓取观察角为140°。详细状态机和协议见[MISSION_PROTOCOL.md](MISSION_PROTOCOL.md)，本轮临时修改、调试命令和恢复方法见[临时底盘修改交接记录](docs/TEMP_CHASSIS_HANDOFF.md)。
 
 > 从“历史设计”到CLion章节之间保留的是旧状态机设计记录，不再作为当前烧录行为或通信协议依据。
 
@@ -16,7 +16,7 @@
 
 该方案属于轮式航迹推算，不是绝对定位。全向轮滚子打滑、越减速带悬空、70 mm轮径误差、1768计数/圈误差和陀螺仪零偏都会随行驶距离累积；赛事文件还明确说明外围围栏不是定位基准。正式比赛应在视觉模块装好后，用已知安全区/出发区边界或场地图像周期性调用`Location_Reset()`或增加坐标校正，不能只凭该粗定位高速盲走。ROS 2官方全向轮控制器同样用轮位置/速度反馈计算里程计，并把轮半径列为决定速度与位移尺度的关键参数；三轮全向平台的系统误差需要通过多方向标定轨迹校正。[ROS 2 omni wheel controller](https://control.ros.org/rolling/doc/ros2_controllers/omni_wheel_drive_controller/doc/userdoc.html)、[三轮全向里程计系统误差研究](https://www.mdpi.com/2076-3417/12/5/2606)、[三轮全向运动学研究](https://doi.org/10.57417/jrnal.11.2_134)
 
-Task模式上电时Location保持未配置状态，不再假定4号位；收到1帧合法赛前配置后，程序用`Location_Reset((LocationStart)start_zone)`按1～4号出发区建立对应初始坐标和航向。本地`Location`仍只由编码器和IMU推算；安全区导航和SEARCH边界预测优先使用上位机下发的T265融合位姿，融合位姿不可用时只有SEARCH边界判断和回正允许退回本地位姿，安全区导航仍会超时停车。
+Task模式上电时Location保持未配置状态，不再假定4号位；收到1帧合法赛前配置后，程序用`Location_Reset((LocationStart)start_zone)`按1～4号出发区建立对应初始坐标和航向。本地`Location`仍只由编码器和IMU推算；安全区导航和SEARCH边界预测优先使用上位机下发的T265融合位姿。融合位姿不可用时只有SEARCH边界判断和回正允许退回本地位姿；安全区NAV立即停车并等待融合位姿恢复，不使用本地位姿继续返航。
 
 # 历史设计（已停用，仅供追溯）
 
@@ -329,7 +329,7 @@ Power the target, connect the USB/transmitter side, and verify that Windows show
 3. LCD初始化完成后显示`IMU660RC: OK`一秒；连接失败时显示`IMU660RC: ERROR`一秒。提示结束后清屏并切换到当前任务状态界面，不执行RGB色块测试。
 4. TIM6提供1 ms基础节拍：每1 ms发布一次IMU主循环采样请求，每10 ms采样编码器并执行一次电机速度环；自主任务开启时每20 ms向最低优先级PendSV发布一次任务请求；每100 ms只发布一次LCD刷新请求。
 5. 新PCB“串口1”USART3使用PD8/PD9和64字节循环DMA接收视觉帧；通过统一的中断发送队列发送4字节配置ACK及100 Hz三路编码器累计计数帧。
-6. 当前`APP_ENABLE_TASK=1`，独立视觉居中Task及所有运动测试、定位演示和舵机扫描均为0；收到配置后自动执行退出安全区、开爪搜索、视觉靠近、抓取观察恢复、融合位姿返航和安全区投送。
+6. 当前`APP_ENABLE_TASK=1`，独立视觉居中Task及所有运动测试、定位演示和舵机扫描均为0；收到配置后自动执行退出安全区、开爪直接搜索、视觉靠近、140°抓取观察、融合位姿返航和安全区投送。原打散状态保留但由`APP_ENABLE_START_SCATTER=0`暂时绕过。
 
 接通电机12 V前应确认三轮与编码器方向正确，并在车后方预留至少1.8 m空间；上位机一旦发出1帧有效配置，F407就会自动开始180秒倒计时，保持IMU航向并按编码器倒车1.70 m，没有额外按键确认。
 
@@ -348,10 +348,14 @@ Power the target, connect the USB/transmitter side, and verify that Windows show
 | LCD | PB13 SCK、PB15 MOSI、PB12 CS、PB14 RESET、PC5 DC、PB1 BL | ST7735，128x160 |
 | IMU660RC | PC10 SCK、PC11 MISO、PC12 MOSI、PC13 CS | SPI3硬件全双工，Mode 3，1000 Hz采样 |
 | PCB串口1 / USART3 | PD8 TX、PD9 RX | 115200 8N1；RX为DMA1 Stream1的64字节循环DMA，TX发送4字节配置ACK和100 Hz累计编码器里程计 |
-| PCB串口2 / USART1 | PA9 TX、PA10 RX | 当前保留，不用于RDK X5通信 |
+| PCB串口2 / USART1 | PA9 TX、PA10 RX | 500000 8N1文本舵机调试；`DEBUG`进入、`S id angle`调角、`RUN`复位回正常模式，不用于RDK通信 |
 | 预留按键 | PA0/S1，内部下拉 | 当前Task不读取该按键 |
 
 M4、TIM10/TIM11、PB8/PB9、PD3/PD4和EXTI3已经整体删除，不再存在第四电机软编码器。
+
+### 运行时舵机调试
+
+USART1发送`DEBUG`并回车后立即停车并暂停Task；随后可发送如`S 3 140`的命令手动调整1～4号舵机。发送`RUN`会停车并复位MCU，回到正常模式后需要重新启动上位机任务或重新发送`TYPE=0x11`配置。调试模式不占用USART3，不恢复按键启动。完整操作和安全注意事项见[临时底盘修改交接记录](docs/TEMP_CHASSIS_HANDOFF.md#6-舵机调试模式)。
 
 ## IMU660RC接线与驱动
 
@@ -543,4 +547,4 @@ cmake --preset Debug
 cmake --build --preset Debug
 ```
 
-输出位于`build/Debug/WWW.elf/.hex/.bin`。当前固件只运行视觉居中Task，完整救援Task和所有独立测试模式关闭；新PCB“串口1”（USART3）继续以100 Hz发送`TYPE=0x15`三路累计编码器计数。烧录后应先架空车轮核对X偏差对应的旋转方向和Y偏差对应的摄像头方向，再落地测试；上位机持续发送带`FOUND=1`的有效视觉报告后自动开始居中，不需要配置帧或按键。可用`tools/vision_protocol.py`验证视觉报告和里程计帧。
+输出位于`build/Debug/WWW.elf/.hex/.bin`。当前固件只运行完整救援Task，独立视觉居中Task和所有独立测试模式关闭；新PCB“串口1”（USART3）继续以100 Hz发送`TYPE=0x15`三路累计编码器计数，并以20 Hz发送`TYPE=0x17`任务状态。烧录后先架空车轮验证启动定距、抓取兜底和返航断流保护，再落地测试；正式Task必须先收到合法`TYPE=0x11`配置，不需要按键确认。可用`tools/vision_protocol.py`验证协议帧。

@@ -4,6 +4,7 @@
 
 #include "app_config.h"
 #include "CenteringTask.h"
+#include "DebugConsole.h"
 #include "encoder.h"
 #include "imu.h"
 #include "Lcd.h"
@@ -111,8 +112,17 @@ static void draw_dashboard(void)
     .motor_test_running = false,
     .imu_ready = false,
     .imu_yaw_mdeg = 0,
-    .location_demo_running = false
+    .location_demo_running = false,
+    .debug_mode = false,
+    .debug_servo_id = 0U,
+    .debug_servo_angle = 0U
   };
+#if APP_ENABLE_RUNTIME_SERVO_DEBUG
+  const DebugConsoleStatus debug = DebugConsole_GetStatus();
+  dashboard.debug_mode = debug.active;
+  dashboard.debug_servo_id = debug.servo_id;
+  dashboard.debug_servo_angle = debug.servo_angle;
+#endif
 #if APP_ENABLE_AUTOMATIC_MOTOR_TEST && !APP_ENABLE_TASK && \
     !APP_ENABLE_CENTERING_TASK
   dashboard.motor_test_running = motor_test_running;
@@ -361,6 +371,10 @@ void Robot_Init(void)
   HAL_NVIC_EnableIRQ(TIM6_DAC_IRQn);
   HAL_NVIC_SetPriority(USART3_IRQn, 7U, 0U);
   HAL_NVIC_EnableIRQ(USART3_IRQn);
+#if APP_ENABLE_RUNTIME_SERVO_DEBUG
+  HAL_NVIC_SetPriority(USART1_IRQn, 7U, 0U);
+  HAL_NVIC_EnableIRQ(USART1_IRQn);
+#endif
 #if APP_ENABLE_TASK || APP_ENABLE_CENTERING_TASK
   HAL_NVIC_SetPriority(PendSV_IRQn, 15U, 0U);
 #endif
@@ -381,6 +395,9 @@ void Robot_Init(void)
   Task_Process(app_milliseconds);
 #elif APP_ENABLE_CENTERING_TASK
   CenteringTask_Init(app_milliseconds);
+#endif
+#if APP_ENABLE_RUNTIME_SERVO_DEBUG
+  DebugConsole_Init();
 #endif
 
   lcd_ready = LCD_Init();
@@ -413,6 +430,9 @@ void Robot_Init(void)
 
 void Robot_Process(void)
 {
+#if APP_ENABLE_RUNTIME_SERVO_DEBUG
+  DebugConsole_Process();
+#endif
   uart_active = Uart_Receive(0U);
 
   const uint32_t odom_released = odom_release_sequence;
@@ -472,11 +492,13 @@ void Robot_RunDeferredTask(void)
   if (released != task_consumed_sequence) {
     const uint32_t now_ms = task_release_ms;
     task_consumed_sequence = released;
+    if (!DebugConsole_IsActive()) {
 #if APP_ENABLE_TASK
-    Task_Process(now_ms);
+      Task_Process(now_ms);
 #else
-    CenteringTask_Process(now_ms);
+      CenteringTask_Process(now_ms);
 #endif
+    }
   }
 
   /* Keep PendSV pending if TIM6 released another task period meanwhile. */

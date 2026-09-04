@@ -51,6 +51,7 @@ static uint32_t state_started_ms;
 static uint32_t step_started_ms;
 static uint32_t match_started_ms;
 static uint32_t status_sent_ms;
+static uint32_t command_hold_until_ms;
 static float camera_angle;
 static float steering_mm_s;
 static uint32_t tracking_tick_ms;
@@ -263,6 +264,7 @@ static void task_initialize(uint32_t now_ms)
   step_started_ms = now_ms;
   match_started_ms = now_ms;
   status_sent_ms = now_ms - APP_TASK_STATUS_PERIOD_MS;
+  command_hold_until_ms = now_ms;
   camera_angle = (float)Camera_GetAngle();
   steering_mm_s = 0.0f;
   tracking_sequence = 0U;
@@ -815,17 +817,40 @@ static bool navigation_progress_ok(const VisionMissionCommand *command,
 static void task_process_navigation(const VisionData *vision,
                                     uint32_t now_ms)
 {
+  const bool navigating = state == TASK_NAVIGATE;
   const uint8_t required_command =
-      (state == TASK_NAVIGATE) ? VISION_CMD_NAVIGATE_WAYPOINT :
-                                 VISION_CMD_ALIGN_SAFE_ZONE;
-  if (!Vision_MissionIsFresh(&vision->mission, now_ms,
-                             APP_MISSION_COMMAND_TIMEOUT_MS) ||
-      (vision->mission.command != required_command)) {
+      navigating ? VISION_CMD_NAVIGATE_WAYPOINT :
+                   VISION_CMD_ALIGN_SAFE_ZONE;
+  const bool command_fresh = Vision_MissionIsFresh(
+      &vision->mission, now_ms, APP_MISSION_COMMAND_TIMEOUT_MS);
+  const bool command_in_grace = navigating && Vision_MissionIsFresh(
+      &vision->mission, now_ms, APP_NAV_COMMAND_GRACE_MS);
+
+  if (vision->mission.command != required_command) {
     task_stop(TASK_FAULT_COMMAND_TIMEOUT, now_ms);
     return;
   }
+  if (!command_fresh && !command_in_grace) {
+    /* A waypoint is safe to retain briefly, but a prolonged RDK outage must
+     * stop the chassis. Remain in NAVIGATE so a later fresh command can resume
+     * the route instead of leaving the robot in a permanent fault state. */
+    Motor_Stop();
+    task_status.motors_active = false;
+    nav_ready = false;
+    nav_progress.valid = false;
+    return;
+  }
   if (!fused_pose_ready(&vision->fused_pose, now_ms)) {
-    task_stop(TASK_FAULT_POSE_TIMEOUT, now_ms);
+    if (!navigating) {
+      task_stop(TASK_FAULT_POSE_TIMEOUT, now_ms);
+      return;
+    }
+    /* Never navigate blind. A transient T265 quality/freshness drop pauses
+     * motion and automatically recovers when valid fused poses return. */
+    Motor_Stop();
+    task_status.motors_active = false;
+    nav_ready = false;
+    nav_progress.valid = false;
     return;
   }
 
@@ -889,7 +914,7 @@ static void task_process_navigation(const VisionData *vision,
     return;
   }
   float speed = APP_NAV_FAST_SPEED_MM_S;
-  if (distance <= APP_NAV_SLOW_DISTANCE_MM) {
+  if (!command_fresh || (distance <= APP_NAV_SLOW_DISTANCE_MM)) {
     speed = APP_NAV_SLOW_SPEED_MM_S;
   }
   /* Motor_MoveAngle() returns false while its non-blocking acceleration ramp
@@ -996,6 +1021,18 @@ static void task_accept_mission(const VisionMissionCommand *command,
   mission_sequence = command->sequence;
   mission_sequence_valid = true;
 
+  const bool holding_grab = task_status.command_received &&
+      (task_status.last_command == VISION_CMD_GRAB_CONFIRMED) &&
+      ((int32_t)(now_ms - command_hold_until_ms) < 0);
+  if (!holding_grab || (command->command == VISION_CMD_STOP) ||
+      (command->command == VISION_CMD_ABORT)) {
+    task_status.last_command = command->command;
+    task_status.command_received = true;
+    command_hold_until_ms =
+        (command->command == VISION_CMD_GRAB_CONFIRMED) ?
+        now_ms + APP_LCD_GRAB_HOLD_MS : now_ms;
+  }
+
   if ((command->command == VISION_CMD_STOP) ||
       (command->command == VISION_CMD_ABORT)) {
     task_status.acknowledged_sequence = command->sequence;
@@ -1005,6 +1042,16 @@ static void task_accept_mission(const VisionMissionCommand *command,
   } else if ((command->command == VISION_CMD_GRAB_CONFIRMED) &&
              (state >= TASK_GRAB_OBSERVE) &&
              (state <= TASK_GRAB_ROTATE)) {
+    task_status.acknowledged_sequence = command->sequence;
+    task_enter(TASK_CLOSE_CLAW, now_ms);
+  } else if ((command->command == VISION_CMD_NAVIGATE_WAYPOINT) &&
+             !task_status.gripper_closed &&
+             (state >= TASK_GRAB_OBSERVE) &&
+             (state <= TASK_GRAB_ROTATE)) {
+    /* The RDK emits GRAB_CONFIRMED for only one update before overwriting the
+     * relay file with NAVIGATE. Reaching NAVIGATE while the STM32 is explicitly
+     * exposing the claw proves that confirmation succeeded upstream, so close
+     * the claw if that one-shot frame was missed. */
     task_status.acknowledged_sequence = command->sequence;
     task_enter(TASK_CLOSE_CLAW, now_ms);
   } else if ((command->command == VISION_CMD_NAVIGATE_WAYPOINT) &&
@@ -1085,7 +1132,11 @@ void Task_Process(uint32_t now_ms)
 
     case TASK_OPEN_CLAW:
       if (Claw_Open(now_ms)) {
+#if APP_ENABLE_START_SCATTER
         task_enter(TASK_PILE_APPROACH, now_ms);
+#else
+        task_enter(TASK_SEARCH, now_ms);
+#endif
       }
       break;
 
