@@ -142,6 +142,8 @@ static void task_publish_status(uint32_t now_ms)
   flags |= task_status.gripper_closed ? VISION_STM_GRIPPER_CLOSED : 0U;
   flags |= task_status.motors_active ? VISION_STM_MOTORS_ACTIVE : 0U;
   flags |= task_status.auto_approach ? VISION_STM_AUTO_APPROACH : 0U;
+  flags |= ((state == TASK_NAVIGATE) && distance_command_done) ?
+      VISION_STM_DISTANCE_DONE : 0U;
   flags |= (task_status.fault != TASK_FAULT_NONE) ? VISION_STM_FAULT : 0U;
 
   const VisionStmStatus status = {

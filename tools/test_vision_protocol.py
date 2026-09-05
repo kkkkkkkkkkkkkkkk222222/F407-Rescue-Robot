@@ -88,14 +88,15 @@ class VisionProtocolTests(unittest.TestCase):
                          bytes.fromhex("01 E0 00 00"))
 
     def test_stm_status_matches_upper_computer(self) -> None:
-        frame = protocol.stm_status_frame(9, 0x09, 2, 7350, 8, 0)
+        frame = protocol.stm_status_frame(9, 0x29, 2, 7350, 8, 0)
         self.assertEqual(
             frame.hex(" ").upper(),
-            "A3 B3 17 09 09 02 1C B6 08 00 00 00 80 54 C3",
+            "A3 B3 17 09 29 02 1C B6 08 00 00 00 82 4C C3",
         )
         status = protocol.parse_stm_status(frame)
         self.assertTrue(status["claw_visible"])
         self.assertTrue(status["auto_approach"])
+        self.assertTrue(status["distance_done"])
         self.assertEqual(status["camera_pitch_cdeg"], 7350)
         self.assertEqual(status["acknowledged_sequence"], 8)
 

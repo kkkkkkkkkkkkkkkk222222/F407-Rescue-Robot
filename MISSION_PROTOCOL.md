@@ -54,7 +54,7 @@ A3 B3 12 10 02 80 02 00 00 00 01 09 DD FD C3
 
 | 字段 | 内容 |
 | --- | --- |
-| `P0` | bit0爪子入镜、bit1夹爪闭合、bit2电机运动、bit3自动靠近、bit7故障 |
+| `P0` | bit0爪子入镜、bit1夹爪闭合、bit2电机运动、bit3自动靠近、bit5导航定距完成、bit7故障 |
 | `P1` | 当前`TaskState`编号 |
 | `P2/P3` | 摄像头角度，0.01°，大端 |
 | `P4` | 最近真正接受的`TYPE=0x18`命令SEQ |
@@ -71,5 +71,6 @@ A3 B3 12 10 02 80 02 00 00 00 01 09 DD FD C3
 
 
 - `GRAB_CONFIRMED`会重复发送直到新鲜`TYPE=0x17`置`GRIPPER_CLOSED=1`；F407对舵机动作幂等，但每个新SEQ都必须更新P4 ACK。
+- `NAVIGATE_WAYPOINT`定距完成后，F407保持`MODE=NAVIGATE`并持续置`P0 bit5 DISTANCE_DONE=1`。上位机收到新鲜完成位后应转入`ALIGN_SAFE_ZONE`；地图车体圆接触安全区仍可作为并行的提前切换条件。
 - `NAVIGATE_WAYPOINT`和`RETURN_CENTER`使用航向+距离；`ALIGN_SAFE_ZONE`和`ENTER_SAFE_ZONE`只使用红方90°或蓝方270°航向。
 - 红方前置点为`(0,+950 mm)`，蓝方前置点为`(0,-950 mm)`。F407不接收PWM值，只接收任务目标并在本地完成转向、速度限制和失联停车。

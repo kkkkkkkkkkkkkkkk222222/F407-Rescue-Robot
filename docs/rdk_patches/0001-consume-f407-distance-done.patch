@@ -1,0 +1,119 @@
+diff --git a/mission_test/state_machine.py b/mission_test/state_machine.py
+index 6c51676..b4efa5b 100755
+--- a/mission_test/state_machine.py
++++ b/mission_test/state_machine.py
+@@ -43,6 +43,7 @@ CARGO_CLASSES = ("green_supply", "core_black", "danger_cyan", "injured_orange")
+ MATERIAL_CLASSES = frozenset(("green_supply", "core_black", "danger_cyan"))
+ STM_MODE_SEARCH = 3
+ STM_MODE_APPROACH = 4
++STM_MODE_NAVIGATE = 10
+ STM_MODE_RAM_FORWARD = 14
+ STM_MODE_RAM_VERIFY = 15
+ STM_MODE_EXIT_SAFE_ZONE = 16
+@@ -252,7 +253,7 @@ class RescueMission:
+         dy = target[1] - pose.y_m
+         return math.degrees(math.atan2(dy, dx)) % 360.0, math.hypot(dx, dy)
+ 
+-    def _navigate(self, pose: PoseInput) -> MissionOutput:
++    def _navigate(self, pose: PoseInput, stm: Stm32Status) -> MissionOutput:
+         if self.delivery_route is None:
+             if not pose.valid:
+                 return MissionOutput(
+@@ -261,14 +262,24 @@ class RescueMission:
+                 )
+             self.delivery_route = self._route_to(pose, self.delivery_contact_point)
+         travel_heading_deg, distance = self.delivery_route
+-        if pose.valid and robot_intersects_safe_zone(pose, self.settings):
++        map_contact = pose.valid and robot_intersects_safe_zone(
++            pose, self.settings
++        )
++        distance_complete = (
++            stm.age_ms <= 250.0
++            and stm.mode == STM_MODE_NAVIGATE
++            and stm.gripper_closed
++            and stm.distance_done
++        )
++        if map_contact or distance_complete:
+             self.state = MissionState.ALIGN
+             command = self._waypoint_command(
+                 CMD_ALIGN_SAFE_ZONE, self.approach_point, heading=True
+             )
++            reason = "地图车体圆已接触安全区" if map_contact else "F407定距完成"
+             return MissionOutput(
+                 self.state, None, command,
+-                f"地图车体圆已接触安全区，开始对正{self.desired_heading_deg:.1f}°",
++                f"{reason}，开始对正{self.desired_heading_deg:.1f}°",
+             )
+         command = self._distance_command(
+             CMD_NAVIGATE_WAYPOINT, travel_heading_deg, distance
+@@ -344,7 +355,7 @@ class RescueMission:
+             if status_fresh and stm.gripper_closed:
+                 self.state = MissionState.NAVIGATE
+                 self.delivery_route = None
+-                return self._navigate(pose)
++                return self._navigate(pose, stm)
+             return MissionOutput(
+                 self.state, None,
+                 MissionCommand(CMD_GRAB_CONFIRMED, self._flags()),
+@@ -352,7 +363,7 @@ class RescueMission:
+             )
+ 
+         if self.state == MissionState.NAVIGATE:
+-            return self._navigate(pose)
++            return self._navigate(pose, stm)
+ 
+         if self.state == MissionState.ALIGN:
+             target = self.approach_point
+diff --git a/mission_test/tests/test_state_machine.py b/mission_test/tests/test_state_machine.py
+index ded5019..35d6192 100755
+--- a/mission_test/tests/test_state_machine.py
++++ b/mission_test/tests/test_state_machine.py
+@@ -28,6 +28,7 @@ from rescue_vision.mission_protocol import (
+     CMD_TASK_COMPLETE,
+     CMD_USE_FINAL_HEADING,
+     STM_CLAW_VISIBLE,
++    STM_DISTANCE_DONE,
+     STM_GRIPPER_CLOSED,
+     Stm32Status,
+ )
+@@ -112,6 +113,17 @@ def run_side(side: str, desired_y: int, desired_heading: int):
+     )) % 360
+     assert output.command.heading_cdeg == round(expected_bearing * 100) % 36000
+ 
++    # Use the F407 encoder completion handshake if T265 position bias keeps
++    # the map-only contact check false at the physical destination.
++    nav_done = Stm32Status(
++        flags=STM_GRIPPER_CLOSED | STM_DISTANCE_DONE,
++        mode=10,
++        age_ms=5,
++    )
++    output = mission.step(VisionInput(), pose, nav_done)
++    assert output.state == MissionState.ALIGN
++    assert output.command.command == CMD_ALIGN_SAFE_ZONE
++
+     output = mission.step(VisionInput(), PoseInput(True, 0.0, desired_y / 1000, 0), closed)
+     assert output.state == MissionState.ALIGN
+     assert output.command.command == CMD_ALIGN_SAFE_ZONE
+diff --git a/vision/rescue_vision/mission_protocol.py b/vision/rescue_vision/mission_protocol.py
+index ea8468f..c2d58b0 100644
+--- a/vision/rescue_vision/mission_protocol.py
++++ b/vision/rescue_vision/mission_protocol.py
+@@ -27,6 +27,7 @@ STM_CLAW_VISIBLE = 1 << 0
+ STM_GRIPPER_CLOSED = 1 << 1
+ STM_MOTORS_ACTIVE = 1 << 2
+ STM_AUTO_APPROACH = 1 << 3
++STM_DISTANCE_DONE = 1 << 5
+ STM_FAULT = 1 << 7
+ 
+ 
+@@ -83,6 +84,10 @@ class Stm32Status:
+     def gripper_closed(self) -> bool:
+         return bool(self.flags & STM_GRIPPER_CLOSED)
+ 
++    @property
++    def distance_done(self) -> bool:
++        return bool(self.flags & STM_DISTANCE_DONE)
++
+     @property
+     def fault(self) -> bool:
+         return bool(self.flags & STM_FAULT) or self.fault_code != 0

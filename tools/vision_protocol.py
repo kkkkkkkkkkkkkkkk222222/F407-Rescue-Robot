@@ -29,6 +29,7 @@ STM_CLAW_VISIBLE = 0x01
 STM_GRIPPER_CLOSED = 0x02
 STM_MOTORS_ACTIVE = 0x04
 STM_AUTO_APPROACH = 0x08
+STM_DISTANCE_DONE = 0x20
 STM_FAULT = 0x80
 
 CMD_STOP = 0x00
@@ -203,6 +204,7 @@ def parse_stm_status(frame: bytes) -> dict[str, int | bool]:
         "gripper_closed": bool(flags & STM_GRIPPER_CLOSED),
         "motors_active": bool(flags & STM_MOTORS_ACTIVE),
         "auto_approach": bool(flags & STM_AUTO_APPROACH),
+        "distance_done": bool(flags & STM_DISTANCE_DONE),
         "fault": bool(flags & STM_FAULT),
     }
 
