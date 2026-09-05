@@ -692,7 +692,26 @@ static void draw_task(const LCDDashboard *dashboard)
   }
   dashboard_write(0U, 12U, 128U, text);
 
-  if (report_fresh) {
+  if ((task.state == TASK_CLOSE_CLAW) ||
+      (task.state == TASK_WAIT_NAVIGATION)) {
+    (void)snprintf(text, sizeof(text), "GRIP:%s A:%03u",
+                   task.gripper_closed ? "OK" : "WAIT",
+                   task.acknowledged_sequence);
+  } else if ((task.state == TASK_NAVIGATE) ||
+             (task.state == TASK_ALIGN_SAFE_ZONE)) {
+    if (vision->mission.received &&
+        (vision->mission.command != VISION_CMD_STOP)) {
+      uint32_t command_age_ms = dashboard->now_ms - vision->mission.tick_ms;
+      if (command_age_ms > 9999U) {
+        command_age_ms = 9999U;
+      }
+      (void)snprintf(text, sizeof(text), "H:%03u AGE:%04lu",
+                     vision->mission.heading_cdeg / 100U,
+                     (unsigned long)command_age_ms);
+    } else {
+      (void)strcpy(text, "H:--- AGE:----");
+    }
+  } else if (report_fresh) {
     (void)snprintf(text, sizeof(text), "X:%04u Y:%04u",
                    vision->x, vision->y);
   } else {

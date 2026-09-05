@@ -270,8 +270,6 @@
 #define APP_LCD_HEIGHT      160U
 #define APP_LCD_X_OFFSET    0U
 #define APP_LCD_Y_OFFSET    0U
-#define APP_LCD_GRAB_HOLD_MS 1000U
-
 #define APP_MOTOR_KEY_DEBOUNCE_MS        30U
 
 #endif

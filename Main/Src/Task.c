@@ -51,7 +51,6 @@ static uint32_t state_started_ms;
 static uint32_t step_started_ms;
 static uint32_t match_started_ms;
 static uint32_t status_sent_ms;
-static uint32_t command_hold_until_ms;
 static float camera_angle;
 static float steering_mm_s;
 static uint32_t tracking_tick_ms;
@@ -264,7 +263,6 @@ static void task_initialize(uint32_t now_ms)
   step_started_ms = now_ms;
   match_started_ms = now_ms;
   status_sent_ms = now_ms - APP_TASK_STATUS_PERIOD_MS;
-  command_hold_until_ms = now_ms;
   camera_angle = (float)Camera_GetAngle();
   steering_mm_s = 0.0f;
   tracking_sequence = 0U;
@@ -826,6 +824,18 @@ static void task_process_navigation(const VisionData *vision,
   const bool command_in_grace = navigating && Vision_MissionIsFresh(
       &vision->mission, now_ms, APP_NAV_COMMAND_GRACE_MS);
 
+  /* In the updated RDK state machine, STOP during NAVIGATE means the current
+   * fused pose cannot provide a safe travel heading.  Hold position without
+   * leaving NAVIGATE so a later valid NAV command can resume the route. */
+  if (navigating &&
+      (vision->mission.command == VISION_CMD_STOP)) {
+    Motor_Stop();
+    task_status.motors_active = false;
+    nav_ready = false;
+    nav_progress.valid = false;
+    return;
+  }
+
   if (vision->mission.command != required_command) {
     task_stop(TASK_FAULT_COMMAND_TIMEOUT, now_ms);
     return;
@@ -883,11 +893,13 @@ static void task_process_navigation(const VisionData *vision,
     nav_progress.valid = false;
     return;
   }
-  const float bearing_deg = bearing_to(
-      (float)vision->mission.target_x_mm,
-      (float)vision->mission.target_y_mm,
-      (float)vision->fused_pose.x_mm,
-      (float)vision->fused_pose.y_mm);
+  const float bearing_deg =
+      ((vision->mission.flags & VISION_CMD_USE_FINAL_HEADING) != 0U) ?
+      (float)vision->mission.heading_cdeg * 0.01f :
+      bearing_to((float)vision->mission.target_x_mm,
+                 (float)vision->mission.target_y_mm,
+                 (float)vision->fused_pose.x_mm,
+                 (float)vision->fused_pose.y_mm);
   const float heading_deg =
       (float)vision->fused_pose.heading_cdeg * 0.01f;
   const float heading_error = task_wrap_angle(bearing_deg - heading_deg);
@@ -1021,20 +1033,22 @@ static void task_accept_mission(const VisionMissionCommand *command,
   mission_sequence = command->sequence;
   mission_sequence_valid = true;
 
-  const bool holding_grab = task_status.command_received &&
-      (task_status.last_command == VISION_CMD_GRAB_CONFIRMED) &&
-      ((int32_t)(now_ms - command_hold_until_ms) < 0);
-  if (!holding_grab || (command->command == VISION_CMD_STOP) ||
-      (command->command == VISION_CMD_ABORT)) {
-    task_status.last_command = command->command;
-    task_status.command_received = true;
-    command_hold_until_ms =
-        (command->command == VISION_CMD_GRAB_CONFIRMED) ?
-        now_ms + APP_LCD_GRAB_HOLD_MS : now_ms;
-  }
+  task_status.last_command = command->command;
+  task_status.command_received = true;
 
-  if ((command->command == VISION_CMD_STOP) ||
-      (command->command == VISION_CMD_ABORT)) {
+  if (command->command == VISION_CMD_ABORT) {
+    task_status.acknowledged_sequence = command->sequence;
+    task_stop(TASK_FAULT_REMOTE_STOP, now_ms);
+  } else if ((command->command == VISION_CMD_STOP) &&
+             (state == TASK_NAVIGATE)) {
+    /* STOP is a resumable navigation hold in the new RDK protocol.  ABORT is
+     * still the unambiguous permanent emergency stop. */
+    task_status.acknowledged_sequence = command->sequence;
+    Motor_Stop();
+    task_status.motors_active = false;
+    nav_ready = false;
+    nav_progress.valid = false;
+  } else if (command->command == VISION_CMD_STOP) {
     task_status.acknowledged_sequence = command->sequence;
     task_stop(TASK_FAULT_REMOTE_STOP, now_ms);
   } else if (state == TASK_STOPPED) {
@@ -1044,16 +1058,12 @@ static void task_accept_mission(const VisionMissionCommand *command,
              (state <= TASK_GRAB_ROTATE)) {
     task_status.acknowledged_sequence = command->sequence;
     task_enter(TASK_CLOSE_CLAW, now_ms);
-  } else if ((command->command == VISION_CMD_NAVIGATE_WAYPOINT) &&
-             !task_status.gripper_closed &&
-             (state >= TASK_GRAB_OBSERVE) &&
-             (state <= TASK_GRAB_ROTATE)) {
-    /* The RDK emits GRAB_CONFIRMED for only one update before overwriting the
-     * relay file with NAVIGATE. Reaching NAVIGATE while the STM32 is explicitly
-     * exposing the claw proves that confirmation succeeded upstream, so close
-     * the claw if that one-shot frame was missed. */
+  } else if ((command->command == VISION_CMD_GRAB_CONFIRMED) &&
+             ((state == TASK_CLOSE_CLAW) ||
+              (state == TASK_WAIT_NAVIGATION))) {
+    /* GRAB_CONFIRMED is now repeated until GRIPPER_CLOSED is reported.  ACK
+     * every new sequence, but never restart an in-progress/completed motion. */
     task_status.acknowledged_sequence = command->sequence;
-    task_enter(TASK_CLOSE_CLAW, now_ms);
   } else if ((command->command == VISION_CMD_NAVIGATE_WAYPOINT) &&
              task_status.gripper_closed &&
              (state != TASK_NAVIGATE)) {

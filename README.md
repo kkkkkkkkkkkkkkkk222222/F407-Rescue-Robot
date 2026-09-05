@@ -1,6 +1,6 @@
 # 当前固件：普通物资抓取与安全区投送Task
 
-当前只启用完整`Task`，所有测试模式和独立`CenteringTask`均关闭。固件已对齐`danmo-teng/shijue_fangan@337aed0`任务协议：视觉坐标为原生1280×1024、中心`(640,512)`；接收`TYPE=0x11/0x12/0x16/0x18`，发送`TYPE=0x15/0x17`。当前临时关闭开局打散，倒车1.70 m并转向、开爪后直接搜索；抓取观察角为140°。详细状态机和协议见[MISSION_PROTOCOL.md](MISSION_PROTOCOL.md)，本轮临时修改、调试命令和恢复方法见[临时底盘修改交接记录](docs/TEMP_CHASSIS_HANDOFF.md)。
+当前只启用完整`Task`，所有测试模式和独立`CenteringTask`均关闭。固件已对齐`danmo-teng/shijue_fangan@4bbbb83`任务协议：视觉坐标为原生1280×1024、中心`(640,512)`；接收`TYPE=0x11/0x12/0x16/0x18`，发送`TYPE=0x15/0x17`。当前临时关闭开局打散，倒车1.70 m并转向、开爪后直接搜索；抓取观察角为140°。抓取命令持续重发直到F407回报夹爪闭合，返航使用上位机实时航向并保留分层失联停车。详细状态机和协议见[MISSION_PROTOCOL.md](MISSION_PROTOCOL.md)，本轮临时修改、调试命令和恢复方法见[临时底盘修改交接记录](docs/TEMP_CHASSIS_HANDOFF.md)。
 
 > 从“历史设计”到CLion章节之间保留的是旧状态机设计记录，不再作为当前烧录行为或通信协议依据。
 
@@ -348,7 +348,7 @@ Power the target, connect the USB/transmitter side, and verify that Windows show
 | LCD | PB13 SCK、PB15 MOSI、PB12 CS、PB14 RESET、PC5 DC、PB1 BL | ST7735，128x160 |
 | IMU660RC | PC10 SCK、PC11 MISO、PC12 MOSI、PC13 CS | SPI3硬件全双工，Mode 3，1000 Hz采样 |
 | PCB串口1 / USART3 | PD8 TX、PD9 RX | 115200 8N1；RX为DMA1 Stream1的64字节循环DMA，TX发送4字节配置ACK和100 Hz累计编码器里程计 |
-| PCB串口2 / USART1 | PA9 TX、PA10 RX | 500000 8N1文本舵机调试；`DEBUG`进入、`S id angle`调角、`RUN`复位回正常模式，不用于RDK通信 |
+| PCB串口2 / USART1 | PA9 TX、PA10 RX | 115200 8N1文本舵机调试；`DEBUG`进入、`S id angle`调角、`RUN`复位回正常模式，不用于RDK通信 |
 | 预留按键 | PA0/S1，内部下拉 | 当前Task不读取该按键 |
 
 M4、TIM10/TIM11、PB8/PB9、PD3/PD4和EXTI3已经整体删除，不再存在第四电机软编码器。
@@ -547,4 +547,4 @@ cmake --preset Debug
 cmake --build --preset Debug
 ```
 
-输出位于`build/Debug/WWW.elf/.hex/.bin`。当前固件只运行完整救援Task，独立视觉居中Task和所有独立测试模式关闭；新PCB“串口1”（USART3）继续以100 Hz发送`TYPE=0x15`三路累计编码器计数，并以20 Hz发送`TYPE=0x17`任务状态。烧录后先架空车轮验证启动定距、抓取兜底和返航断流保护，再落地测试；正式Task必须先收到合法`TYPE=0x11`配置，不需要按键确认。可用`tools/vision_protocol.py`验证协议帧。
+输出位于`build/Debug/WWW.elf/.hex/.bin`。当前固件只运行完整救援Task，独立视觉居中Task和所有独立测试模式关闭；新PCB“串口1”（USART3）继续以100 Hz发送`TYPE=0x15`三路累计编码器计数，并以20 Hz发送`TYPE=0x17`任务状态。烧录后先架空车轮验证启动定距、重复GRAB/闭合回报握手和返航断流保护，再落地测试；正式Task必须先收到合法`TYPE=0x11`配置，不需要按键确认。可用`tools/vision_protocol.py`验证协议帧。

@@ -4,7 +4,7 @@
 
 - 日期：2026-09-04
 - 底盘基线：`d431e37 feat: optimize autonomous motion and recovery`
-- 对照上位机：`danmo-teng/shijue_fangan@337aed0`
+- 对照上位机：`danmo-teng/shijue_fangan@4bbbb83`（抓取超时预计由队友后续提高到3秒）
 - 正式RDK通信保持为PCB串口1 / USART3（PD8 TX、PD9 RX）、115200 8N1、固定15字节帧。
 - 本次目标是临时取消开局打散、降低抓取俯仰阈值、提高抓取命令和返航链路容错，并增加不干扰正式协议的舵机调试入口。
 - 修改前尚未完成的结构重构已单独保存在本地分支`wip/refactor-before-temp-chassis-20260904`，提交`c0dc7c8`，没有混入本次改动。
@@ -41,16 +41,17 @@
 
 本机构中舵机3角度越大，相机看得越低。因此数值150→140表示机械上更早停止下压并进入抓取观察。
 
-队友上位机连续3个视觉周期确认目标后，只在状态切换的那个周期写入一次`GRAB_CONFIRMED`，下一周期立即用`NAVIGATE_WAYPOINT`覆盖同一个`uart_command.bin`。定位进程只转发轮询时看到的最新文件，不是逐命令队列，所以存在单发GRAB被NAV覆盖的窗口。
+队友在`4bbbb83`中新增`GRABBING`状态。连续视觉确认目标后，上位机以20～50 Hz反复发送`GRAB_CONFIRMED`，只有新鲜STM32状态帧报告`GRIPPER_CLOSED=1`才转入`NAVIGATE`。
 
 底盘兼容规则：
 
-- 正常收到`GRAB_CONFIRMED`时立即进入`TASK_CLOSE_CLAW`。
-- 如果底盘仍在`TASK_GRAB_OBSERVE`、`TASK_GRAB_RAISE_WAIT`或`TASK_GRAB_ROTATE`，爪子尚未闭合，却先收到有效`NAVIGATE_WAYPOINT`，则认为上位机已完成抓取确认，先补做合爪。
-- 该规则不适用于`SEARCH`、`APPROACH`或其他阶段，避免普通NAV帧误触发抓取。
-- 合爪完成后等待下一帧NAV，再进入正常返航。
+- 抓取观察/抬高/旋转观察状态第一次收到`GRAB_CONFIRMED`时进入`TASK_CLOSE_CLAW`。
+- `TASK_CLOSE_CLAW`和`TASK_WAIT_NAVIGATION`中每个新GRAB SEQ都更新`TYPE=0x17 P4 acknowledged_sequence`，但不重新启动舵机。
+- `Claw_Touch()`两步动作真正完成后才置`GRIPPER_CLOSED=1`，此后20 Hz持续上报，不发一次性脉冲。
+- 旧版“先收到NAV则补做合爪”兼容逻辑已删除；新协议在确认闭合前不得发NAV。
+- 合爪完成后底盘留在`TASK_WAIT_NAVIGATION`，收到后续NAV才进入正常返航。
 
-长期建议：上位机应重复发送`GRAB_CONFIRMED`，直到`TYPE=0x17`返回`GRIPPER_CLOSED=1`或对应ACK；当前底盘兼容逻辑不能替代可靠的命令确认/重发协议。
+时序注意：底盘现有两步合爪动作名义2秒，因此上位机抓取超时必须大于2秒并预留UART/状态转发余量；已与队友约定使用3秒。
 
 ## 4. 返航断流保护
 
@@ -64,7 +65,8 @@
 | NAV命令年龄250～1000 ms，融合位姿有效 | 沿已确认目标点继续，限速250 mm/s |
 | NAV命令年龄>1000 ms | 立即停车并保留NAV状态，新命令恢复后重新对正并继续 |
 | 融合位姿超过150 ms、T265非GOOD或更新被拒绝 | 立即停车并保留NAV状态，位姿恢复后重新对正并继续 |
-| STOP/ABORT、电机故障、1.5秒无导航进展 | 保持原有故障停车 |
+| NAV中收到STOP | 立即停车但保留NAV状态，新NAV到达后恢复 |
+| ABORT、其他阶段STOP、电机故障、1.5秒无导航进展 | 故障停车 |
 
 命令刚断流后的理论附加运动上限约为：
 
@@ -76,7 +78,7 @@
 
 ## 5. LCD任务界面
 
-正常任务界面调整为：
+正常靠近界面保持为：
 
 ```text
 STATE:APPROACH T:...
@@ -85,7 +87,21 @@ CMD:GRAB OK
 Angle:140
 ```
 
-`CMD`显示最近收到的原始`TYPE=0x18`动作：`NONE / STOP / GRAB / NAV / ALIGN / ENTER / DONE / ABORT`。由于上位机只短暂发送一次GRAB，而LCD每100 ms刷新，底盘会把确实收到的`GRAB`名称保持1秒再显示后续NAV，避免现场完全看不到抓取动作；这只影响显示，不延迟抓取或导航状态机。
+抓取和返航阶段改为显示更有用的握手数据：
+
+```text
+STATE:CLOSE T:...
+GRIP:WAIT A:123
+CMD:GRAB OK
+Angle:140
+
+STATE:NAV T:...
+H:090 AGE:0045
+CMD:NAV OK
+Angle:090
+```
+
+`A`是最近确认的GRAB SEQ；`H`是上位机实时返航航向，`AGE`是该命令的本地年龄（ms）。`CMD`始终显示最近收到的原始动作，新协议持续重发GRAB，因此删除了1秒显示锁定变量。
 
 - `OK`：该任务命令不超过250 ms。
 - `HOLD`：NAV命令处于250～1000 ms降速保持期。
@@ -94,7 +110,7 @@ Angle:140
 
 ## 6. 舵机调试模式
 
-调试入口使用PCB串口2 / USART1（PA9 TX、PA10 RX），保持现有500000 8N1。它不占用RDK的USART3，也没有修改正式15字节协议。
+调试入口使用PCB串口2 / USART1（PA9 TX、PA10 RX），配置为115200 8N1，便于山外等通用串口助手直接选择。它不占用RDK的USART3，也没有修改正式15字节协议。
 
 连接3.3 V USB-TTL并发送以回车或换行结尾的ASCII命令：
 
@@ -122,7 +138,7 @@ RUN         停车并复位MCU，重新进入正常模式
 ## 7. 修改文件
 
 - `Main/Inc/app_config.h`：临时打散开关、140°抓取阈值、NAV 1000 ms保持窗、运行时调试开关。
-- `Main/Src/Task.c`：绕过打散、GRAB丢帧兜底、NAV断流/位姿恢复策略。
+- `Main/Src/Task.c`：绕过打散、重复GRAB幂等ACK、实时返航航向、NAV断流/STOP/位姿恢复策略。
 - `Main/Inc/DebugConsole.h`、`Main/Src/DebugConsole.c`：USART1文本调试模式。
 - `Main/Src/Robot.c`：初始化和轮询调试控制台，调试时暂停Task。
 - `Main/Inc/Lcd.h`、`Main/Src/Lcd.c`：显示上位机动作与调试状态。
@@ -136,11 +152,12 @@ RUN         停车并复位MCU，重新进入正常模式
 1. 架空车轮，确认收到配置后仍倒车1.70 m、保持航向、减速、制动和转180°。
 2. 确认开爪完成后LCD从`OPEN`直接进入`SEARCH`，不出现`PILEIN/SPIN+/SPIN-/PILEOUT`。
 3. USART1发送`DEBUG`，确认车轮停止；分别发送4路舵机角度，核对机械限位；发送`RUN`后重新启动上位机。
-4. 注入正常`GRAB_CONFIRMED`，确认合爪。
-5. 跳过GRAB，直接在`CLAW_VISIBLE`阶段注入NAV，确认只在该阶段补做合爪。
-6. 返航时暂停任务命令约0.5秒，确认LCD显示`HOLD`且车速降到250 mm/s；暂停超过1秒，确认停车；恢复命令后应重新对正并继续。
-7. 返航时停止`TYPE=0x16`融合位姿，确认立即停车且不沿旧位姿继续；恢复GOOD位姿后应继续。
-8. 确认`STOP/ABORT`仍立即进入故障停车，安全区撞送失联保护未被放宽。
+4. 以20～50 Hz注入不同SEQ的`GRAB_CONFIRMED`，确认只启动一次合爪、LCD ACK持续跟随，动作完成后`GRIPPER_CLOSED`持续为1。
+5. 合爪未完成时注入NAV，确认不再补抓或进入返航。
+6. 返航时改变`HEADING_cdeg`，确认底盘按新航向重新对正。暂停任务命令约0.5秒，确认LCD显示`HOLD`且车速降到250 mm/s；暂停超过1秒，确认停车；恢复命令后应重新对正并继续。
+7. NAV中注入`STOP`，确认停车但不进入`TASK_STOPPED`，恢复NAV后继续；注入`ABORT`则必须永久故障停车。
+8. 返航时停止`TYPE=0x16`融合位姿，确认立即停车且不沿旧位姿继续；恢复GOOD位姿后应继续。
+9. 确认安全区对正和撞送的250 ms严格失联保护未被放宽。
 
 ## 9. 已知限制
 
@@ -148,3 +165,11 @@ RUN         停车并复位MCU，重新进入正常模式
 - 假设中心附近只有一个物块；若第一圈搜索漏检，现有算法仍可能向前搜索0.8 m。
 - NAV断流保持只能覆盖短暂调度或视觉卡顿，不能替代上位机命令ACK/重发。
 - 上位机发出`TASK_COMPLETE`后仍停留在`COMPLETE`，下一轮自动搜索需要上位机增加任务复位逻辑。
+
+## 10. 2026-09-05协议复核待处理项
+
+对照`danmo-teng/shijue_fangan@c09aef2`时确认以下小差异，当前先记录、未修改：
+
+1. 未闭爪时提前收到`NAVIGATE_WAYPOINT / ALIGN_SAFE_ZONE / ENTER_SAFE_ZONE`，现代码只忽略命令，最新参考语义要求ACK并强制停车等待，不得继续扫描或靠近。
+2. `TASK_ALIGN_SAFE_ZONE`中融合位姿失效会进入永久`POSE_TIMEOUT`故障；最新语义建议与NAV一样暂停并在位姿恢复后重新对正。
+3. NAV命令缺少`USE_FINAL_HEADING`时，现代码会退回本地`bearing_to()`计算；最新参考实现要求停车等待合法航向。
