@@ -252,10 +252,12 @@
 #define APP_NAV_FAST_SPEED_MM_S          800.0f
 #define APP_NAV_SLOW_SPEED_MM_S          250.0f
 #define APP_NAV_LINEAR_SLOWDOWN_MM       300.0f
-#define APP_NAV_END_SPEED_RATIO            0.5f
+#define APP_NAV_END_SPEED_RATIO            0.2f
+#define APP_NAV_MIN_END_SPEED_MM_S        120.0f
 #define APP_NAV_HEADING_TOLERANCE_DEG      2.0f
 #define APP_NAV_REALIGN_DEG                7.0f
 #define APP_NAV_TURN_SETTLE_MS            100U
+#define APP_POSE_WAIT_TIMEOUT_MS          1500U
 #define APP_LIFT_START_ANGLE              55U
 #define APP_LIFT_TRAVEL_ANGLE             85U
 #define APP_DELIVERY_VERIFY_WAIT_MS       1200U

@@ -13,8 +13,8 @@
 7. 摄像头到140°后停车并持续通过`TYPE=0x17`置`CLAW_VISIBLE=1`，让上位机检查抓取画面。
 8. 如果上位机报告画面无物体，摄像头每次抬高10°（舵机角度140→130→…→90），每次抬高后停车观察1秒；仍没有物体就以100 mm/s慢速旋转观察。转满一圈仍没有物体则再次抬高并重复。在视觉报告超时期间保持停车。
 9. 上位机在F407持续上报`CLAW_VISIBLE=1`且状态帧不超过250 ms时，连续3个视觉周期确认画面仍有目标，然后以20～50 Hz重复发送`TYPE=0x18 / GRAB_CONFIRMED`。F407第一次接受时让左右爪同时合到Touch姿态，后续帧只更新`acknowledged_sequence`而不重启舵机动作；仍保留2秒机构完成窗口，之后才通过20 Hz的`TYPE=0x17`持续置`GRIPPER_CLOSED=1`。合爪后摄像头保持当前抓取观察角，不提前抬头。
-10. 抓取闭合后，上位机根据当时T265融合位置计算一次到对应分区入口的绝对航向和本段剩余距离。`TYPE=0x18`置`DRIVE_STRAIGHT | USE_FINAL_HEADING | DISTANCE_VALID`，P2/P3携带距离毫米、P4/P5为0。F407先按本地IMU/Location对准航向，再锁存首个合法距离并由编码器完成定距，不会因重复帧重启整段。内部剩余距离小于300 mm后采用线性速度目标：300 mm处保持当前巡航上限，向终点逐步降速，理论0 mm处为该巡航速度的50%；3 mm容差内制动停车。
-11. 上位机发送`ALIGN_SAFE_ZONE`后，F407仍转到命令给出的最终航向；这就是车辆到达安全区后出现慢速旋转的来源。收到`ENTER_SAFE_ZONE`后左右爪同时张开，随后直接进入`RAM_VERIFY/CHECK`原地停车，不再后退0.30 m或前冲0.55 m。F407至少保持1200 ms，并持续要求收到不超过250 ms的新鲜`ENTER_SAFE_ZONE`或`TASK_COMPLETE`；失联或其他命令立即故障停车。
+10. 抓取闭合后，上位机根据当时T265融合位置计算一次到对应分区入口的绝对航向和本段剩余距离。`TYPE=0x18`置`DRIVE_STRAIGHT | USE_FINAL_HEADING | DISTANCE_VALID`，P2/P3携带距离毫米、P4/P5为0。F407先按本地IMU/Location对准航向，再锁存首个合法距离并由编码器完成定距，不会因重复帧重启整段。内部剩余距离小于300 mm后采用线性速度目标：NAV从800 mm/s降到160 mm/s，RETURN从500 mm/s降到120 mm/s，3 mm容差内制动停车；不再以巡航速度50%冲到终点。
+11. 上位机发送`ALIGN_SAFE_ZONE`后，F407仍转到命令给出的最终航向；这就是车辆到达安全区后出现慢速旋转的来源。如果上位机按自身8°容差提前切到`ENTER_SAFE_ZONE`，F407继续使用ENTER携带的同一航向对正到本地2°，不会再命令超时。对正后左右爪同时张开，直接进入`RAM_VERIFY/CHECK`原地停车，不再后退0.30 m或前冲0.55 m。F407至少保持1200 ms，并持续要求收到不超过250 ms的新鲜`ENTER_SAFE_ZONE`或`TASK_COMPLETE`。
 12. 1200 ms最短静止窗口结束后，收到`TASK_COMPLETE`才允许摄像头抬到120°并后退0.45 m；如果上位机仍发送`ENTER_SAFE_ZONE`，F407继续原地等待，不会重复碰撞。随后等待`RETURN_CENTER`航向和剩余距离，使用相同的300 mm线性减速定距；完成后摄像头快速到90°并直接从低视角进入`SEARCH`。
 
 上位机在收到STM32的`TYPE=0x17`退出、返中或搜索状态后进入下一轮；第一次投送完成前只发普通物资，之后允许四类目标。
@@ -72,5 +72,6 @@ A3 B3 12 10 02 80 02 00 00 00 01 09 DD FD C3
 
 - `GRAB_CONFIRMED`会重复发送直到新鲜`TYPE=0x17`置`GRIPPER_CLOSED=1`；F407对舵机动作幂等，但每个新SEQ都必须更新P4 ACK。
 - `NAVIGATE_WAYPOINT`定距完成后，F407保持`MODE=NAVIGATE`并持续置`P0 bit5 DISTANCE_DONE=1`。上位机收到新鲜完成位后应转入`ALIGN_SAFE_ZONE`；地图车体圆接触安全区仍可作为并行的提前切换条件。
+- 合法命令前驱固定为`WAIT_NAVIGATION→NAVIGATE→ALIGN_SAFE_ZONE→ENTER_SAFE_ZONE→CHECK→TASK_COMPLETE`；延迟NAV帧不会让ALIGN倒退回NAV。需要Location的阶段允许短暂失效并停车等待，连续1500 ms无效才报告`POSE_TIMEOUT`。
 - `NAVIGATE_WAYPOINT`和`RETURN_CENTER`使用航向+距离；`ALIGN_SAFE_ZONE`和`ENTER_SAFE_ZONE`只使用红方90°或蓝方270°航向。
 - 红方前置点为`(0,+950 mm)`，蓝方前置点为`(0,-950 mm)`。F407不接收PWM值，只接收任务目标并在本地完成转向、速度限制和失联停车。

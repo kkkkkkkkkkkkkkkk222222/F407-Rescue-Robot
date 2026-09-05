@@ -52,6 +52,7 @@ static RecoverPhase recover_phase;
 static uint32_t state_started_ms;
 static uint32_t step_started_ms;
 static uint32_t status_sent_ms;
+static uint32_t pose_invalid_started_ms;
 static float camera_angle;
 static float steering_mm_s;
 static uint32_t tracking_tick_ms;
@@ -70,6 +71,7 @@ static bool nav_ready;
 static bool scan_report_gate_open;
 static bool reposition_heading_valid;
 static bool search_start_low;
+static bool pose_invalid_pending;
 static bool start_clearance_done;
 static bool distance_command_done;
 static bool distance_command_started;
@@ -109,6 +111,26 @@ static void task_stop(TaskFault fault, uint32_t now_ms)
 {
   task_status.fault = fault;
   task_enter(TASK_STOPPED, now_ms);
+}
+
+static bool task_get_location_pose(LocationPose *pose, uint32_t now_ms)
+{
+  *pose = Location_GetPose();
+  if (pose->valid) {
+    pose_invalid_pending = false;
+    return true;
+  }
+
+  Motor_Stop();
+  task_status.motors_active = false;
+  if (!pose_invalid_pending) {
+    pose_invalid_pending = true;
+    pose_invalid_started_ms = now_ms;
+  } else if ((uint32_t)(now_ms - pose_invalid_started_ms) >=
+             APP_POSE_WAIT_TIMEOUT_MS) {
+    task_stop(TASK_FAULT_POSE_TIMEOUT, now_ms);
+  }
+  return false;
 }
 
 static void task_reset_tracking(void)
@@ -196,6 +218,7 @@ static void task_enter(TaskState next, uint32_t now_ms)
       (next >= TASK_GRAB_OBSERVE) && (next <= TASK_CLOSE_CLAW);
   state_started_ms = now_ms;
   step_started_ms = now_ms;
+  pose_invalid_pending = false;
 
   if (next == TASK_START) {
     const LocationPose pose = Location_GetPose();
@@ -276,6 +299,7 @@ static void task_initialize(uint32_t now_ms)
   state_started_ms = now_ms;
   step_started_ms = now_ms;
   status_sent_ms = now_ms - APP_TASK_STATUS_PERIOD_MS;
+  pose_invalid_started_ms = now_ms;
   camera_angle = (float)Camera_GetAngle();
   steering_mm_s = 0.0f;
   tracking_sequence = 0U;
@@ -293,6 +317,7 @@ static void task_initialize(uint32_t now_ms)
   scan_report_gate_open = false;
   reposition_heading_valid = false;
   search_start_low = false;
+  pose_invalid_pending = false;
   start_clearance_done = false;
   distance_command_done = false;
   distance_command_started = false;
@@ -584,8 +609,11 @@ static bool task_choose_reposition_heading(const VisionData *vision,
 {
   TaskPose pose;
   if (!read_field_pose(vision, now_ms, &pose)) {
+    LocationPose local;
+    (void)task_get_location_pose(&local, now_ms);
     return false;
   }
+  pose_invalid_pending = false;
 
   const float heading_rad = *heading_deg * 0.01745329252f;
   const float distance_mm = distance_m * 1000.0f;
@@ -600,11 +628,12 @@ static bool task_choose_reposition_heading(const VisionData *vision,
   return true;
 }
 
-static MotorTurnStatus task_turn_to_heading(float desired_heading_deg)
+static MotorTurnStatus task_turn_to_heading(float desired_heading_deg,
+                                            uint32_t now_ms)
 {
-  const LocationPose pose = Location_GetPose();
-  if (!pose.valid) {
-    return MOTOR_TURN_INVALID;
+  LocationPose pose;
+  if (!task_get_location_pose(&pose, now_ms)) {
+    return MOTOR_TURN_IDLE;
   }
   const float current_heading_deg = (float)pose.heading_mdeg * 0.001f;
   const float error_deg = task_wrap_angle(
@@ -621,7 +650,16 @@ static void task_process_search(const VisionData *vision, uint32_t now_ms)
   /* Reports received before this SEARCH epoch may still be younger than the
    * normal 250 ms timeout. They remain visible on the LCD, but cannot select
    * a target or enter APPROACH until a new valid report is received. */
-  task_status.found = task_scan_target_found(vision, now_ms);
+  const bool camera_ready =
+      ((search_phase == SEARCH_SWEEP_HIGH) &&
+       ((uint32_t)(now_ms - state_started_ms) >= APP_TARGET_WAIT_MS)) ||
+      ((search_phase == SEARCH_SWEEP_LOW) &&
+       ((uint32_t)(now_ms - step_started_ms) >=
+        APP_CAMERA_SCAN_ENDPOINT_HOLD_MS)) ||
+      ((search_phase != SEARCH_SWEEP_HIGH) &&
+       (search_phase != SEARCH_SWEEP_LOW));
+  task_status.found = camera_ready &&
+                      task_scan_target_found(vision, now_ms);
   if (task_status.found) {
     task_enter(TASK_APPROACH, now_ms);
     return;
@@ -632,10 +670,8 @@ static void task_process_search(const VisionData *vision, uint32_t now_ms)
       if ((uint32_t)(now_ms - state_started_ms) < APP_TARGET_WAIT_MS) {
         return;
       }
-      const LocationPose pose = Location_GetPose();
-      if (!pose.valid) {
-        Motor_Stop();
-        task_status.motors_active = false;
+      LocationPose pose;
+      if (!task_get_location_pose(&pose, now_ms)) {
         return;
       }
       if (!reposition_heading_valid) {
@@ -663,10 +699,8 @@ static void task_process_search(const VisionData *vision, uint32_t now_ms)
         return;
       }
       if (!reposition_heading_valid) {
-        const LocationPose pose = Location_GetPose();
-        if (!pose.valid) {
-          Motor_Stop();
-          task_status.motors_active = false;
+        LocationPose pose;
+        if (!task_get_location_pose(&pose, now_ms)) {
           return;
         }
         reposition_heading_deg = (float)pose.heading_mdeg * 0.001f;
@@ -690,7 +724,7 @@ static void task_process_search(const VisionData *vision, uint32_t now_ms)
 
     case SEARCH_REALIGN: {
       const MotorTurnStatus result =
-          task_turn_to_heading(reposition_heading_deg);
+          task_turn_to_heading(reposition_heading_deg, now_ms);
       task_status.motors_active = result == MOTOR_TURN_RUNNING;
       if (result == MOTOR_TURN_DONE) {
         Motor_Stop();
@@ -794,8 +828,8 @@ static void task_process_approach_recover(const VisionData *vision,
       Motor_Stop();
       task_status.motors_active = false;
       if (!reposition_heading_valid) {
-        const LocationPose pose = Location_GetPose();
-        if (pose.valid) {
+        LocationPose pose;
+        if (task_get_location_pose(&pose, now_ms)) {
           reposition_heading_deg = (float)pose.heading_mdeg * 0.001f;
           reposition_heading_valid = true;
         }
@@ -840,10 +874,8 @@ static void task_process_approach_recover(const VisionData *vision,
 
     case RECOVER_SWEEP_90: {
       if (!reposition_heading_valid) {
-        const LocationPose pose = Location_GetPose();
-        if (!pose.valid) {
-          Motor_Stop();
-          task_status.motors_active = false;
+        LocationPose pose;
+        if (!task_get_location_pose(&pose, now_ms)) {
           return;
         }
         reposition_heading_deg = (float)pose.heading_mdeg * 0.001f;
@@ -870,7 +902,7 @@ static void task_process_approach_recover(const VisionData *vision,
 
     case RECOVER_REALIGN: {
       const MotorTurnStatus result =
-          task_turn_to_heading(reposition_heading_deg);
+          task_turn_to_heading(reposition_heading_deg, now_ms);
       task_status.motors_active = result == MOTOR_TURN_RUNNING;
       if (result == MOTOR_TURN_DONE) {
         Motor_Stop();
@@ -1004,13 +1036,17 @@ static bool task_distance_command_valid(const VisionMissionCommand *command,
          (command->target_x_mm >= 0) && (command->target_y_mm == 0);
 }
 
+static float task_navigation_end_speed(float cruise_speed_mm_s)
+{
+  const float scaled_speed = cruise_speed_mm_s * APP_NAV_END_SPEED_RATIO;
+  return (scaled_speed < APP_NAV_MIN_END_SPEED_MM_S) ?
+      APP_NAV_MIN_END_SPEED_MM_S : scaled_speed;
+}
+
 static void task_process_navigation(const VisionData *vision,
                                     uint32_t now_ms)
 {
   const bool navigating = state == TASK_NAVIGATE;
-  const uint8_t required_command =
-      navigating ? VISION_CMD_NAVIGATE_WAYPOINT :
-                   VISION_CMD_ALIGN_SAFE_ZONE;
   const bool command_fresh = Vision_MissionIsFresh(
       &vision->mission, now_ms, APP_MISSION_COMMAND_TIMEOUT_MS);
   const bool command_in_grace = navigating && Vision_MissionIsFresh(
@@ -1030,10 +1066,6 @@ static void task_process_navigation(const VisionData *vision,
     return;
   }
 
-  if (vision->mission.command != required_command) {
-    task_stop(TASK_FAULT_COMMAND_TIMEOUT, now_ms);
-    return;
-  }
   if (!command_fresh && !command_in_grace) {
     /* A waypoint is safe to retain briefly, but a prolonged RDK outage must
      * stop the chassis. Remain in NAVIGATE so a later fresh command can resume
@@ -1048,11 +1080,19 @@ static void task_process_navigation(const VisionData *vision,
     return;
   }
   if (state == TASK_ALIGN_SAFE_ZONE) {
-    const LocationPose pose = Location_GetPose();
-    if (!pose.valid) {
+    if (vision->mission.command == VISION_CMD_NAVIGATE_WAYPOINT) {
+      /* A final in-flight NAV frame must not regress ALIGN or latch a fault. */
       Motor_Stop();
       task_status.motors_active = false;
-      nav_ready = false;
+      return;
+    }
+    if ((vision->mission.command != VISION_CMD_ALIGN_SAFE_ZONE) &&
+        (vision->mission.command != VISION_CMD_ENTER_SAFE_ZONE)) {
+      task_stop(TASK_FAULT_COMMAND_TIMEOUT, now_ms);
+      return;
+    }
+    LocationPose pose;
+    if (!task_get_location_pose(&pose, now_ms)) {
       return;
     }
     const float desired_deg =
@@ -1071,10 +1111,18 @@ static void task_process_navigation(const VisionData *vision,
     } else if (nav_ready) {
       Motor_Stop();
       task_status.motors_active = false;
+      if (vision->mission.command == VISION_CMD_ENTER_SAFE_ZONE) {
+        task_status.acknowledged_sequence = vision->mission.sequence;
+        task_enter(TASK_OPEN_FOR_RAM, now_ms);
+      }
     }
     return;
   }
 
+  if (vision->mission.command != VISION_CMD_NAVIGATE_WAYPOINT) {
+    task_stop(TASK_FAULT_COMMAND_TIMEOUT, now_ms);
+    return;
+  }
   if (!task_distance_command_valid(&vision->mission,
                                    VISION_CMD_NAVIGATE_WAYPOINT)) {
     task_stop(TASK_FAULT_COMMAND_TIMEOUT, now_ms);
@@ -1085,10 +1133,8 @@ static void task_process_navigation(const VisionData *vision,
     return;
   }
   if (!distance_command_started) {
-    const LocationPose pose = Location_GetPose();
-    if (!pose.valid) {
-      Motor_Stop();
-      task_status.motors_active = false;
+    LocationPose pose;
+    if (!task_get_location_pose(&pose, now_ms)) {
       nav_ready = false;
       return;
     }
@@ -1117,7 +1163,7 @@ static void task_process_navigation(const VisionData *vision,
   const MotorDistanceStatus result = Motor_MoveDistanceLinear(
       (float)vision->mission.target_x_mm * 0.001f, speed_mm_s,
       APP_NAV_LINEAR_SLOWDOWN_MM,
-      speed_mm_s * APP_NAV_END_SPEED_RATIO);
+      task_navigation_end_speed(speed_mm_s));
   task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
   if (result == MOTOR_DISTANCE_RUNNING) {
     distance_command_started = true;
@@ -1199,10 +1245,8 @@ static void task_process_face_center(const VisionData *vision,
     return;
   }
   if (!distance_command_started) {
-    const LocationPose pose = Location_GetPose();
-    if (!pose.valid) {
-      Motor_Stop();
-      task_status.motors_active = false;
+    LocationPose pose;
+    if (!task_get_location_pose(&pose, now_ms)) {
       nav_ready = false;
       return;
     }
@@ -1228,7 +1272,7 @@ static void task_process_face_center(const VisionData *vision,
     const MotorDistanceStatus result = Motor_MoveDistanceLinear(
         (float)command->target_x_mm * 0.001f,
         APP_RETURN_CENTER_SPEED_MM_S, APP_NAV_LINEAR_SLOWDOWN_MM,
-        APP_RETURN_CENTER_SPEED_MM_S * APP_NAV_END_SPEED_RATIO);
+        task_navigation_end_speed(APP_RETURN_CENTER_SPEED_MM_S));
     task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
     if (result == MOTOR_DISTANCE_RUNNING) {
       distance_command_started = true;
@@ -1289,7 +1333,7 @@ static void task_accept_mission(const VisionMissionCommand *command,
     task_status.acknowledged_sequence = command->sequence;
   } else if ((command->command == VISION_CMD_NAVIGATE_WAYPOINT) &&
              task_status.gripper_closed &&
-             (state != TASK_NAVIGATE)) {
+             (state == TASK_WAIT_NAVIGATION)) {
     task_status.acknowledged_sequence = command->sequence;
     task_enter(TASK_NAVIGATE, now_ms);
   } else if ((command->command == VISION_CMD_NAVIGATE_WAYPOINT) &&
@@ -1297,7 +1341,7 @@ static void task_accept_mission(const VisionMissionCommand *command,
     task_status.acknowledged_sequence = command->sequence;
   } else if ((command->command == VISION_CMD_ALIGN_SAFE_ZONE) &&
              task_status.gripper_closed &&
-             (state != TASK_ALIGN_SAFE_ZONE)) {
+             (state == TASK_NAVIGATE)) {
     task_status.acknowledged_sequence = command->sequence;
     task_enter(TASK_ALIGN_SAFE_ZONE, now_ms);
   } else if ((command->command == VISION_CMD_ALIGN_SAFE_ZONE) &&

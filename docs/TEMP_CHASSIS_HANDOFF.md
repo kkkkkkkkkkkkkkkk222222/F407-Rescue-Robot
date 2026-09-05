@@ -154,7 +154,7 @@ RUN         停车并复位MCU，重新进入正常模式
 3. USART1发送`DEBUG`，确认车轮停止；分别发送4路舵机角度，核对机械限位；发送`RUN`后重新启动上位机。
 4. 以20～50 Hz注入不同SEQ的`GRAB_CONFIRMED`，确认只启动一次合爪、LCD ACK持续跟随，动作完成后`GRIPPER_CLOSED`持续为1。
 5. 合爪未完成时注入NAV，确认不再补抓或进入返航。
-6. 返航注入带`DRIVE_STRAIGHT | USE_FINAL_HEADING | DISTANCE_VALID`的航向＋距离，确认先对向再定距；剩余300 mm时为巡航上限、150 mm时约为75%、接近0 mm时约为50%。暂停任务命令约0.5秒，确认LCD显示`HOLD`且速度上限降到250 mm/s；定距开始后暂停超过1秒应故障停车，不能恢复后重跑完整距离。
+6. 返航注入带`DRIVE_STRAIGHT | USE_FINAL_HEADING | DISTANCE_VALID`的航向＋距离，确认先对向再定距；剩余300 mm时为巡航上限，NAV接近终点降到160 mm/s、RETURN降到120 mm/s。暂停任务命令约0.5秒，确认LCD显示`HOLD`且速度上限降到250 mm/s；定距开始后暂停超过1秒应故障停车，不能恢复后重跑完整距离。
 7. NAV尚未启动定距时注入`STOP`，确认停车等待并可由新NAV恢复；定距已经启动后注入`STOP`，必须以`COMMAND_TIMEOUT`故障停车，防止恢复时重跑完整距离。注入`ABORT`始终永久故障停车。
 8. 默认不再发送`TYPE=0x16`。完成首件普通物资后注入`TASK_COMPLETE`，确认F407退出安全区并等待`RETURN_CENTER`；返中定距完成进入SEARCH后，上位机应清除旧目标并允许四类单目标开始下一轮。
 9. 确认安全区对正和撞送的250 ms严格失联保护未被放宽。
@@ -219,3 +219,11 @@ RUN         停车并复位MCU，重新进入正常模式
 - 保留现有`TYPE=0x18`航向＋距离协议、NAV/ALIGN/ENTER/TASK_COMPLETE/RETURN_CENTER命令和返中计算，不要求上位机增加新的路径字段。上位机P2/P3发送的是本段开始时计算并锁存的剩余距离，不是逐帧递减值；F407收到首帧后用本地编码器自行计算实时余量。
 - F407普通SEARCH的120°首圈失败后不再逐度慢扫，直接命令舵机3到90°并等待300 ms再进行第二圈；逐度慢扫只保留在APPROACH目标丢失恢复。`RETURN_CENTER`定距完成后设置一次性低视角入口，下一次SEARCH直接从90°开始。
 - RDK最小必需修改仅为删除碰撞语义：不再等待`RAM_FORWARD=14`，只在新鲜`CHECK/RAM_VERIFY=15`状态下累计安全区静止时间并发送`TASK_COMPLETE`。对应增量补丁为`docs/rdk_patches/0002-remove-collision-delivery.patch`，其余通信协议不变。
+
+## 17. 2026-09-05可靠性收口
+
+- F407不再要求上位机ALIGN的8°容差与本地2°完全同步：如果ENTER提前到达，底盘保持停车并继续按ENTER中的最终航向对正，达到2°后才张爪；延迟到达的一帧NAV只暂停当前对正，不会退回NAV或触发永久故障。
+- 任务命令跳转收紧为`WAIT_NAVIGATION→NAV→ALIGN→ENTER→CHECK→COMPLETE`，不能再因合法但时序错误的新SEQ从后续状态跳回NAV/ALIGN。依赖Location的搜索、重捕获、NAV起步、ALIGN和返中转向统一采用1500 ms恢复窗：短暂失效停车，持续失效才报`POSE_TIMEOUT`。
+- NAV末端比例由50%降为20%，并设置120 mm/s最低有效速度：NAV由800降到160 mm/s，RETURN由500降到120 mm/s，NAV通信宽限期也不低于120 mm/s，避免低到无法克服静摩擦。
+- SEARCH快速切换相机角度后的300 ms稳定期不再锁定视觉目标；APPROACH丢失恢复的慢速逐度扫描仍持续接收目标。相机没有位置反馈，LCD的Angle是命令角度，300 ms只能作为机械稳定余量。
+- 对RDK `c576447`新增一份一次性整合补丁`docs/rdk_patches/0003-rdk-navigation-delivery-rollup.patch`：包含DISTANCE_DONE消费、无碰撞CHECK、到达条件锁存、默认T265静止容差15→25 mm和对应回归测试。旧0001/0002仅保留便于逐项追溯，现场优先应用0003，不要重复叠加。
