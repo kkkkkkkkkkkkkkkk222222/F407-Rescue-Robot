@@ -196,8 +196,6 @@ static void task_enter(TaskState next, uint32_t now_ms)
     start_reverse_path_mm = pose.path_mm;
     start_target_heading_deg = task_wrap_angle(
         (float)pose.heading_mdeg * 0.001f + APP_START_TURN_DEG);
-    Lift_SetTravelPosition();
-    (void)Claw_Open(now_ms);
   } else if (next == TASK_SEARCH) {
     const VisionData vision = Vision_GetSnapshot();
     Camera_SetAngle(APP_SEARCH_CAMERA_ANGLE);
@@ -374,7 +372,6 @@ static void task_process_start(uint32_t now_ms)
     return;
   }
 
-  (void)Claw_Open(now_ms);
   const uint32_t travelled_mm = pose.path_mm - start_reverse_path_mm;
   if (travelled_mm + APP_START_REVERSE_TOLERANCE_MM >=
       APP_START_REVERSE_DISTANCE_MM) {
@@ -388,6 +385,16 @@ static void task_process_start(uint32_t now_ms)
   const float speed_mm_s =
       (remaining_mm <= APP_START_REVERSE_SLOW_REMAINING_MM) ?
       APP_START_REVERSE_SLOW_SPEED_MM_S : APP_START_REVERSE_SPEED_MM_S;
+
+  /* Keep every mechanism folded inside the obstacle-zone clearance. */
+  if (travelled_mm < APP_START_CLEARANCE_DISTANCE_MM) {
+    (void)Motor_MoveAngle(speed_mm_s, 180.0f);
+    task_status.motors_active = true;
+    return;
+  }
+
+  Lift_SetTravelPosition();
+  (void)Claw_Open(now_ms);
   const float heading_deg = (float)pose.heading_mdeg * 0.001f;
   float heading_error = task_wrap_angle(start_target_heading_deg - heading_deg);
   if (heading_error <= -179.9f) {
@@ -402,8 +409,8 @@ static void task_process_start(uint32_t now_ms)
     yaw_mm_s = 0.0f;
   }
 
-  /* Keep the 1.70 m path straight on the floor while rotating toward the
-   * final heading. Claws open in parallel during the same travel segment. */
+  /* Outside the obstacle zone, keep the remaining path straight on the floor
+   * while rotating toward the final heading and opening both claws. */
   if (!Motor_MoveSpin(speed_mm_s, 180.0f, yaw_mm_s)) {
     task_stop(TASK_FAULT_MOTOR, now_ms);
     return;
