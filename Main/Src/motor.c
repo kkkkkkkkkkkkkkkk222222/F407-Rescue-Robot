@@ -36,6 +36,7 @@ typedef struct {
   bool waiting_for_stop;
   float target_mm;
   float max_speed_mm_s;
+  float end_speed_mm_s;
   float current_speed_mm_s;
   float slowdown_start_mm;
   float last_progress_mm;
@@ -565,9 +566,6 @@ static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
     }
   }
 
-  const float minimum_speed_mm_s =
-      (distance_move.max_speed_mm_s < APP_GO_DISTANCE_MIN_SPEED_MM_S) ?
-      distance_move.max_speed_mm_s : APP_GO_DISTANCE_MIN_SPEED_MM_S;
   float requested_speed_mm_s = distance_move.max_speed_mm_s;
 
   if (remaining_mm < distance_move.slowdown_start_mm) {
@@ -585,8 +583,8 @@ static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
     } else if (ratio > 1.0f) {
       ratio = 1.0f;
     }
-    requested_speed_mm_s = minimum_speed_mm_s +
-        (distance_move.max_speed_mm_s - minimum_speed_mm_s) * ratio;
+    requested_speed_mm_s = distance_move.end_speed_mm_s +
+        (distance_move.max_speed_mm_s - distance_move.end_speed_mm_s) * ratio;
   }
 
   const float rate_mm_s2 =
@@ -828,6 +826,7 @@ void Motor_Init(void)
   distance_move.waiting_for_stop = false;
   distance_move.target_mm = 0.0f;
   distance_move.max_speed_mm_s = APP_GO_DISTANCE_SPEED_MM_S;
+  distance_move.end_speed_mm_s = APP_GO_DISTANCE_MIN_SPEED_MM_S;
   distance_move.current_speed_mm_s = 0.0f;
   distance_move.slowdown_start_mm = 0.0f;
   distance_move.last_progress_mm = 0.0f;
@@ -1018,12 +1017,36 @@ void Motor_SetSpeed(float target_speed, uint8_t id)
   motor_leave_critical(primask);
 }
 
-MotorDistanceStatus Motor_MoveDistance(float distance_m,
-                                       float max_speed_mm_s)
+static MotorDistanceStatus motor_move_distance(float distance_m,
+                                               float max_speed_mm_s,
+                                               float slowdown_mm,
+                                               float end_speed_mm_s,
+                                               bool limit_slowdown_to_half)
 {
   const uint32_t primask = motor_enter_critical();
   if (distance_move.status != MOTOR_DISTANCE_IDLE) {
     const MotorDistanceStatus status = distance_move.status;
+    if ((status == MOTOR_DISTANCE_RUNNING) &&
+        isfinite(max_speed_mm_s) && isfinite(slowdown_mm) &&
+        isfinite(end_speed_mm_s) && (max_speed_mm_s > 0.0f) &&
+        (max_speed_mm_s <= (float)MOTOR_MAX_SPEED) &&
+        (end_speed_mm_s > 0.0f) &&
+        (end_speed_mm_s <= max_speed_mm_s) &&
+        (slowdown_mm > APP_GO_DISTANCE_TOLERANCE_MM)) {
+      if (limit_slowdown_to_half) {
+        const float half_distance =
+            motor_abs_float(distance_move.target_mm) * 0.5f;
+        if (slowdown_mm > half_distance) {
+          slowdown_mm = half_distance;
+        }
+      }
+      if (slowdown_mm <= APP_GO_DISTANCE_TOLERANCE_MM) {
+        slowdown_mm = APP_GO_DISTANCE_TOLERANCE_MM + 1.0f;
+      }
+      distance_move.max_speed_mm_s = max_speed_mm_s;
+      distance_move.end_speed_mm_s = end_speed_mm_s;
+      distance_move.slowdown_start_mm = slowdown_mm;
+    }
     motor_leave_critical(primask);
     return status;
   }
@@ -1032,8 +1055,12 @@ MotorDistanceStatus Motor_MoveDistance(float distance_m,
     return MOTOR_DISTANCE_INVALID;
   }
   if (!isfinite(distance_m) || !isfinite(max_speed_mm_s) ||
+      !isfinite(slowdown_mm) || !isfinite(end_speed_mm_s) ||
       (max_speed_mm_s <= 0.0f) ||
-      (max_speed_mm_s > (float)MOTOR_MAX_SPEED)) {
+      (max_speed_mm_s > (float)MOTOR_MAX_SPEED) ||
+      (end_speed_mm_s <= 0.0f) ||
+      (end_speed_mm_s > max_speed_mm_s) ||
+      (slowdown_mm <= APP_GO_DISTANCE_TOLERANCE_MM)) {
     motor_leave_critical(primask);
     return MOTOR_DISTANCE_INVALID;
   }
@@ -1062,13 +1089,14 @@ MotorDistanceStatus Motor_MoveDistance(float distance_m,
   const float absolute_distance = motor_abs_float(distance_mm);
   distance_move.target_mm = distance_mm;
   distance_move.max_speed_mm_s = max_speed_mm_s;
+  distance_move.end_speed_mm_s = end_speed_mm_s;
   distance_move.current_speed_mm_s = 0.0f;
   distance_move.start_m1_count = 0;
   distance_move.start_m2_count = 0;
   distance_move.target_yaw_mdeg = 0;
-  distance_move.slowdown_start_mm = APP_GO_DISTANCE_SLOWDOWN_MM *
-      max_speed_mm_s / APP_GO_DISTANCE_SPEED_MM_S;
-  if (distance_move.slowdown_start_mm > (absolute_distance * 0.5f)) {
+  distance_move.slowdown_start_mm = slowdown_mm;
+  if (limit_slowdown_to_half &&
+      (distance_move.slowdown_start_mm > (absolute_distance * 0.5f))) {
     distance_move.slowdown_start_mm = absolute_distance * 0.5f;
   }
   if (distance_move.slowdown_start_mm <= APP_GO_DISTANCE_TOLERANCE_MM) {
@@ -1084,6 +1112,27 @@ MotorDistanceStatus Motor_MoveDistance(float distance_m,
   motor_update_distance_move(encoder);
   motor_leave_critical(primask);
   return MOTOR_DISTANCE_RUNNING;
+}
+
+MotorDistanceStatus Motor_MoveDistance(float distance_m,
+                                       float max_speed_mm_s)
+{
+  const float end_speed_mm_s =
+      (max_speed_mm_s < APP_GO_DISTANCE_MIN_SPEED_MM_S) ?
+      max_speed_mm_s : APP_GO_DISTANCE_MIN_SPEED_MM_S;
+  const float slowdown_mm = APP_GO_DISTANCE_SLOWDOWN_MM *
+      max_speed_mm_s / APP_GO_DISTANCE_SPEED_MM_S;
+  return motor_move_distance(distance_m, max_speed_mm_s, slowdown_mm,
+                             end_speed_mm_s, true);
+}
+
+MotorDistanceStatus Motor_MoveDistanceLinear(float distance_m,
+                                             float max_speed_mm_s,
+                                             float slowdown_mm,
+                                             float end_speed_mm_s)
+{
+  return motor_move_distance(distance_m, max_speed_mm_s, slowdown_mm,
+                             end_speed_mm_s, false);
 }
 
 MotorTurnStatus Motor_TurnAngle(float angle_deg)

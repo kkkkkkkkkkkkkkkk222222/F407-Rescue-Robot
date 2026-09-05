@@ -654,6 +654,7 @@ static const char *task_command_name(uint8_t command, bool received)
     case VISION_CMD_ENTER_SAFE_ZONE:   return "ENTER";
     case VISION_CMD_TASK_COMPLETE:     return "DONE";
     case VISION_CMD_ABORT:             return "ABORT";
+    case VISION_CMD_RETURN_CENTER:      return "RETURN";
     default:                           return "INVALID";
   }
 }
@@ -701,18 +702,27 @@ static void draw_task(const LCDDashboard *dashboard)
                    task.gripper_closed ? "OK" : "WAIT",
                    task.acknowledged_sequence);
   } else if ((task.state == TASK_NAVIGATE) ||
-             (task.state == TASK_ALIGN_SAFE_ZONE)) {
+             (task.state == TASK_ALIGN_SAFE_ZONE) ||
+             (task.state == TASK_FACE_FIELD_CENTER)) {
     if (vision->mission.received &&
         (vision->mission.command != VISION_CMD_STOP)) {
-      uint32_t command_age_ms = dashboard->now_ms - vision->mission.tick_ms;
-      if (command_age_ms > 9999U) {
-        command_age_ms = 9999U;
+      if ((vision->mission.flags & VISION_CMD_DISTANCE_VALID) != 0U) {
+        const int distance_mm = (vision->mission.target_x_mm >= 0) ?
+            vision->mission.target_x_mm : 0;
+        (void)snprintf(text, sizeof(text), "H:%03u D:%04d",
+                       vision->mission.heading_cdeg / 100U, distance_mm);
+      } else {
+        uint32_t command_age_ms = dashboard->now_ms -
+                                  vision->mission.tick_ms;
+        if (command_age_ms > 9999U) {
+          command_age_ms = 9999U;
+        }
+        (void)snprintf(text, sizeof(text), "H:%03u AGE:%04lu",
+                       vision->mission.heading_cdeg / 100U,
+                       (unsigned long)command_age_ms);
       }
-      (void)snprintf(text, sizeof(text), "H:%03u AGE:%04lu",
-                     vision->mission.heading_cdeg / 100U,
-                     (unsigned long)command_age_ms);
     } else {
-      (void)strcpy(text, "H:--- AGE:----");
+      (void)strcpy(text, "H:--- D:----");
     }
   } else if (report_fresh) {
     (void)snprintf(text, sizeof(text), "X:%04u Y:%04u",

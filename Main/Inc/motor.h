@@ -34,6 +34,11 @@ void Motor_SetSpeed(float target_speed, uint8_t id);
 /* Encoder distance control with IMU heading hold; positive is forward. */
 MotorDistanceStatus Motor_MoveDistance(float distance_m,
                                        float max_speed_mm_s);
+/* Encoder distance control with a linear terminal speed profile. */
+MotorDistanceStatus Motor_MoveDistanceLinear(float distance_m,
+                                             float max_speed_mm_s,
+                                             float slowdown_mm,
+                                             float end_speed_mm_s);
 MotorTurnStatus Motor_TurnAngle(float angle_deg);
 /* yaw_tangent_mm_s is R*omega, so all three inputs use mm/s. */
 void Motor_Move(float forward_mm_s, float lateral_mm_s,

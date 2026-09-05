@@ -168,7 +168,8 @@
 #define APP_MATCH_TIME_S                 180U
 #define APP_MATCH_TIME_MS                (APP_MATCH_TIME_S * 1000U)
 #define APP_START_REVERSE_DISTANCE_MM  1700U
-#define APP_START_CLEARANCE_DISTANCE_MM  500U
+#define APP_START_CLEARANCE_DISTANCE_M   0.60f
+#define APP_START_CLEARANCE_SPEED_MM_S  700.0f
 #define APP_START_REVERSE_SPEED_MM_S    850.0f
 #define APP_START_REVERSE_SLOW_SPEED_MM_S 160.0f
 #define APP_START_REVERSE_SLOW_REMAINING_MM 100U
@@ -246,14 +247,11 @@
 #define APP_GRAB_SCAN_ROTATE_MM_S        100.0f
 #define APP_NAV_FAST_SPEED_MM_S          800.0f
 #define APP_NAV_SLOW_SPEED_MM_S          250.0f
-#define APP_NAV_SLOW_DISTANCE_MM         500.0f
-#define APP_NAV_TARGET_HOLD_MM           100.0f
+#define APP_NAV_LINEAR_SLOWDOWN_MM       300.0f
+#define APP_NAV_END_SPEED_RATIO            0.5f
 #define APP_NAV_HEADING_TOLERANCE_DEG      2.0f
 #define APP_NAV_REALIGN_DEG                7.0f
 #define APP_NAV_TURN_SETTLE_MS            100U
-#define APP_NAV_PROGRESS_MM                20.0f
-#define APP_NAV_TARGET_CHANGE_MM           50
-#define APP_NAV_NO_PROGRESS_MS           1500U
 #define APP_LIFT_START_ANGLE              55U
 #define APP_LIFT_TRAVEL_ANGLE             85U
 #define APP_RAM_BACK_DISTANCE_M            0.30f
