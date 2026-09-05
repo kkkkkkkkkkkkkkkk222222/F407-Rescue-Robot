@@ -169,14 +169,13 @@
 #define APP_MATCH_TIME_MS                (APP_MATCH_TIME_S * 1000U)
 #define APP_START_REVERSE_DISTANCE_MM  1700U
 #define APP_START_REVERSE_SPEED_MM_S    850.0f
-#define APP_START_REVERSE_MID_SPEED_MM_S 350.0f
 #define APP_START_REVERSE_SLOW_SPEED_MM_S 160.0f
-#define APP_START_REVERSE_MID_REMAINING_MM 300U
 #define APP_START_REVERSE_SLOW_REMAINING_MM 100U
 #define APP_START_REVERSE_TOLERANCE_MM   10U
-#define APP_START_BRAKE_WAIT_MS          150U
 #define APP_START_TURN_DEG               180.0f
-#define APP_START_SCAN_WAIT_MS          5000U
+#define APP_START_TURN_KP_MM_S_PER_DEG     2.2f
+#define APP_START_TURN_MAX_MM_S          380.0f
+#define APP_START_TURN_TOLERANCE_DEG       3.0f
 #define APP_TARGET_WAIT_MS               700U
 #define APP_START_TIMEOUT_MS           30000U
 /* Temporary handoff switch: keep the original pile-scatter states available,

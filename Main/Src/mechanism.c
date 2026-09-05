@@ -17,9 +17,9 @@ static uint8_t claw_step;
 static uint32_t claw_step_ms;
 static bool claw_done;
 
-static bool claw_move(ClawAction action, uint32_t now_ms,
-                      uint8_t first_servo, uint8_t first_angle,
-                      uint8_t second_servo, uint8_t second_angle)
+static bool claw_move_sequential(ClawAction action, uint32_t now_ms,
+                                 uint8_t first_servo, uint8_t first_angle,
+                                 uint8_t second_servo, uint8_t second_angle)
 {
   if (claw_action != action) {
     claw_action = action;
@@ -46,6 +46,25 @@ static bool claw_move(ClawAction action, uint32_t now_ms,
 
   claw_done = true;
   return true;
+}
+
+static bool claw_move_together(ClawAction action, uint32_t now_ms,
+                               uint8_t left_angle, uint8_t right_angle,
+                               uint32_t wait_ms)
+{
+  if (claw_action != action) {
+    claw_action = action;
+    claw_step_ms = now_ms;
+    claw_done = false;
+    Servo_SetAngle(4U, left_angle);
+    Servo_SetAngle(2U, right_angle);
+    return false;
+  }
+
+  if (!claw_done && ((uint32_t)(now_ms - claw_step_ms) >= wait_ms)) {
+    claw_done = true;
+  }
+  return claw_done;
 }
 
 void Mechanism_Init(void)
@@ -88,19 +107,19 @@ void Lift_SetTravelPosition(void)
 
 bool Claw_Open(uint32_t now_ms)
 {
-  /* Move the left claw clear before opening the right claw. */
-  return claw_move(CLAW_ACTION_OPEN, now_ms, 4U, 128U, 2U, 52U);
+  return claw_move_together(CLAW_ACTION_OPEN, now_ms, 128U, 52U, 1000U);
 }
 
 bool Claw_Retract(uint32_t now_ms)
 {
   /* Fold the left claw first, then place the right claw on the outside. */
-  return claw_move(CLAW_ACTION_RETRACT, now_ms, 4U, 23U, 2U, 147U);
+  return claw_move_sequential(CLAW_ACTION_RETRACT, now_ms,
+                              4U, 23U, 2U, 147U);
 }
 
 bool Claw_Touch(uint32_t now_ms)
 {
-  /* Retract leaves the right claw (servo 2) outside the left claw. Move the
-   * outside claw into its touch position before moving servo 4. */
-  return claw_move(CLAW_ACTION_TOUCH, now_ms, 2U, 100U, 4U, 80U);
+  /* Both claws move together, but keep the existing two-second confirmation
+   * window before GRIPPER_CLOSED is reported to the RDK. */
+  return claw_move_together(CLAW_ACTION_TOUCH, now_ms, 80U, 100U, 2000U);
 }

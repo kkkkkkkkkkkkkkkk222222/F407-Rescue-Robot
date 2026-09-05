@@ -11,14 +11,6 @@
 #include "pid.h"
 #include "vision.h"
 
-typedef enum {
-  START_EXIT = 0,
-  START_BRAKE,
-  START_TOUCH_CLAW,
-  START_TURN,
-  START_SETTLE
-} StartStep;
-
 typedef struct {
   int32_t last_heading_mdeg;
   uint32_t accumulated_mdeg;
@@ -44,7 +36,6 @@ static volatile TaskStatus task_status;
 static Pid_t steering_pid;
 static Pid_t camera_pid;
 static TaskState state;
-static StartStep start_step;
 static TurnTracker turn_tracker;
 static NavProgress nav_progress;
 static uint32_t state_started_ms;
@@ -57,6 +48,7 @@ static uint32_t tracking_tick_ms;
 static uint8_t tracking_sequence;
 static uint8_t mission_sequence;
 static uint32_t start_reverse_path_mm;
+static float start_target_heading_deg;
 static uint32_t search_entry_report_generation;
 static bool initialized;
 static bool initial_claw_ready;
@@ -200,8 +192,12 @@ static void task_enter(TaskState next, uint32_t now_ms)
   step_started_ms = now_ms;
 
   if (next == TASK_START) {
-    start_step = START_EXIT;
-    start_reverse_path_mm = Location_GetPose().path_mm;
+    const LocationPose pose = Location_GetPose();
+    start_reverse_path_mm = pose.path_mm;
+    start_target_heading_deg = task_wrap_angle(
+        (float)pose.heading_mdeg * 0.001f + APP_START_TURN_DEG);
+    Lift_SetTravelPosition();
+    (void)Claw_Open(now_ms);
   } else if (next == TASK_SEARCH) {
     const VisionData vision = Vision_GetSnapshot();
     Camera_SetAngle(APP_SEARCH_CAMERA_ANGLE);
@@ -227,9 +223,9 @@ static void task_enter(TaskState next, uint32_t now_ms)
   } else if ((next == TASK_SCATTER_POSITIVE) ||
              (next == TASK_SCATTER_NEGATIVE)) {
     task_reset_turn_tracker();
-  } else if (next == TASK_WAIT_NAVIGATION) {
-    Camera_SetAngle(90U);
-    camera_angle = 90.0f;
+  } else if (next == TASK_EXIT_SAFE_ZONE) {
+    Camera_SetAngle(APP_SEARCH_CAMERA_ANGLE);
+    camera_angle = (float)APP_SEARCH_CAMERA_ANGLE;
   } else if ((next == TASK_NAVIGATE) ||
              (next == TASK_ALIGN_SAFE_ZONE) ||
              (next == TASK_FACE_FIELD_CENTER)) {
@@ -269,6 +265,7 @@ static void task_initialize(uint32_t now_ms)
   tracking_tick_ms = 0U;
   mission_sequence = 0U;
   start_reverse_path_mm = 0U;
+  start_target_heading_deg = 0.0f;
   search_entry_report_generation = 0U;
   initial_claw_ready = false;
   match_started = false;
@@ -371,60 +368,47 @@ static void task_process_start(uint32_t now_ms)
     return;
   }
 
-  if (start_step == START_EXIT) {
-    const LocationPose pose = Location_GetPose();
-    if (!pose.valid) {
-      task_stop(TASK_FAULT_POSE_TIMEOUT, now_ms);
-      return;
-    }
-    const uint32_t travelled_mm = pose.path_mm - start_reverse_path_mm;
-    if (travelled_mm + APP_START_REVERSE_TOLERANCE_MM >=
-        APP_START_REVERSE_DISTANCE_MM) {
-      Motor_Stop();
-      task_status.motors_active = false;
-      start_step = START_BRAKE;
-      step_started_ms = now_ms;
-    } else {
-      const uint32_t remaining_mm =
-          APP_START_REVERSE_DISTANCE_MM - travelled_mm;
-      float speed_mm_s = APP_START_REVERSE_SPEED_MM_S;
-      if (remaining_mm <= APP_START_REVERSE_SLOW_REMAINING_MM) {
-        speed_mm_s = APP_START_REVERSE_SLOW_SPEED_MM_S;
-      } else if (remaining_mm <= APP_START_REVERSE_MID_REMAINING_MM) {
-        speed_mm_s = APP_START_REVERSE_MID_SPEED_MM_S;
-      }
-      /* 180 degrees means body-backward. Motor_MoveAngle records the current
-       * IMU yaw when this segment starts and continuously holds that yaw. */
-      (void)Motor_MoveAngle(speed_mm_s, 180.0f);
-      task_status.motors_active = true;
-    }
-  } else if (start_step == START_BRAKE) {
-    if ((uint32_t)(now_ms - step_started_ms) >= APP_START_BRAKE_WAIT_MS) {
-      Lift_SetTravelPosition();
-      start_step = START_TOUCH_CLAW;
-      step_started_ms = now_ms;
-    }
-  } else if (start_step == START_TOUCH_CLAW) {
-    if (Claw_Touch(now_ms)) {
-      start_step = START_TURN;
-      step_started_ms = now_ms;
-    }
-  } else if (start_step == START_TURN) {
-    const MotorTurnStatus result = Motor_TurnAngle(APP_START_TURN_DEG);
-    task_status.motors_active = result == MOTOR_TURN_RUNNING;
-    if (result == MOTOR_TURN_DONE) {
-      Motor_Stop();
-      task_status.motors_active = false;
-      start_step = START_SETTLE;
-      step_started_ms = now_ms;
-    } else if ((result == MOTOR_TURN_FAULT) ||
-               (result == MOTOR_TURN_INVALID)) {
-      task_stop(TASK_FAULT_MOTOR, now_ms);
-    }
-  } else if ((uint32_t)(now_ms - step_started_ms) >=
-             APP_START_SCAN_WAIT_MS) {
-    task_enter(TASK_OPEN_CLAW, now_ms);
+  const LocationPose pose = Location_GetPose();
+  if (!pose.valid) {
+    task_stop(TASK_FAULT_POSE_TIMEOUT, now_ms);
+    return;
   }
+
+  (void)Claw_Open(now_ms);
+  const uint32_t travelled_mm = pose.path_mm - start_reverse_path_mm;
+  if (travelled_mm + APP_START_REVERSE_TOLERANCE_MM >=
+      APP_START_REVERSE_DISTANCE_MM) {
+    Motor_Stop();
+    task_status.motors_active = false;
+    task_enter(TASK_OPEN_CLAW, now_ms);
+    return;
+  }
+
+  const uint32_t remaining_mm = APP_START_REVERSE_DISTANCE_MM - travelled_mm;
+  const float speed_mm_s =
+      (remaining_mm <= APP_START_REVERSE_SLOW_REMAINING_MM) ?
+      APP_START_REVERSE_SLOW_SPEED_MM_S : APP_START_REVERSE_SPEED_MM_S;
+  const float heading_deg = (float)pose.heading_mdeg * 0.001f;
+  float heading_error = task_wrap_angle(start_target_heading_deg - heading_deg);
+  if (heading_error <= -179.9f) {
+    heading_error = 180.0f;
+  }
+  float yaw_mm_s = heading_error * APP_START_TURN_KP_MM_S_PER_DEG;
+  if (yaw_mm_s > APP_START_TURN_MAX_MM_S) {
+    yaw_mm_s = APP_START_TURN_MAX_MM_S;
+  } else if (yaw_mm_s < -APP_START_TURN_MAX_MM_S) {
+    yaw_mm_s = -APP_START_TURN_MAX_MM_S;
+  } else if (task_abs(heading_error) <= APP_START_TURN_TOLERANCE_DEG) {
+    yaw_mm_s = 0.0f;
+  }
+
+  /* Keep the 1.70 m path straight on the floor while rotating toward the
+   * final heading. Claws open in parallel during the same travel segment. */
+  if (!Motor_MoveSpin(speed_mm_s, 180.0f, yaw_mm_s)) {
+    task_stop(TASK_FAULT_MOTOR, now_ms);
+    return;
+  }
+  task_status.motors_active = true;
 }
 
 static void task_process_pile_approach(uint32_t now_ms)
