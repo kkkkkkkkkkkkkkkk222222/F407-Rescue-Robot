@@ -26,7 +26,6 @@ typedef struct {
 
 typedef enum {
   SEARCH_SWEEP_HIGH = 0,
-  SEARCH_CAMERA_TO_LOW,
   SEARCH_SWEEP_LOW,
   SEARCH_REALIGN,
   SEARCH_ADVANCE
@@ -70,6 +69,7 @@ static bool steering_active;
 static bool nav_ready;
 static bool scan_report_gate_open;
 static bool reposition_heading_valid;
+static bool search_start_low;
 static bool start_clearance_done;
 static bool distance_command_done;
 static bool distance_command_started;
@@ -205,10 +205,14 @@ static void task_enter(TaskState next, uint32_t now_ms)
     start_clearance_done = false;
   } else if (next == TASK_SEARCH) {
     const VisionData vision = Vision_GetSnapshot();
-    Camera_SetAngle(APP_SEARCH_CAMERA_ANGLE);
-    camera_angle = (float)APP_SEARCH_CAMERA_ANGLE;
+    const uint8_t start_angle = search_start_low ?
+        APP_SEARCH_LOW_CAMERA_ANGLE : APP_SEARCH_CAMERA_ANGLE;
+    Camera_SetAngle(start_angle);
+    camera_angle = (float)start_angle;
     task_status.found = false;
-    search_phase = SEARCH_SWEEP_HIGH;
+    search_phase = search_start_low ?
+        SEARCH_SWEEP_LOW : SEARCH_SWEEP_HIGH;
+    search_start_low = false;
     scan_entry_report_generation = vision.report_generation;
     scan_report_gate_open = false;
     reposition_heading_valid = false;
@@ -288,6 +292,7 @@ static void task_initialize(uint32_t now_ms)
   nav_ready = false;
   scan_report_gate_open = false;
   reposition_heading_valid = false;
+  search_start_low = false;
   start_clearance_done = false;
   distance_command_done = false;
   distance_command_started = false;
@@ -640,7 +645,9 @@ static void task_process_search(const VisionData *vision, uint32_t now_ms)
       if (task_full_turn_reached()) {
         Motor_Stop();
         task_status.motors_active = false;
-        search_phase = SEARCH_CAMERA_TO_LOW;
+        Camera_SetAngle(APP_SEARCH_LOW_CAMERA_ANGLE);
+        camera_angle = (float)APP_SEARCH_LOW_CAMERA_ANGLE;
+        search_phase = SEARCH_SWEEP_LOW;
         task_reset_turn_tracker();
         step_started_ms = now_ms;
         return;
@@ -650,18 +657,20 @@ static void task_process_search(const VisionData *vision, uint32_t now_ms)
       return;
     }
 
-    case SEARCH_CAMERA_TO_LOW:
-      if (task_scan_camera_to(APP_SEARCH_LOW_CAMERA_ANGLE, now_ms)) {
-        search_phase = SEARCH_SWEEP_LOW;
-        task_reset_turn_tracker();
-        step_started_ms = now_ms;
-      }
-      return;
-
     case SEARCH_SWEEP_LOW:
       if ((uint32_t)(now_ms - step_started_ms) <
           APP_CAMERA_SCAN_ENDPOINT_HOLD_MS) {
         return;
+      }
+      if (!reposition_heading_valid) {
+        const LocationPose pose = Location_GetPose();
+        if (!pose.valid) {
+          Motor_Stop();
+          task_status.motors_active = false;
+          return;
+        }
+        reposition_heading_deg = (float)pose.heading_mdeg * 0.001f;
+        reposition_heading_valid = true;
       }
       if (task_full_turn_reached()) {
         Motor_Stop();
@@ -1185,6 +1194,7 @@ static void task_process_face_center(const VisionData *vision,
     return;
   }
   if (distance_command_done) {
+    search_start_low = true;
     task_enter(TASK_SEARCH, now_ms);
     return;
   }

@@ -1,0 +1,81 @@
+diff --git a/mission_test/README.md b/mission_test/README.md
+--- a/mission_test/README.md
++++ b/mission_test/README.md
+@@ -92,8 +92,8 @@ RDK读取一次当前融合位置，计算指向原点的航向以及`当前位
+ `RETURN_CENTER`定距命令。F407到距中心600 mm的位置即恢复`SEARCH`，没必要驶到原点。
+ 
+ 发送`TASK_COMPLETE`必须同时满足：融合位姿有效、地图小车圆仍与本方安全区相交、融合位置在
+-半径15 mm范围内持续稳定0.8秒，并且F407已经进入前冲/撞送阶段。车体未接触安全区、仍在移动
+-或夹爪尚未张开时，RDK持续发送
++半径15 mm范围内持续稳定0.8秒，并且F407已经张开夹爪并进入`CHECK`静止放置阶段。车体未接触
++安全区、仍在移动或夹爪尚未张开时，RDK持续发送
+ `ENTER_SAFE_ZONE`，不会提前发送`TASK_COMPLETE`。
+ 
+ ## 围栏接触参考与现场调参
+diff --git a/mission_test/state_machine.py b/mission_test/state_machine.py
+--- a/mission_test/state_machine.py
++++ b/mission_test/state_machine.py
+@@ -43,7 +43,6 @@ CARGO_CLASSES = ("green_supply", "core_black", "danger_cyan", "injured_orange")
+ MATERIAL_CLASSES = frozenset(("green_supply", "core_black", "danger_cyan"))
+ STM_MODE_SEARCH = 3
+ STM_MODE_APPROACH = 4
+-STM_MODE_RAM_FORWARD = 14
+ STM_MODE_RAM_VERIFY = 15
+ STM_MODE_EXIT_SAFE_ZONE = 16
+ STM_MODE_FACE_FIELD_CENTER = 17
+@@ -368,11 +367,11 @@ class RescueMission:
+             return MissionOutput(self.state, None, command, f"对正安全区入口，角度误差{yaw_error:.1f}°")
+ 
+         if self.state == MissionState.ENTER_SAFE_ZONE:
+-            ram_delivery_active = (
++            delivery_verify_active = (
+                 stm.age_ms <= 250.0
+-                and stm.mode in {STM_MODE_RAM_FORWARD, STM_MODE_RAM_VERIFY}
++                and stm.mode == STM_MODE_RAM_VERIFY
+             )
+-            if ram_delivery_active:
++            if delivery_verify_active:
+                 stationary, stationary_s = self._stationary_at_safe_zone(pose)
+             else:
+                 self.delivery_stationary_started_s = None
+@@ -394,7 +393,7 @@ class RescueMission:
+                 self.state,
+                 report,
+                 self._waypoint_command(CMD_ENTER_SAFE_ZONE, self.safe_center, straight=True, heading=True),
+-                f"等待撞送阶段车体圆接触安全区并稳定{self.settings.delivery_stationary_s:.1f}s（当前{stationary_s:.2f}s）",
++                f"等待张爪放置阶段车体圆接触安全区并稳定{self.settings.delivery_stationary_s:.1f}s（当前{stationary_s:.2f}s）",
+             )
+ 
+         if self.state == MissionState.COMPLETE:
+diff --git a/mission_test/tests/test_state_machine.py b/mission_test/tests/test_state_machine.py
+--- a/mission_test/tests/test_state_machine.py
++++ b/mission_test/tests/test_state_machine.py
+@@ -140,23 +140,23 @@ def run_side(side: str, desired_y: int, desired_heading: int):
+     )
+     contact = PoseInput(True, 0.0, contact_y, desired_heading)
+     # Being stationary while the claw is only opening cannot prematurely
+-    # complete delivery; the F407 must have reached RAM_FORWARD/RAM_VERIFY.
++    # complete delivery; the F407 must have opened the claw and reached CHECK.
+     output = mission.step(VisionInput(), contact, Stm32Status(mode=12, age_ms=5))
+     clock.advance(2.0)
+     output = mission.step(VisionInput(), contact, Stm32Status(mode=12, age_ms=5))
+     assert output.state == MissionState.ENTER_SAFE_ZONE
+-    output = mission.step(VisionInput(), contact, Stm32Status(mode=14, age_ms=5))
++    output = mission.step(VisionInput(), contact, Stm32Status(mode=15, age_ms=5))
+     assert output.state == MissionState.ENTER_SAFE_ZONE
+     clock.advance(0.70)
+     moved = PoseInput(True, 0.016, contact_y, desired_heading)
+-    output = mission.step(VisionInput(), moved, Stm32Status(mode=14, age_ms=5))
++    output = mission.step(VisionInput(), moved, Stm32Status(mode=15, age_ms=5))
+     assert output.state == MissionState.ENTER_SAFE_ZONE
+     clock.advance(0.79)
+-    output = mission.step(VisionInput(), moved, Stm32Status(mode=14, age_ms=5))
++    output = mission.step(VisionInput(), moved, Stm32Status(mode=15, age_ms=5))
+     assert output.state == MissionState.ENTER_SAFE_ZONE
+     clock.advance(0.02)
+     output = mission.step(
+-        VisionInput(), moved, Stm32Status(mode=14, age_ms=5)
++        VisionInput(), moved, Stm32Status(mode=15, age_ms=5)
+     )
+     assert output.state == MissionState.COMPLETE
+     assert output.command.command == CMD_TASK_COMPLETE
