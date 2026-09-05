@@ -38,11 +38,13 @@ CMD_ALIGN_SAFE_ZONE = 0x04
 CMD_ENTER_SAFE_ZONE = 0x05
 CMD_TASK_COMPLETE = 0x06
 CMD_ABORT = 0x07
+CMD_RETURN_CENTER = 0x08
 
 CMD_VALID = 0x01
 CMD_DRIVE_STRAIGHT = 0x02
 CMD_USE_FINAL_HEADING = 0x04
 CMD_RED_SIDE = 0x08
+CMD_DISTANCE_VALID = 0x10
 
 
 def crc16_modbus(data: bytes) -> int:
@@ -215,9 +217,9 @@ def mission_frame(
 ) -> bytes:
     if command not in (CMD_STOP, CMD_GRAB_CONFIRMED, CMD_NAVIGATE_WAYPOINT,
                        CMD_ALIGN_SAFE_ZONE, CMD_ENTER_SAFE_ZONE,
-                       CMD_TASK_COMPLETE, CMD_ABORT):
+                       CMD_TASK_COMPLETE, CMD_ABORT, CMD_RETURN_CENTER):
         raise ValueError("invalid mission command")
-    if not flags & CMD_VALID or flags & 0xF0:
+    if not flags & CMD_VALID or flags & 0xE0:
         raise ValueError("invalid mission flags")
     if not -32768 <= target_x_mm <= 32767 or not -32768 <= target_y_mm <= 32767:
         raise ValueError("mission target must fit int16")

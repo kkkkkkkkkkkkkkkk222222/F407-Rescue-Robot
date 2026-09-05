@@ -264,6 +264,7 @@
 #define APP_RAM_VERIFY_WAIT_MS            600U
 #define APP_SAFE_EXIT_DISTANCE_M            0.45f
 #define APP_SAFE_EXIT_SPEED_MM_S          300.0f
+#define APP_RETURN_CENTER_SPEED_MM_S       500.0f
 
 /* This 1.8-inch 128x160 ST7735 panel exposes GRAM origin (0, 0). */
 #define APP_LCD_WIDTH       128U

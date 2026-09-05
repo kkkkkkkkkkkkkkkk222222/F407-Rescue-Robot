@@ -33,6 +33,15 @@ class VisionProtocolTests(unittest.TestCase):
             "A3 B3 12 10 02 80 02 00 01 5E 01 49 BC 23 C3",
         )
 
+    def test_each_single_cargo_class_uses_one_count_field(self) -> None:
+        for counts in (0x01, 0x04, 0x10, 0x40):
+            with self.subTest(counts=counts):
+                frame = protocol.report_frame(
+                    0x20 + counts.bit_length(), 640, 512, 0, counts,
+                    protocol.FLAG_FOUND | protocol.FLAG_CLASS_VALID,
+                )
+                self.assertEqual(protocol.parse_frame(frame)[2][6], counts)
+
     def test_no_target_payload_is_all_zero(self) -> None:
         frame = protocol.report_frame(0x11, 0, 0, 0, 0, 0)
         self.assertEqual(frame[4:12], bytes(8))
@@ -59,6 +68,24 @@ class VisionProtocolTests(unittest.TestCase):
             frame.hex(" ").upper(),
             "A3 B3 18 20 03 0B 00 00 03 B6 23 28 6B E0 C3",
         )
+
+    def test_heading_distance_and_return_commands(self) -> None:
+        flags = (
+            protocol.CMD_VALID | protocol.CMD_DRIVE_STRAIGHT |
+            protocol.CMD_USE_FINAL_HEADING | protocol.CMD_DISTANCE_VALID
+        )
+        outward = protocol.mission_frame(
+            0x21, protocol.CMD_NAVIGATE_WAYPOINT, flags,
+            1374, 0, 12821,
+        )
+        returning = protocol.mission_frame(
+            0x22, protocol.CMD_RETURN_CENTER, flags,
+            480, 0, 26915,
+        )
+        self.assertEqual(protocol.parse_frame(outward)[2][2:6],
+                         bytes.fromhex("05 5E 00 00"))
+        self.assertEqual(protocol.parse_frame(returning)[2][2:6],
+                         bytes.fromhex("01 E0 00 00"))
 
     def test_stm_status_matches_upper_computer(self) -> None:
         frame = protocol.stm_status_frame(9, 0x09, 2, 7350, 8, 0)

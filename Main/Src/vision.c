@@ -188,7 +188,7 @@ static bool vision_mission_code_valid(uint8_t command)
 {
   return (command == VISION_CMD_STOP) ||
          ((command >= VISION_CMD_GRAB_CONFIRMED) &&
-          (command <= VISION_CMD_ABORT));
+          (command <= VISION_CMD_RETURN_CENTER));
 }
 
 static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
@@ -204,7 +204,7 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
   const uint16_t heading = vision_u16_be(&payload[6]);
   if (!vision_mission_code_valid(code) ||
       ((flags & VISION_CMD_VALID) == 0U) ||
-      ((flags & 0xF0U) != 0U) || (heading >= 36000U)) {
+      ((flags & 0xE0U) != 0U) || (heading >= 36000U)) {
     return;
   }
 

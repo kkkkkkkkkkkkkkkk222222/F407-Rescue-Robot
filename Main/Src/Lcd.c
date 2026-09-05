@@ -686,6 +686,9 @@ static void draw_task(const LCDDashboard *dashboard)
 
   if (dashboard->debug_mode) {
     (void)strcpy(text, "MODE:DEBUG");
+  } else if (task.remaining_s == UINT16_MAX) {
+    (void)snprintf(text, sizeof(text), "STATE:%s T:--",
+                   task_state_name(task.state));
   } else {
     (void)snprintf(text, sizeof(text), "STATE:%s T:%us",
                    task_state_name(task.state), task.remaining_s);
