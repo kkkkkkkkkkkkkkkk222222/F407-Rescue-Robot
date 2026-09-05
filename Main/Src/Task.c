@@ -1126,53 +1126,32 @@ static bool distance_failed(MotorDistanceStatus result)
          (result == MOTOR_DISTANCE_INVALID);
 }
 
-static bool ram_command_ok(const VisionMissionCommand *command,
-                           uint32_t now_ms)
+static bool delivery_enter_command_ok(const VisionMissionCommand *command,
+                                      uint32_t now_ms)
 {
   return Vision_MissionIsFresh(command, now_ms,
                                APP_MISSION_COMMAND_TIMEOUT_MS) &&
          (command->command == VISION_CMD_ENTER_SAFE_ZONE);
 }
 
-static void task_process_ram_move(const VisionMissionCommand *command,
-                                  float distance_m, float speed_mm_s,
-                                  uint32_t settle_ms, TaskState next,
-                                  uint32_t now_ms)
-{
-  if (!ram_command_ok(command, now_ms)) {
-    task_stop(TASK_FAULT_COMMAND_TIMEOUT, now_ms);
-    return;
-  }
-  if ((uint32_t)(now_ms - state_started_ms) < settle_ms) {
-    return;
-  }
-  const MotorDistanceStatus result =
-      Motor_MoveDistance(distance_m, speed_mm_s);
-  task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
-  if (result == MOTOR_DISTANCE_DONE) {
-    task_enter(next, now_ms);
-  } else if (distance_failed(result)) {
-    task_stop(TASK_FAULT_RAM, now_ms);
-  }
-}
-
-static void task_process_ram_verify(const VisionMissionCommand *command,
-                                    uint32_t now_ms)
+static void task_process_delivery_verify(
+    const VisionMissionCommand *command, uint32_t now_ms)
 {
   Motor_Stop();
   task_status.motors_active = false;
   if (!Vision_MissionIsFresh(command, now_ms,
-                             APP_MISSION_COMMAND_TIMEOUT_MS)) {
+                             APP_MISSION_COMMAND_TIMEOUT_MS) ||
+      ((command->command != VISION_CMD_ENTER_SAFE_ZONE) &&
+       (command->command != VISION_CMD_TASK_COMPLETE))) {
     task_stop(TASK_FAULT_COMMAND_TIMEOUT, now_ms);
     return;
   }
-  if ((uint32_t)(now_ms - state_started_ms) < APP_RAM_VERIFY_WAIT_MS) {
+  if ((uint32_t)(now_ms - state_started_ms) <
+      APP_DELIVERY_VERIFY_WAIT_MS) {
     return;
   }
-  if (command->command == VISION_CMD_ENTER_SAFE_ZONE) {
-    task_enter(TASK_RAM_BACK, now_ms);
-  } else {
-    task_stop(TASK_FAULT_COMMAND_TIMEOUT, now_ms);
+  if (command->command == VISION_CMD_TASK_COMPLETE) {
+    task_enter(TASK_EXIT_SAFE_ZONE, now_ms);
   }
 }
 
@@ -1321,17 +1300,12 @@ static void task_accept_mission(const VisionMissionCommand *command,
     task_enter(TASK_OPEN_FOR_RAM, now_ms);
   } else if ((command->command == VISION_CMD_ENTER_SAFE_ZONE) &&
              ((state == TASK_OPEN_FOR_RAM) ||
-              (state == TASK_RAM_BACK) ||
-              (state == TASK_RAM_FORWARD) ||
               (state == TASK_RAM_VERIFY))) {
     task_status.acknowledged_sequence = command->sequence;
   } else if ((command->command == VISION_CMD_TASK_COMPLETE) &&
              !task_status.gripper_closed &&
-             ((state == TASK_RAM_BACK) ||
-              (state == TASK_RAM_FORWARD) ||
-              (state == TASK_RAM_VERIFY))) {
+             (state == TASK_RAM_VERIFY)) {
     task_status.acknowledged_sequence = command->sequence;
-    task_enter(TASK_EXIT_SAFE_ZONE, now_ms);
   } else if ((command->command == VISION_CMD_RETURN_CENTER) &&
              (state == TASK_FACE_FIELD_CENTER)) {
     task_status.acknowledged_sequence = command->sequence;
@@ -1448,31 +1422,16 @@ void Task_Process(uint32_t now_ms)
       break;
 
     case TASK_OPEN_FOR_RAM:
-      if (!ram_command_ok(&vision.mission, now_ms)) {
+      if (!delivery_enter_command_ok(&vision.mission, now_ms)) {
         task_stop(TASK_FAULT_COMMAND_TIMEOUT, now_ms);
       } else if (Claw_Open(now_ms)) {
         task_status.gripper_closed = false;
-        task_enter(TASK_RAM_BACK, now_ms);
+        task_enter(TASK_RAM_VERIFY, now_ms);
       }
       break;
 
-    case TASK_RAM_BACK:
-      task_process_ram_move(&vision.mission,
-                            -APP_RAM_BACK_DISTANCE_M,
-                            APP_RAM_BACK_SPEED_MM_S,
-                            0U, TASK_RAM_FORWARD, now_ms);
-      break;
-
-    case TASK_RAM_FORWARD:
-      task_process_ram_move(&vision.mission,
-                            APP_RAM_FORWARD_DISTANCE_M,
-                            APP_RAM_FORWARD_SPEED_MM_S,
-                            APP_RAM_DIRECTION_SETTLE_MS,
-                            TASK_RAM_VERIFY, now_ms);
-      break;
-
     case TASK_RAM_VERIFY:
-      task_process_ram_verify(&vision.mission, now_ms);
+      task_process_delivery_verify(&vision.mission, now_ms);
       break;
 
     case TASK_EXIT_SAFE_ZONE:

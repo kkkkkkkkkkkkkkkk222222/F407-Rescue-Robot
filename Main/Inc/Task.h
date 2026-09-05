@@ -18,6 +18,7 @@ typedef enum {
   TASK_NAVIGATE,
   TASK_ALIGN_SAFE_ZONE,
   TASK_OPEN_FOR_RAM,
+  /* Reserved protocol values: collision delivery has been removed. */
   TASK_RAM_BACK,
   TASK_RAM_FORWARD,
   TASK_RAM_VERIFY,

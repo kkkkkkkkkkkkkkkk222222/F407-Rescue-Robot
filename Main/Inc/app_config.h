@@ -258,12 +258,7 @@
 #define APP_NAV_TURN_SETTLE_MS            100U
 #define APP_LIFT_START_ANGLE              55U
 #define APP_LIFT_TRAVEL_ANGLE             85U
-#define APP_RAM_BACK_DISTANCE_M            0.30f
-#define APP_RAM_BACK_SPEED_MM_S           250.0f
-#define APP_RAM_FORWARD_DISTANCE_M         0.55f
-#define APP_RAM_FORWARD_SPEED_MM_S        850.0f
-#define APP_RAM_DIRECTION_SETTLE_MS        200U
-#define APP_RAM_VERIFY_WAIT_MS            600U
+#define APP_DELIVERY_VERIFY_WAIT_MS       1200U
 #define APP_SAFE_EXIT_DISTANCE_M            0.45f
 #define APP_SAFE_EXIT_SPEED_MM_S          300.0f
 #define APP_RETURN_CENTER_SPEED_MM_S       500.0f
