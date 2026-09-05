@@ -1000,10 +1000,11 @@ static bool fused_pose_ready(const VisionFusedPose *pose, uint32_t now_ms)
          ((pose->status & VISION_POSE_T265_UPDATE_REJECTED) == 0U);
 }
 
-static bool turn_to(float desired_deg, float current_deg, uint32_t now_ms)
+static bool turn_to(float desired_deg, float current_deg,
+                    float tolerance_deg, uint32_t now_ms)
 {
   const float error_deg = task_wrap_angle(desired_deg - current_deg);
-  if (task_abs(error_deg) <= APP_NAV_HEADING_TOLERANCE_DEG) {
+  if (task_abs(error_deg) <= tolerance_deg) {
     Motor_Stop();
     nav_ready = true;
     step_started_ms = now_ms;
@@ -1103,10 +1104,11 @@ static void task_process_navigation(const VisionData *vision,
     if (nav_ready &&
         ((uint32_t)(now_ms - step_started_ms) >=
          APP_NAV_TURN_SETTLE_MS) &&
-        (task_abs(error_deg) >= APP_NAV_REALIGN_DEG)) {
+        (task_abs(error_deg) >= APP_ALIGN_REALIGN_DEG)) {
       nav_ready = false;
     }
-    if (!nav_ready && !turn_to(desired_deg, current_deg, now_ms)) {
+    if (!nav_ready && !turn_to(desired_deg, current_deg,
+                               APP_ALIGN_HEADING_TOLERANCE_DEG, now_ms)) {
       task_stop(TASK_FAULT_MOTOR, now_ms);
     } else if (nav_ready) {
       Motor_Stop();
@@ -1149,7 +1151,8 @@ static void task_process_navigation(const VisionData *vision,
       return;
     }
     if (!nav_ready) {
-      if (!turn_to(bearing_deg, heading_deg, now_ms)) {
+      if (!turn_to(bearing_deg, heading_deg,
+                   APP_NAV_HEADING_TOLERANCE_DEG, now_ms)) {
         task_stop(TASK_FAULT_MOTOR, now_ms);
       }
       return;
@@ -1262,7 +1265,8 @@ static void task_process_face_center(const VisionData *vision,
       return;
     }
     if (!nav_ready) {
-      if (!turn_to(center_bearing, pose_heading_deg, now_ms)) {
+      if (!turn_to(center_bearing, pose_heading_deg,
+                   APP_NAV_HEADING_TOLERANCE_DEG, now_ms)) {
         task_stop(TASK_FAULT_MOTOR, now_ms);
       }
       return;

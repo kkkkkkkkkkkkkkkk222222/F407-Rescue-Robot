@@ -256,6 +256,8 @@
 #define APP_NAV_MIN_END_SPEED_MM_S        120.0f
 #define APP_NAV_HEADING_TOLERANCE_DEG      2.0f
 #define APP_NAV_REALIGN_DEG                7.0f
+#define APP_ALIGN_HEADING_TOLERANCE_DEG    8.0f
+#define APP_ALIGN_REALIGN_DEG             12.0f
 #define APP_NAV_TURN_SETTLE_MS            100U
 #define APP_POSE_WAIT_TIMEOUT_MS          1500U
 #define APP_LIFT_START_ANGLE              55U
