@@ -252,7 +252,6 @@
 /* Native-resolution mission flow shared with shijue_fangan/mission_test. */
 #define APP_FUSED_POSE_TIMEOUT_MS        150U
 #define APP_MISSION_COMMAND_TIMEOUT_MS   250U
-#define APP_NAV_COMMAND_GRACE_MS         1000U
 #define APP_GRAB_VIEW_ANGLE              140U
 #define APP_GRAB_INITIAL_OBSERVE_MS      500U
 #define APP_GRAB_CAMERA_RAISE_STEP_DEG    10U
@@ -260,10 +259,17 @@
 #define APP_GRAB_RAISE_OBSERVE_MS       1000U
 #define APP_GRAB_SCAN_ROTATE_MM_S        100.0f
 #define APP_NAV_FAST_SPEED_MM_S          800.0f
-#define APP_NAV_SLOW_SPEED_MM_S          250.0f
 #define APP_NAV_LINEAR_SLOWDOWN_MM       300.0f
 #define APP_NAV_END_SPEED_RATIO            0.2f
 #define APP_NAV_MIN_END_SPEED_MM_S        120.0f
+#define APP_NAV_REMOTE_STOP_DISTANCE_MM     20U
+#define APP_NAV_REMOTE_RESUME_DISTANCE_MM   50U
+#define APP_NAV_REMOTE_MAX_DISTANCE_MM     5000U
+#define APP_NAV_REMOTE_PROGRESS_MM            2
+#define APP_NAV_REMOTE_PROGRESS_TIMEOUT_MS  500U
+#define APP_NAV_HEADING_KP_MM_S_PER_DEG      8.0f
+#define APP_NAV_HEADING_MIN_MM_S             80.0f
+#define APP_NAV_HEADING_MAX_MM_S            300.0f
 #define APP_NAV_HEADING_TOLERANCE_DEG      2.0f
 #define APP_NAV_REALIGN_DEG                7.0f
 #define APP_ALIGN_HEADING_TOLERANCE_DEG    8.0f

@@ -669,11 +669,6 @@ static const char *task_command_state(const LCDDashboard *dashboard)
                             APP_MISSION_COMMAND_TIMEOUT_MS)) {
     return "OK";
   }
-  if ((command->command == VISION_CMD_NAVIGATE_WAYPOINT) &&
-      Vision_MissionIsFresh(command, dashboard->now_ms,
-                            APP_NAV_COMMAND_GRACE_MS)) {
-    return "HOLD";
-  }
   return "TMO";
 }
 
