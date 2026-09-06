@@ -60,6 +60,8 @@ typedef struct {
   bool gripper_closed;
   bool motors_active;
   bool auto_approach;
+  bool nav_stale;
+  bool nav_done;
 } TaskStatus;
 
 void Task_Process(uint32_t now_ms);

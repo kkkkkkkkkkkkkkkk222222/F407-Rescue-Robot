@@ -267,9 +267,11 @@
 #define APP_NAV_REMOTE_MAX_DISTANCE_MM     5000U
 #define APP_NAV_REMOTE_PROGRESS_MM            2
 #define APP_NAV_REMOTE_PROGRESS_TIMEOUT_MS  500U
-#define APP_NAV_HEADING_KP_MM_S_PER_DEG      8.0f
-#define APP_NAV_HEADING_MIN_MM_S             80.0f
+#define APP_NAV_HEADING_KP_MM_S_PER_DEG     20.0f
 #define APP_NAV_HEADING_MAX_MM_S            300.0f
+#define APP_NAV_SPEED_ACCEL_MM_S2           1800.0f
+#define APP_NAV_SPEED_DECEL_MM_S2           3000.0f
+#define APP_NAV_YAW_ACCEL_MM_S2             1800.0f
 #define APP_NAV_HEADING_TOLERANCE_DEG      2.0f
 #define APP_NAV_REALIGN_DEG                7.0f
 #define APP_ALIGN_HEADING_TOLERANCE_DEG    8.0f

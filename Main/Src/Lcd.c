@@ -659,17 +659,24 @@ static const char *task_command_name(uint8_t command, bool received)
   }
 }
 
-static const char *task_command_state(const LCDDashboard *dashboard)
+static const char *task_command_state(const LCDDashboard *dashboard,
+                                      const TaskStatus *task)
 {
   const VisionMissionCommand *command = &dashboard->vision.mission;
   if (!command->received) {
     return task_uart_state(dashboard);
   }
-  if (Vision_MissionIsFresh(command, dashboard->now_ms,
-                            APP_MISSION_COMMAND_TIMEOUT_MS)) {
-    return "OK";
+  if (!Vision_MissionIsFresh(command, dashboard->now_ms,
+                             APP_MISSION_COMMAND_TIMEOUT_MS)) {
+    return "TMO";
   }
-  return "TMO";
+  if (task->nav_done) {
+    return "DONE";
+  }
+  if (task->nav_stale) {
+    return "STALE";
+  }
+  return "OK";
 }
 
 static void draw_task(const LCDDashboard *dashboard)
@@ -733,7 +740,7 @@ static void draw_task(const LCDDashboard *dashboard)
                                              task.last_command,
                      dashboard->debug_mode ? vision->mission.received :
                                              task.command_received),
-                 task_command_state(dashboard));
+                 task_command_state(dashboard, &task));
   dashboard_write(0U, 76U, 128U, text);
 
   if (dashboard->debug_mode) {
