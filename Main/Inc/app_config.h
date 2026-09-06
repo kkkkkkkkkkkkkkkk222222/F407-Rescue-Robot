@@ -208,7 +208,7 @@
 #define APP_VISION_MAX_Y                1023U
 #define APP_SEARCH_ROTATE_SPEED_MM_S     160.0f
 #define APP_SEARCH_FIELD_MARGIN_MM       200.0f
-#define APP_APPROACH_SPEED_MM_S          300.0f
+#define APP_APPROACH_SPEED_MM_S          350.0f
 #define APP_GRAB_MID_SPEED_MM_S          225.0f
 #define APP_GRAB_SLOW_SPEED_MM_S         125.0f
 #define APP_GRAB_MID_DISTANCE_MM         500U
