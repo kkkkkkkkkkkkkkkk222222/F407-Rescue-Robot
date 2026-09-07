@@ -252,5 +252,11 @@ RUN         停车并复位MCU，重新进入正常模式
 - `TASK_ALIGN_SAFE_ZONE=11`和`VISION_CMD_ALIGN_SAFE_ZONE=4`保留数值兼容，但正常状态机不再进入或执行对正。F407只允许`TASK_NAVIGATE`直接接收`ENTER_SAFE_ZONE`，随后张爪进入`CHECK`；旧上位机继续发送ALIGN时底盘只停车等待，不会旋转，也不会误报故障。
 - 投送完成后的返中仍先执行0.45 m编码器闭环后退，以免车体贴围栏原地转向；该动作完成后立即进入RETURN并跟随上位机动态航向/余量，不再增加任何放置区车头对正步骤。
 - 上位机必须基于`437c0ef`同步把到达分支从`NAV→ALIGN`改为`NAV→ENTER_SAFE_ZONE`，删除ALIGN确认状态；`center_stop_radius_m`和CLI默认值从0.60 m改为0，校验允许0，使RETURN剩余距离直接等于`hypot(x,y)`并到达场地原点。否则旧上位机会停在ALIGN，或仍只返回距中心600 mm的位置。
+
+## 22. 2026-09-07 IMU校准先于舵机动作
+
+- 原启动顺序是`main.c: Servo_Init() → Robot_Init() → IMU_Init()`；`Servo_Init()`会立即启动TIM8四路PWM并把全部舵机命令到90°，机械振动会发生在陀螺仪静止零偏校准之前。
+- `Servo_Init()`现移入`Robot_Init()`并严格放在`IMU_Init()`成功之后。IMU执行芯片复位、配置、稳定等待和128点静止校准期间TIM8 PWM不启动；校准完成后才启动PWM并由Task执行舵机1、摄像头和左右爪初始化。
+- 新增`application_ready`门控。IMU初始化失败时不调用`Servo_Init()`、不首次运行Task；后续PendSV任务也要求`application_ready && IMU_GetData().ready`，避免失败或运行时IMU故障后继续触发机构/运动状态机。
 - 视觉PID只在新报告代次到达时更新，X/Y采用新样本权重0.35的一阶低通；最大PID `dt`由100 ms放宽到300 ms，避免低帧率时微分项被人为放大。舵机3视觉跟踪按30°/s限制变化率，低帧率不会再表现为每帧突然跳6°。
 - SEARCH的120°和90°每个视角一整圈只要求至少1帧新的合法报告；整圈完全没有报告才重置IMU转圈计数并保持当前视角继续搜索。快速切90°后的300 ms稳定期仍不锁定目标，慢速REACQ扫描继续逐帧接收目标。

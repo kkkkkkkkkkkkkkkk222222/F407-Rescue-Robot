@@ -34,6 +34,7 @@ static uint8_t imu_period_ms;
 static uint8_t motor_control_period_ms;
 static uint8_t lcd_period_ms;
 static bool lcd_ready;
+static bool application_ready;
 static bool uart_active;
 
 #if APP_ENABLE_MOTION_TEST
@@ -327,6 +328,7 @@ static void process_motor_test_key(uint32_t now_ms)
 
 void Robot_Init(void)
 {
+  application_ready = false;
   app_milliseconds = 0U;
   lcd_release_sequence = 0U;
   lcd_consumed_sequence = 0U;
@@ -382,6 +384,13 @@ void Robot_Init(void)
   Motor_Init();
   Encoder_Init();
   const bool imu_ready = IMU_Init();
+  /* TIM8 PWM remains disabled throughout IMU setup and stationary gyro-bias
+   * calibration. Starting all servos at 90 degrees before this point can
+   * shake the chassis and corrupt the calibration samples. */
+  if (imu_ready) {
+    Servo_Init();
+    application_ready = true;
+  }
 #if APP_ENABLE_TASK
   /* The real start zone arrives in the validated configuration frame. */
   Location_Init(LOCATION_START_UNKNOWN);
@@ -392,9 +401,13 @@ void Robot_Init(void)
   RouteDemo_Init();
 #endif
 #if APP_ENABLE_TASK
-  Task_Process(app_milliseconds);
+  if (application_ready) {
+    Task_Process(app_milliseconds);
+  }
 #elif APP_ENABLE_CENTERING_TASK
-  CenteringTask_Init(app_milliseconds);
+  if (application_ready) {
+    CenteringTask_Init(app_milliseconds);
+  }
 #endif
 #if APP_ENABLE_RUNTIME_SERVO_DEBUG
   DebugConsole_Init();
@@ -492,7 +505,8 @@ void Robot_RunDeferredTask(void)
   if (released != task_consumed_sequence) {
     const uint32_t now_ms = task_release_ms;
     task_consumed_sequence = released;
-    if (!DebugConsole_IsActive()) {
+    if (application_ready && IMU_GetData().ready &&
+        !DebugConsole_IsActive()) {
 #if APP_ENABLE_TASK
       Task_Process(now_ms);
 #else
