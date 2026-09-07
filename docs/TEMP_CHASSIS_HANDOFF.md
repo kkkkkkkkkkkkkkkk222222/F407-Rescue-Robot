@@ -246,5 +246,11 @@ RUN         停车并复位MCU，重新进入正常模式
 - 非法距离/标志/命令现在报告`COMMAND_TIMEOUT`，只有转向执行失败才报告`MOTOR`。TaskStatus新增`nav_stale/nav_done`供LCD显示`STALE/DONE`，避免把100 Hz心跳正常误解为规划数据有效。
 - SEARCH首次锁定合法单目标时保存其类别位，APPROACH、REACQ、GRAB_OBSERVE/RAISE/ROTATE全程必须匹配该类别；进入新SEARCH才解除锁定。协议仍无法携带置信度和bbox，首帧误识别必须由RDK阈值负责。
 - SEARCH 90°、REACQ 90°和抓取观察旋转现在每周期检查Location；失效立即停车，连续1500 ms无效报告`POSE_TIMEOUT`，不再因已有起始航向缓存而继续盲转。
+
+## 21. 2026-09-07删除安全区车头对正并返回中心点
+
+- `TASK_ALIGN_SAFE_ZONE=11`和`VISION_CMD_ALIGN_SAFE_ZONE=4`保留数值兼容，但正常状态机不再进入或执行对正。F407只允许`TASK_NAVIGATE`直接接收`ENTER_SAFE_ZONE`，随后张爪进入`CHECK`；旧上位机继续发送ALIGN时底盘只停车等待，不会旋转，也不会误报故障。
+- 投送完成后的返中仍先执行0.45 m编码器闭环后退，以免车体贴围栏原地转向；该动作完成后立即进入RETURN并跟随上位机动态航向/余量，不再增加任何放置区车头对正步骤。
+- 上位机必须基于`437c0ef`同步把到达分支从`NAV→ALIGN`改为`NAV→ENTER_SAFE_ZONE`，删除ALIGN确认状态；`center_stop_radius_m`和CLI默认值从0.60 m改为0，校验允许0，使RETURN剩余距离直接等于`hypot(x,y)`并到达场地原点。否则旧上位机会停在ALIGN，或仍只返回距中心600 mm的位置。
 - 视觉PID只在新报告代次到达时更新，X/Y采用新样本权重0.35的一阶低通；最大PID `dt`由100 ms放宽到300 ms，避免低帧率时微分项被人为放大。舵机3视觉跟踪按30°/s限制变化率，低帧率不会再表现为每帧突然跳6°。
 - SEARCH的120°和90°每个视角一整圈只要求至少1帧新的合法报告；整圈完全没有报告才重置IMU转圈计数并保持当前视角继续搜索。快速切90°后的300 ms稳定期仍不锁定目标，慢速REACQ扫描继续逐帧接收目标。

@@ -1417,44 +1417,14 @@ static void task_process_navigation(const VisionData *vision,
     task_reset_remote_targets();
     return;
   }
-  if (state == TASK_ALIGN_SAFE_ZONE) {
-    if (vision->mission.command == VISION_CMD_NAVIGATE_WAYPOINT) {
-      /* A final in-flight NAV frame must not regress ALIGN or latch a fault. */
-      Motor_Stop();
-      task_status.motors_active = false;
-      return;
-    }
-    if ((vision->mission.command != VISION_CMD_ALIGN_SAFE_ZONE) &&
-        (vision->mission.command != VISION_CMD_ENTER_SAFE_ZONE)) {
-      task_stop(TASK_FAULT_COMMAND_TIMEOUT, now_ms);
-      return;
-    }
-    LocationPose pose;
-    if (!task_get_location_pose(&pose, now_ms)) {
-      return;
-    }
-    const float desired_deg =
-        (float)vision->mission.heading_cdeg * 0.01f;
-    const float current_deg =
-        (float)pose.heading_mdeg * 0.001f;
-    const float error_deg = task_wrap_angle(desired_deg - current_deg);
-    if (nav_ready &&
-        ((uint32_t)(now_ms - step_started_ms) >=
-         APP_NAV_TURN_SETTLE_MS) &&
-        (task_abs(error_deg) >= APP_ALIGN_REALIGN_DEG)) {
-      nav_ready = false;
-    }
-    if (!nav_ready && !turn_to(desired_deg, current_deg,
-                               APP_ALIGN_HEADING_TOLERANCE_DEG, now_ms)) {
-      task_stop(TASK_FAULT_MOTOR, now_ms);
-    } else if (nav_ready) {
-      Motor_Stop();
-      task_status.motors_active = false;
-      if (vision->mission.command == VISION_CMD_ENTER_SAFE_ZONE) {
-        task_status.acknowledged_sequence = vision->mission.sequence;
-        task_enter(TASK_OPEN_FOR_RAM, now_ms);
-      }
-    }
+  if (vision->mission.command == VISION_CMD_ALIGN_SAFE_ZONE) {
+    /* Old RDK software may still send ALIGN. Do not rotate or fault; hold NAV
+     * until the updated planner sends ENTER_SAFE_ZONE directly. */
+    Motor_Stop();
+    task_status.motors_active = false;
+    nav_ready = false;
+    nav_forward_active = false;
+    task_reset_remote_targets();
     return;
   }
 
@@ -1598,16 +1568,12 @@ static void task_accept_mission(const VisionMissionCommand *command,
              (state == TASK_NAVIGATE)) {
     task_status.acknowledged_sequence = command->sequence;
   } else if ((command->command == VISION_CMD_ALIGN_SAFE_ZONE) &&
-             task_status.gripper_closed &&
              (state == TASK_NAVIGATE)) {
-    task_status.acknowledged_sequence = command->sequence;
-    task_enter(TASK_ALIGN_SAFE_ZONE, now_ms);
-  } else if ((command->command == VISION_CMD_ALIGN_SAFE_ZONE) &&
-             (state == TASK_ALIGN_SAFE_ZONE)) {
+    /* Compatibility hold only; ALIGN no longer changes Task state. */
     task_status.acknowledged_sequence = command->sequence;
   } else if ((command->command == VISION_CMD_ENTER_SAFE_ZONE) &&
               task_status.gripper_closed &&
-              (state == TASK_ALIGN_SAFE_ZONE) && nav_ready) {
+              (state == TASK_NAVIGATE)) {
     task_status.acknowledged_sequence = command->sequence;
     task_enter(TASK_OPEN_FOR_RAM, now_ms);
   } else if ((command->command == VISION_CMD_ENTER_SAFE_ZONE) &&
@@ -1729,8 +1695,13 @@ void Task_Process(uint32_t now_ms)
       break;
 
     case TASK_NAVIGATE:
-    case TASK_ALIGN_SAFE_ZONE:
       task_process_navigation(&vision, now_ms);
+      break;
+
+    case TASK_ALIGN_SAFE_ZONE:
+      /* Reserved legacy state; normal control never enters it. */
+      Motor_Stop();
+      task_status.motors_active = false;
       break;
 
     case TASK_OPEN_FOR_RAM:

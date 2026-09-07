@@ -16,6 +16,7 @@ typedef enum {
   TASK_CLOSE_CLAW,
   TASK_WAIT_NAVIGATION,
   TASK_NAVIGATE,
+  /* Reserved protocol value: safe-zone heading alignment was removed. */
   TASK_ALIGN_SAFE_ZONE,
   TASK_OPEN_FOR_RAM,
   /* Reserved protocol values: collision delivery has been removed. */
