@@ -15,6 +15,8 @@ MSG_EVENT = 0x13
 MSG_NAV = 0x14
 MSG_ODOM = 0x15
 MSG_STATUS = 0x16
+MSG_MOTION_COMMAND = 0x17
+MSG_MOTION_STATUS = 0x18
 CONFIG_ACK = bytes((0xA3, 0xB3, 0x01, 0xC3))
 
 EVENT_STOP = 0x01
@@ -49,6 +51,24 @@ STATUS_NAV_FRESH = 0x20
 STATUS_NEAR_SAFE = 0x40
 STATUS_CLAW_EMPTY = 0x80
 
+MOTION_CMD_STOP = 0x00
+MOTION_CMD_TURN_REL = 0x01
+MOTION_CMD_MOVE_DISTANCE = 0x02
+MOTION_TURN_NEGATIVE = 0x01
+MOTION_MOVE_FIELD_FRAME = 0x01
+MOTION_STATE_IDLE = 0x00
+MOTION_STATE_RUNNING = 0x01
+MOTION_STATE_DONE = 0x02
+MOTION_STATE_FAULT = 0x03
+MOTION_STATE_STOPPED = 0x04
+MOTION_STATUS_IMU_READY = 0x01
+MOTION_STATUS_ODOM_VALID = 0x02
+MOTION_STATUS_MOTOR_FAULT = 0x04
+MOTION_MAX_DISTANCE_MM = 10_000
+MOTION_MIN_SPEED_MM_S = 50
+MOTION_MAX_SPEED_MM_S = 700
+MOTION_MAX_TURN_CDEG = 36_000
+
 
 def crc16_modbus(data: bytes) -> int:
     crc = 0xFFFF
@@ -62,6 +82,7 @@ def crc16_modbus(data: bytes) -> int:
 def build_frame(message_type: int, sequence: int, payload: bytes) -> bytes:
     if message_type not in (
         MSG_CONFIG, MSG_REPORT, MSG_EVENT, MSG_NAV, MSG_ODOM, MSG_STATUS,
+        MSG_MOTION_COMMAND, MSG_MOTION_STATUS,
     ):
         raise ValueError("unsupported message type")
     if not 0 <= sequence <= 0xFF:
@@ -86,6 +107,7 @@ def parse_frame(frame: bytes) -> tuple[int, int, bytes]:
     message_type = frame[2]
     if message_type not in (
         MSG_CONFIG, MSG_REPORT, MSG_EVENT, MSG_NAV, MSG_ODOM, MSG_STATUS,
+        MSG_MOTION_COMMAND, MSG_MOTION_STATUS,
     ):
         raise ValueError("unsupported message type")
     return message_type, frame[3], frame[4:12]
@@ -240,6 +262,80 @@ def nav_frame(
     return build_frame(MSG_NAV, sequence, payload)
 
 
+def _motion_speed(speed_mm_s: int, name: str) -> int:
+    if speed_mm_s == 0:
+        return 0
+    if not MOTION_MIN_SPEED_MM_S <= speed_mm_s <= MOTION_MAX_SPEED_MM_S:
+        raise ValueError(
+            f"{name} must be 0 or {MOTION_MIN_SPEED_MM_S}.."
+            f"{MOTION_MAX_SPEED_MM_S} mm/s"
+        )
+    return speed_mm_s
+
+
+def motion_stop_frame(sequence: int) -> bytes:
+    return build_frame(MSG_MOTION_COMMAND, sequence, bytes(8))
+
+
+def motion_turn_frame(sequence: int, angle_deg: float,
+                      speed_mm_s: int = 0) -> bytes:
+    if not math.isfinite(angle_deg) or not -360.0 <= angle_deg <= 360.0:
+        raise ValueError("angle_deg must be in -360..360")
+    magnitude_cdeg = int(round(abs(angle_deg) * 100.0))
+    if not 0 < magnitude_cdeg <= MOTION_MAX_TURN_CDEG:
+        raise ValueError("angle_deg must not be zero")
+    speed_mm_s = _motion_speed(speed_mm_s, "speed_mm_s")
+    flags = MOTION_TURN_NEGATIVE if angle_deg < 0.0 else 0
+    payload = (
+        bytes((MOTION_CMD_TURN_REL, flags))
+        + magnitude_cdeg.to_bytes(2, "big")
+        + speed_mm_s.to_bytes(2, "big")
+        + bytes(2)
+    )
+    return build_frame(MSG_MOTION_COMMAND, sequence, payload)
+
+
+def motion_move_frame(sequence: int, direction_deg: float,
+                      distance_mm: int, speed_mm_s: int = 0,
+                      field_frame: bool = False) -> bytes:
+    if not math.isfinite(direction_deg) or not 0.0 <= direction_deg < 360.0:
+        raise ValueError("direction_deg must be in 0..360")
+    direction_cdeg = int(round(direction_deg * 100.0))
+    if direction_cdeg >= 36000:
+        direction_cdeg = 0
+    if not 0 < distance_mm <= MOTION_MAX_DISTANCE_MM:
+        raise ValueError(
+            f"distance_mm must be in 1..{MOTION_MAX_DISTANCE_MM}"
+        )
+    speed_mm_s = _motion_speed(speed_mm_s, "speed_mm_s")
+    flags = MOTION_MOVE_FIELD_FRAME if field_frame else 0
+    payload = (
+        bytes((MOTION_CMD_MOVE_DISTANCE, flags))
+        + direction_cdeg.to_bytes(2, "big")
+        + distance_mm.to_bytes(2, "big")
+        + speed_mm_s.to_bytes(2, "big")
+    )
+    return build_frame(MSG_MOTION_COMMAND, sequence, payload)
+
+
+def parse_motion_status(frame: bytes) -> dict[str, int | bool]:
+    message_type, sequence, payload = parse_frame(frame)
+    if message_type != MSG_MOTION_STATUS:
+        raise ValueError("not a motion status frame")
+    flags = payload[6]
+    return {
+        "sequence": sequence,
+        "state": payload[0],
+        "command": payload[1],
+        "progress": int.from_bytes(payload[2:4], "big"),
+        "remaining": int.from_bytes(payload[4:6], "big"),
+        "imu_ready": bool(flags & MOTION_STATUS_IMU_READY),
+        "odom_valid": bool(flags & MOTION_STATUS_ODOM_VALID),
+        "motor_fault": bool(flags & MOTION_STATUS_MOTOR_FAULT),
+        "command_sequence": payload[7],
+    }
+
+
 if __name__ == "__main__":
     examples = (
         config_frame(0, 0x11, 1),
@@ -249,12 +345,14 @@ if __name__ == "__main__":
             512,
             350,
             pack_counts(1, 0, 0, 0),
-            FLAG_FOUND | FLAG_CLASS_VALID,
+            FLAG_FOUND | FLAG_CLASS_VALID | FLAG_DISTANCE_VALID,
         ),
         nav_frame(0x20, NAV_FORWARD, NAV_EN_ROUTE, DEST_MATERIAL),
         nav_frame(0x21, NAV_HOLD, NAV_NEAR_SAFE, DEST_MATERIAL),
         rescue_frame(0x22),
         stop_frame(0x30),
+        motion_turn_frame(0x40, 90.0),
+        motion_move_frame(0x41, 90.0, 1000, 300),
     )
     for frame in examples:
         print(frame.hex(" ").upper())

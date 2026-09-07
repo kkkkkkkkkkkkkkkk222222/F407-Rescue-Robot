@@ -18,6 +18,10 @@
 #define VISION_MSG_NAV            0x14U
 #define VISION_MSG_ODOM           0x15U
 #define VISION_MSG_STATUS         0x16U
+#define VISION_MSG_MOTION_COMMAND 0x17U
+#define VISION_MSG_MOTION_STATUS  0x18U
+#define VISION_MSG_JOYSTICK_COMMAND 0x19U /* Reserved; not accepted yet. */
+#define VISION_MSG_PARAMETER       0x1AU /* Reserved; not accepted yet. */
 
 #define VISION_EVENT_STOP         0x01U
 #define VISION_EVENT_RESCUE       0x02U
@@ -53,6 +57,20 @@
 #define VISION_ZONE_3             0x03U
 #define VISION_ZONE_4             0x04U
 
+/* UART-controlled motion debug command payload byte 0. */
+#define VISION_MOTION_CMD_STOP          0x00U
+#define VISION_MOTION_CMD_TURN_REL      0x01U
+#define VISION_MOTION_CMD_MOVE_DISTANCE 0x02U
+
+/* Motion command payload byte 1. The meaning is opcode-specific. */
+#define VISION_MOTION_TURN_NEGATIVE     0x01U
+#define VISION_MOTION_MOVE_FIELD_FRAME 0x01U
+
+/* TYPE=0x18 status flags in payload byte 6. */
+#define VISION_MOTION_STATUS_IMU_READY  0x01U
+#define VISION_MOTION_STATUS_ODOM_VALID 0x02U
+#define VISION_MOTION_STATUS_MOTOR_FAULT 0x04U
+
 /* Vision report payload byte 6: four two-bit counts. */
 #define VISION_COUNT_NORMAL(v)    ((uint8_t)((v) & 0x03U))
 #define VISION_COUNT_CORE(v)      ((uint8_t)(((v) >> 2) & 0x03U))
@@ -75,6 +93,7 @@ typedef struct {
   uint32_t tick_ms;
   uint32_t nav_tick_ms;
   uint32_t rescue_tick_ms;
+  uint32_t motion_tick_ms;
   uint32_t last_frame_tick_ms;
   uint8_t color;
   uint8_t start_zone;
@@ -86,11 +105,18 @@ typedef struct {
   uint8_t nav_zone_state;
   uint8_t nav_destination;
   uint8_t rescue_sequence;
+  uint8_t motion_sequence;
+  uint8_t motion_opcode;
+  uint8_t motion_flags;
+  uint16_t motion_param_a;
+  uint16_t motion_param_b;
+  uint16_t motion_param_c;
   uint8_t last_frame[VISION_FRAME_SIZE];
   bool valid;
   bool nav_valid;
   bool stop;
   bool rescue_requested;
+  bool motion_valid;
   bool frame_received;
   bool config_ready;
   bool found;
@@ -118,6 +144,16 @@ typedef struct {
   uint8_t status;
 } VisionOdom;
 
+typedef struct {
+  uint8_t state;
+  uint8_t command;
+  uint16_t progress;
+  uint16_t remaining;
+  uint8_t flags;
+  uint8_t fault;
+  uint8_t command_sequence;
+} VisionMotionStatus;
+
 void Vision_Init(void);
 void Vision_ResetParser(void);
 void Vision_ParseBytes(const uint8_t *data, size_t size, uint32_t tick_ms);
@@ -129,6 +165,7 @@ bool Vision_NavIsFresh(const VisionData *data,
 void Vision_RequestConfigAck(void);
 void Vision_QueueTaskStatus(const VisionTaskStatus *status);
 void Vision_QueueOdom(const VisionOdom *odom);
+void Vision_QueueMotionStatus(const VisionMotionStatus *status);
 void Vision_Process(void);
 
 #endif

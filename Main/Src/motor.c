@@ -19,7 +19,7 @@ extern TIM_HandleTypeDef htim9;
 #define MOTOR_SQRT3_OVER_2 0.86602540378f
 #define MOTOR_ONE_HALF 0.5f
 /* Calibrated on the real chassis: API +90 deg is physical left. */
-#define MOTOR_API_LEFT_TO_BODY_Y -1.0f
+#define MOTOR_API_LEFT_TO_BODY_Y APP_OMNI_LATERAL_API_SIGN
 #define MOTOR_DEFAULT_OUTPUT_LIMIT \
   (APP_MOTOR_BASE_PWM + (int32_t)APP_MOTOR_PID_LIMIT)
 
@@ -49,6 +49,8 @@ typedef struct {
   int32_t target_mdeg;
   int64_t start_yaw_mdeg;
   uint32_t start_ms;
+  float fast_speed_mm_s;
+  float slow_speed_mm_s;
 } AngleTurn;
 
 typedef struct {
@@ -564,11 +566,17 @@ static void motor_update_angle_turn(void)
     return;
   }
 
-  const int64_t signed_yaw_mdeg = imu.yaw_mdeg - angle_turn.start_yaw_mdeg;
-  const int64_t yaw_mdeg =
-      (signed_yaw_mdeg < 0LL) ? -signed_yaw_mdeg : signed_yaw_mdeg;
+  const int64_t raw_yaw_delta_mdeg =
+      imu.yaw_mdeg - angle_turn.start_yaw_mdeg;
+  const int64_t field_yaw_delta_mdeg =
+      (APP_LOCATION_IMU_YAW_SIGN < 0.0f) ?
+      -raw_yaw_delta_mdeg : raw_yaw_delta_mdeg;
+  const int64_t directed_yaw_delta_mdeg =
+      field_yaw_delta_mdeg * (int64_t)angle_turn.direction;
+  const int64_t progress_mdeg = (directed_yaw_delta_mdeg > 0LL) ?
+      directed_yaw_delta_mdeg : 0LL;
   const int64_t remaining_mdeg =
-      (int64_t)angle_turn.target_mdeg - yaw_mdeg;
+      (int64_t)angle_turn.target_mdeg - progress_mdeg;
 
   if (remaining_mdeg <= APP_MOTOR_TURN_TOLERANCE_MDEG) {
     angle_turn.status = MOTOR_TURN_DONE;
@@ -583,7 +591,7 @@ static void motor_update_angle_turn(void)
     for (uint32_t i = 0U; i < MOTOR_COUNT; ++i) {
       Pid_Reset(&speed_pids[i]);
     }
-    motor_set_rotate_speed(APP_MOTOR_TURN_SLOW_MM_S *
+    motor_set_rotate_speed(angle_turn.slow_speed_mm_s *
                            (float)angle_turn.direction);
   }
 }
@@ -773,6 +781,8 @@ void Motor_Init(void)
   angle_turn.target_mdeg = 0;
   angle_turn.start_yaw_mdeg = 0LL;
   angle_turn.start_ms = 0U;
+  angle_turn.fast_speed_mm_s = APP_MOTOR_TURN_FAST_MM_S;
+  angle_turn.slow_speed_mm_s = APP_MOTOR_TURN_SLOW_MM_S;
   motor_clear_direction_move();
   motor_clear_spin_move();
   Pid_Init(&heading_pid,
@@ -1007,15 +1017,21 @@ MotorDistanceStatus Go_distance(float distance_m, float max_speed_mm_s)
 
 MotorTurnStatus Motor_TurnAngle(float angle_deg)
 {
+  return Motor_TurnAngleAtSpeed(angle_deg, APP_MOTOR_TURN_FAST_MM_S);
+}
+
+MotorTurnStatus Motor_TurnAngleAtSpeed(float angle_deg, float speed_mm_s)
+{
   const uint32_t primask = motor_enter_critical();
   if (angle_turn.status != MOTOR_TURN_IDLE) {
     const MotorTurnStatus status = angle_turn.status;
     motor_leave_critical(primask);
     return status;
   }
-  if (!isfinite(angle_deg) ||
+  if (!isfinite(angle_deg) || !isfinite(speed_mm_s) ||
       (angle_deg < -APP_MOTOR_TURN_MAX_DEG) ||
-      (angle_deg > APP_MOTOR_TURN_MAX_DEG)) {
+      (angle_deg > APP_MOTOR_TURN_MAX_DEG) ||
+      (speed_mm_s <= 0.0f) || (speed_mm_s > (float)MOTOR_MAX_SPEED)) {
     motor_leave_critical(primask);
     return MOTOR_TURN_INVALID;
   }
@@ -1048,7 +1064,10 @@ MotorTurnStatus Motor_TurnAngle(float angle_deg)
   angle_turn.target_mdeg = target_mdeg;
   angle_turn.start_yaw_mdeg = imu.yaw_mdeg;
   angle_turn.start_ms = HAL_GetTick();
-  motor_set_rotate_speed(APP_MOTOR_TURN_FAST_MM_S *
+  angle_turn.fast_speed_mm_s = speed_mm_s;
+  angle_turn.slow_speed_mm_s = (speed_mm_s < APP_MOTOR_TURN_SLOW_MM_S) ?
+      speed_mm_s : APP_MOTOR_TURN_SLOW_MM_S;
+  motor_set_rotate_speed(angle_turn.fast_speed_mm_s *
                          (float)angle_turn.direction);
   motor_leave_critical(primask);
   return MOTOR_TURN_RUNNING;

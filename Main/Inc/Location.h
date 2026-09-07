@@ -24,6 +24,9 @@ typedef struct {
 
 void Location_Init(LocationStart start);
 void Location_Reset(LocationStart start);
+/* Reset the local odometry frame. Used by the UART motion test task when no
+ * competition start-zone coordinates are available. */
+void Location_ResetReference(int32_t x_mm, int32_t y_mm, int32_t heading_mdeg);
 void Location_Update10ms(void);
 LocationPose Location_GetPose(void);
 

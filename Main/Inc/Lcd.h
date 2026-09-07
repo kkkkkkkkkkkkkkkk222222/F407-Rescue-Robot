@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "DebugMotion.h"
 #include "Location.h"
 #include "vision.h"
 
@@ -29,6 +30,7 @@ typedef struct {
   int64_t imu_yaw_mdeg;
   bool location_demo_running;
   LocationPose location;
+  DebugMotionStatus motion;
   VisionData vision;
 } LCDDashboard;
 

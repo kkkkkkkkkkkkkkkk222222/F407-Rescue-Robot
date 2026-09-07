@@ -1,8 +1,10 @@
-# 当前固件：视觉居中Task
+# 当前固件：UART运动调试Task
 
-当前固件只启用独立的视觉居中`CenteringTask`，完整救援`Task`及其余运动测试、定位演示和舵机扫描均关闭。RDK X5通过新PCB“串口1”持续发送目标视觉报告；F407根据X坐标控制小车原地旋转，根据Y坐标调整摄像头舵机3，使目标保持在1280×1024画面中心`(640,512)`。该接口使用MCU USART3的PD8 TX、PD9 RX和115200 8N1；RDK X5使用`/dev/ttyS1`，两端TX/RX交叉并共地。
+当前默认固件启用`DebugMotionTask`，用于上位机下发陀螺仪定角度和F407本地里程计定向定距命令；完整救援`Task`、视觉居中、定位演示和其他独立测试均关闭。RDK X5通过新PCB“串口1”与F407 USART3双向通信，PD8为TX、PD9为RX、115200 8N1；RDK X5使用`/dev/ttyS1`，两端TX/RX交叉并共地。完整字段、命令示例、T265测试顺序和上位机交接见[`docs/f407_motion_debug_handoff.md`](docs/f407_motion_debug_handoff.md)。
 
-## 当前视觉居中Task
+视觉居中仍保留为可切换的备用模式：将`APP_ENABLE_MOTION_DEBUG_TASK`置0、`APP_ENABLE_CENTERING_TASK`置1后重新编译即可。
+
+## 视觉居中备用Task
 
 `CenteringTask_Process(now_ms)`每20 ms由最低优先级PendSV调度，但PID只在收到新视觉`SEQ`时更新，并按实际帧间隔计算I/D。合法且不超过250 ms的`TYPE=0x12`报告必须置`FOUND=1`；X方向采用16像素进入、8像素退出的滞环死区，以原地旋转速度修正水平误差，非零旋转至少80 mm/s、最大239 mm/s。Y方向采用±12像素死区，通过舵机3在0°～165°范围内调整俯仰，初始角度90°。目标进入两个死区后停车并显示`CENTER`；目标丢失、报告超时或无效时立即停车、复位PID并显示`WAIT`；检测到电机方向或堵转故障时显示`FAULT`。该Task不会前进、不会操作左右夹爪，也不需要赛前配置帧。
 

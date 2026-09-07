@@ -44,6 +44,8 @@ class VisionProtocolTests(unittest.TestCase):
                 0x42,
                 bytes((0, 12, 0xFF, 0xF8, 0, 4, 10, 7)),
             ),
+            protocol.motion_turn_frame(0x43, 90.0),
+            protocol.motion_move_frame(0x44, 90.0, 1000, 300),
         )
         for frame in frames:
             with self.subTest(frame=frame.hex()):
@@ -149,6 +151,37 @@ class VisionProtocolTests(unittest.TestCase):
             forward, 20 * metres_per_count / math.sqrt(3) / 0.020
         )
         self.assertAlmostEqual(left, 0.0)
+
+    def test_motion_command_layout(self) -> None:
+        turn = protocol.motion_turn_frame(0x50, -360.0, 300)
+        self.assertEqual(turn[2], protocol.MSG_MOTION_COMMAND)
+        self.assertEqual(turn[4:12], bytes((1, 1, 0x8C, 0xA0, 0x01, 0x2C, 0, 0)))
+
+        move = protocol.motion_move_frame(0x51, 90.0, 1000, 300)
+        self.assertEqual(move[4:12], bytes((2, 0, 0x23, 0x28, 0x03, 0xE8, 0x01, 0x2C)))
+        with self.assertRaises(ValueError):
+            protocol.motion_move_frame(0x52, 0.0, 0, 300)
+        with self.assertRaises(ValueError):
+            protocol.motion_turn_frame(0x53, 0.0)
+
+    def test_parse_motion_status(self) -> None:
+        frame = protocol.build_frame(
+            protocol.MSG_MOTION_STATUS,
+            0x60,
+            bytes((protocol.MOTION_STATE_RUNNING,
+                   protocol.MOTION_CMD_MOVE_DISTANCE,
+                   0x03, 0xE8, 0x00, 0x64,
+                   protocol.MOTION_STATUS_IMU_READY |
+                   protocol.MOTION_STATUS_ODOM_VALID,
+                   0x51)),
+        )
+        status = protocol.parse_motion_status(frame)
+        self.assertEqual(status["progress"], 1000)
+        self.assertEqual(status["remaining"], 100)
+        self.assertTrue(status["imu_ready"])
+        self.assertTrue(status["odom_valid"])
+        self.assertFalse(status["motor_fault"])
+        self.assertEqual(status["command_sequence"], 0x51)
 
 
 if __name__ == "__main__":

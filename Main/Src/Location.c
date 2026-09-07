@@ -18,6 +18,7 @@ typedef struct {
   int64_t heading_unwrapped_mdeg;
   int64_t previous_imu_yaw_mdeg;
   uint8_t start_zone;
+  bool tracking_enabled;
   bool imu_sample_valid;
   bool valid;
 } LocationState;
@@ -98,6 +99,7 @@ void Location_Reset(LocationStart start)
     location.heading_unwrapped_mdeg = 0LL;
     location.previous_imu_yaw_mdeg = imu.yaw_mdeg;
     location.start_zone = (uint8_t)LOCATION_START_UNKNOWN;
+    location.tracking_enabled = false;
     location.imu_sample_valid = imu.ready;
     location.valid = false;
     location_leave_critical(primask);
@@ -117,6 +119,7 @@ void Location_Reset(LocationStart start)
   location.heading_unwrapped_mdeg = heading_mdeg;
   location.previous_imu_yaw_mdeg = imu.yaw_mdeg;
   location.start_zone = (uint8_t)start;
+  location.tracking_enabled = true;
   location.imu_sample_valid = imu.ready;
   location.valid = imu.ready;
   location_leave_critical(primask);
@@ -127,14 +130,29 @@ void Location_Init(LocationStart start)
   Location_Reset(start);
 }
 
+void Location_ResetReference(int32_t x_mm, int32_t y_mm, int32_t heading_mdeg)
+{
+  const IMUData imu = IMU_GetData();
+  const uint32_t primask = location_enter_critical();
+  location.x_mm = (float)x_mm;
+  location.y_mm = (float)y_mm;
+  location.path_mm = 0.0f;
+  location.heading_unwrapped_mdeg = (int64_t)heading_mdeg;
+  location.previous_imu_yaw_mdeg = imu.yaw_mdeg;
+  location.start_zone = (uint8_t)LOCATION_START_UNKNOWN;
+  location.tracking_enabled = true;
+  location.imu_sample_valid = imu.ready;
+  location.valid = imu.ready;
+  location_leave_critical(primask);
+}
+
 void Location_Update10ms(void)
 {
   EncoderStatus encoder[3];
   const IMUData imu = IMU_GetData();
   Encoder_GetAll(encoder);
 
-  if ((location.start_zone < (uint8_t)LOCATION_START_1) ||
-      (location.start_zone > (uint8_t)LOCATION_START_4)) {
+  if (!location.tracking_enabled) {
     location.previous_imu_yaw_mdeg = imu.yaw_mdeg;
     location.imu_sample_valid = imu.ready;
     location.valid = false;

@@ -298,7 +298,7 @@ static bool dashboard_motor_fault(void)
 
 #if !APP_ENABLE_TASK && !APP_ENABLE_CENTERING_TASK && \
     !APP_ENABLE_MOTION_TEST && !APP_ENABLE_MOVE_SPIN_TEST && \
-    !APP_ENABLE_LOCATION_DEMO
+    !APP_ENABLE_LOCATION_DEMO && !APP_ENABLE_MOTION_DEBUG_TASK
 static const char *dashboard_uart_text(const LCDDashboard *dashboard)
 {
   if (!dashboard->uart_active) {
@@ -657,6 +657,77 @@ static void draw_task(const LCDDashboard *dashboard)
                  VISION_COUNT_DANGER(vision->cargo_counts));
   dashboard_write(0U, 108U, 128U, text);
 }
+#elif APP_ENABLE_MOTION_DEBUG_TASK
+static const char *motion_state_name(DebugMotionState state)
+{
+  static const char *const names[] = {
+    "IDLE", "RUN", "DONE", "FAULT", "STOP"
+  };
+  return (state <= DEBUG_MOTION_STOPPED) ? names[state] : "FAULT";
+}
+
+static const char *motion_command_name(uint8_t command)
+{
+  switch (command) {
+    case VISION_MOTION_CMD_TURN_REL:
+      return "TURN";
+    case VISION_MOTION_CMD_MOVE_DISTANCE:
+      return "MOVE";
+    default:
+      return "STOP";
+  }
+}
+
+static const char *motion_uart_state(const LCDDashboard *dashboard)
+{
+  if (!dashboard->uart_active) {
+    return "DMA";
+  }
+  if (!dashboard->uart_received) {
+    return "WAIT";
+  }
+  if ((uint32_t)(dashboard->now_ms - dashboard->uart_last_rx_ms) >
+      APP_VISION_TIMEOUT_MS) {
+    return "TMO";
+  }
+  return "OK";
+}
+
+static void draw_motion_debug(const LCDDashboard *dashboard)
+{
+  char text[24];
+  const DebugMotionStatus *motion = &dashboard->motion;
+  const LocationPose *pose = &dashboard->location;
+  if (motion->state == DEBUG_MOTION_FAULT) {
+    (void)snprintf(text, sizeof(text), "MOTION:FAULT F%u",
+                   (unsigned)motion->fault);
+  } else {
+    (void)snprintf(text, sizeof(text), "MOTION:%s %s",
+                   motion_state_name(motion->state),
+                   motion_command_name(motion->command));
+  }
+  dashboard_write(0U, 12U, 128U, text);
+
+  (void)snprintf(text, sizeof(text), "P:%u R:%u Q:%u",
+                 motion->progress, motion->remaining,
+                 motion->command_sequence);
+  dashboard_write(0U, 40U, 128U, text);
+
+  (void)snprintf(text, sizeof(text), "X:%ld Y:%ld",
+                 (long)pose->x_mm, (long)pose->y_mm);
+  dashboard_write(0U, 68U, 128U, text);
+
+  (void)snprintf(text, sizeof(text), "H:%ld.%01ld %s",
+                 (long)(pose->heading_mdeg / 1000L),
+                 (long)((pose->heading_mdeg % 1000L) / 100L),
+                 pose->valid ? "ODOM" : "ODERR");
+  dashboard_write(0U, 96U, 128U, text);
+
+  (void)snprintf(text, sizeof(text), "IMU:%s UART:%s",
+                 dashboard->imu_ready ? "OK" : "ERR",
+                 motion_uart_state(dashboard));
+  dashboard_write(0U, 124U, 128U, text);
+}
 #elif APP_ENABLE_CENTERING_TASK
 static const char *centering_state_name(CenteringState state)
 {
@@ -709,7 +780,7 @@ static void draw_centering_task(const LCDDashboard *dashboard)
                  centering_uart_state(dashboard));
   dashboard_write(0U, 108U, 128U, text);
 }
-#elif !APP_ENABLE_LOCATION_DEMO
+#elif !APP_ENABLE_LOCATION_DEMO && !APP_ENABLE_MOTION_DEBUG_TASK
 static void dashboard_draw_test(const LCDDashboard *dashboard)
 {
   static bool layout_drawn;
@@ -800,6 +871,8 @@ void LCD_DrawDashboard(const LCDDashboard *dashboard)
   }
 #if APP_ENABLE_TASK
   draw_task(dashboard);
+#elif APP_ENABLE_MOTION_DEBUG_TASK
+  draw_motion_debug(dashboard);
 #elif APP_ENABLE_CENTERING_TASK
   draw_centering_task(dashboard);
 #elif APP_ENABLE_LOCATION_DEMO

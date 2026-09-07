@@ -8,7 +8,8 @@
 #define APP_ENABLE_AUTOMATIC_MOTOR_TEST  0
 #define APP_ENABLE_SERVO_SWEEP_TEST      0
 #define APP_ENABLE_TASK                  0
-#define APP_ENABLE_CENTERING_TASK        1
+#define APP_ENABLE_CENTERING_TASK        0
+#define APP_ENABLE_MOTION_DEBUG_TASK     1
 
 /* Non-blocking IMU angle turn used by Motor_TurnAngle(). */
 #define APP_MOTOR_TURN_TOLERANCE_MDEG    1000L
@@ -55,10 +56,24 @@
 #define APP_MOVE_SPIN_OUTPUT_LIMIT_PWM      1000
 #define APP_MOVE_SPIN_HEADING_LEAD_MS         55.0f
 
+/* UART-controlled gyro/odometry motion test task. */
+#define APP_MOTION_DEBUG_STATUS_PERIOD_MS    50U
+#define APP_MOTION_DEBUG_MAX_DISTANCE_MM  10000U
+#define APP_MOTION_DEBUG_MIN_SPEED_MM_S      50.0f
+#define APP_MOTION_DEBUG_MAX_SPEED_MM_S     700.0f
+#define APP_MOTION_DEBUG_DISTANCE_TOLERANCE_MM 10.0f
+#define APP_MOTION_DEBUG_SLOWDOWN_MM         150.0f
+#define APP_MOTION_DEBUG_MIN_SLOW_SPEED_MM_S  80.0f
+#define APP_MOTION_DEBUG_CROSS_TRACK_KP        1.5f
+#define APP_MOTION_DEBUG_CROSS_TRACK_LIMIT_MM_S 120.0f
+#define APP_MOTION_DEBUG_MOVE_TIMEOUT_MIN_MS 5000U
+#define APP_MOTION_DEBUG_MOVE_TIMEOUT_MAX_MS 120000U
+#define APP_MOTION_DEBUG_MAX_TURN_CDEG     36000U
+
 #if (APP_ENABLE_MOTION_TEST + APP_ENABLE_LOCATION_DEMO + \
      APP_ENABLE_MOVE_SPIN_TEST + APP_ENABLE_AUTOMATIC_MOTOR_TEST + \
      APP_ENABLE_SERVO_SWEEP_TEST + APP_ENABLE_TASK + \
-     APP_ENABLE_CENTERING_TASK) > 1
+     APP_ENABLE_CENTERING_TASK + APP_ENABLE_MOTION_DEBUG_TASK) > 1
 #error "Only one application mode can run"
 #endif
 
@@ -133,6 +148,10 @@
 #define APP_MOTOR_HEADING_INTEGRAL_LIMIT  1500.0f
 /* The installed chassis rotates opposite to the IMU positive Z direction. */
 #define APP_MOTOR_HEADING_OUTPUT_SIGN    -1.0f
+
+/* Motor_Move() uses the mathematical lateral axis; positive physical left is
+ * represented by a negative API lateral command on this chassis. */
+#define APP_OMNI_LATERAL_API_SIGN         -1.0f
 
 /* Non-blocking vector ramp used by Motor_MoveAngle(). */
 #define APP_OMNI_ACCEL_MM_S2              2500.0f
