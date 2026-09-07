@@ -1257,8 +1257,14 @@ static float task_remote_route_speed(int16_t remaining_mm,
   } else if (ratio > 1.0f) {
     ratio = 1.0f;
   }
-  return end_speed_mm_s +
+  float speed_mm_s = end_speed_mm_s +
       (cruise_speed_mm_s - end_speed_mm_s) * ratio;
+  if ((cruise_speed_mm_s > APP_NAV_FINAL_APPROACH_SPEED_MM_S) &&
+      (remaining_mm <= (int16_t)APP_NAV_FINAL_APPROACH_DISTANCE_MM) &&
+      (speed_mm_s > APP_NAV_FINAL_APPROACH_SPEED_MM_S)) {
+    speed_mm_s = APP_NAV_FINAL_APPROACH_SPEED_MM_S;
+  }
+  return speed_mm_s;
 }
 
 static bool task_nav_payload_changed(const VisionMissionCommand *command,
