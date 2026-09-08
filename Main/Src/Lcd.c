@@ -8,8 +8,10 @@
 
 #include "app_config.h"
 #include "CenteringTask.h"
+#include "DebugMotion.h"
 #include "encoder.h"
 #include "main.h"
+#include "mechanism.h"
 #include "motor.h"
 #include "Task.h"
 #include "vision.h"
@@ -298,7 +300,7 @@ static bool dashboard_motor_fault(void)
 
 #if !APP_ENABLE_TASK && !APP_ENABLE_CENTERING_TASK && \
     !APP_ENABLE_MOTION_TEST && !APP_ENABLE_MOVE_SPIN_TEST && \
-    !APP_ENABLE_LOCATION_DEMO && !APP_ENABLE_MOTION_DEBUG_TASK
+    !APP_ENABLE_LOCATION_DEMO
 static const char *dashboard_uart_text(const LCDDashboard *dashboard)
 {
   if (!dashboard->uart_active) {
@@ -596,10 +598,33 @@ static void draw_location(const LCDDashboard *dashboard)
 #if APP_ENABLE_TASK
 static const char *task_state_name(TaskState state)
 {
-  static const char *const names[] = {
-    "WAITCFG", "START", "SEARCH", "GRAB", "RETURN", "DROP", "STOP"
-  };
-  return (state <= TASK_STOPPED) ? names[state] : "STOP";
+  switch (state) {
+    case TASK_WAIT_CONFIG:       return "WAITCFG";
+    case TASK_START:             return "START";
+    case TASK_OPEN_CLAW:         return "OPEN";
+    case TASK_SEARCH:            return "SEARCH";
+    case TASK_APPROACH:          return "APPROACH";
+    case TASK_GRAB_OBSERVE:      return "WATCH";
+    case TASK_GRAB_RAISE_WAIT:   return "RAISE";
+    case TASK_GRAB_ROTATE:       return "SCAN";
+    case TASK_CLOSE_CLAW:        return "CLOSE";
+    case TASK_WAIT_NAVIGATION:   return "WAITNAV";
+    case TASK_NAVIGATE:          return "NAV";
+    case TASK_ALIGN_SAFE_ZONE:   return "ALIGN";
+    case TASK_OPEN_FOR_RAM:      return "OPENRAM";
+    case TASK_RAM_BACK:          return "RAMBACK";
+    case TASK_RAM_FORWARD:       return "RAMFWD";
+    case TASK_RAM_VERIFY:        return "CHECK";
+    case TASK_EXIT_SAFE_ZONE:    return "EXITSAFE";
+    case TASK_FACE_FIELD_CENTER: return "CENTER";
+    case TASK_PILE_APPROACH:     return "PILEIN";
+    case TASK_SCATTER_POSITIVE:  return "SPIN+";
+    case TASK_SCATTER_PAUSE:     return "PAUSE";
+    case TASK_SCATTER_NEGATIVE:  return "SPIN-";
+    case TASK_SCATTER_EXIT:      return "PILEOUT";
+    case TASK_APPROACH_RECOVER:  return "REACQ";
+    default:                     return "STOP";
+  }
 }
 
 static const char *task_uart_state(const LCDDashboard *dashboard)
@@ -617,12 +642,42 @@ static const char *task_uart_state(const LCDDashboard *dashboard)
   return "OK";
 }
 
-static char config_color_code(uint8_t color)
+static const char *task_command_name(uint8_t command, bool received)
 {
-  if (color == VISION_COLOR_RED) {
-    return 'R';
+  if (!received) {
+    return "NONE";
   }
-  return (color == VISION_COLOR_BLUE) ? 'B' : '-';
+  switch (command) {
+    case VISION_CMD_STOP:              return "STOP";
+    case VISION_CMD_GRAB_CONFIRMED:    return "GRAB";
+    case VISION_CMD_NAVIGATE_WAYPOINT: return "NAV";
+    case VISION_CMD_ALIGN_SAFE_ZONE:   return "ALIGN";
+    case VISION_CMD_ENTER_SAFE_ZONE:   return "ENTER";
+    case VISION_CMD_TASK_COMPLETE:     return "DONE";
+    case VISION_CMD_ABORT:             return "ABORT";
+    case VISION_CMD_RETURN_CENTER:      return "RETURN";
+    default:                           return "INVALID";
+  }
+}
+
+static const char *task_command_state(const LCDDashboard *dashboard,
+                                      const TaskStatus *task)
+{
+  const VisionMissionCommand *command = &dashboard->vision.mission;
+  if (!command->received) {
+    return task_uart_state(dashboard);
+  }
+  if (!Vision_MissionIsFresh(command, dashboard->now_ms,
+                             APP_MISSION_COMMAND_TIMEOUT_MS)) {
+    return "TMO";
+  }
+  if (task->nav_done) {
+    return "DONE";
+  }
+  if (task->nav_stale) {
+    return "STALE";
+  }
+  return "OK";
 }
 
 static void draw_task(const LCDDashboard *dashboard)
@@ -633,11 +688,46 @@ static void draw_task(const LCDDashboard *dashboard)
   const bool report_fresh =
       Vision_IsFresh(vision, dashboard->now_ms, APP_VISION_TIMEOUT_MS);
 
-  (void)snprintf(text, sizeof(text), "STATE:%s T:%us",
-                 task_state_name(task.state), task.remaining_s);
+  if (dashboard->debug_mode) {
+    (void)strcpy(text, "MODE:DEBUG");
+  } else if (task.remaining_s == UINT16_MAX) {
+    (void)snprintf(text, sizeof(text), "STATE:%s T:--",
+                   task_state_name(task.state));
+  } else {
+    (void)snprintf(text, sizeof(text), "STATE:%s T:%us",
+                   task_state_name(task.state), task.remaining_s);
+  }
   dashboard_write(0U, 12U, 128U, text);
 
-  if (report_fresh) {
+  if ((task.state == TASK_CLOSE_CLAW) ||
+      (task.state == TASK_WAIT_NAVIGATION)) {
+    (void)snprintf(text, sizeof(text), "GRIP:%s A:%03u",
+                   task.gripper_closed ? "OK" : "WAIT",
+                   task.acknowledged_sequence);
+  } else if ((task.state == TASK_NAVIGATE) ||
+             (task.state == TASK_ALIGN_SAFE_ZONE) ||
+             (task.state == TASK_FACE_FIELD_CENTER)) {
+    if (vision->mission.received &&
+        (vision->mission.command != VISION_CMD_STOP)) {
+      if ((vision->mission.flags & VISION_CMD_DISTANCE_VALID) != 0U) {
+        const int distance_mm = (vision->mission.target_x_mm >= 0) ?
+            vision->mission.target_x_mm : 0;
+        (void)snprintf(text, sizeof(text), "H:%03u D:%04d",
+                       vision->mission.heading_cdeg / 100U, distance_mm);
+      } else {
+        uint32_t command_age_ms = dashboard->now_ms -
+                                  vision->mission.tick_ms;
+        if (command_age_ms > 9999U) {
+          command_age_ms = 9999U;
+        }
+        (void)snprintf(text, sizeof(text), "H:%03u AGE:%04lu",
+                       vision->mission.heading_cdeg / 100U,
+                       (unsigned long)command_age_ms);
+      }
+    } else {
+      (void)strcpy(text, "H:--- D:----");
+    }
+  } else if (report_fresh) {
     (void)snprintf(text, sizeof(text), "X:%04u Y:%04u",
                    vision->x, vision->y);
   } else {
@@ -645,88 +735,24 @@ static void draw_task(const LCDDashboard *dashboard)
   }
   dashboard_write(0U, 44U, 128U, text);
 
-  (void)snprintf(text, sizeof(text), "CFG:%c Z:%u UART:%s",
-                 config_color_code(vision->color), vision->start_zone,
-                 task_uart_state(dashboard));
+  (void)snprintf(text, sizeof(text), "CMD:%s %s",
+                 task_command_name(
+                     dashboard->debug_mode ? vision->mission.command :
+                                             task.last_command,
+                     dashboard->debug_mode ? vision->mission.received :
+                                             task.command_received),
+                 task_command_state(dashboard, &task));
   dashboard_write(0U, 76U, 128U, text);
 
-  (void)snprintf(text, sizeof(text), "N:%u C:%u H:%u D:%u",
-                 VISION_COUNT_NORMAL(vision->cargo_counts),
-                 VISION_COUNT_CORE(vision->cargo_counts),
-                 VISION_COUNT_CASUALTY(vision->cargo_counts),
-                 VISION_COUNT_DANGER(vision->cargo_counts));
-  dashboard_write(0U, 108U, 128U, text);
-}
-#elif APP_ENABLE_MOTION_DEBUG_TASK
-static const char *motion_state_name(DebugMotionState state)
-{
-  static const char *const names[] = {
-    "IDLE", "RUN", "DONE", "FAULT", "STOP"
-  };
-  return (state <= DEBUG_MOTION_STOPPED) ? names[state] : "FAULT";
-}
-
-static const char *motion_command_name(uint8_t command)
-{
-  switch (command) {
-    case VISION_MOTION_CMD_TURN_REL:
-      return "TURN";
-    case VISION_MOTION_CMD_MOVE_DISTANCE:
-      return "MOVE";
-    default:
-      return "STOP";
-  }
-}
-
-static const char *motion_uart_state(const LCDDashboard *dashboard)
-{
-  if (!dashboard->uart_active) {
-    return "DMA";
-  }
-  if (!dashboard->uart_received) {
-    return "WAIT";
-  }
-  if ((uint32_t)(dashboard->now_ms - dashboard->uart_last_rx_ms) >
-      APP_VISION_TIMEOUT_MS) {
-    return "TMO";
-  }
-  return "OK";
-}
-
-static void draw_motion_debug(const LCDDashboard *dashboard)
-{
-  char text[24];
-  const DebugMotionStatus *motion = &dashboard->motion;
-  const LocationPose *pose = &dashboard->location;
-  if (motion->state == DEBUG_MOTION_FAULT) {
-    (void)snprintf(text, sizeof(text), "MOTION:FAULT F%u",
-                   (unsigned)motion->fault);
+  if (dashboard->debug_mode) {
+    (void)snprintf(text, sizeof(text), "S%u:%03u Angle:%03u",
+                   dashboard->debug_servo_id,
+                   dashboard->debug_servo_angle,
+                   Camera_GetAngle());
   } else {
-    (void)snprintf(text, sizeof(text), "MOTION:%s %s",
-                   motion_state_name(motion->state),
-                   motion_command_name(motion->command));
+    (void)snprintf(text, sizeof(text), "Angle:%03u", task.camera_angle);
   }
-  dashboard_write(0U, 12U, 128U, text);
-
-  (void)snprintf(text, sizeof(text), "P:%u R:%u Q:%u",
-                 motion->progress, motion->remaining,
-                 motion->command_sequence);
-  dashboard_write(0U, 40U, 128U, text);
-
-  (void)snprintf(text, sizeof(text), "X:%ld Y:%ld",
-                 (long)pose->x_mm, (long)pose->y_mm);
-  dashboard_write(0U, 68U, 128U, text);
-
-  (void)snprintf(text, sizeof(text), "H:%ld.%01ld %s",
-                 (long)(pose->heading_mdeg / 1000L),
-                 (long)((pose->heading_mdeg % 1000L) / 100L),
-                 pose->valid ? "ODOM" : "ODERR");
-  dashboard_write(0U, 96U, 128U, text);
-
-  (void)snprintf(text, sizeof(text), "IMU:%s UART:%s",
-                 dashboard->imu_ready ? "OK" : "ERR",
-                 motion_uart_state(dashboard));
-  dashboard_write(0U, 124U, 128U, text);
+  dashboard_write(0U, 108U, 128U, text);
 }
 #elif APP_ENABLE_CENTERING_TASK
 static const char *centering_state_name(CenteringState state)
@@ -780,7 +806,7 @@ static void draw_centering_task(const LCDDashboard *dashboard)
                  centering_uart_state(dashboard));
   dashboard_write(0U, 108U, 128U, text);
 }
-#elif !APP_ENABLE_LOCATION_DEMO && !APP_ENABLE_MOTION_DEBUG_TASK
+#elif !APP_ENABLE_LOCATION_DEMO
 static void dashboard_draw_test(const LCDDashboard *dashboard)
 {
   static bool layout_drawn;
@@ -872,7 +898,18 @@ void LCD_DrawDashboard(const LCDDashboard *dashboard)
 #if APP_ENABLE_TASK
   draw_task(dashboard);
 #elif APP_ENABLE_MOTION_DEBUG_TASK
-  draw_motion_debug(dashboard);
+  const DebugMotionStatus motion = DebugMotionTask_GetStatus();
+  char text[24];
+  dashboard_write(0U, 0U, 128U, "MOTION DEBUG");
+  (void)snprintf(text, sizeof(text), "STATE %u FAULT %u",
+                 (unsigned)motion.state, (unsigned)motion.fault);
+  dashboard_write(0U, 24U, 128U, text);
+  (void)snprintf(text, sizeof(text), "CMD %u SEQ %u",
+                 (unsigned)motion.command, (unsigned)motion.command_sequence);
+  dashboard_write(0U, 48U, 128U, text);
+  (void)snprintf(text, sizeof(text), "DONE %u LEFT %u",
+                 (unsigned)motion.progress, (unsigned)motion.remaining);
+  dashboard_write(0U, 72U, 128U, text);
 #elif APP_ENABLE_CENTERING_TASK
   draw_centering_task(dashboard);
 #elif APP_ENABLE_LOCATION_DEMO

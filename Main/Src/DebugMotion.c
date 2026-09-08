@@ -174,17 +174,8 @@ static void motion_start_command(const VisionData *vision, uint32_t now_ms)
     active_timeout_ms = APP_MOTOR_TURN_TIMEOUT_MS;
     motion_status.remaining = vision->motion_param_a;
     active = true;
-    const MotorTurnStatus result = Motor_TurnAngleAtSpeed(
-        active_turn_angle_deg, active_turn_speed_mm_s);
-    if (result == MOTOR_TURN_FAULT || result == MOTOR_TURN_INVALID) {
-      motion_finish(DEBUG_MOTION_FAULT,
-                    (result == MOTOR_TURN_INVALID) ?
-                    DEBUG_MOTION_FAULT_INVALID : DEBUG_MOTION_FAULT_MOTOR,
-                    now_ms);
-    } else {
-      motion_status.state = DEBUG_MOTION_RUNNING;
-      motion_publish_status(now_ms, true);
-    }
+    motion_status.state = DEBUG_MOTION_RUNNING;
+    motion_publish_status(now_ms, true);
     return;
   }
 
@@ -246,18 +237,15 @@ static void motion_update_turn(uint32_t now_ms)
   motion_status.remaining = motion_saturate_u16(
       (target_deg - progress_deg) * 100.0f);
 
-  const MotorTurnStatus result = Motor_TurnAngleAtSpeed(
-      active_turn_angle_deg, active_turn_speed_mm_s);
-  if (result == MOTOR_TURN_DONE) {
+  const float remaining_deg = target_deg - progress_deg;
+  if (remaining_deg * 1000.0f <= APP_MOTOR_TURN_TOLERANCE_MDEG) {
     motion_status.progress = motion_saturate_u16(target_deg * 100.0f);
     motion_status.remaining = 0U;
     motion_finish(DEBUG_MOTION_DONE, DEBUG_MOTION_FAULT_NONE, now_ms);
-  } else if ((result == MOTOR_TURN_FAULT) ||
-             (result == MOTOR_TURN_INVALID)) {
-    motion_finish(DEBUG_MOTION_FAULT,
-                  (result == MOTOR_TURN_INVALID) ?
-                  DEBUG_MOTION_FAULT_INVALID : DEBUG_MOTION_FAULT_MOTOR,
-                  now_ms);
+  } else {
+    const float speed = remaining_deg * 1000.0f <= APP_MOTOR_TURN_SLOWDOWN_MDEG ?
+        fminf(active_turn_speed_mm_s, APP_MOTOR_TURN_SLOW_MM_S) : active_turn_speed_mm_s;
+    Motor_Move(0.0f, 0.0f, speed * ((active_turn_angle_deg >= 0.0f) ? 1.0f : -1.0f));
   }
 }
 
@@ -379,9 +367,9 @@ void DebugMotionTask_Process(uint32_t now_ms)
   }
 
   const VisionData vision = Vision_GetSnapshot();
-  if (vision.stop) {
-    /* Preserve the existing permanent TYPE=0x13 emergency-stop path in the
-     * standalone debug task as well as the TYPE=0x17 STOP command. */
+  if (vision.mission.received &&
+      (vision.mission.command == VISION_CMD_ABORT)) {
+    /* Latest upstream mission ABORT is also honored in debug mode. */
     if ((motion_status.state != DEBUG_MOTION_STOPPED) || active) {
       Motor_Stop();
       active = false;

@@ -1,14 +1,21 @@
-# 当前固件：视觉目标居中Task
+# 快速切换：正常跑图 / UART运动调试
 
-当前默认固件恢复为加入运动调试功能之前的`CenteringTask`：上位机发送视觉目标坐标，F407控制车体原地旋转和摄像头俯仰，使目标回到画面中心。完整救援`Task`、UART运动调试、定位演示和其他独立测试均关闭。RDK X5通过新PCB“串口1”与F407 USART3双向通信，PD8为TX、PD9为RX、115200 8N1；RDK X5使用`/dev/ttyS1`，两端TX/RX交叉并共地。
+正常跑图基准是原仓库提交 `68a0802b140226c87a510e75190e54ca2a1c222e`。Task、机构和电机底层保留该版本，不是单独视觉居中测试。
 
-模式现在只有一个选择入口。默认的`APP_ACTIVE_MODE APP_MODE_CENTERING_TASK`就是加运动调试功能之前的视觉居中版；测试T265安装参数、陀螺仪定角度和F407本地里程计定向定距时，将这一行改为`APP_ACTIVE_MODE APP_MODE_MOTION_DEBUG_TASK`后重新编译烧录。也可以在CLion中直接选择`Centering`或`MotionDebug` CMake配置，无需改源码。完整字段、命令示例、测试顺序和上位机交接见[`docs/f407_motion_debug_handoff.md`](docs/f407_motion_debug_handoff.md)。
+- 首次在 CLion 的 Settings → Build, Execution, Deployment → CMake 中启用 `NormalRun - NormalRun`、`MotionDebug - MotionDebug` 并 Reload。若本机显示为不带重复后缀的名称，在 Run → Edit Configurations 中把下面两个烧录入口的 CMake Profile 对应选好。
+- 工具栏选择 `DAPLink NormalRun` 或 `DAPLink MotionDebug` 再运行；旧 `DAPLink OpenOCD` 仍绑定 Debug，不用于这两个模式切换。
+- CLion 重新加载 CMake 后选择 `NormalRun`：完整跑图，烧录 `build/NormalRun/WWW.elf`。
+- 选择 `MotionDebug`：陀螺仪定角度、编码器方向＋距离，烧录 `build/MotionDebug/WWW.elf`。
+- 两套配置独立目录，切换后必须重新烧录，不是运行中切换。
+- 配置会覆盖源码宏；使用普通 Debug 配置时，才通过 app_config.h 的 `APP_ACTIVE_MODE` 选择 `APP_MODE_RESCUE_TASK`（默认）或 `APP_MODE_MOTION_DEBUG_TASK`。不要再修改多个 APP_ENABLE 宏。
+- 正常 USART3 协议保持不变；新调试使用 **0x1B 命令 / 0x1C 状态**，旧调试 0x17/0x18 不兼容。上位机使用[运动调试交接](docs/f407_motion_debug_handoff.md)及配套脚本。
+- MotionDebug 不启动舵机；正常模式保留原仓库机构动作和 USART1 舵机维护控制台。
 
-## 视觉居中Task
+# 当前固件：连续物资抓取与分区投送Task
 
-`CenteringTask_Process(now_ms)`每20 ms由最低优先级PendSV调度，但PID只在收到新视觉`SEQ`时更新，并按实际帧间隔计算I/D。合法且不超过250 ms的`TYPE=0x12`报告必须置`FOUND=1`；X方向采用16像素进入、8像素退出的滞环死区，以原地旋转速度修正水平误差，非零旋转至少80 mm/s、最大239 mm/s。Y方向采用±12像素死区，通过舵机3在0°～165°范围内调整俯仰，初始角度90°。目标进入两个死区后停车并显示`CENTER`；目标丢失、报告超时或无效时立即停车、复位PID并显示`WAIT`；检测到电机方向或堵转故障时显示`FAULT`。该Task不会前进、不会操作左右夹爪，也不需要赛前配置帧。
+当前只启用完整`Task`，所有测试模式和独立`CenteringTask`均关闭，并已对照`danmo-teng/shijue_fangan@437c0ef`的100 Hz任务心跳与动态导航协议。视觉坐标为原生1280×1024、中心`(640,512)`；正常任务接收`TYPE=0x11/0x12/0x18`，发送`TYPE=0x15/0x17`。返安全区和回到中心点持续采用RDK按最新融合位置发送的绝对航向+剩余距离；安全区到达后直接ENTER张爪，不再执行ALIGN车头对正。
 
-当前LCD只显示四行：居中Task状态、上位机目标X/Y、摄像头角度与底盘旋转指令、串口状态。视觉报告超过250 ms后X/Y显示`----`。底层仍以100 Hz发送`TYPE=0x15`三路编码器累计低16位。
+> 从“历史设计”到CLion章节之间保留的是旧状态机设计记录，不再作为当前烧录行为或通信协议依据。
 
 ## 定位坐标系与算法
 
@@ -22,13 +29,13 @@
 
 该方案属于轮式航迹推算，不是绝对定位。全向轮滚子打滑、越减速带悬空、70 mm轮径误差、1768计数/圈误差和陀螺仪零偏都会随行驶距离累积；赛事文件还明确说明外围围栏不是定位基准。正式比赛应在视觉模块装好后，用已知安全区/出发区边界或场地图像周期性调用`Location_Reset()`或增加坐标校正，不能只凭该粗定位高速盲走。ROS 2官方全向轮控制器同样用轮位置/速度反馈计算里程计，并把轮半径列为决定速度与位移尺度的关键参数；三轮全向平台的系统误差需要通过多方向标定轨迹校正。[ROS 2 omni wheel controller](https://control.ros.org/rolling/doc/ros2_controllers/omni_wheel_drive_controller/doc/userdoc.html)、[三轮全向里程计系统误差研究](https://www.mdpi.com/2076-3417/12/5/2606)、[三轮全向运动学研究](https://doi.org/10.57417/jrnal.11.2_134)
 
-Task模式上电时Location保持未配置状态，不再假定4号位；收到1帧合法赛前配置后，程序用`Location_Reset((LocationStart)start_zone)`按1～4号出发区建立对应初始坐标和航向。T265位姿回传尚未加入，运行中仍由本地编码器和IMU推算。
+Task模式收到赛前配置后，用`Location_Reset((LocationStart)start_zone)`建立初始坐标和航向。本地`Location`由编码器和IMU推算；RDK根据T265在每段运动开始前生成绝对航向和距离，F407随后仅用本地航向闭环和编码器定距执行，不持续接收T265位置。
 
-# 代码思路（救援流程与上位机协议）
+# 历史设计（已停用，仅供追溯）
 
 当前固件实现赛前配置、一键驶出、搜索、分类靠近、抓取合规检查、上位机引导返航、进入安全区、放下目标、低头复核和后退重搜。上位机负责从图像判断路线和安全区位置，F407负责命令超时停车、目的地校验、单帧合法性确认、编码器定距进入/退出和机构动作；上位机不能直接控制PWM。
 
-IMU660RC已经作为独立底层传感器移植：F407通过独立的5.25 MHz硬件SPI3读取LSM6DSV16X，传感器的陀螺仪和加速度计都工作在高精度1000 Hz模式，TIM6每1 ms发布一次主循环采样请求，并在完成静止零偏校准后积分Z轴偏航角。`Motor_TurnAngle()`已经封装IMU定角度旋转，`Motor_MoveAngle()`则在任意方向平移期间保持启动航向；正式救援状态机暂未调用这两个航向接口。
+IMU660RC已经作为独立底层传感器移植：F407通过独立的5.25 MHz硬件SPI3读取LSM6DSV16X，传感器的陀螺仪和加速度计都工作在高精度1000 Hz模式，TIM6每1 ms发布一次主循环采样请求，并在完成静止零偏校准后积分Z轴偏航角。`Motor_TurnAngle()`封装IMU定角度旋转，`Motor_MoveAngle()`在任意方向平移期间保持启动航向，`Motor_MoveDistance()`则把同一航向闭环叠加到编码器定距动作；当前Task已使用这些接口。
 
 协议设计采用固定长度、消息类型、递增序号和整帧CRC16。固定帧适合当前STM32的64字节循环DMA；CRC16用于拒绝误码帧；坐标、距离、类别数量和状态放在同一视觉报告中，避免旧协议把不同采样周期的三帧拼在一起。导航采用“连续命令+失联停车”，与[ROS 2控制器的过期速度命令自动停车](https://control.ros.org/master/doc/ros2_controllers/diff_drive_controller/doc/userdoc.html)和[Nav2传感器超时即停车](https://docs.nav2.org/configuration/packages/collision_monitor/configuring-collision-monitor-node.html)的失效安全思路一致。串口设计参考：[ST UART Receive-to-IDLE DMA](https://dev.st.com/stm32cube-docs/hal1-to-hal2-migration/1.0.0/en/docs/markup/drivers_documentation/hal_drivers/uart/hal_uart_exported_functions_io_operation.html)、[Modbus串口CRC规范](https://modbus.org/docs/Modbus_over_serial_line_V1_02.pdf)、[IETF RFC 1662 FCS](https://www.rfc-editor.org/info/rfc1662/)。比赛规则以[2027智能+工程创新赛道官方解析](https://gcxl.edu.cn/new/res/intelligence20260617.pdf)为准。
 
@@ -78,9 +85,9 @@ A3 B3 01 C3
 
 首帧合法配置确认后会锁定颜色和半区并回复1次ACK，只有复位MCU才能重新配置；CRC错误或载荷非法的配置帧仍会被拒绝。
 
-## 现有Task状态帧（通信联调模式不发送）
+## 现有Task状态帧（`TYPE=0x17`，当前模式不发送）
 
-完整救援Task使用`TYPE=0x16`发送任务状态：状态改变时立即发送，并在任务运行期间每200 ms发送一次。当前该Task关闭、`APP_ENABLE_CENTERING_TASK=1`，因此视觉居中模式不发送`TYPE=0x16`状态帧。联调说明曾把`0x16`预留给后续RDK融合位姿；正式接入融合位姿前，需要由上位机负责人确定新的任务状态类型。
+完整救援Task使用`TYPE=0x17`发送任务状态：状态改变时立即发送，并在任务运行期间每200 ms发送一次。当前该Task关闭、`APP_ENABLE_CENTERING_TASK=1`，因此视觉居中模式不发送任务状态帧。`TYPE=0x16`已按上位机定位代码固定用于RDK向F407发送融合位姿，避免双向消息类型冲突。
 
 | 载荷 | 内容 |
 | --- | --- |
@@ -92,7 +99,7 @@ A3 B3 01 C3
 | `P6` | 本场抓取超时恢复次数 |
 | `P7` | 四类目标数量位域，与视觉报告`P6`相同 |
 
-`P5`依次定义为：0无故障、1上位机急停、2比赛时间结束、3电机故障、4出发超时、5返航超时、6放置总超时、7放置复核失败、8货物不合规、9非法任务状态、10自救失败或超过两次。上位机应校验CRC和`SEQ`后再更新界面，不应把状态帧当成运动命令。解析代码见`tools/vision_protocol.py`中的`parse_config_ack()`和`parse_status()`。
+`P5`依次定义为：0无故障、1上位机急停、2比赛时间结束、3电机故障、4出发超时、5融合/本地位姿超时、6任务命令超时、7投送退出定距故障、8非法任务状态、9接近阶段目标重捕获失败。上位机应校验CRC和`SEQ`后再更新界面，不应把状态帧当成运动命令。
 
 ## `TYPE=0x15`：F407编码器里程计
 
@@ -108,15 +115,29 @@ A3 B3 01 C3
 
 上位机用`轮周长 / 1768`把计数转换成每只轮子的线位移，再按当前三轮运动学反解车体平移速度并转成m/s，随后通过librealsense的`send_wheel_odometry()`送入T265。`tools/vision_protocol.py`中的`parse_odometry()`可直接解析该帧。T265的轮式里程计接口还必须加载与实际安装位置和坐标轴一致的标定JSON，不能只发送速度而省略外参。
 
+## `TYPE=0x16`：RDK融合位姿
+
+上位机定位程序以20 Hz向F407发送融合位姿。F407会完成帧、CRC、航向范围和保留位校验，重复`SEQ`不刷新时间戳；建议使用150 ms新鲜度超时。当前视觉居中Task只使用`TYPE=0x12`，因此该位姿仅保存到`VisionData.fused_pose`，不会改变底盘控制或本地`Location`。
+
+| 载荷 | 内容 | 字节序 |
+| --- | --- | --- |
+| `P0 P1` | 场地X坐标，int16，mm | 大端 |
+| `P2 P3` | 场地Y坐标，int16，mm | 大端 |
+| `P4 P5` | 航向角，uint16，0～35999，单位0.01° | 大端 |
+| `P6` | 位姿状态位 | 位标志 |
+| `P7` | 置信度和位置标准差 | 位打包 |
+
+`P6`的bit0～6依次为`VALID、T265_GOOD、WHEEL_ACTIVE、OBSTACLE_GATE、ODOM_FRESH、INSIDE_FIELD、T265_UPDATE_REJECTED`，bit7必须为0。`P7`中bit0～1为tracker confidence，bit2～3为mapper confidence，bit4～7为位置标准差cm（15表示不小于15 cm）。
+
 ## `TYPE=0x12`：原子视觉报告
 
 上位机每30～50 ms只发送一帧视觉报告：
 
 | 载荷 | 内容 | 字节序 |
 | --- | --- | --- |
-| `P0 P1` | 目标中心X，0～1279；画面中心为640 | 大端 |
-| `P2 P3` | 目标中心Y，0～1023；画面中心为512 | 大端 |
-| `P4 P5` | 目标距离mm；`DISTANCE_VALID=0`时必须为0，否则为1～65535 | 大端 |
+| `P0 P1` | 串口坐标X，0～639；中心为320 | 大端 |
+| `P2 P3` | 串口坐标Y，0～479；中心为240 | 大端 |
+| `P4 P5` | 目标距离mm；无有效距离时必须为0 | 大端 |
 | `P6` | 抓取ROI内四类目标的数量 | 位打包 |
 | `P7` | 识别和抓取状态 | 位标志 |
 
@@ -139,21 +160,21 @@ A3 B3 01 C3
 | bit3 | `CLASS_VALID` | 四类数量识别可信 |
 | bit4 | `UNKNOWN` | ROI内还存在无法分类的物体 |
 | bit5 | `CLAW_VIEW` | 当前报告来自低头后的夹内检查ROI |
-| bit6 | `DISTANCE_VALID` | 距离字段已经标定且可用于前进/停车 |
+| bit6 | `DISTANCE_VALID` | P4/P5为有效距离；置位时距离必须为1～65535 mm |
 | bit7 | 保留 | 必须为0 |
 
-`GRABBED=0`时，P6只统计当前选中目标的抓取ROI，不得统计整张画面的所有目标；`GRABBED=1`时，P6必须统计机构内全部目标。没有目标时清除`FOUND/GRABBED/NEAR/UNKNOWN/DISTANCE_VALID`并把P6和距离置0；低头检查确认夹内为空时同时置`CLAW_VIEW=1、CLASS_VALID=1`。当前居中阶段允许`FOUND=1、DISTANCE_VALID=0、distance=0`，只使用1280×1024原始X/Y；正式接近前必须完成距离标定并置`DISTANCE_VALID=1`。250 ms内没收到新的有效视觉报告就停车，不会沿用旧坐标。
+`GRABBED=0`时，P6只编码当前选中的一个目标类别，不得统计整张画面的所有目标。没有目标时整个P0～P7必须为0。F407会拒绝坐标越界、bit7非0、距离有效位与距离数值矛盾以及无目标但载荷非0的报告。APPROACH中250 ms没有合法新目标后开始减速、600 ms停车、连续1200 ms无合法目标才进入REACQ；不会因单帧漏检立即放弃。当前上位机未测距时发送`FOUND=1、CLASS_VALID=1、DISTANCE_VALID=0、distance=0`。
 
-目标位于画面中心`(640,512)`、距离350 mm、识别为1个普通物资：
+上位机当前发送的典型帧：目标位于串口坐标中心`(320,240)`、暂无有效距离、识别为1个普通物资：
 
 ```text
-A3 B3 12 10 02 80 02 00 01 5E 01 09 BD D3 C3
+A3 B3 12 10 01 40 00 F0 00 00 01 09 1C 13 C3
 ```
 
-抓住1个普通物资并稳定分类：
+如果后续增加测距，350 mm时需同时置`DISTANCE_VALID`：
 
 ```text
-A3 B3 12 11 02 80 02 00 00 64 01 0D 90 71 C3
+A3 B3 12 10 01 40 00 F0 01 5E 01 49 7D CD C3
 ```
 
 ## `TYPE=0x13`：安全事件
@@ -227,7 +248,7 @@ A3 B3 14 21 00 02 01 00 00 00 00 00 86 07 C3
 
 当前实车参数为`进入0.20 m、退出0.50 m、夹内检查0°`：0.20 m要保证目标越过边界但车体不压线，0.50 m要保证旋转时机构不扫到已放下目标，0°要保证夹内ROI完整进入画面。摄像头软件最小限位已同步设为0°，因此检查命令不会再被夹到10°。
 
-当前F407没有激光雷达、碰撞开关或本地地图，无法独立判断返航路径上突然出现的障碍；200 ms以内的短时断帧会沿用最后一条合法方向，超过200 ms强制停车。上位机识别不确定、目标被遮挡或路线被占用时必须先发送`HOLD`。电机堵转/反向故障、30秒返航超时和180秒总超时仍是底层最后保护，但不能替代上位机避障。
+当前F407没有激光雷达、碰撞开关或本地地图，无法独立判断路径上的突然障碍。连续任务不设置比赛总时长，但电机、机构和任务命令看门狗仍是底层保护，不能替代上位机避障。
 
 ## 抓取顺序与合规判断
 
@@ -247,16 +268,17 @@ F407执行以下硬规则：
 TIM6每20 ms发布一次`Task_Process(now_ms)`运行请求，由最低优先级PendSV非阻塞执行：
 
 1. `WAIT_CONFIG`：停车等待1帧合法配置并回复1次ACK。
-2. `START`：Task运行后先停车，依次将左爪舵机4转到30°、右爪舵机2转到140°形成Retract收缩姿态；收到1帧合法配置后自动启动180秒倒计时，以850 mm/s倒车1秒退出安全区。制动后舵机1恢复85°，先将右爪舵机2转到100°，再将左爪舵机4转到80°形成Touch姿态，然后调用`Motor_TurnAngle(180.0f)`并停车等待5000 ms。
-3. `FIND_OBJECT`：摄像头保持90°，等待700 ms后原地搜索；累计实际航向转满360°仍未找到目标，就前进0.80 m并从新位置继续搜索。只接近当前阶段允许且分类明确的单个目标。
-4. `GRAB_OBJECT`：Task起始时舵机3明确复位到90°；收到1帧合法目标报告后先保持Touch姿态，按X修正底盘并由舵机3根据目标Y坐标执行视觉PID。水平和摄像头PID都只在新视觉`SEQ`到达时更新，并按实际帧间隔计算I/D；水平控制采用16像素进入、8像素退出的滞环死区，非零修正至少80 mm/s。舵机3达到150°后立即停车，再按“左爪128°、右爪52°”顺序Open；两只爪子全部打开后才进入抓取阶段，保持150°观察并让夹爪回到右100°/左80°的Touch姿态夹持目标，随后根据1帧合法报告确认抓取结果。8秒超时只约束视觉靠近，Open和Touch各自使用3秒动作保护；非法、丢失或失败时保持Touch后再后退重搜。
-5. `RETURN_SAFE`：夹紧目标，按目的地匹配且不超过200 ms的`TYPE=14`帧前进、转向、后退或停车；导航过期立即停车。收到新`SEQ`的`TYPE=13、P0=02`后以850 mm/s后退1秒自救；收到1帧合法到区报告后进入放置。
-6. `DROP_OBJECT`：舵机1转到65°，编码器前进0.20 m，夹爪Open释放，摄像头转到0°检查夹内；随后夹爪Touch，空夹确认后退0.50 m重新搜索，仍有货物则夹紧后退返航。
-7. `STOPPED`：180秒结束、永久停车事件、电机故障或复核出非法剩余货物后保持停车。
+2. `START`：上电后先完成IMU芯片配置、静止稳定和陀螺仪零偏校准；此期间TIM8舵机PWM尚未启动，四个舵机不会动作。仅在`IMU_Init()`成功并置`ready=true`后才启动舵机PWM，随后依次将左爪舵机4转到23°、右爪舵机2转到147°形成安全Retract姿态。收到合法配置后再执行前600 mm收纳直行和总计1.70 m的出发流程；IMU初始化失败时机构和Task均不会启动。
+3. `DISPERSE`：原有“前进0.20 m、正反各转一圈、后退0.30 m”代码仍保留，但当前`APP_ENABLE_START_SCATTER=0`，正常流程不会进入这些状态。
+4. `FIND_OBJECT`：普通搜索先以摄像头120°等待700 ms，再以160 mm/s原地转满360°；没有目标就停车并快速命令舵机3到90°，稳定300 ms后再转一圈。每个视角一整圈只需收到1帧新的合法视觉报告即可判定无目标；整圈完全无新报告才保持当前视角继续旋转。两个视角都确认无目标后才恢复起始航向并前进0.80 m。返中完成后的第一轮直接从90°开始。
+5. `GRAB_OBJECT`：SEARCH收到1帧合法单目标便锁定其类别并以350 mm/s进入APPROACH；后续只有相同类别的合法新SEQ可以刷新低通后的X/Y、距离和丢失计时，其他类别不能中途接管。250 ms内保持、250～600 ms平滑降速、600 ms后停车，连续1200 ms没有原目标才进入REACQ。近距离仍按500/250 mm阈值降到225/125 mm/s；恢复和抓取观察同样要求锁定类别。
+6. `RETURN_SAFE`：夹紧目标后持续接收上位机最新`TYPE=0x18`航向+剩余距离。速度和航向目标都经过每20 ms斜率限制；NAV进入最后300 mm时限速约400 mm/s，RETURN仍在最后300 mm内由500线性降到120 mm/s，≤2 mm停车，余量重新大于50 mm才恢复。命令超过250 ms或余量500 ms无进展便停车；LCD显示`TMO/STALE/DONE`区分通信超时、载荷冻结和到达。
+7. `DELIVER`：安全区车头对正已删除。上位机确认到达后直接发送`ENTER_SAFE_ZONE`，F407从NAV直接同时打开左右爪并进入`CHECK`原地保持至少1200 ms；不会进入ALIGN，也不执行碰撞。收到`TASK_COMPLETE`后先后退0.45 m安全脱离围栏，随即执行上位机到场地原点`(0,0)`的`RETURN_CENTER`动态航向+完整剩余距离，完成后摄像头快速到90°并开始下一轮搜索。
+8. `STOPPED`：上位机`STOP/ABORT`、电机、位姿或任务命令安全故障后保持停车。连续任务不设置180秒总时长终止；目标重捕获失败则返回搜索而不是永久停车。
 
-S4默认开角90度、闭角30度。安装机构后必须先断开机构负载标定角度，确认不会顶死舵机。
+当前夹爪角度为：收缩左23°/右147°，Touch左80°/右100°，Open左128°/右52°。安装机构后必须先断开机构负载标定角度，确认不会顶死舵机。
 
-视觉居中模式LCD不绘制场地图、本地位置或目标距离，只保留四行核心信息：`WAIT/TRACK/CENTER/FAULT`状态、上位机视觉报告中的目标X/Y坐标、摄像头角度与底盘旋转指令、串口状态。超过250 ms没有新的有效视觉报告时X/Y显示`----`；串口超过250 ms未收到任何新帧时显示`TMO`。动态值每100 ms刷新；固定宽度文字直接覆盖旧内容，不先清空整行，以减少闪烁。
+Task模式LCD保留当前任务状态、上位机X/Y、导航H/D、命令状态和摄像头角度。命令状态中`TMO`表示任务帧超过250 ms，`STALE`表示100 Hz心跳仍在但剩余距离500 ms无进展，`DONE`表示上位机余量已进入5 mm停车区。动态值每100 ms覆盖刷新，不整行清屏。
 
 底层仍为：编码器和速度PID严格每10 ms在TIM6中断执行；IMU每1 ms释放一次主循环采样请求，主循环延迟时合并为最新一次而不重复读取已经过去的样本；任务由TIM6严格每20 ms发布、最低优先级PendSV消费，延迟时只执行最新一次；LCD每100 ms刷新；USART3使用64字节循环DMA，不申请动态内存。PendSV可被TIM6、DMA和USART3抢占，高层状态机不会再占用电机实时中断。
 
@@ -315,18 +337,18 @@ Power the target, connect the USB/transmitter side, and verify that Windows show
 
 ## 当前上电行为
 
-1. M1-M3六路PWM以0占空比启动，三路硬件编码器开始计数；当前视觉居中模式初始化舵机，但在收到新鲜且有效的目标报告前保持底盘停车。
+1. M1-M3六路PWM以0占空比启动，三路硬件编码器开始计数，TIM8四路舵机PWM启动；Task先将左右爪收缩，收到配置前保持停车。
 2. IMU660RC先检查`WHO_AM_I=0x70`，随后在车辆静止时采集128个陀螺仪样本校准零偏；1000 Hz配置下采样本身约需0.13秒，连同复位和配置仍应保持静止直到LCD给出结果。
 3. LCD初始化完成后显示`IMU660RC: OK`一秒；连接失败时显示`IMU660RC: ERROR`一秒。提示结束后清屏并切换到当前任务状态界面，不执行RGB色块测试。
 4. TIM6提供1 ms基础节拍：每1 ms发布一次IMU主循环采样请求，每10 ms采样编码器并执行一次电机速度环；自主任务开启时每20 ms向最低优先级PendSV发布一次任务请求；每100 ms只发布一次LCD刷新请求。
 5. 新PCB“串口1”USART3使用PD8/PD9和64字节循环DMA接收视觉帧；通过统一的中断发送队列发送4字节配置ACK及100 Hz三路编码器累计计数帧。
-6. 当前`APP_ENABLE_CENTERING_TASK=1`，完整救援Task及所有独立运动测试、定位演示和舵机扫描均为0；上电后摄像头回90°并等待有效目标报告，只执行视觉居中动作。
+6. 当前`APP_ENABLE_TASK=1`，独立视觉居中Task及所有运动测试、定位演示和舵机扫描均为0；收到配置后自动执行退出安全区、开爪搜索、视觉靠近、140°抓取观察、航向定距返航和安全区投送。
 
-接通电机12 V前应确认三轮与编码器方向正确，并在车后方预留至少1 m安全空间；上位机一旦发出1帧有效配置，F407就会自动开始180秒倒计时并以850 mm/s倒车1秒，没有额外按键确认。
+接通电机12 V前应确认三轮与编码器方向正确，并在车后方预留至少1.8 m空间；上位机一旦发出1帧有效配置，F407就会启动连续任务，保持IMU航向并按编码器倒车1.70 m，没有额外按键确认。
 
 ## 自主救援流程
 
-完整流程只公开一个非阻塞入口`Task_Process(now_ms)`。TIM6每20 ms发布节拍，最低优先级PendSV执行高层状态机，电机10 ms闭环仍留在TIM6中断。当前状态为`WAIT_CONFIG`、`START`、`FIND_OBJECT`、`GRAB_OBJECT`、`RETURN_SAFE`、`DROP_OBJECT`和`STOPPED`，详细数据帧、抓取规则、LCD内容及返航放置流程以README最前面的“代码思路”为准。
+完整流程只公开一个非阻塞入口`Task_Process(now_ms)`。TIM6每20 ms发布节拍，最低优先级PendSV执行高层状态机，电机10 ms闭环仍留在TIM6中断。当前状态覆盖配置、出发、开爪、搜索、靠近、抓取观察/抬高/旋转恢复、合爪、等待导航、前置点导航、安全区对正、慢速入区、投送和完成；准确流程及协议以[MISSION_PROTOCOL.md](MISSION_PROTOCOL.md)为准。
 
 ## 引脚与外设
 
@@ -339,10 +361,14 @@ Power the target, connect the USB/transmitter side, and verify that Windows show
 | LCD | PB13 SCK、PB15 MOSI、PB12 CS、PB14 RESET、PC5 DC、PB1 BL | ST7735，128x160 |
 | IMU660RC | PC10 SCK、PC11 MISO、PC12 MOSI、PC13 CS | SPI3硬件全双工，Mode 3，1000 Hz采样 |
 | PCB串口1 / USART3 | PD8 TX、PD9 RX | 115200 8N1；RX为DMA1 Stream1的64字节循环DMA，TX发送4字节配置ACK和100 Hz累计编码器里程计 |
-| PCB串口2 / USART1 | PA9 TX、PA10 RX | 当前保留，不用于RDK X5通信 |
+| PCB串口2 / USART1 | PA9 TX、PA10 RX | 115200 8N1文本舵机调试；`DEBUG`进入、`S id angle`调角、`RUN`复位回正常模式，不用于RDK通信 |
 | 预留按键 | PA0/S1，内部下拉 | 当前Task不读取该按键 |
 
 M4、TIM10/TIM11、PB8/PB9、PD3/PD4和EXTI3已经整体删除，不再存在第四电机软编码器。
+
+### 运行时舵机调试
+
+USART1发送`DEBUG`并回车后立即停车并暂停Task；随后可发送如`S 3 140`的命令手动调整1～4号舵机。发送`RUN`会停车并复位MCU，回到正常模式后需要重新启动上位机任务或重新发送`TYPE=0x11`配置。调试模式不占用USART3，不恢复按键启动。完整操作和安全注意事项见[临时底盘修改交接记录](docs/TEMP_CHASSIS_HANDOFF.md#6-舵机调试模式)。
 
 ## IMU660RC接线与驱动
 
@@ -389,7 +415,7 @@ typedef struct {
 
 void Motor_Init(void);
 void Motor_SetSpeed(float target_speed, uint8_t id); /* mm/s，id=1..3 */
-MotorDistanceStatus Go_distance(float distance_m, float max_speed_mm_s);
+MotorDistanceStatus Motor_MoveDistance(float distance_m, float max_speed_mm_s);
 MotorTurnStatus Motor_TurnAngle(float angle_deg);   /* deg */
 void Motor_Move(float forward_mm_s, float lateral_mm_s,
                 float yaw_tangent_mm_s);            /* 三项均为mm/s */
@@ -435,7 +461,7 @@ v3 =  sqrt(3)/2 * Vx - 1/2 * Vy + Rω
 - 网盘中的轮趣STM32讲义先在固定周期内平滑`VX/VY/VZ`，再调用底盘逆运动学和四个独立速度PI；松开指令时也不是直接把运动量清零。当前工程沿用“先平滑车体速度、再进行轮速分解”的层次，但使用二维同比矢量斜坡，避免分别修改X/Y导致斜向角度暂时失真。[轮趣R680/ROS资料包](https://pan.baidu.com/s/186VvHGOcfHoDA3TKxAP9tw)
 - ROS官方Nav2速度平滑器同样使用固定周期插值、独立加减速度限制、速度死区和同比缩放，并说明高频低延迟里程计才适合闭环平滑。本工程10 ms速度环使用上一平滑指令推进，只有反向零速确认读取同周期编码器，避免编码器低速量化噪声参与每一步斜坡。[Nav2 Velocity Smoother](https://github.com/ros-navigation/navigation2/tree/main/nav2_velocity_smoother)
 - ROS 2全向轮控制器以车体`x/y/yaw`速度为统一输入、用轮速/位置反馈计算底盘状态；移动控制器还提供速度、加速度、减速度和jerk限制。当前F407保留三轮逐轮PI、航向PI和同比轮速限幅；暂不增加jerk状态，因为固定45%起步PWM和当前低速死区会让第三阶轨迹参数难以独立标定，先把可测的加减速度与停稳阈值调准更可靠。[ROS 2 omni wheel controller](https://control.ros.org/kilted/doc/ros2_controllers/omni_wheel_drive_controller/doc/userdoc.html)、[ROS 2移动底盘运动限制](https://control.ros.org/rolling/doc/ros2_controllers/mecanum_drive_controller/doc/userdoc.html)
-- 轮趣R550全向轮版本标称最高速度0.84 m/s，当前测试750 mm/s已经接近同类教育底盘的高速区，因此高速横移不能同时做到“瞬间反向”和“无冲击”；必须为轮子惯性保留过渡时间。[轮趣R550产品手册](https://wheeltec.net/R550.pdf)
+- 轮趣R550全向轮版本标称最高速度0.84 m/s，当前任务的最高直线请求为850 mm/s，已经处于同类教育底盘的极限速度区；高速动作必须保留减速和制动过程，并在实车上检查供电压降、轮胎打滑与电机温升。[轮趣R550产品手册](https://wheeltec.net/R550.pdf)
 
 `Motor_MoveAngle(speed, angle)`规定`0°=前、90°=左、180°=后、270°=右`，将速度分解成`Vx/Vy`后进入同一逆运动学。第一次启动记录IMU累计航向，之后10 ms一次用航向PI产生`Rω`修正。启动和小角度换向采用二维矢量限速，当前加速度为2500 mm/s²；新旧方向夹角小于120°时直接在速度空间连续过渡，达到120°或更大时以3000 mm/s²先减到0。命令归零后要求三轮实测速度连续3个周期不超过40 mm/s，最多等待400 ms，随后清除三轮速度PI及航向PI积分、保留原目标航向，再向新方向加速。函数在平滑矢量达到目标后返回`true`；当前测试从此时才开始计算3秒倒车时间，单次加速超过2秒则安全停车。只有`Motor_Stop()`、IMU故障或切换到其他运动模式才结束本次航向保持。
 
@@ -443,13 +469,13 @@ v3 =  sqrt(3)/2 * Vx - 1/2 * Vy + Rω
 
 - 启动/换向后先等待200 ms；之后若编码器连续60 ms与目标反向，记录`DIR`。
 - 启动后先等待500 ms；若上一周期PWM绝对值至少50%，但编码器连续500 ms仍为0，记录`STALL`，用于检测堵转和编码器断线。
-- 任意一个轮子出现`DIR`或`STALL`，三轮立即一起停车；普通恒速测试、`Motor_Move()`、`Go_distance()`和`Motor_TurnAngle()`使用同一联停规则。
+- 任意一个轮子出现`DIR`或`STALL`，三轮立即一起停车；普通恒速测试、`Motor_Move()`、`Motor_MoveDistance()`和`Motor_TurnAngle()`使用同一联停规则。
 - 故障会锁存，`Motor_Stop()`不会清除，状态机下一周期也不能重新启动电机。检查接线和机械问题后复位MCU才能恢复。
 - AT8236停车时内部先使用`IN1=IN2=1`低侧制动约60 ms，然后切换到`IN1=IN2=0`高阻滑行/休眠；重复调用`Motor_Stop()`不会无限延长制动，新运动命令会保存目标但必须等剩余制动周期结束后才真正输出。
 
 电机、编码器和舵机的HAL启动失败会进入`Error_Handler()`，不会再静默继续运行。
 
-## `Go_distance()`
+## `Motor_MoveDistance()`
 
 返回状态：
 
@@ -469,12 +495,12 @@ typedef enum {
 forward_distance = (M1_distance - M2_distance) / sqrt(3)
 ```
 
-估算底盘前进距离。正式前进轮速比例为`M1=+0.866、M2=-0.866、M3=0`，后退时M1/M2符号相反；横移比例为`M1=-0.5、M2=-0.5、M3=+1.0`，原地旋转仍为三轮同号。Task开局退出安全区不再调用该定距接口，而是以850 mm/s倒车1秒；搜索后推进0.80 m使用750 mm/s，放置定距仍使用300 mm/s。减速距离按速度相对300 mm/s同比放大，并限制为全程一半，最后线性降到120 mm/s后进入3 mm容差主动制动。
+估算底盘前进距离。正式前进轮速比例为`M1=+0.866、M2=-0.866、M3=0`，后退时M1/M2符号相反；横移比例为`M1=-0.5、M2=-0.5、M3=+1.0`，原地旋转仍为三轮同号。开局600 mm、搜索换位和退出安全区仍使用`Motor_MoveDistance()`完成本地编码器定距；NAV与RETURN已改用`Motor_Move()`执行上位机持续更新的航向和剩余距离，不再使用`Motor_MoveDistanceLinear()`锁存整段。轮胎打滑造成的位置误差由上位机下一帧融合余量修正。
 
 完成、故障状态会锁存，循环调用不会再次启动：
 
 ```c
-MotorDistanceStatus result = Go_distance(0.5f, 300.0f);
+MotorDistanceStatus result = Motor_MoveDistance(0.5f, 300.0f);
 if (result == MOTOR_DISTANCE_DONE) {
     Motor_Stop(); /* 确认完成、回到IDLE，之后才能启动下一段 */
 }
@@ -518,7 +544,8 @@ A3 B3 TYPE SEQ P0 P1 P2 P3 P4 P5 P6 P7 CRC_LO CRC_HI C3
 - CRC按`TYPE`到`P7`共10字节计算，低字节先发；错误帧不更新任何任务数据。
 - 视觉报告超过250 ms未更新即视为过期，不会继续驱动底盘靠近。
 - 配置ACK保留原有4字节`A3 B3 01 C3`；`TYPE=0x15`是F407以100 Hz发出的三轮编码器累计计数低16位、10 ms采样间隔和状态位。
-- `TYPE=0x16`融合位姿属于后续阶段，本次不接收也不修改后续任务流程。
+- `TYPE=0x16`仅保留旧版解析兼容，当前连续任务的RDK默认不发送。
+- `TYPE=0x17`是关闭中的完整救援Task状态上报，当前视觉居中模式不发送。
 
 循环DMA在`Size=64`时消费本圈剩余数据并把软件位置归零，可持续解析无IDLE的连续数据。DMA首次启动或错误恢复失败时，主循环每100 ms重试，LCD显示`DMA ERR`，不会静默失效。
 
@@ -526,11 +553,11 @@ A3 B3 TYPE SEQ P0 P1 P2 P3 P4 P5 P6 P7 CRC_LO CRC_HI C3
 
 ## 编译与安全测试顺序
 
-每次源码修改后成功链接`WWW.elf`，CMake都会调用`tools/AutoBackup.ps1`：先创建标题带`yyyy-MM-dd HH:mm:ss`的本地提交，再根据改动路径附加`IMU`、`motor/PID`、`task/vision`、`scheduler/LCD`、`board/build config`或`documentation`等摘要，最后推送到`origin`。当前DAPLink OpenOCD配置开启了烧录前构建，因此点击烧录也会先完成同样的自动备份。没有文件变化时不会产生空提交；网络或GitHub认证失败时保留本地提交并在下次成功编译后重试，不阻止生成固件和烧录。疑似凭据文件（例如`.env`、`.pem`、`.key`）出现时自动跳过并警告。
+每次默认CMake构建都会在固件目标完成后运行独立的`github_backup`目标并调用`tools/AutoBackup.ps1`，即使`WWW.elf`已经是最新、无需重新链接也不会跳过：有改动时先创建标题带`yyyy-MM-dd HH:mm:ss`的本地提交，根据路径附加模块摘要，随后推送到`origin`并核对上游提交与本地`HEAD`完全一致。当前DAPLink OpenOCD配置开启了烧录前默认构建，因此点击烧录也会先完成这项强制GitHub同步；网络不可用、认证失败、远端拒绝、存在未处理分歧或疑似凭据文件（例如`.env`、`.pem`、`.key`）时构建会以错误结束并阻止烧录。没有文件变化时不会产生空提交，但仍会连接GitHub执行同步检查。Git无法绕过本地commit直接写远端，因此“只提交GitHub”的实际保证是：本地commit未成功同步到GitHub时，本次构建和烧录不会被视为成功。
 
 ```powershell
 cmake --preset Debug
 cmake --build --preset Debug
 ```
 
-输出位于`build/Debug/WWW.elf/.hex/.bin`。当前固件只运行视觉居中Task，完整救援Task和所有独立测试模式关闭；新PCB“串口1”（USART3）继续以100 Hz发送`TYPE=0x15`三路累计编码器计数。烧录后应先架空车轮核对X偏差对应的旋转方向和Y偏差对应的摄像头方向，再落地测试；上位机持续发送带`FOUND=1`的有效视觉报告后自动开始居中，不需要配置帧或按键。可用`tools/vision_protocol.py`验证视觉报告和里程计帧。
+输出位于`build/Debug/WWW.elf/.hex/.bin`。当前固件只运行完整救援Task，独立视觉居中Task和所有独立测试模式关闭；新PCB“串口1”（USART3）继续以100 Hz发送`TYPE=0x15`三路累计编码器计数，并以20 Hz发送`TYPE=0x17`任务状态。烧录后先架空车轮验证启动定距、重复GRAB/闭合回报握手和返航断流保护，再落地测试；正式Task必须先收到合法`TYPE=0x11`配置，不需要按键确认。可用`tools/vision_protocol.py`验证协议帧。

@@ -1,31 +1,40 @@
 #ifndef APP_CONFIG_H
 #define APP_CONFIG_H
 
-/* Select exactly one normal application mode by changing only this line.
- * CENTERING_TASK is the firmware behavior from before motion debug was added.
- * MOTION_DEBUG_TASK enables UART gyro-turn and wheel-odometry move commands. */
-#define APP_MODE_CENTERING_TASK          1
-#define APP_MODE_MOTION_DEBUG_TASK       2
-#define APP_MODE_RESCUE_TASK             3
-
+/* NormalRun preserves upstream 68a0802; only MotionDebug enables test commands. */
+#define APP_MODE_RESCUE_TASK 3
+#define APP_MODE_MOTION_DEBUG_TASK 2
+#define APP_MODE_CENTERING_TASK 1
 #ifndef APP_ACTIVE_MODE
-#define APP_ACTIVE_MODE APP_MODE_CENTERING_TASK
+#define APP_ACTIVE_MODE APP_MODE_RESCUE_TASK
 #endif
-
+#if APP_ACTIVE_MODE < 1 || APP_ACTIVE_MODE > 3
+#error "Invalid APP_ACTIVE_MODE"
+#endif
+#define APP_ENABLE_MOTION_DEBUG_TASK (APP_ACTIVE_MODE == APP_MODE_MOTION_DEBUG_TASK)
+#define APP_OMNI_LATERAL_API_SIGN -1.0f
+#define APP_MOTION_DEBUG_STATUS_PERIOD_MS 50U
+#define APP_MOTION_DEBUG_MAX_DISTANCE_MM 10000U
+#define APP_MOTION_DEBUG_MIN_SPEED_MM_S 50.0f
+#define APP_MOTION_DEBUG_MAX_SPEED_MM_S 700.0f
+#define APP_MOTION_DEBUG_DISTANCE_TOLERANCE_MM 10.0f
+#define APP_MOTION_DEBUG_SLOWDOWN_MM 150.0f
+#define APP_MOTION_DEBUG_MIN_SLOW_SPEED_MM_S 80.0f
+#define APP_MOTION_DEBUG_CROSS_TRACK_KP 1.5f
+#define APP_MOTION_DEBUG_CROSS_TRACK_LIMIT_MM_S 120.0f
+#define APP_MOTION_DEBUG_MOVE_TIMEOUT_MIN_MS 5000U
+#define APP_MOTION_DEBUG_MOVE_TIMEOUT_MAX_MS 120000U
+#define APP_MOTION_DEBUG_MAX_TURN_CDEG 36000U
 #define APP_ENABLE_MOTION_TEST           0
 #define APP_ENABLE_LOCATION_DEMO         0
 #define APP_ENABLE_MOVE_SPIN_TEST        0
 #define APP_ENABLE_AUTOMATIC_MOTOR_TEST  0
 #define APP_ENABLE_SERVO_SWEEP_TEST      0
-#define APP_ENABLE_TASK                  (APP_ACTIVE_MODE == APP_MODE_RESCUE_TASK)
-#define APP_ENABLE_CENTERING_TASK        (APP_ACTIVE_MODE == APP_MODE_CENTERING_TASK)
-#define APP_ENABLE_MOTION_DEBUG_TASK     (APP_ACTIVE_MODE == APP_MODE_MOTION_DEBUG_TASK)
-
-#if (APP_ACTIVE_MODE != APP_MODE_CENTERING_TASK) && \
-    (APP_ACTIVE_MODE != APP_MODE_MOTION_DEBUG_TASK) && \
-    (APP_ACTIVE_MODE != APP_MODE_RESCUE_TASK)
-#error "Invalid APP_ACTIVE_MODE"
-#endif
+#define APP_ENABLE_TASK (APP_ACTIVE_MODE == APP_MODE_RESCUE_TASK)
+#define APP_ENABLE_CENTERING_TASK (APP_ACTIVE_MODE == APP_MODE_CENTERING_TASK)
+/* USART1 (PCB serial port 2) text console. It can suspend TASK and position
+ * one servo at a time without changing the USART3 RDK protocol. */
+#define APP_ENABLE_RUNTIME_SERVO_DEBUG (!APP_ENABLE_MOTION_DEBUG_TASK)
 
 /* Non-blocking IMU angle turn used by Motor_TurnAngle(). */
 #define APP_MOTOR_TURN_TOLERANCE_MDEG    1000L
@@ -71,20 +80,6 @@
 #define APP_MOVE_SPIN_PID_BOOST                1.8f
 #define APP_MOVE_SPIN_OUTPUT_LIMIT_PWM      1000
 #define APP_MOVE_SPIN_HEADING_LEAD_MS         55.0f
-
-/* UART-controlled gyro/odometry motion test task. */
-#define APP_MOTION_DEBUG_STATUS_PERIOD_MS    50U
-#define APP_MOTION_DEBUG_MAX_DISTANCE_MM  10000U
-#define APP_MOTION_DEBUG_MIN_SPEED_MM_S      50.0f
-#define APP_MOTION_DEBUG_MAX_SPEED_MM_S     700.0f
-#define APP_MOTION_DEBUG_DISTANCE_TOLERANCE_MM 10.0f
-#define APP_MOTION_DEBUG_SLOWDOWN_MM         150.0f
-#define APP_MOTION_DEBUG_MIN_SLOW_SPEED_MM_S  80.0f
-#define APP_MOTION_DEBUG_CROSS_TRACK_KP        1.5f
-#define APP_MOTION_DEBUG_CROSS_TRACK_LIMIT_MM_S 120.0f
-#define APP_MOTION_DEBUG_MOVE_TIMEOUT_MIN_MS 5000U
-#define APP_MOTION_DEBUG_MOVE_TIMEOUT_MAX_MS 120000U
-#define APP_MOTION_DEBUG_MAX_TURN_CDEG     36000U
 
 #if (APP_ENABLE_MOTION_TEST + APP_ENABLE_LOCATION_DEMO + \
      APP_ENABLE_MOVE_SPIN_TEST + APP_ENABLE_AUTOMATIC_MOTOR_TEST + \
@@ -156,7 +151,7 @@
 #define APP_MOTOR_STALL_GRACE_CYCLES     50U
 #define APP_MOTOR_BRAKE_CYCLES           6U
 
-/* IMU heading hold used only by Motor_MoveAngle(). */
+/* IMU heading hold shared by Motor_MoveAngle() and Motor_MoveDistance(). */
 #define APP_MOTOR_HEADING_KP              4.0f
 #define APP_MOTOR_HEADING_KI              0.02f
 #define APP_MOTOR_HEADING_KD              0.0f
@@ -164,10 +159,6 @@
 #define APP_MOTOR_HEADING_INTEGRAL_LIMIT  1500.0f
 /* The installed chassis rotates opposite to the IMU positive Z direction. */
 #define APP_MOTOR_HEADING_OUTPUT_SIGN    -1.0f
-
-/* Motor_Move() uses the mathematical lateral axis; positive physical left is
- * represented by a negative API lateral command on this chassis. */
-#define APP_OMNI_LATERAL_API_SIGN         -1.0f
 
 /* Non-blocking vector ramp used by Motor_MoveAngle(). */
 #define APP_OMNI_ACCEL_MM_S2              2500.0f
@@ -177,9 +168,12 @@
 #define APP_OMNI_ZERO_CONFIRM_CYCLES      3U
 #define APP_OMNI_ZERO_TIMEOUT_CYCLES      40U
 
-/* Go_distance() accepts metres; internal speed, slowdown and tolerance use millimetres. */
+/* Motor_MoveDistance() accepts metres, holds its starting IMU yaw, and uses
+ * millimetres internally for speed, slowdown and tolerance. */
 #define APP_GO_DISTANCE_SPEED_MM_S       300.0f
 #define APP_GO_DISTANCE_MIN_SPEED_MM_S   120.0f
+#define APP_GO_DISTANCE_ACCEL_MM_S2     3000.0f
+#define APP_GO_DISTANCE_DECEL_MM_S2     3500.0f
 #define APP_GO_DISTANCE_SLOWDOWN_MM      100.0f
 #define APP_GO_DISTANCE_TOLERANCE_MM     3.0f
 #define APP_GO_DISTANCE_PROGRESS_MM      0.25f
@@ -193,44 +187,67 @@
 #define APP_IMU_UPDATE_PERIOD_MS         1U
 #define APP_MOTOR_CONTROL_PERIOD_MS      10U
 #define APP_TASK_PERIOD_MS               20U
-#define APP_TASK_STATUS_PERIOD_MS       200U
+#define APP_TASK_STATUS_PERIOD_MS        50U
 #define APP_MATCH_TIME_S                 180U
 #define APP_MATCH_TIME_MS                (APP_MATCH_TIME_S * 1000U)
+#define APP_START_REVERSE_DISTANCE_MM  1700U
+#define APP_START_CLEARANCE_DISTANCE_M   0.60f
+#define APP_START_CLEARANCE_SPEED_MM_S  700.0f
 #define APP_START_REVERSE_SPEED_MM_S    850.0f
-#define APP_START_REVERSE_TIME_MS      1000U
-#define APP_START_BRAKE_WAIT_MS          150U
+#define APP_START_REVERSE_SLOW_SPEED_MM_S 160.0f
+#define APP_START_REVERSE_SLOW_REMAINING_MM 100U
+#define APP_START_REVERSE_TOLERANCE_MM   10U
 #define APP_START_TURN_DEG               180.0f
-#define APP_START_SCAN_WAIT_MS          5000U
+#define APP_START_TURN_KP_MM_S_PER_DEG     2.2f
+#define APP_START_TURN_MAX_MM_S          380.0f
+#define APP_START_TURN_TOLERANCE_DEG       3.0f
 #define APP_TARGET_WAIT_MS               700U
-#define APP_START_TIMEOUT_MS           20000U
+#define APP_START_TIMEOUT_MS           30000U
+/* Temporary handoff switch: keep the original pile-scatter states available,
+ * but go straight from the open claw to SEARCH while the centre contains a
+ * single object. */
+#define APP_ENABLE_START_SCATTER           0
+#define APP_PILE_APPROACH_DISTANCE_M      0.20f
+#define APP_PILE_APPROACH_SPEED_MM_S     250.0f
+#define APP_SCATTER_ROTATE_SPEED_MM_S    500.0f
+#define APP_SCATTER_BRAKE_WAIT_MS        250U
+#define APP_SCATTER_TURN_TIMEOUT_MS    10000U
+#define APP_SCATTER_EXIT_DISTANCE_M        0.30f
+#define APP_SCATTER_EXIT_SPEED_MM_S      250.0f
+#define APP_SEARCH_CAMERA_ANGLE          120U
+#define APP_SEARCH_LOW_CAMERA_ANGLE       90U
 #define APP_SEARCH_FULL_TURN_MDEG     360000U
+#define APP_SEARCH_MIN_REPORTS_PER_SWEEP  1U
 #define APP_SEARCH_ADVANCE_DISTANCE_M     0.8f
 #define APP_SEARCH_ADVANCE_SPEED_MM_S    750.0f
-#define APP_GRAB_APPROACH_TIMEOUT_MS    8000U
-#define APP_GRAB_MECHANISM_TIMEOUT_MS   3000U
-#define APP_GRAB_TARGET_LOSS_GRACE_MS    250U
-#define APP_RETURN_TIMEOUT_MS          30000U
-#define APP_DROP_TOTAL_TIMEOUT_MS      20000U
-#define APP_TASK_RESCUE_MAX_RETRIES       2U
+#define APP_CAMERA_SCAN_STEP_DEG            1U
+#define APP_CAMERA_SCAN_STEP_MS            40U
+#define APP_CAMERA_SCAN_ENDPOINT_HOLD_MS  300U
 #define APP_VISION_TIMEOUT_MS            250U
 #define APP_CONFIG_CONFIRM_FRAMES        1U
-#define APP_CARGO_CONFIRM_FRAMES         1U
-#define APP_NAV_CONFIRM_FRAMES           1U
-#define APP_DROP_CONFIRM_FRAMES          1U
 #define APP_VISION_TARGET_X              640U
 #define APP_VISION_TARGET_Y              512U
 #define APP_VISION_MAX_X                1279U
 #define APP_VISION_MAX_Y                1023U
-#define APP_VISION_MIN_DISTANCE_MM       1U
-#define APP_SEARCH_ROTATE_SPEED_MM_S     120.0f
-#define APP_APPROACH_SPEED_MM_S          750.0f
-#define APP_GRAB_MID_SPEED_MM_S          450.0f
-#define APP_GRAB_SLOW_SPEED_MM_S         250.0f
-#define APP_GRAB_RECOVERY_SPEED_MM_S     200.0f
+#define APP_SEARCH_ROTATE_SPEED_MM_S     160.0f
+#define APP_SEARCH_FIELD_MARGIN_MM       200.0f
+#define APP_APPROACH_SPEED_MM_S          350.0f
+#define APP_GRAB_MID_SPEED_MM_S          225.0f
+#define APP_GRAB_SLOW_SPEED_MM_S         125.0f
 #define APP_GRAB_MID_DISTANCE_MM         500U
 #define APP_GRAB_SLOW_DISTANCE_MM        250U
-#define APP_GRAB_CONFIRM_WAIT_MS          500U
-#define APP_GRAB_RECOVERY_TIME_MS         250U
+#define APP_APPROACH_FRAME_HOLD_MS        250U
+#define APP_APPROACH_FRAME_STOP_MS        600U
+#define APP_APPROACH_FRAME_LOSS_MS       1200U
+#if (APP_APPROACH_FRAME_HOLD_MS >= APP_APPROACH_FRAME_STOP_MS) || \
+    (APP_APPROACH_FRAME_STOP_MS >= APP_APPROACH_FRAME_LOSS_MS)
+#error "Approach frame hold/stop/loss times must be strictly increasing"
+#endif
+#define APP_APPROACH_LOSS_HOLD_MS         500U
+#define APP_APPROACH_RECOVERY_ROTATE_MM_S 120.0f
+#define APP_APPROACH_RECOVERY_ADVANCE_DISTANCE_M 1.0f
+#define APP_APPROACH_RECOVERY_ADVANCE_SPEED_MM_S 500.0f
+#define APP_APPROACH_RECOVERY_TIMEOUT_MS 60000U
 #define APP_STEERING_EXIT_DEAD_ZONE       8
 #define APP_STEERING_ENTER_DEAD_ZONE     16
 #define APP_STEERING_KP_MM_S             1.12f
@@ -241,34 +258,61 @@
 #define APP_STEERING_LIMIT_MM_S          239.0f
 #define APP_STEERING_DIRECTION           1.0f
 #define APP_CAMERA_DEAD_ZONE              12
-#define APP_CAMERA_KP_DEG_PER_PX          0.0175f
-#define APP_CAMERA_KI_DEG_PER_PX_S        0.00625f
-#define APP_CAMERA_KD_DEG_S_PER_PX        0.0012f
+#define APP_CAMERA_KP_DEG_PER_PX          0.0350f
+#define APP_CAMERA_KI_DEG_PER_PX_S        0.00875f
+#define APP_CAMERA_KD_DEG_S_PER_PX        0.00168f
 #define APP_CAMERA_INTEGRAL_LIMIT_PX_S  240.0f
+#define APP_VISION_COORD_FILTER_ALPHA      0.35f
+#define APP_CAMERA_TRACK_MAX_RATE_DEG_S   30.0f
 #define APP_VISION_PID_DEFAULT_DT_S        0.040f
 #define APP_VISION_PID_MIN_DT_S            0.020f
-#define APP_VISION_PID_MAX_DT_S            0.100f
+#define APP_VISION_PID_MAX_DT_S            0.300f
 #define APP_CENTERING_CAMERA_MIN_ANGLE       0U
 #define APP_CENTERING_CAMERA_MAX_ANGLE     165U
 #define APP_CENTERING_CAMERA_START_ANGLE    90U
-/* Upper-computer-guided return and local delivery sequence. */
-#define APP_NAV_TIMEOUT_MS               200U
-#define APP_RETURN_FORWARD_SPEED_MM_S    776.0f
-#define APP_RETURN_BACKWARD_SPEED_MM_S   448.0f
-#define APP_RETURN_TURN_SPEED_MM_S       358.0f
-#define APP_DROP_FORWARD_DISTANCE_M      0.20f
-#define APP_DROP_BACK_DISTANCE_M         0.50f
-#define APP_DROP_RELEASE_WAIT_MS         600U
-#define APP_CAMERA_SETTLE_MS             400U
-#define APP_DROP_VERIFY_TIMEOUT_MS       3000U
-#define APP_DROP_VERIFY_RETRIES          2U
+#define APP_CENTERING_CAMERA_STEP_LIMIT_DEG  6.0f
+
+/* Native-resolution mission flow shared with shijue_fangan/mission_test. */
+#define APP_FUSED_POSE_TIMEOUT_MS        150U
+#define APP_MISSION_COMMAND_TIMEOUT_MS   250U
+#define APP_GRAB_VIEW_ANGLE              140U
+#define APP_GRAB_INITIAL_OBSERVE_MS      500U
+#define APP_GRAB_CAMERA_RAISE_STEP_DEG    10U
+#define APP_GRAB_CAMERA_MIN_ANGLE         90U
+#define APP_GRAB_RAISE_OBSERVE_MS       1000U
+#define APP_GRAB_SCAN_ROTATE_MM_S        100.0f
+#define APP_NAV_FAST_SPEED_MM_S          800.0f
+#define APP_NAV_FINAL_APPROACH_DISTANCE_MM 300U
+#define APP_NAV_FINAL_APPROACH_SPEED_MM_S 400.0f
+#define APP_NAV_LINEAR_SLOWDOWN_MM       300.0f
+#define APP_NAV_END_SPEED_RATIO            0.2f
+#define APP_NAV_MIN_END_SPEED_MM_S        120.0f
+#define APP_NAV_REMOTE_STOP_DISTANCE_MM      2U
+#define APP_NAV_REMOTE_RESUME_DISTANCE_MM   50U
+#define APP_NAV_REMOTE_MAX_DISTANCE_MM     5000U
+#define APP_NAV_REMOTE_PROGRESS_MM            2
+#define APP_NAV_REMOTE_PROGRESS_TIMEOUT_MS  500U
+#define APP_NAV_HEADING_KP_MM_S_PER_DEG     20.0f
+#define APP_NAV_HEADING_MAX_MM_S            300.0f
+#define APP_NAV_SPEED_ACCEL_MM_S2           1800.0f
+#define APP_NAV_SPEED_DECEL_MM_S2           3000.0f
+#define APP_NAV_YAW_ACCEL_MM_S2             1800.0f
+#define APP_NAV_HEADING_TOLERANCE_DEG      2.0f
+#define APP_NAV_REALIGN_DEG                7.0f
+#define APP_NAV_TURN_SETTLE_MS            100U
+#define APP_POSE_WAIT_TIMEOUT_MS          1500U
+#define APP_LIFT_START_ANGLE              55U
+#define APP_LIFT_TRAVEL_ANGLE             85U
+#define APP_DELIVERY_VERIFY_WAIT_MS       1200U
+#define APP_SAFE_EXIT_DISTANCE_M            0.45f
+#define APP_SAFE_EXIT_SPEED_MM_S          300.0f
+#define APP_RETURN_CENTER_SPEED_MM_S       500.0f
 
 /* This 1.8-inch 128x160 ST7735 panel exposes GRAM origin (0, 0). */
 #define APP_LCD_WIDTH       128U
 #define APP_LCD_HEIGHT      160U
 #define APP_LCD_X_OFFSET    0U
 #define APP_LCD_Y_OFFSET    0U
-
 #define APP_MOTOR_KEY_DEBOUNCE_MS        30U
 
 #endif

@@ -152,7 +152,12 @@ void Location_Update10ms(void)
   const IMUData imu = IMU_GetData();
   Encoder_GetAll(encoder);
 
+#if APP_ENABLE_MOTION_DEBUG_TASK
   if (!location.tracking_enabled) {
+#else
+  if ((location.start_zone < (uint8_t)LOCATION_START_1) ||
+      (location.start_zone > (uint8_t)LOCATION_START_4)) {
+#endif
     location.previous_imu_yaw_mdeg = imu.yaw_mdeg;
     location.imu_sample_valid = imu.ready;
     location.valid = false;

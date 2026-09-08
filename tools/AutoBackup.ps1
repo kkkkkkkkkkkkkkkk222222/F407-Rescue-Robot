@@ -42,41 +42,54 @@ function Push-Backup {
 
     & git @gitPrefix rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' *> $null
     if ($LASTEXITCODE -eq 0) {
-        $null = & git @gitPrefix push
-        $pushExitCode = $LASTEXITCODE
-        return $pushExitCode
+        & git @gitPrefix push
+        return $LASTEXITCODE
     }
 
     $branch = (& git @gitPrefix branch --show-current).Trim()
     if (($LASTEXITCODE -ne 0) -or [string]::IsNullOrWhiteSpace($branch)) {
-        Write-Warning 'Auto-backup could not determine the current Git branch.'
         return 1
     }
-    $null = & git @gitPrefix push --set-upstream origin $branch
-    $pushExitCode = $LASTEXITCODE
-    return $pushExitCode
+    & git @gitPrefix push --set-upstream origin $branch
+    return $LASTEXITCODE
 }
 
+function Assert-GitHubSynchronized {
+    $localHead = (& git @gitPrefix rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Could not read the local HEAD after push.'
+    }
+    $upstreamHead = (& git @gitPrefix rev-parse '@{upstream}').Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Could not read the upstream branch after push.'
+    }
+    if ($localHead -ne $upstreamHead) {
+        throw "GitHub verification failed: local HEAD $localHead differs from upstream $upstreamHead."
+    }
+    Write-Host "GitHub synchronized: $localHead"
+}
+
+$backupFailed = $false
 try {
     $hasMutex = $mutex.WaitOne(0)
     if (-not $hasMutex) {
-        Write-Host 'GitHub auto-backup is already running; this request was skipped.'
-        return
+        throw 'Another GitHub backup is still running.'
     }
 
     $statusLines = @(& git @gitPrefix status --porcelain=v1 --untracked-files=all)
     if ($LASTEXITCODE -ne 0) {
-        Write-Warning 'GitHub auto-backup could not read the repository status.'
-        return
+        throw 'Could not read the repository status.'
     }
 
     if ($statusLines.Count -eq 0) {
-        $ahead = (& git @gitPrefix rev-list --count '@{upstream}..HEAD' 2>$null)
-        if (($LASTEXITCODE -eq 0) -and ([int]$ahead -gt 0) -and (-not $DryRun)) {
-            if ((Push-Backup) -ne 0) {
-                Write-Warning 'Local backup exists, but GitHub is unavailable. It will be retried after the next successful build.'
-            }
+        if ($DryRun) {
+            Write-Host 'Dry run: working tree is clean.'
+            return
         }
+        if ((Push-Backup) -ne 0) {
+            throw 'GitHub push failed; build/flash is blocked.'
+        }
+        Assert-GitHubSynchronized
         return
     }
 
@@ -96,8 +109,7 @@ try {
         $_ -match '\.(pem|pfx|p12|key)$'
     } | Select-Object -First 1
     if ($null -ne $blockedPath) {
-        Write-Warning "Auto-backup skipped because a possible credential file changed: $blockedPath"
-        return
+        throw "Possible credential file changed: $blockedPath. Build/flash is blocked."
     }
 
     $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
@@ -112,8 +124,7 @@ try {
 
     & git @gitPrefix add --all
     if ($LASTEXITCODE -ne 0) {
-        Write-Warning 'GitHub auto-backup could not stage the changed files.'
-        return
+        throw 'Could not stage the changed files.'
     }
 
     & git @gitPrefix diff --cached --quiet
@@ -123,22 +134,26 @@ try {
 
     & git @gitPrefix commit -m $message
     if ($LASTEXITCODE -ne 0) {
-        Write-Warning 'GitHub auto-backup could not create the local commit.'
-        return
+        throw 'Could not create the local backup commit.'
     }
 
     if ((Push-Backup) -ne 0) {
-        Write-Warning 'The local backup was created, but GitHub is unavailable. It will be retried after the next successful build.'
-        return
+        throw 'GitHub push failed after the local commit; build/flash is blocked.'
     }
+    Assert-GitHubSynchronized
     Write-Host "GitHub backup complete: $message"
 }
 catch {
-    Write-Warning "GitHub auto-backup failed without blocking the firmware build: $($_.Exception.Message)"
+    $backupFailed = $true
+    Write-Error "GitHub auto-backup failed: $($_.Exception.Message)"
 }
 finally {
     if ($hasMutex) {
         $mutex.ReleaseMutex()
     }
     $mutex.Dispose()
+}
+
+if ($backupFailed) {
+    exit 1
 }

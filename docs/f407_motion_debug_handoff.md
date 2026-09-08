@@ -5,21 +5,21 @@ T265 安装参数、三轮编码器和底盘方向的联调，不启用完整救
 
 ## 1. 当前固件和安全约定
 
-仓库默认保持加入运动调试功能之前的视觉居中模式。进行本交接中的测试前，
+仓库默认为原仓库 68a0802 的完整跑图流程（NormalRun）。进行本交接中的测试前，
 在 Main/Inc/app_config.h 只改一行：
 
 ```c
 #define APP_ACTIVE_MODE APP_MODE_MOTION_DEBUG_TASK
 ```
 
-测试结束后把同一行恢复成`APP_MODE_CENTERING_TASK`。也可以在CLion中选择
-`MotionDebug`或`Centering` CMake配置来切换。两种模式是编译期互斥的，切换后
+测试结束后把同一行恢复成`APP_MODE_RESCUE_TASK`。也可以在CLion中选择
+`MotionDebug`或`NormalRun` CMake配置来切换。两种模式是编译期互斥的，切换后
 必须重新编译并烧录，不能在MCU运行中热切换。
 
 F407 上电后初始化 LSM6DSV16X/IMU660RC 并静止校准陀螺仪零偏，把本地里程计
 参考点设为车体三轮运动学中心 (0, 0, 0°)，每 10 ms 发送 TYPE=0x15 编码器
-累计计数，接收 TYPE=0x17 后在 F407 内部执行陀螺仪定角度或里程计定距运动，
-并以约 20 Hz 发送 TYPE=0x18 运动状态。
+累计计数，接收 TYPE=0x1B 后在 F407 内部执行陀螺仪定角度或里程计定距运动，
+并以约 20 Hz 发送 TYPE=0x1C 运动状态。
 
 调试必须先架空车轮验证命令、符号和停止帧，再落地测试。新的 TURN/MOVE
 命令会中止当前动作并从当前状态建立参考；STOP 会停车。动作是一次性自主
@@ -51,7 +51,7 @@ USART1/串口2保留给后续用途，本阶段不使用。
 - 上位机必须按字节流解析，支持拆包、粘包和噪声重同步。
 - 同一个运动命令 SEQ 只执行一次；上位机每次新动作必须递增 SEQ，不能每次都固定发 0。
 
-## 4. 上位机 → F407：运动命令 TYPE=0x17
+## 4. 上位机 → F407：运动命令 TYPE=0x1B
 
 统一载荷如下，三个参数均为大端无符号 16 位数：
 
@@ -68,7 +68,7 @@ USART1/串口2保留给后续用途，本阶段不使用。
 P1..P7 必须全部为 0。例：
 
 ```text
-A3 B3 17 05 00 00 00 00 00 00 00 00 FF 18 C3
+A3 B3 1B 05 00 00 00 00 00 00 00 00 3F 27 C3
 ```
 
 ### P0=0x01：TURN_REL，陀螺仪闭环相对转角
@@ -81,7 +81,7 @@ A3 B3 17 05 00 00 00 00 00 00 00 00 FF 18 C3
 正转 90°、速度 300 mm/s：
 
 ```text
-A3 B3 17 00 01 00 23 28 01 2C 00 00 A6 E4 C3
+A3 B3 1B 00 01 00 23 28 01 2C 00 00 66 DB C3
 ```
 
 F407 保存动作起始陀螺仪航向，闭环计算：
@@ -117,10 +117,10 @@ APP_OMNI_M1/M2/M3_ENCODER_SIGN 统一修正。不要交换上位机的 forward/l
 车体左移 1 m、速度 300 mm/s：
 
 ```text
-A3 B3 17 03 02 00 23 28 03 E8 01 2C B2 09 C3
+A3 B3 1B 03 02 00 23 28 03 E8 01 2C 72 36 C3
 ```
 
-## 5. F407 → 上位机：运动状态 TYPE=0x18
+## 5. F407 → 上位机：运动状态 TYPE=0x1C
 
 ```text
 P0 STATE
@@ -139,7 +139,7 @@ P7 COMMAND_SEQ
 - P7 是被执行命令的 SEQ，外层 SEQ 是 F407 状态帧自己的发送序号。
 
 上位机以 P7 关联动作，以 STATE=DONE/FAULT 结束测试；动作期间仍需读取
-TYPE=0x15，不要只看 TYPE=0x18 的进度值。
+TYPE=0x15，不要只看 TYPE=0x1C 的进度值。
 
 仓库内的参考编码器、状态解析器和单次测试工具是：
 
@@ -207,11 +207,11 @@ odom_increment_left_m≈0，只有 yaw 变化。比例误差多查轮径、1768 
 
 ## 7. 后续手柄链路预留
 
-当前唯一执行入口是 F407 的 TYPE=0x17，建议后续保持：
+当前唯一执行入口是 F407 的 TYPE=0x1B，建议后续保持：
 
 ```text
-手柄 -> 上位机 -> TYPE=0x17 canonical command -> F407
-F407 -> TYPE=0x15/0x18 -> 上位机 -> 手柄界面
+手柄 -> 上位机 -> TYPE=0x1B canonical command -> F407
+F407 -> TYPE=0x15/0x1C -> 上位机 -> 手柄界面
 ```
 
 TYPE=0x19 预留给速度/方向保持类手柄命令，TYPE=0x1A 预留给参数标定/查询，
@@ -225,7 +225,15 @@ TYPE=0x19 预留给速度/方向保持类手柄命令，TYPE=0x1A 预留给参�
 - [ ] 上位机支持拆包/粘包，CRC 错帧不触发运动；
 - [ ] 架空轮发送 STOP、90° TURN、1 m forward、1 m left；
 - [ ] 每 10 ms 收到 TYPE=0x15，累计计数回绕按 16 位模差处理；
-- [ ] 收到 TYPE=0x18，并用 P7 COMMAND_SEQ 关联 DONE/FAULT；
+- [ ] 收到 TYPE=0x1C，并用 P7 COMMAND_SEQ 关联 DONE/FAULT；
 - [ ] 地面完成 90/180/270/360°、forward 1 m、left 1 m 四组日志；
 - [ ] 确认 navigation_distance_compensation_enabled=false 后再比较杠杆臂修正；
-- [ ] 完成调试后切回视觉居中：`APP_ACTIVE_MODE APP_MODE_CENTERING_TASK`。
+- [ ] 完成调试后切回完整跑图：`APP_ACTIVE_MODE APP_MODE_RESCUE_TASK`。
+
+## 合并最新正常协议后的兼容性说明
+
+正常模式基准为原仓库 `68a0802`，原有 `0x17` 状态、`0x18` 任务命令保持不变。
+运动调试改用 `0x1B` 命令、`0x1C` 状态；旧调试程序必须更新，不能照旧编号发送。
+本文十六进制示例已更新，也可用 `tools/vision_protocol.py` 生成帧（CRC 随 TYPE 改变）。
+调试停车使用 `motion_stop_frame()`；旧 `0x13` 紧急停车不再适用。调试模式不启动舵机。
+NormalRun / MotionDebug 配置会覆盖源码中的模式选择；切换配置后烧录对应目录的 WWW.elf。

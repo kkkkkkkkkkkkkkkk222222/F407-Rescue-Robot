@@ -4,6 +4,7 @@
 
 #include "app_config.h"
 #include "CenteringTask.h"
+#include "DebugConsole.h"
 #include "DebugMotion.h"
 #include "encoder.h"
 #include "imu.h"
@@ -34,6 +35,7 @@ static uint8_t imu_period_ms;
 static uint8_t motor_control_period_ms;
 static uint8_t lcd_period_ms;
 static bool lcd_ready;
+static bool application_ready;
 static bool uart_active;
 
 #if APP_ENABLE_MOTION_TEST
@@ -92,7 +94,7 @@ static uint8_t task_period_ms;
 #endif
 
 #if APP_ENABLE_AUTOMATIC_MOTOR_TEST && !APP_ENABLE_TASK && \
-    !APP_ENABLE_CENTERING_TASK && !APP_ENABLE_MOTION_DEBUG_TASK
+    !APP_ENABLE_CENTERING_TASK
 static bool motor_test_running;
 static bool motor_key_sample;
 static bool motor_key_stable;
@@ -112,10 +114,19 @@ static void draw_dashboard(void)
     .motor_test_running = false,
     .imu_ready = false,
     .imu_yaw_mdeg = 0,
-    .location_demo_running = false
+    .location_demo_running = false,
+    .debug_mode = false,
+    .debug_servo_id = 0U,
+    .debug_servo_angle = 0U
   };
+#if APP_ENABLE_RUNTIME_SERVO_DEBUG
+  const DebugConsoleStatus debug = DebugConsole_GetStatus();
+  dashboard.debug_mode = debug.active;
+  dashboard.debug_servo_id = debug.servo_id;
+  dashboard.debug_servo_angle = debug.servo_angle;
+#endif
 #if APP_ENABLE_AUTOMATIC_MOTOR_TEST && !APP_ENABLE_TASK && \
-    !APP_ENABLE_CENTERING_TASK && !APP_ENABLE_MOTION_DEBUG_TASK
+    !APP_ENABLE_CENTERING_TASK
   dashboard.motor_test_running = motor_test_running;
 #endif
 #if APP_ENABLE_MOTION_TEST || APP_ENABLE_MOVE_SPIN_TEST
@@ -128,13 +139,6 @@ static void draw_dashboard(void)
   dashboard.imu_ready = imu.ready;
   dashboard.imu_yaw_mdeg = imu.yaw_mdeg;
   dashboard.location = Location_GetPose();
-#endif
-#if APP_ENABLE_MOTION_DEBUG_TASK
-  const IMUData imu = IMU_GetData();
-  dashboard.imu_ready = imu.ready;
-  dashboard.imu_yaw_mdeg = imu.yaw_mdeg;
-  dashboard.location = Location_GetPose();
-  dashboard.motion = DebugMotionTask_GetStatus();
 #endif
 #if APP_ENABLE_LOCATION_DEMO
   dashboard.location_demo_running = RouteDemo_IsRunning();
@@ -183,7 +187,7 @@ static void run_move_spin_test(uint32_t now_ms)
 #endif
 
 #if APP_ENABLE_SERVO_SWEEP_TEST && !APP_ENABLE_TASK && \
-    !APP_ENABLE_CENTERING_TASK && !APP_ENABLE_MOTION_DEBUG_TASK
+    !APP_ENABLE_CENTERING_TASK
 static void run_servo_sweep(uint32_t now_ms)
 {
   static uint32_t next_change_ms;
@@ -290,7 +294,7 @@ static void run_motion_test(uint32_t now_ms)
 }
 #endif
 #if APP_ENABLE_AUTOMATIC_MOTOR_TEST && !APP_ENABLE_TASK && \
-    !APP_ENABLE_CENTERING_TASK && !APP_ENABLE_MOTION_DEBUG_TASK
+    !APP_ENABLE_CENTERING_TASK
 static void process_motor_test_key(uint32_t now_ms)
 {
   const bool sample =
@@ -325,6 +329,7 @@ static void process_motor_test_key(uint32_t now_ms)
 
 void Robot_Init(void)
 {
+  application_ready = false;
   app_milliseconds = 0U;
   lcd_release_sequence = 0U;
   lcd_consumed_sequence = 0U;
@@ -355,7 +360,7 @@ void Robot_Init(void)
 #endif
 
 #if APP_ENABLE_AUTOMATIC_MOTOR_TEST && !APP_ENABLE_TASK && \
-    !APP_ENABLE_CENTERING_TASK && !APP_ENABLE_MOTION_DEBUG_TASK
+    !APP_ENABLE_CENTERING_TASK
   motor_test_running = false;
   motor_key_sample =
       HAL_GPIO_ReadPin(MOTOR_PWM_KEY_GPIO_Port, MOTOR_PWM_KEY_Pin) == GPIO_PIN_SET;
@@ -369,6 +374,10 @@ void Robot_Init(void)
   HAL_NVIC_EnableIRQ(TIM6_DAC_IRQn);
   HAL_NVIC_SetPriority(USART3_IRQn, 7U, 0U);
   HAL_NVIC_EnableIRQ(USART3_IRQn);
+#if APP_ENABLE_RUNTIME_SERVO_DEBUG
+  HAL_NVIC_SetPriority(USART1_IRQn, 7U, 0U);
+  HAL_NVIC_EnableIRQ(USART1_IRQn);
+#endif
 #if APP_ENABLE_TASK || APP_ENABLE_CENTERING_TASK || APP_ENABLE_MOTION_DEBUG_TASK
   HAL_NVIC_SetPriority(PendSV_IRQn, 15U, 0U);
 #endif
@@ -376,6 +385,15 @@ void Robot_Init(void)
   Motor_Init();
   Encoder_Init();
   const bool imu_ready = IMU_Init();
+  /* TIM8 PWM remains disabled throughout IMU setup and stationary gyro-bias
+   * calibration. Starting all servos at 90 degrees before this point can
+   * shake the chassis and corrupt the calibration samples. */
+  if (imu_ready) {
+#if !APP_ENABLE_MOTION_DEBUG_TASK
+    Servo_Init();
+#endif
+    application_ready = true;
+  }
 #if APP_ENABLE_TASK
   /* The real start zone arrives in the validated configuration frame. */
   Location_Init(LOCATION_START_UNKNOWN);
@@ -388,11 +406,18 @@ void Robot_Init(void)
   RouteDemo_Init();
 #endif
 #if APP_ENABLE_TASK
-  Task_Process(app_milliseconds);
+  if (application_ready) {
+    Task_Process(app_milliseconds);
+  }
 #elif APP_ENABLE_CENTERING_TASK
-  CenteringTask_Init(app_milliseconds);
+  if (application_ready) {
+    CenteringTask_Init(app_milliseconds);
+  }
 #elif APP_ENABLE_MOTION_DEBUG_TASK
   DebugMotionTask_Init(app_milliseconds);
+#endif
+#if APP_ENABLE_RUNTIME_SERVO_DEBUG
+  DebugConsole_Init();
 #endif
 
   lcd_ready = LCD_Init();
@@ -425,6 +450,9 @@ void Robot_Init(void)
 
 void Robot_Process(void)
 {
+#if APP_ENABLE_RUNTIME_SERVO_DEBUG
+  DebugConsole_Process();
+#endif
   uart_active = Uart_Receive(0U);
 
   const uint32_t odom_released = odom_release_sequence;
@@ -451,7 +479,7 @@ void Robot_Process(void)
   }
 
 #if APP_ENABLE_AUTOMATIC_MOTOR_TEST && !APP_ENABLE_TASK && \
-    !APP_ENABLE_CENTERING_TASK && !APP_ENABLE_MOTION_DEBUG_TASK
+    !APP_ENABLE_CENTERING_TASK
   process_motor_test_key(app_milliseconds);
 #endif
   const uint32_t lcd_released = lcd_release_sequence;
@@ -463,7 +491,7 @@ void Robot_Process(void)
   }
 
 #if APP_ENABLE_SERVO_SWEEP_TEST && !APP_ENABLE_TASK && \
-    !APP_ENABLE_CENTERING_TASK && !APP_ENABLE_MOTION_DEBUG_TASK
+    !APP_ENABLE_CENTERING_TASK
   run_servo_sweep(app_milliseconds);
 #endif
 #if APP_ENABLE_MOTION_TEST
@@ -484,13 +512,16 @@ void Robot_RunDeferredTask(void)
   if (released != task_consumed_sequence) {
     const uint32_t now_ms = task_release_ms;
     task_consumed_sequence = released;
+    if ((APP_ENABLE_MOTION_DEBUG_TASK || (application_ready && IMU_GetData().ready)) &&
+        !DebugConsole_IsActive()) {
 #if APP_ENABLE_TASK
-    Task_Process(now_ms);
+      Task_Process(now_ms);
 #elif APP_ENABLE_CENTERING_TASK
-    CenteringTask_Process(now_ms);
+      CenteringTask_Process(now_ms);
 #else
-    DebugMotionTask_Process(now_ms);
+      DebugMotionTask_Process(now_ms);
 #endif
+    }
   }
 
   /* Keep PendSV pending if TIM6 released another task period meanwhile. */
@@ -514,8 +545,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *timer)
     motor_control_period_ms = 0U;
     Encoder_Sample10ms();
     ++odom_release_sequence;
-#if APP_ENABLE_LOCATION_DEMO || APP_ENABLE_MOVE_SPIN_TEST || APP_ENABLE_TASK || \
-    APP_ENABLE_MOTION_DEBUG_TASK
+#if APP_ENABLE_LOCATION_DEMO || APP_ENABLE_MOVE_SPIN_TEST || APP_ENABLE_TASK || APP_ENABLE_MOTION_DEBUG_TASK
     Location_Update10ms();
 #endif
     motor_update_due = true;

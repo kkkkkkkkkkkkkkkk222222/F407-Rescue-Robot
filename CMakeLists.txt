@@ -46,6 +46,7 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Main/Src/CenteringTask.c
     Main/Src/DebugMotion.c
+    Main/Src/DebugConsole.c
     Main/Src/Robot.c
     Main/Src/encoder.c
     Main/Src/imu.c
@@ -72,22 +73,18 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined symbols
 )
 
-# Allows CLion/CMake profiles to select a firmware mode without editing source.
-# Leave empty to use APP_ACTIVE_MODE from Main/Inc/app_config.h.
-set(APP_ACTIVE_MODE_OVERRIDE "" CACHE STRING
-    "Override APP_ACTIVE_MODE (APP_MODE_CENTERING_TASK, APP_MODE_MOTION_DEBUG_TASK, or APP_MODE_RESCUE_TASK)")
+set(APP_ACTIVE_MODE_OVERRIDE "" CACHE STRING "Firmware mode override")
 if(NOT APP_ACTIVE_MODE_OVERRIDE STREQUAL "")
-    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
-        APP_ACTIVE_MODE=${APP_ACTIVE_MODE_OVERRIDE}
-    )
+    target_compile_definitions(WWW PRIVATE APP_ACTIVE_MODE=${APP_ACTIVE_MODE_OVERRIDE})
 endif()
 
 # Remove wrong libob.a library dependency when using cpp files
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 
 # A successful firmware link is the user's explicit backup point. The script
-# creates a dated local commit, summarizes the changed modules and pushes it to
-# GitHub. Network/authentication failures are reported but never block flashing.
+# creates a dated local commit, pushes it, and verifies that the upstream branch
+# matches HEAD. Any backup failure stops the build so a launch task cannot flash
+# firmware that has not reached GitHub.
 find_program(POWERSHELL_EXECUTABLE NAMES pwsh powershell)
 
 # Add linked libraries
@@ -97,11 +94,27 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
     # Add user defined libraries
 )
 
+option(APP_AUTO_BACKUP "Backup after firmware link" ON)
+if(APP_AUTO_BACKUP)
 add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:${CMAKE_PROJECT_NAME}> ${CMAKE_PROJECT_NAME}.hex
     COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:${CMAKE_PROJECT_NAME}> ${CMAKE_PROJECT_NAME}.bin
+    COMMENT "Generating firmware images"
+)
+
+# Custom targets without outputs run on every default build, even when the ELF
+# is already up to date. This makes every pre-flash build verify GitHub rather
+# than limiting the check to builds that happened to relink the firmware.
+add_custom_target(github_backup ALL
     COMMAND ${POWERSHELL_EXECUTABLE} -NoProfile -ExecutionPolicy Bypass
             -File ${CMAKE_SOURCE_DIR}/tools/AutoBackup.ps1
             -Repository ${CMAKE_SOURCE_DIR}
-    COMMENT "Generating firmware images and backing up source changes"
+    DEPENDS ${CMAKE_PROJECT_NAME}
+    COMMENT "Committing, pushing, and verifying GitHub backup"
+    VERBATIM
 )
+else()
+add_custom_command(TARGET WWW POST_BUILD
+ COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:WWW> WWW.hex
+ COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:WWW> WWW.bin)
+endif()

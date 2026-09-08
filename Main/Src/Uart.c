@@ -49,27 +49,16 @@ static bool uart_data_is_odom(const uint8_t *data, uint16_t size)
          (data[0] == VISION_FRAME_HEAD_1) &&
          (data[1] == VISION_FRAME_HEAD_2) &&
          (data[2] == VISION_MSG_ODOM) &&
-          (data[VISION_FRAME_SIZE - 1U] == VISION_FRAME_TAIL);
+         (data[VISION_FRAME_SIZE - 1U] == VISION_FRAME_TAIL);
 }
 
-static bool uart_data_is_motion_status(const uint8_t *data, uint16_t size)
+static bool uart_data_is_status(const uint8_t *data, uint16_t size)
 {
   return (size == VISION_FRAME_SIZE) &&
          (data[0] == VISION_FRAME_HEAD_1) &&
          (data[1] == VISION_FRAME_HEAD_2) &&
-         (data[2] == VISION_MSG_MOTION_STATUS) &&
+         (data[2] == VISION_MSG_STM_STATUS) &&
          (data[VISION_FRAME_SIZE - 1U] == VISION_FRAME_TAIL);
-}
-
-static uint8_t uart_tx_priority(const uint8_t *data, uint16_t size)
-{
-  if (uart_is_ack(data, size)) {
-    return 2U;
-  }
-  if (uart_data_is_motion_status(data, size)) {
-    return 1U;
-  }
-  return 0U;
 }
 
 static void uart_start_tx(void)
@@ -80,19 +69,18 @@ static void uart_start_tx(void)
   }
 
   int8_t selected = -1;
-  uint8_t selected_priority = 0U;
+  bool selected_ack = false;
   uint32_t selected_order = UINT32_MAX;
   for (uint8_t i = 0U; i < UART_TX_QUEUE_SIZE; ++i) {
     if (!tx_queue[i].used) {
       continue;
     }
-    const uint8_t priority = uart_tx_priority(tx_queue[i].data,
-                                              tx_queue[i].size);
-    if ((selected < 0) || (priority > selected_priority) ||
-        ((priority == selected_priority) &&
+    const bool is_ack = uart_is_ack(tx_queue[i].data, tx_queue[i].size);
+    if ((selected < 0) || (is_ack && !selected_ack) ||
+        ((is_ack == selected_ack) &&
          (tx_queue[i].order < selected_order))) {
       selected = (int8_t)i;
-      selected_priority = priority;
+      selected_ack = is_ack;
       selected_order = tx_queue[i].order;
     }
   }
@@ -180,35 +168,15 @@ bool Uart_Send(const uint8_t *data, uint16_t size)
   }
 
   /* Keep control ACKs and the newest cumulative odometry snapshot. */
-  const uint8_t incoming_priority = uart_tx_priority(data, size);
   if ((slot < 0) &&
-      ((incoming_priority > 0U) || uart_data_is_odom(data, size))) {
+      (uart_is_ack(data, size) || uart_data_is_odom(data, size) ||
+       uart_data_is_status(data, size))) {
     uint32_t oldest_order = UINT32_MAX;
     for (uint8_t i = 0U; i < UART_TX_QUEUE_SIZE; ++i) {
       if (((int8_t)i != tx_active_slot) && uart_is_odom(&tx_queue[i]) &&
           (tx_queue[i].order < oldest_order)) {
         slot = (int8_t)i;
         oldest_order = tx_queue[i].order;
-      }
-    }
-
-    /* A status/ACK is more useful than an already queued low-priority frame.
-     * Never evict the active slot or another control/status frame. */
-    if ((slot < 0) && (incoming_priority > 0U)) {
-      uint8_t lowest_priority = incoming_priority;
-      for (uint8_t i = 0U; i < UART_TX_QUEUE_SIZE; ++i) {
-        if ((int8_t)i == tx_active_slot || !tx_queue[i].used) {
-          continue;
-        }
-        const uint8_t priority = uart_tx_priority(tx_queue[i].data,
-                                                  tx_queue[i].size);
-        if (priority < lowest_priority ||
-            ((priority == lowest_priority) &&
-             (tx_queue[i].order < oldest_order))) {
-          slot = (int8_t)i;
-          lowest_priority = priority;
-          oldest_order = tx_queue[i].order;
-        }
       }
     }
   }

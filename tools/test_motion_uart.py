@@ -83,6 +83,14 @@ def main() -> int:
         if args.command == "stop":
             return 0
 
+        try:
+            return monitor(uart, args, sequence)
+        finally:
+            uart.write(protocol.motion_stop_frame((sequence + 1) & 0xFF))
+            uart.flush()
+
+
+def monitor(uart, args, sequence) -> int:
         buffer = bytearray()
         deadline = time.monotonic() + args.timeout
         while time.monotonic() < deadline:
@@ -102,8 +110,8 @@ def main() -> int:
                 elif message_type == protocol.MSG_ODOM:
                     odom = protocol.parse_odometry(frame)
                     print("ODOM", odom)
-    print("TIMEOUT waiting for F407 motion status")
-    return 3
+        print("TIMEOUT waiting for F407 motion status")
+        return 3
 
 
 if __name__ == "__main__":

@@ -6,9 +6,8 @@
             "hidden": true,
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/${presetName}",
-		    "toolchainFile": "${sourceDir}/cmake/gcc-arm-none-eabi.cmake",
-            "cacheVariables": {
-            }
+            "toolchainFile": "${sourceDir}/cmake/gcc-arm-none-eabi.cmake",
+            "cacheVariables": {}
         },
         {
             "name": "Debug",
@@ -25,19 +24,19 @@
             }
         },
         {
-            "name": "Centering",
-            "inherits": "default",
-            "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug",
-                "APP_ACTIVE_MODE_OVERRIDE": "APP_MODE_CENTERING_TASK"
-            }
-        },
-        {
             "name": "MotionDebug",
             "inherits": "default",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
                 "APP_ACTIVE_MODE_OVERRIDE": "APP_MODE_MOTION_DEBUG_TASK"
+            }
+        },
+        {
+            "name": "NormalRun",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "APP_ACTIVE_MODE_OVERRIDE": "APP_MODE_RESCUE_TASK"
             }
         }
     ],
@@ -51,12 +50,12 @@
             "configurePreset": "Release"
         },
         {
-            "name": "Centering",
-            "configurePreset": "Centering"
-        },
-        {
             "name": "MotionDebug",
             "configurePreset": "MotionDebug"
+        },
+        {
+            "name": "NormalRun",
+            "configurePreset": "NormalRun"
         }
     ]
 }
