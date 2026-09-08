@@ -72,6 +72,16 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined symbols
 )
 
+# Allows CLion/CMake profiles to select a firmware mode without editing source.
+# Leave empty to use APP_ACTIVE_MODE from Main/Inc/app_config.h.
+set(APP_ACTIVE_MODE_OVERRIDE "" CACHE STRING
+    "Override APP_ACTIVE_MODE (APP_MODE_CENTERING_TASK, APP_MODE_MOTION_DEBUG_TASK, or APP_MODE_RESCUE_TASK)")
+if(NOT APP_ACTIVE_MODE_OVERRIDE STREQUAL "")
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+        APP_ACTIVE_MODE=${APP_ACTIVE_MODE_OVERRIDE}
+    )
+endif()
+
 # Remove wrong libob.a library dependency when using cpp files
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 

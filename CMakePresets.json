@@ -23,6 +23,22 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release"
             }
+        },
+        {
+            "name": "Centering",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "APP_ACTIVE_MODE_OVERRIDE": "APP_MODE_CENTERING_TASK"
+            }
+        },
+        {
+            "name": "MotionDebug",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "APP_ACTIVE_MODE_OVERRIDE": "APP_MODE_MOTION_DEBUG_TASK"
+            }
         }
     ],
     "buildPresets": [
@@ -33,6 +49,14 @@
         {
             "name": "Release",
             "configurePreset": "Release"
+        },
+        {
+            "name": "Centering",
+            "configurePreset": "Centering"
+        },
+        {
+            "name": "MotionDebug",
+            "configurePreset": "MotionDebug"
         }
     ]
 }

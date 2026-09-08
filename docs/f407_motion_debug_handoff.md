@@ -1,16 +1,20 @@
 # F407 运动调试交接：RDK X5 ↔ USART3
 
-本文是当前 F407 固件给上位机/视觉负责人的交接说明。本阶段只服务于
+本文是 F407 运动调试模式给上位机/视觉负责人的交接说明。该模式只服务于
 T265 安装参数、三轮编码器和底盘方向的联调，不启用完整救援流程。
 
 ## 1. 当前固件和安全约定
 
-Main/Inc/app_config.h 默认配置为：
+仓库默认保持加入运动调试功能之前的视觉居中模式。进行本交接中的测试前，
+在 Main/Inc/app_config.h 只改一行：
 
 ```c
-#define APP_ENABLE_MOTION_DEBUG_TASK 1
-#define APP_ENABLE_CENTERING_TASK    0
+#define APP_ACTIVE_MODE APP_MODE_MOTION_DEBUG_TASK
 ```
+
+测试结束后把同一行恢复成`APP_MODE_CENTERING_TASK`。也可以在CLion中选择
+`MotionDebug`或`Centering` CMake配置来切换。两种模式是编译期互斥的，切换后
+必须重新编译并烧录，不能在MCU运行中热切换。
 
 F407 上电后初始化 LSM6DSV16X/IMU660RC 并静止校准陀螺仪零偏，把本地里程计
 参考点设为车体三轮运动学中心 (0, 0, 0°)，每 10 ms 发送 TYPE=0x15 编码器
@@ -224,4 +228,4 @@ TYPE=0x19 预留给速度/方向保持类手柄命令，TYPE=0x1A 预留给参�
 - [ ] 收到 TYPE=0x18，并用 P7 COMMAND_SEQ 关联 DONE/FAULT；
 - [ ] 地面完成 90/180/270/360°、forward 1 m、left 1 m 四组日志；
 - [ ] 确认 navigation_distance_compensation_enabled=false 后再比较杠杆臂修正；
-- [ ] 完成调试后切回视觉居中：MOTION_DEBUG_TASK=0、CENTERING_TASK=1。
+- [ ] 完成调试后切回视觉居中：`APP_ACTIVE_MODE APP_MODE_CENTERING_TASK`。
