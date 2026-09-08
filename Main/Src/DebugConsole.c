@@ -8,6 +8,8 @@
 #include "motor.h"
 #include "servo.h"
 
+#if APP_ENABLE_RUNTIME_SERVO_DEBUG
+
 extern UART_HandleTypeDef huart1;
 
 #define DEBUG_RX_RING_SIZE  32U
@@ -167,6 +169,8 @@ DebugConsoleStatus DebugConsole_GetStatus(void)
   };
   return snapshot;
 }
+
+#endif /* APP_ENABLE_RUNTIME_SERVO_DEBUG */
 
 #if APP_ENABLE_RUNTIME_SERVO_DEBUG
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *uart)

@@ -512,8 +512,12 @@ void Robot_RunDeferredTask(void)
   if (released != task_consumed_sequence) {
     const uint32_t now_ms = task_release_ms;
     task_consumed_sequence = released;
+    bool console_active = false;
+#if APP_ENABLE_RUNTIME_SERVO_DEBUG
+    console_active = DebugConsole_IsActive();
+#endif
     if ((APP_ENABLE_MOTION_DEBUG_TASK || (application_ready && IMU_GetData().ready)) &&
-        !DebugConsole_IsActive()) {
+        !console_active) {
 #if APP_ENABLE_TASK
       Task_Process(now_ms);
 #elif APP_ENABLE_CENTERING_TASK

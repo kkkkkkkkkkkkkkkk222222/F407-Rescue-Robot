@@ -10,6 +10,7 @@
 #include "CenteringTask.h"
 #include "DebugMotion.h"
 #include "encoder.h"
+#include "Location.h"
 #include "main.h"
 #include "mechanism.h"
 #include "motor.h"
@@ -300,7 +301,7 @@ static bool dashboard_motor_fault(void)
 
 #if !APP_ENABLE_TASK && !APP_ENABLE_CENTERING_TASK && \
     !APP_ENABLE_MOTION_TEST && !APP_ENABLE_MOVE_SPIN_TEST && \
-    !APP_ENABLE_LOCATION_DEMO
+    !APP_ENABLE_LOCATION_DEMO && !APP_ENABLE_MOTION_DEBUG_TASK
 static const char *dashboard_uart_text(const LCDDashboard *dashboard)
 {
   if (!dashboard->uart_active) {
@@ -682,7 +683,7 @@ static const char *task_command_state(const LCDDashboard *dashboard,
 
 static void draw_task(const LCDDashboard *dashboard)
 {
-  char text[24];
+  char text[32];
   const TaskStatus task = Task_GetStatus();
   const VisionData *vision = &dashboard->vision;
   const bool report_fresh =
@@ -712,8 +713,15 @@ static void draw_task(const LCDDashboard *dashboard)
       if ((vision->mission.flags & VISION_CMD_DISTANCE_VALID) != 0U) {
         const int distance_mm = (vision->mission.target_x_mm >= 0) ?
             vision->mission.target_x_mm : 0;
-        (void)snprintf(text, sizeof(text), "H:%03u D:%04d",
-                       vision->mission.heading_cdeg / 100U, distance_mm);
+        const LocationPose pose = Location_GetPose();
+        if (pose.valid) {
+          (void)snprintf(text, sizeof(text), "T:%03u A:%03ld D:%04d",
+                         vision->mission.heading_cdeg / 100U,
+                         (long)(pose.heading_mdeg / 1000L), distance_mm);
+        } else {
+          (void)snprintf(text, sizeof(text), "T:%03u A:--- D:%04d",
+                         vision->mission.heading_cdeg / 100U, distance_mm);
+        }
       } else {
         uint32_t command_age_ms = dashboard->now_ms -
                                   vision->mission.tick_ms;
@@ -806,7 +814,7 @@ static void draw_centering_task(const LCDDashboard *dashboard)
                  centering_uart_state(dashboard));
   dashboard_write(0U, 108U, 128U, text);
 }
-#elif !APP_ENABLE_LOCATION_DEMO
+#elif !APP_ENABLE_LOCATION_DEMO && !APP_ENABLE_MOTION_DEBUG_TASK
 static void dashboard_draw_test(const LCDDashboard *dashboard)
 {
   static bool layout_drawn;

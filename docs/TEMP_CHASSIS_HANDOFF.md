@@ -248,6 +248,11 @@ RUN         停车并复位MCU，重新进入正常模式
 - SEARCH首次锁定合法单目标时保存其类别位，APPROACH、REACQ、GRAB_OBSERVE/RAISE/ROTATE全程必须匹配该类别；进入新SEARCH才解除锁定。协议仍无法携带置信度和bbox，首帧误识别必须由RDK阈值负责。
 - SEARCH 90°、REACQ 90°和抓取观察旋转现在每周期检查Location；失效立即停车，连续1500 ms无效报告`POSE_TIMEOUT`，不再因已有起始航向缓存而继续盲转。
 
+## 23. 2026-09-08导航角度可视化
+
+- 正常Task的LCD导航行现在显示`T:xxx A:xxx D:xxxx`：`T`是上位机最新任务目标航向，`A`是F407本地Location/IMU当前航向，`D`是上位机最新剩余距离。Location无效时`A:---`，不伪造角度。
+- 该显示用于区分“上位机目标方向错误”和“F407执行方向偏差”；不会改变导航控制。上位机仍需在放置区前约250～300 mm把目标heading切换为放置区方向，F407只执行该新heading并在最后300 mm以约400 mm/s行驶。
+
 ## 21. 2026-09-07删除安全区车头对正并返回中心点
 
 - `TASK_ALIGN_SAFE_ZONE=11`和`VISION_CMD_ALIGN_SAFE_ZONE=4`保留数值兼容，但正常状态机不再进入或执行对正。F407只允许`TASK_NAVIGATE`直接接收`ENTER_SAFE_ZONE`，随后张爪进入`CHECK`；旧上位机继续发送ALIGN时底盘只停车等待，不会旋转，也不会误报故障。
