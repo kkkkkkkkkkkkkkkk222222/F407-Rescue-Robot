@@ -1,5 +1,36 @@
 # 快速切换：正常跑图 / UART运动调试
 
+## 普通 Debug - Debug：只改一行
+
+如果使用工具栏的 `Debug - Debug` + `DAPLink OpenOCD`，在 `Main/Inc/app_config.h` 中修改：
+
+```c
+// 正常跑图（默认）
+#define APP_ACTIVE_MODE APP_MODE_RESCUE_TASK
+// 要切换为运动调试，请用下面这一行替换上面一行，不要同时定义：
+// #define APP_ACTIVE_MODE APP_MODE_MOTION_DEBUG_TASK
+```
+
+重新编译后再烧录 `build/Debug/WWW.elf`。普通Debug的CMake选项 `APP_ACTIVE_MODE_OVERRIDE` 必须为空；其他 `APP_ENABLE_*` 是自动推导结果，不要手改。
+专用NormalRun/MotionDebug配置会覆盖源码这一行，因此不要混用两种切换方法。
+
+## 为什么最新原版不保证上电“张开再闭上”
+
+原仓库 `60ae186`（已包含在 `68a0802`）把Servo_Init从IMU校准前移到了校准后，避免舵机运动干扰陀螺仪零偏。
+旧版舵机在校准期间保持90°；新版校准成功后设90°，随即调用Task_Process开始收爪，没有专门停留在90°的等待阶段。因此可见的“先张开”过程可能消失，不能单凭此判断是否运行正常Task。
+
+正常初始化收爪为S4→23°，等待1000ms后S2→147°，再等待1000ms完成。任务首次调用在LCD的READY启动画面之前；后续步骤由20ms任务调度推进。
+收到合法赛前配置后，先保持收爪倒退0.60m，再抬机构、张爪并边转边走。这里的Claw_Open与上电初始化到90°不是同一动作。
+
+READY只说明启动时IMU校准成功，不证明舵机已物理到位，也不证明后续任务持续运行。
+如果校准后连收爪也完全不动，需要检查READY之后的任务状态、USART1维护控制台是否暂停Task、当前IMU状态、TIM8输出及舵机供电；尚未通过实车确认原因。不要绕过IMU保护或擅自增加上电张爪动作来“模拟恢复”。
+
+## 给上位机负责人
+
+直接复制[上位机迁移提示词](docs/upper_computer_migration_prompt.md)。已经核对上位机 `39ae746` 的独立调试适配器仍使用旧0x17/0x18，需要迁移到0x1B/0x1C；正常比赛0x17/0x18必须保留。
+
+## 专用编译与烧录配置
+
 正常跑图基准是原仓库提交 `68a0802b140226c87a510e75190e54ca2a1c222e`。Task、机构和电机底层保留该版本，不是单独视觉居中测试。
 
 - 首次在 CLion 的 Settings → Build, Execution, Deployment → CMake 中启用 `NormalRun - NormalRun`、`MotionDebug - MotionDebug` 并 Reload。若本机显示为不带重复后缀的名称，在 Run → Edit Configurations 中把下面两个烧录入口的 CMake Profile 对应选好。
