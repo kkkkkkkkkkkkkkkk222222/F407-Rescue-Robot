@@ -70,6 +70,7 @@ static float filtered_target_x;
 static float filtered_target_y;
 static float remote_speed_mm_s;
 static float remote_yaw_mm_s;
+static float nav_locked_heading_deg;
 static uint32_t tracking_tick_ms;
 static uint32_t approach_report_generation;
 static uint32_t search_counted_report_generation;
@@ -99,6 +100,7 @@ static bool distance_command_done;
 static bool nav_payload_valid;
 static bool nav_payload_stale;
 static bool nav_forward_active;
+static bool nav_heading_locked;
 
 static void task_enter(TaskState next, uint32_t now_ms);
 static bool distance_failed(MotorDistanceStatus result);
@@ -254,6 +256,8 @@ static void task_enter(TaskState next, uint32_t now_ms)
   task_status.auto_approach = false;
   task_status.nav_stale = false;
   task_status.nav_done = false;
+  task_status.nav_heading_locked = false;
+  task_status.nav_locked_heading_deg = 0U;
   task_status.claw_visible =
       (next >= TASK_GRAB_OBSERVE) && (next <= TASK_CLOSE_CLAW);
   state_started_ms = now_ms;
@@ -261,6 +265,8 @@ static void task_enter(TaskState next, uint32_t now_ms)
   pose_invalid_pending = false;
   remote_speed_mm_s = 0.0f;
   remote_yaw_mm_s = 0.0f;
+  nav_locked_heading_deg = 0.0f;
+  nav_heading_locked = false;
 
   if (next == TASK_START) {
     const LocationPose pose = Location_GetPose();
@@ -360,6 +366,7 @@ static void task_initialize(uint32_t now_ms)
   approach_speed_mm_s = APP_APPROACH_SPEED_MM_S;
   remote_speed_mm_s = 0.0f;
   remote_yaw_mm_s = 0.0f;
+  nav_locked_heading_deg = 0.0f;
   tracking_sequence = 0U;
   tracking_tick_ms = 0U;
   approach_report_generation = 0U;
@@ -388,6 +395,7 @@ static void task_initialize(uint32_t now_ms)
   nav_payload_valid = false;
   nav_payload_stale = false;
   nav_forward_active = false;
+  nav_heading_locked = false;
   search_phase = SEARCH_SWEEP_HIGH;
   recover_phase = RECOVER_WAIT;
   task_reset_turn_tracker();
@@ -1336,11 +1344,35 @@ static RemoteRouteStatus task_follow_remote_route(
   distance_command_done = false;
   task_status.nav_done = false;
 
-  const float desired_heading_deg = (float)command->heading_cdeg * 0.01f;
   const float current_heading_deg = (float)pose.heading_mdeg * 0.001f;
+  const float command_heading_deg = (float)command->heading_cdeg * 0.01f;
+  const bool lock_allowed =
+      expected_command == VISION_CMD_NAVIGATE_WAYPOINT;
+
+  if (nav_heading_locked &&
+      (!lock_allowed ||
+       (command->target_x_mm >
+        (int16_t)APP_NAV_HEADING_UNLOCK_DISTANCE_MM))) {
+    nav_heading_locked = false;
+    task_status.nav_heading_locked = false;
+  }
+  if (!nav_heading_locked && lock_allowed && nav_ready &&
+      (command->target_x_mm <=
+       (int16_t)APP_NAV_HEADING_LOCK_DISTANCE_MM) &&
+      (task_abs(task_wrap_angle(command_heading_deg - current_heading_deg)) <=
+       APP_NAV_HEADING_TOLERANCE_DEG)) {
+    nav_locked_heading_deg = current_heading_deg;
+    nav_heading_locked = true;
+    task_status.nav_heading_locked = true;
+    task_status.nav_locked_heading_deg =
+        (uint16_t)(nav_locked_heading_deg + 0.5f) % 360U;
+  }
+
+  const float desired_heading_deg = nav_heading_locked ?
+      nav_locked_heading_deg : command_heading_deg;
   const float heading_error_deg = task_wrap_angle(
       desired_heading_deg - current_heading_deg);
-  if (nav_ready &&
+  if (!nav_heading_locked && nav_ready &&
       (task_abs(heading_error_deg) >= APP_NAV_REALIGN_DEG)) {
     Motor_Stop();
     task_status.motors_active = false;

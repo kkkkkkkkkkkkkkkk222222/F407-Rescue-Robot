@@ -55,6 +55,7 @@ typedef struct {
   uint8_t acknowledged_sequence;
   uint8_t last_command;
   uint8_t camera_angle;
+  uint16_t nav_locked_heading_deg;
   bool command_received;
   bool found;
   bool claw_visible;
@@ -63,6 +64,7 @@ typedef struct {
   bool auto_approach;
   bool nav_stale;
   bool nav_done;
+  bool nav_heading_locked;
 } TaskStatus;
 
 void Task_Process(uint32_t now_ms);

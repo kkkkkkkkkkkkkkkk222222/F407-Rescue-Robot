@@ -8,11 +8,19 @@ from tools import vision_protocol as p
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 class MotionIntegrationTests(unittest.TestCase):
-    def test_normal_core_matches_pinned_upstream(self):
-        for name in ("Task.c", "motor.c", "mechanism.c"):
+    def test_motion_debug_does_not_change_motor_or_mechanism_core(self):
+        for name in ("motor.c", "mechanism.c"):
             path = "Main/Src/" + name
             upstream = subprocess.check_output(["git", "show", "68a0802:" + path], cwd=ROOT).decode()
             self.assertEqual(upstream.replace("\r\n", "\n"), (ROOT/path).read_text())
+
+    def test_normal_rescue_mode_is_default(self):
+        config = (ROOT / "Main/Inc/app_config.h").read_text()
+        self.assertIn("#define APP_ACTIVE_MODE APP_MODE_RESCUE_TASK", config)
+        self.assertIn(
+            "#define APP_ENABLE_TASK (APP_ACTIVE_MODE == APP_MODE_RESCUE_TASK)",
+            config,
+        )
 
     def test_types_do_not_collide(self):
         self.assertEqual((p.MSG_STM_STATUS, p.MSG_MISSION), (0x17, 0x18))

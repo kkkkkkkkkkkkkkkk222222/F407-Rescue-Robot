@@ -714,13 +714,17 @@ static void draw_task(const LCDDashboard *dashboard)
         const int distance_mm = (vision->mission.target_x_mm >= 0) ?
             vision->mission.target_x_mm : 0;
         const LocationPose pose = Location_GetPose();
+        const char heading_kind = task.nav_heading_locked ? 'L' : 'T';
+        const unsigned int displayed_heading = task.nav_heading_locked ?
+            task.nav_locked_heading_deg :
+            vision->mission.heading_cdeg / 100U;
         if (pose.valid) {
-          (void)snprintf(text, sizeof(text), "T:%03u A:%03ld D:%04d",
-                         vision->mission.heading_cdeg / 100U,
+          (void)snprintf(text, sizeof(text), "%c:%03u A:%03ld D:%04d",
+                         heading_kind, displayed_heading,
                          (long)(pose.heading_mdeg / 1000L), distance_mm);
         } else {
-          (void)snprintf(text, sizeof(text), "T:%03u A:--- D:%04d",
-                         vision->mission.heading_cdeg / 100U, distance_mm);
+          (void)snprintf(text, sizeof(text), "%c:%03u A:--- D:%04d",
+                         heading_kind, displayed_heading, distance_mm);
         }
       } else {
         uint32_t command_age_ms = dashboard->now_ms -
