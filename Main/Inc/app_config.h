@@ -250,19 +250,25 @@
 #define APP_APPROACH_RECOVERY_TIMEOUT_MS 60000U
 #define APP_STEERING_EXIT_DEAD_ZONE       8
 #define APP_STEERING_ENTER_DEAD_ZONE     16
-#define APP_STEERING_KP_MM_S             1.12f
+#define APP_STEERING_KP_MM_S             0.72f
 /* Time-normalized equivalent of the former 0.745-per-frame derivative at
  * the nominal 40 ms vision period. */
-#define APP_STEERING_KD_MM                0.0298f
-#define APP_STEERING_MIN_MM_S             80.0f
-#define APP_STEERING_LIMIT_MM_S          239.0f
+#define APP_STEERING_KD_MM                0.0200f
+#define APP_STEERING_MIN_MM_S             40.0f
+#define APP_STEERING_LIMIT_MM_S          175.0f
+#define APP_STEERING_RATE_MM_S2         1000.0f
+#define APP_STEERING_FRAME_HOLD_MS        120U
+#define APP_STEERING_FRAME_STOP_MS        300U
 #define APP_STEERING_DIRECTION           1.0f
 #define APP_CAMERA_DEAD_ZONE              12
 #define APP_CAMERA_KP_DEG_PER_PX          0.0350f
 #define APP_CAMERA_KI_DEG_PER_PX_S        0.00875f
 #define APP_CAMERA_KD_DEG_S_PER_PX        0.00168f
 #define APP_CAMERA_INTEGRAL_LIMIT_PX_S  240.0f
-#define APP_VISION_COORD_FILTER_ALPHA      0.35f
+#define APP_VISION_COORD_FILTER_ALPHA      0.55f
+#define APP_APPROACH_FULL_SPEED_ERROR_PX    48.0f
+#define APP_APPROACH_SLOW_SPEED_ERROR_PX   160.0f
+#define APP_APPROACH_ALIGN_MIN_SPEED_MM_S  150.0f
 #define APP_CAMERA_TRACK_MAX_RATE_DEG_S   30.0f
 #define APP_VISION_PID_DEFAULT_DT_S        0.040f
 #define APP_VISION_PID_MIN_DT_S            0.020f
@@ -301,15 +307,19 @@
 #define APP_NAV_SPEED_ACCEL_MM_S2           1800.0f
 #define APP_NAV_SPEED_DECEL_MM_S2           3000.0f
 #define APP_NAV_YAW_ACCEL_MM_S2             1800.0f
-#define APP_NAV_HEADING_TOLERANCE_DEG      2.0f
-#define APP_NAV_REALIGN_DEG                7.0f
+#define APP_NAV_HEADING_TOLERANCE_DEG      1.0f
+#define APP_NAV_FINAL_TURN_TOLERANCE_DEG   1.0f
+#define APP_NAV_FINAL_PUSH_SPEED_MM_S    150.0f
+#define APP_NAV_FINAL_PUSH_TIME_MS       1200U
+#define APP_NAV_FINAL_PUSH_MAX_DISTANCE_MM 180U
+#define APP_NAV_REALIGN_DEG                3.0f
 #define APP_NAV_TURN_SETTLE_MS            100U
 #define APP_POSE_WAIT_TIMEOUT_MS          1500U
 #define APP_LIFT_START_ANGLE              55U
 #define APP_LIFT_TRAVEL_ANGLE             85U
+#define APP_DELIVERY_CAMERA_ANGLE         120U
+#define APP_DELIVERY_CAMERA_SETTLE_MS     300U
 #define APP_DELIVERY_VERIFY_WAIT_MS       1200U
-#define APP_SAFE_EXIT_DISTANCE_M            0.45f
-#define APP_SAFE_EXIT_SPEED_MM_S          300.0f
 #define APP_RETURN_CENTER_SPEED_MM_S       500.0f
 
 /* This 1.8-inch 128x160 ST7735 panel exposes GRAM origin (0, 0). */

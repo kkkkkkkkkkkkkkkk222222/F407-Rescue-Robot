@@ -672,6 +672,9 @@ static const char *task_command_state(const LCDDashboard *dashboard,
                              APP_MISSION_COMMAND_TIMEOUT_MS)) {
     return "TMO";
   }
+  if (task->nav_final_push) {
+    return "PUSH";
+  }
   if (task->nav_done) {
     return "DONE";
   }

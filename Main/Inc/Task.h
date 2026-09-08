@@ -64,6 +64,7 @@ typedef struct {
   bool auto_approach;
   bool nav_stale;
   bool nav_done;
+  bool nav_final_push;
   bool nav_heading_locked;
 } TaskStatus;
 
