@@ -1356,16 +1356,23 @@ static RemoteRouteStatus task_follow_remote_route(
     nav_heading_locked = false;
     task_status.nav_heading_locked = false;
   }
-  if (!nav_heading_locked && lock_allowed && nav_ready &&
+  if (!nav_heading_locked && lock_allowed &&
       (command->target_x_mm <=
-       (int16_t)APP_NAV_HEADING_LOCK_DISTANCE_MM) &&
-      (task_abs(task_wrap_angle(command_heading_deg - current_heading_deg)) <=
-       APP_NAV_HEADING_TOLERANCE_DEG)) {
-    nav_locked_heading_deg = current_heading_deg;
+       (int16_t)APP_NAV_HEADING_LOCK_DISTANCE_MM)) {
+    nav_locked_heading_deg =
+        ((command->flags & VISION_CMD_RED_SIDE) != 0U) ?
+        APP_SAFE_ZONE_RED_HEADING_DEG : APP_SAFE_ZONE_BLUE_HEADING_DEG;
     nav_heading_locked = true;
     task_status.nav_heading_locked = true;
     task_status.nav_locked_heading_deg =
         (uint16_t)(nav_locked_heading_deg + 0.5f) % 360U;
+    /* The final zone-normal heading is mandatory: stop translation and make
+     * turn_to() complete the 90/270-degree alignment before the last push. */
+    Motor_Stop();
+    task_status.motors_active = false;
+    nav_ready = false;
+    nav_forward_active = false;
+    task_reset_remote_targets();
   }
 
   const float desired_heading_deg = nav_heading_locked ?
