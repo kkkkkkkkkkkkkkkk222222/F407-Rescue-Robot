@@ -26,14 +26,9 @@ typedef enum {
   TASK_EXIT_SAFE_ZONE,
   TASK_FACE_FIELD_CENTER,
   TASK_STOPPED,
-  /* Appended to preserve every protocol-visible state number above. */
-  TASK_PILE_APPROACH,
-  TASK_SCATTER_POSITIVE,
-  TASK_SCATTER_PAUSE,
-  TASK_SCATTER_NEGATIVE,
-  TASK_SCATTER_EXIT,
-  TASK_APPROACH_RECOVER,
-  TASK_REMOTE_ACTION
+  /* Values 19..23 belonged to the removed blind start-scatter sequence. */
+  TASK_APPROACH_RECOVER = 24,
+  TASK_REMOTE_ACTION = 25
 } TaskState;
 
 typedef enum {

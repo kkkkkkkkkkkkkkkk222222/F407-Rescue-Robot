@@ -230,17 +230,6 @@
 #define APP_START_TURN_MAX_MM_S          380.0f
 #define APP_START_TURN_TOLERANCE_DEG       3.0f
 #define APP_START_TIMEOUT_MS           30000U
-/* Temporary handoff switch: keep the original pile-scatter states available,
- * but go straight from the open claw to SEARCH while the centre contains a
- * single object. */
-#define APP_ENABLE_START_SCATTER           0
-#define APP_PILE_APPROACH_DISTANCE_M      0.20f
-#define APP_PILE_APPROACH_SPEED_MM_S     250.0f
-#define APP_SCATTER_ROTATE_SPEED_MM_S    500.0f
-#define APP_SCATTER_BRAKE_WAIT_MS        250U
-#define APP_SCATTER_TURN_TIMEOUT_MS    10000U
-#define APP_SCATTER_EXIT_DISTANCE_M        0.30f
-#define APP_SCATTER_EXIT_SPEED_MM_S      250.0f
 #define APP_SEARCH_LOW_CAMERA_ANGLE       90U
 #define APP_SEARCH_FULL_TURN_MDEG     360000U
 #define APP_SEARCH_MIN_REPORTS_PER_SWEEP  1U
@@ -351,6 +340,8 @@
 #define APP_RETURN_CENTER_SPEED_MM_S       800.0f
 #define APP_RETURN_CENTER_HEADING_MAX_MM_S 100.0f
 #define APP_REMOTE_YIELD_SPEED_MM_S          750.0f
+#define APP_CARGO_SEPARATE_START_MM            100U
+#define APP_CARGO_SEPARATE_START_SPEED_MM_S  450.0f
 #define APP_CARGO_RECHECK_SETTLE_MS             300U
 #define APP_REMOTE_ESCAPE_LATERAL_SPEED_MM_S 800.0f
 #define APP_REMOTE_LANE_SPEED_MM_S           850.0f

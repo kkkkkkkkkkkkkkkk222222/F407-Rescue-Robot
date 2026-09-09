@@ -6,7 +6,7 @@
 - 底盘基线：`d431e37 feat: optimize autonomous motion and recovery`
 - 对照上位机：`danmo-teng/shijue_fangan@4bbbb83`（抓取超时预计由队友后续提高到3秒）
 - 正式RDK通信保持为PCB串口1 / USART3（PD8 TX、PD9 RX）、115200 8N1、固定15字节帧。
-- 本次目标是临时取消开局打散、降低抓取俯仰阈值、提高抓取命令和返航链路容错，并增加不干扰正式协议的舵机调试入口。
+- 本次目标是删除开局盲打乱、降低抓取俯仰阈值、提高抓取命令和返航链路容错，并增加不干扰正式协议的舵机调试入口。
 - 修改前尚未完成的结构重构已单独保存在本地分支`wip/refactor-before-temp-chassis-20260904`，提交`c0dc7c8`，没有混入本次改动。
 
 ## 2. 启动与搜索
@@ -20,13 +20,7 @@
 5. 舵机1到85°，夹爪进入Touch姿态，IMU闭环原地转180°，保留原有5秒等待。
 6. 打开夹爪（左108°、右72°）后直接进入`SEARCH`。
 
-原打散状态、状态编号和参数没有删除。`Main/Inc/app_config.h`中的：
-
-```c
-#define APP_ENABLE_START_SCATTER 0
-```
-
-为0时直接搜索；改为1即可恢复“前进0.20 m、正反旋转、后退0.30 m”的原流程。这种处理不会改变上位机可见的Task状态编号。
+旧的开局盲打乱状态、函数和参数已经删除，流程固定为`START -> OPEN_CLAW -> SEARCH`。原状态值19～23保留为空洞，后续状态编号不变，避免影响现有诊断。上位机通过视觉确认首件绿色物资无法单独取得后发送的`DISPERSE_PILE`属于受控任务算法，F407在空爪且没有等待夹内复审时继续接受该命令。
 
 进入每一轮`SEARCH`时仍记录视觉报告本地代次，只有进入搜索后收到的新报告才能触发`APPROACH`，因此开局定距、转向和开爪期间缓存的X/Y不会干扰搜索。
 
@@ -343,3 +337,9 @@ RUN         停车并复位MCU，重新进入正常模式
 - 上位机当前返中在距原点0.60 m时直接进入SEARCH并发送HOLD，未完成严格的RETURN D=0握手。底盘临时只在最近RETURN余量≤650 mm时把该HOLD视为返中完成；上位机后续仍应改为持续发送RETURN D=0并等待F407上报SEARCH。
 - 上位机当前`_audit_valid()`对`initial_stash`只检查总数1～3，会把危险物或伤员混装也当成可抓。F407会安全拒绝该GRAB，但上位机会停留在GRAB等待。上位机必须把危险、未知和伤员混装判断移到`initial_stash`提前返回之前，并进入`INVALID_RELEASE`，否则这类场景无法自动恢复。
 - 上位机的非法物资流程必须由`INVALID_RELEASE -> INVALID_BACKOFF -> SEARCH`改为`INVALID_RELEASE -> INVALID_BACKOFF -> CAPTURE_AUDIT`。`YIELD_DONE`后重新发送审核帧；审核合法则持续发送`GRAB_CONFIRMED`，直到F407完成双爪重新合拢并上报`GRIPPER_CLOSED=1`，审核仍非法则发送`RELEASE_BOTH`。旧流程在单侧分离后直接SEARCH会被F407的复审门拒绝，表现为安全停车而不是夹着旧物资继续抓新目标。
+
+## 36. 2026-09-09删除盲打乱与单侧分离退让
+
+- 删除的是F407到中心后无条件执行的盲打乱。上位机确认首件绿色物资无法单独取得时主动发送`DISPERSE_PILE`的视觉受控打散必须保留；F407只在空爪且没有等待夹内复审时接受。
+- 单侧释放后的`YIELD_BACKOFF`改为两段编码器定距且继续使用IMU航向保持：最初100 mm为450 mm/s，剩余距离恢复750 mm/s。退让完成后舵机3到140°并稳定300 ms，之后才上报`YIELD_DONE`。
+- 对照上位机`codex/complete-rescue-flow@8339c1b`，其首件绿色物资无法单独取得时发送`DISPERSE_PILE`的逻辑正确，应继续保留；但`INVALID_BACKOFF`完成后清空批次直接进入SEARCH仍需改为夹内复审。

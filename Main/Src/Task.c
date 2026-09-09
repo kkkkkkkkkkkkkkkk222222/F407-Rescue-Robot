@@ -588,9 +588,6 @@ static void task_enter(TaskState next, uint32_t now_ms)
     task_reset_tracking();
   } else if (next == TASK_GRAB_ROTATE) {
     task_reset_turn_tracker();
-  } else if ((next == TASK_SCATTER_POSITIVE) ||
-             (next == TASK_SCATTER_NEGATIVE)) {
-    task_reset_turn_tracker();
   } else if ((next == TASK_NAVIGATE) ||
              (next == TASK_ALIGN_SAFE_ZONE) ||
              (next == TASK_FACE_FIELD_CENTER)) {
@@ -947,66 +944,6 @@ static void task_process_start(uint32_t now_ms)
     return;
   }
   task_status.motors_active = true;
-}
-
-static void task_process_pile_approach(uint32_t now_ms)
-{
-  const MotorDistanceStatus result =
-      Motor_MoveDistance(APP_PILE_APPROACH_DISTANCE_M,
-                         APP_PILE_APPROACH_SPEED_MM_S);
-  task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
-  if (result == MOTOR_DISTANCE_DONE) {
-    task_enter(TASK_SCATTER_POSITIVE, now_ms);
-  } else if (distance_failed(result)) {
-    task_stop(TASK_FAULT_MOTOR, now_ms);
-  }
-}
-
-static void task_process_scatter(float speed_mm_s, TaskState next,
-                                 uint32_t now_ms)
-{
-  if (!Location_GetPose().valid) {
-    task_stop(TASK_FAULT_POSE_TIMEOUT, now_ms);
-    return;
-  }
-  if ((uint32_t)(now_ms - state_started_ms) >=
-      APP_SCATTER_TURN_TIMEOUT_MS) {
-    task_stop(TASK_FAULT_START_TIMEOUT, now_ms);
-    return;
-  }
-  if (task_full_turn_reached()) {
-    task_enter(next, now_ms);
-    return;
-  }
-  Motor_Move(0.0f, 0.0f, speed_mm_s);
-  task_status.motors_active = true;
-}
-
-static void task_process_scatter_pause(uint32_t now_ms)
-{
-  if ((uint32_t)(now_ms - state_started_ms) >=
-      APP_SCATTER_BRAKE_WAIT_MS) {
-    task_enter(TASK_SCATTER_NEGATIVE, now_ms);
-  }
-}
-
-static void task_process_scatter_exit(uint32_t now_ms)
-{
-  /* Give the chassis a short stationary interval before changing from a
-   * 500 mm/s spin to translation in the opposite body direction. */
-  if ((uint32_t)(now_ms - state_started_ms) <
-      APP_SCATTER_BRAKE_WAIT_MS) {
-    return;
-  }
-  const MotorDistanceStatus result =
-      Motor_MoveDistance(-APP_SCATTER_EXIT_DISTANCE_M,
-                         APP_SCATTER_EXIT_SPEED_MM_S);
-  task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
-  if (result == MOTOR_DISTANCE_DONE) {
-    task_enter(TASK_SEARCH, now_ms);
-  } else if (distance_failed(result)) {
-    task_stop(TASK_FAULT_MOTOR, now_ms);
-  }
 }
 
 static MotorTurnStatus task_turn_to_heading(float desired_heading_deg,
@@ -2048,22 +1985,45 @@ static void task_process_remote_action(const VisionMissionCommand *command,
       return;
 
     case REMOTE_ACTION_YIELD:
-      if (remote_action.phase == 0U) {
+      if (!cargo_recheck_pending) {
         if (task_remote_distance((float)remote_action.arg_a * 0.001f,
-                                 APP_REMOTE_YIELD_SPEED_MM_S, now_ms) &&
-            !cargo_recheck_pending) {
+                                 APP_REMOTE_YIELD_SPEED_MM_S, now_ms)) {
           task_remote_action_finish();
         }
-      } else if (remote_action.phase == 1U) {
+        return;
+      }
+      {
+        const int32_t requested_mm = remote_action.arg_a;
+        const int32_t direction = (requested_mm < 0) ? -1 : 1;
+        const uint32_t magnitude_mm = (uint32_t)(
+            (requested_mm < 0) ? -requested_mm : requested_mm);
+        const uint32_t start_mm =
+            (magnitude_mm < APP_CARGO_SEPARATE_START_MM) ?
+                magnitude_mm : APP_CARGO_SEPARATE_START_MM;
+        const uint32_t fast_mm = magnitude_mm - start_mm;
+        if (remote_action.phase == 0U) {
+          (void)task_remote_distance(
+              (float)(direction * (int32_t)start_mm) * 0.001f,
+              APP_CARGO_SEPARATE_START_SPEED_MM_S, now_ms);
+        } else if (remote_action.phase == 1U) {
+          if (fast_mm == 0U) {
+            task_remote_action_advance(now_ms);
+          } else {
+            (void)task_remote_distance(
+                (float)(direction * (int32_t)fast_mm) * 0.001f,
+                APP_REMOTE_YIELD_SPEED_MM_S, now_ms);
+          }
+        } else if (remote_action.phase == 2U) {
         /* A unilateral release keeps the opposite cargo at the normal touch
          * angle.  After physical separation, look back into the claw before
          * accepting either navigation or a new search target. */
-        if (task_scan_camera_to(APP_GRAB_VIEW_ANGLE, now_ms)) {
-          task_remote_action_advance(now_ms);
+          if (task_scan_camera_to(APP_GRAB_VIEW_ANGLE, now_ms)) {
+            task_remote_action_advance(now_ms);
+          }
+        } else if ((uint32_t)(now_ms - step_started_ms) >=
+                   APP_CARGO_RECHECK_SETTLE_MS) {
+          task_remote_action_finish();
         }
-      } else if ((uint32_t)(now_ms - step_started_ms) >=
-                 APP_CARGO_RECHECK_SETTLE_MS) {
-        task_remote_action_finish();
       }
       return;
 
@@ -2293,6 +2253,7 @@ static void task_accept_mission(const VisionMissionCommand *command,
     task_status.acknowledged_sequence = command->sequence;
     task_start_remote_action(REMOTE_ACTION_LANE, command, now_ms);
   } else if ((command->command == VISION_CMD_DISPERSE_PILE) &&
+             !cargo_recheck_pending &&
              !task_status.gripper_closed &&
              ((state == TASK_SEARCH) ||
               ((state == TASK_REMOTE_ACTION) && remote_action.done))) {
@@ -2370,34 +2331,8 @@ void Task_Process(uint32_t now_ms)
 
     case TASK_OPEN_CLAW:
       if (Claw_Open(now_ms)) {
-#if APP_ENABLE_START_SCATTER
-        task_enter(TASK_PILE_APPROACH, now_ms);
-#else
         task_enter(TASK_SEARCH, now_ms);
-#endif
       }
-      break;
-
-    case TASK_PILE_APPROACH:
-      task_process_pile_approach(now_ms);
-      break;
-
-    case TASK_SCATTER_POSITIVE:
-      task_process_scatter(APP_SCATTER_ROTATE_SPEED_MM_S,
-                           TASK_SCATTER_PAUSE, now_ms);
-      break;
-
-    case TASK_SCATTER_PAUSE:
-      task_process_scatter_pause(now_ms);
-      break;
-
-    case TASK_SCATTER_NEGATIVE:
-      task_process_scatter(-APP_SCATTER_ROTATE_SPEED_MM_S,
-                           TASK_SCATTER_EXIT, now_ms);
-      break;
-
-    case TASK_SCATTER_EXIT:
-      task_process_scatter_exit(now_ms);
       break;
 
     case TASK_SEARCH:
