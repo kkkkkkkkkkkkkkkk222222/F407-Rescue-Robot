@@ -8,6 +8,8 @@ static uint8_t camera_angle = 90U;
 typedef enum {
   CLAW_ACTION_NONE = 0,
   CLAW_ACTION_OPEN,
+  CLAW_ACTION_OPEN_LEFT,
+  CLAW_ACTION_OPEN_RIGHT,
   CLAW_ACTION_RETRACT,
   CLAW_ACTION_TOUCH
 } ClawAction;
@@ -108,6 +110,22 @@ void Lift_SetTravelPosition(void)
 bool Claw_Open(uint32_t now_ms)
 {
   return claw_move_together(CLAW_ACTION_OPEN, now_ms, 108U, 72U, 1000U);
+}
+
+bool Claw_OpenLeft(uint32_t now_ms)
+{
+  /* Release the left cargo while the right claw stays at the ordinary
+   * touch position.  Never drive the retained side to its compact/retracted
+   * limit: a large cargo could otherwise stall that servo. */
+  return claw_move_together(CLAW_ACTION_OPEN_LEFT, now_ms,
+                            108U, 100U, 600U);
+}
+
+bool Claw_OpenRight(uint32_t now_ms)
+{
+  /* Mirror of Claw_OpenLeft: left stays at its normal touch position. */
+  return claw_move_together(CLAW_ACTION_OPEN_RIGHT, now_ms,
+                            80U, 72U, 600U);
 }
 
 bool Claw_Retract(uint32_t now_ms)

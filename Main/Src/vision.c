@@ -191,7 +191,7 @@ static bool vision_mission_code_valid(uint8_t command)
 {
   return (command == VISION_CMD_STOP) ||
          ((command >= VISION_CMD_GRAB_CONFIRMED) &&
-          (command <= VISION_CMD_RETURN_CENTER));
+          (command <= VISION_CMD_CARGO_AUDIT));
 }
 
 static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
@@ -207,15 +207,49 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
   const uint16_t heading = vision_u16_be(&payload[6]);
   if (!vision_mission_code_valid(code) ||
       ((flags & VISION_CMD_VALID) == 0U) ||
-      ((flags & 0xE0U) != 0U) || (heading >= 36000U)) {
+      ((flags & 0xE0U) != 0U)) {
+    return;
+  }
+
+  const int16_t arg_a = (int16_t)vision_u16_be(&payload[2]);
+  const int16_t arg_b = (int16_t)vision_u16_be(&payload[4]);
+  if ((code == VISION_CMD_APPROACH_TARGET) &&
+      ((arg_a < 0) || (arg_a > (int16_t)APP_VISION_MAX_X) ||
+       (arg_b < 0) || (arg_b > (int16_t)APP_VISION_MAX_Y))) {
+    return;
+  }
+  if (((code == VISION_CMD_NAVIGATE_WAYPOINT) ||
+       (code == VISION_CMD_RETURN_CENTER)) &&
+      (((flags & (VISION_CMD_DRIVE_STRAIGHT |
+                  VISION_CMD_USE_FINAL_HEADING |
+                  VISION_CMD_DISTANCE_VALID)) !=
+        (VISION_CMD_DRIVE_STRAIGHT |
+         VISION_CMD_USE_FINAL_HEADING |
+         VISION_CMD_DISTANCE_VALID)) ||
+       (arg_a < 0) || (arg_b != 0) || (heading >= 36000U))) {
+    return;
+  }
+  if ((code == VISION_CMD_ENTER_SAFE_ZONE) && (heading >= 36000U)) {
+    return;
+  }
+  if ((code == VISION_CMD_CARGO_AUDIT) &&
+      ((payload[2] > VISION_CARGO_MIXED_MATERIAL) ||
+       (payload[3] > VISION_CARGO_MIXED_MATERIAL) ||
+       ((payload[4] & 0xF0U) != 0U) || ((payload[5] & 0xC0U) != 0U))) {
     return;
   }
 
   command->command = code;
   command->flags = flags;
-  command->target_x_mm = (int16_t)vision_u16_be(&payload[2]);
-  command->target_y_mm = (int16_t)vision_u16_be(&payload[4]);
+  command->target_x_mm = arg_a;
+  command->target_y_mm = arg_b;
   command->heading_cdeg = heading;
+  command->audit_left_class = payload[2];
+  command->audit_right_class = payload[3];
+  command->audit_counts = payload[4];
+  command->audit_flags = payload[5];
+  command->audit_id = payload[6];
+  command->audit_total_count = payload[7];
   command->sequence = sequence;
   command->tick_ms = tick_ms;
   command->received = true;

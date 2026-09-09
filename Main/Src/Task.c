@@ -17,30 +17,13 @@ typedef struct {
   bool valid;
 } TurnTracker;
 
-typedef struct {
-  float x_mm;
-  float y_mm;
-  float heading_deg;
-  bool inside_field;
-} TaskPose;
-
 typedef enum {
-  SEARCH_SWEEP_HIGH = 0,
-  SEARCH_SWEEP_LOW,
-  SEARCH_REALIGN,
-  SEARCH_ADVANCE
+  SEARCH_CAMERA_TO_90 = 0,
+  SEARCH_HOLD_90,
+  SEARCH_SWEEP_90,
+  SEARCH_RETURN_ALIGN,
+  SEARCH_RETURN_CENTER
 } SearchPhase;
-
-typedef enum {
-  RECOVER_WAIT = 0,
-  RECOVER_CAMERA_TO_140,
-  RECOVER_HOLD_140,
-  RECOVER_CAMERA_TO_90,
-  RECOVER_HOLD_90,
-  RECOVER_SWEEP_90,
-  RECOVER_REALIGN,
-  RECOVER_ADVANCE
-} RecoverPhase;
 
 typedef enum {
   REMOTE_ROUTE_WAITING = 0,
@@ -50,18 +33,42 @@ typedef enum {
   REMOTE_ROUTE_MOTOR_FAULT
 } RemoteRouteStatus;
 
+typedef enum {
+  REMOTE_ACTION_NONE = 0,
+  REMOTE_ACTION_YIELD,
+  REMOTE_ACTION_ESCAPE,
+  REMOTE_ACTION_RELEASE_LEFT,
+  REMOTE_ACTION_RELEASE_RIGHT,
+  REMOTE_ACTION_RELEASE_BOTH,
+  REMOTE_ACTION_DISPERSE,
+  REMOTE_ACTION_LANE
+} RemoteAction;
+
+typedef struct {
+  RemoteAction type;
+  uint8_t phase;
+  uint8_t command;
+  int16_t arg_a;
+  int16_t arg_b;
+  uint32_t started_ms;
+  uint32_t phase_path_mm;
+  bool done;
+  bool paused;
+  uint32_t paused_ms;
+} RemoteActionState;
+
 static volatile TaskStatus task_status;
 static Pid_t steering_pid;
 static Pid_t camera_pid;
 static TaskState state;
 static TurnTracker turn_tracker;
 static SearchPhase search_phase;
-static RecoverPhase recover_phase;
 static uint32_t state_started_ms;
 static uint32_t step_started_ms;
 static uint32_t status_sent_ms;
 static uint32_t pose_invalid_started_ms;
 static uint32_t approach_last_target_ms;
+static uint32_t approach_prestop_started_ms;
 static uint32_t nav_payload_change_ms;
 static uint32_t nav_final_push_started_ms;
 static uint32_t nav_final_push_paused_ms;
@@ -70,6 +77,7 @@ static float steering_mm_s;
 static float steering_target_mm_s;
 static float approach_speed_mm_s;
 static bool approach_close_hold;
+static bool approach_prestop_active;
 static float filtered_target_x;
 static float filtered_target_y;
 static float remote_speed_mm_s;
@@ -84,6 +92,7 @@ static uint8_t mission_sequence;
 static uint32_t start_reverse_path_mm;
 static float start_target_heading_deg;
 static float reposition_heading_deg;
+static float reposition_distance_m;
 static uint32_t scan_entry_report_generation;
 static uint32_t nav_final_push_start_path_mm;
 static uint8_t search_phase_report_count;
@@ -98,9 +107,6 @@ static bool mission_sequence_valid;
 static bool steering_active;
 static bool nav_ready;
 static bool scan_report_gate_open;
-static bool reposition_heading_valid;
-static bool search_start_low;
-static bool search_low_first;
 static bool pose_invalid_pending;
 static bool start_clearance_done;
 static bool distance_command_done;
@@ -111,10 +117,27 @@ static bool nav_heading_locked;
 static bool nav_final_push_active;
 static bool nav_final_push_done;
 static bool nav_final_push_paused;
+static bool first_delivery_done;
+static bool complete_flow_active;
+static bool audit_received;
+static bool audit_valid;
+static bool audit_initial_stash;
+static bool audit_destination_injury;
+static bool cargo_recheck_pending;
+static bool route_to_initial_stash;
+static uint8_t audit_consistent_count;
+static uint8_t audit_last_left_class;
+static uint8_t audit_last_right_class;
+static uint8_t audit_last_counts;
+static uint8_t audit_last_flags;
+static uint8_t audit_last_total_count;
+static uint8_t remote_target_sequence;
+static uint32_t remote_target_generation;
+static bool remote_target_sequence_valid;
+static RemoteActionState remote_action;
 
 static void task_enter(TaskState next, uint32_t now_ms);
 static bool distance_failed(MotorDistanceStatus result);
-static bool fused_pose_ready(const VisionFusedPose *pose, uint32_t now_ms);
 static bool delivery_enter_command_ok(const VisionMissionCommand *command,
                                       uint32_t now_ms);
 
@@ -145,6 +168,24 @@ static float task_wrap_angle(float angle_deg)
     angle_deg += 360.0f;
   }
   return angle_deg;
+}
+
+static float task_safe_zone_heading(void)
+{
+  float heading_deg = (configured_color == VISION_COLOR_RED) ?
+      APP_SAFE_ZONE_RED_HEADING_DEG : APP_SAFE_ZONE_BLUE_HEADING_DEG;
+  if (!first_delivery_done) {
+    heading_deg += (configured_color == VISION_COLOR_RED) ?
+        APP_FIRST_DELIVERY_RED_OFFSET_DEG :
+        APP_FIRST_DELIVERY_BLUE_OFFSET_DEG;
+  }
+  if (heading_deg < 0.0f) {
+    heading_deg += 360.0f;
+  }
+  if (heading_deg >= 360.0f) {
+    heading_deg -= 360.0f;
+  }
+  return heading_deg;
 }
 
 static bool task_side_flag_valid(uint8_t flags)
@@ -245,6 +286,195 @@ static bool task_full_turn_reached(void)
   return turn_tracker.accumulated_mdeg >= APP_SEARCH_FULL_TURN_MDEG;
 }
 
+static uint8_t task_protocol_mode(void)
+{
+  if (complete_flow_active) {
+    if (state == TASK_APPROACH) {
+      return 20U;
+    }
+    if ((state >= TASK_GRAB_OBSERVE) && (state <= TASK_GRAB_ROTATE)) {
+      return 21U;
+    }
+    if (state == TASK_WAIT_NAVIGATION) {
+      return 22U;
+    }
+    if ((state == TASK_REMOTE_ACTION) && remote_action.done) {
+      switch (remote_action.type) {
+        case REMOTE_ACTION_YIELD:        return 30U;
+        case REMOTE_ACTION_ESCAPE:       return 31U;
+        case REMOTE_ACTION_RELEASE_LEFT: return 32U;
+        case REMOTE_ACTION_RELEASE_RIGHT:return 33U;
+        case REMOTE_ACTION_RELEASE_BOTH: return 34U;
+        case REMOTE_ACTION_DISPERSE:     return 35U;
+        case REMOTE_ACTION_LANE:         return 36U;
+        default:                         break;
+      }
+    }
+  }
+  return (uint8_t)state;
+}
+
+static bool task_audit_class_is(uint8_t value, uint8_t cargo)
+{
+  return value == cargo;
+}
+
+static bool task_validate_audit(const VisionMissionCommand *command)
+{
+  const uint8_t left_count = command->audit_counts & 0x03U;
+  const uint8_t right_count = (command->audit_counts >> 2) & 0x03U;
+  const uint8_t total = command->audit_total_count;
+  const uint8_t left = command->audit_left_class;
+  const uint8_t right = command->audit_right_class;
+  const bool dangerous =
+      ((command->audit_flags & VISION_AUDIT_DANGER_PRESENT) != 0U) ||
+      task_audit_class_is(left, VISION_CARGO_DANGER) ||
+      task_audit_class_is(right, VISION_CARGO_DANGER);
+  const bool unknown =
+      ((command->audit_flags & VISION_AUDIT_UNKNOWN_PRESENT) != 0U) ||
+      task_audit_class_is(left, VISION_CARGO_UNKNOWN) ||
+      task_audit_class_is(right, VISION_CARGO_UNKNOWN);
+  const bool injury = task_audit_class_is(left, VISION_CARGO_INJURED) ||
+                      task_audit_class_is(right, VISION_CARGO_INJURED);
+  const bool injury_mixed =
+      ((command->audit_flags & VISION_AUDIT_INJURY_MIXED) != 0U) ||
+      (injury && (total != 1U));
+
+  if ((total == 0U) || (total > 3U) ||
+      ((uint8_t)(left_count + right_count) != total) ||
+      dangerous || unknown || injury_mixed) {
+    return false;
+  }
+  if (audit_initial_stash) {
+    return true;
+  }
+  if (!first_delivery_done) {
+    return (total == 1U) &&
+           ((task_audit_class_is(left, VISION_CARGO_GREEN) &&
+             (left_count == 1U)) ||
+            (task_audit_class_is(right, VISION_CARGO_GREEN) &&
+             (right_count == 1U)));
+  }
+  if (audit_destination_injury) {
+    return (total == 1U) && injury;
+  }
+  return !injury &&
+         ((left == VISION_CARGO_NONE) ||
+          (left == VISION_CARGO_GREEN) ||
+          (left == VISION_CARGO_CORE) ||
+          (left == VISION_CARGO_MIXED_MATERIAL)) &&
+         ((right == VISION_CARGO_NONE) ||
+          (right == VISION_CARGO_GREEN) ||
+          (right == VISION_CARGO_CORE) ||
+          (right == VISION_CARGO_MIXED_MATERIAL));
+}
+
+static void task_latch_audit(const VisionMissionCommand *command)
+{
+  const uint8_t semantic_flags = command->audit_flags &
+      (uint8_t)~VISION_AUDIT_STABLE;
+  const bool same =
+      (command->audit_left_class == audit_last_left_class) &&
+      (command->audit_right_class == audit_last_right_class) &&
+      (command->audit_counts == audit_last_counts) &&
+      (semantic_flags == audit_last_flags) &&
+      (command->audit_total_count == audit_last_total_count);
+  if (same) {
+    if (audit_consistent_count < 255U) {
+      ++audit_consistent_count;
+    }
+  } else {
+    audit_last_left_class = command->audit_left_class;
+    audit_last_right_class = command->audit_right_class;
+    audit_last_counts = command->audit_counts;
+    audit_last_flags = semantic_flags;
+    audit_last_total_count = command->audit_total_count;
+    audit_consistent_count = 1U;
+  }
+  audit_initial_stash =
+      (command->audit_flags & VISION_AUDIT_INITIAL_STASH) != 0U;
+  audit_destination_injury =
+      (command->audit_flags & VISION_AUDIT_DESTINATION_INJURY) != 0U;
+  task_status.audit_left_class = command->audit_left_class;
+  task_status.audit_right_class = command->audit_right_class;
+  task_status.audit_total_count = command->audit_total_count;
+  /* bdcf0f2 switches to GRAB on its third matching camera frame, so only the
+   * first two non-STABLE audit frames reach the UART. Accept those two equal
+   * payloads; a future explicit STABLE frame is accepted immediately. */
+  audit_received = (audit_consistent_count >= 2U) ||
+      ((command->audit_flags & VISION_AUDIT_STABLE) != 0U);
+  audit_valid = audit_received && task_validate_audit(command);
+  task_status.audit_ready = audit_received;
+  task_status.audit_valid = audit_valid;
+}
+
+static void task_clear_audit_result(void)
+{
+  audit_received = false;
+  audit_valid = false;
+  audit_consistent_count = 0U;
+  audit_last_left_class = 0U;
+  audit_last_right_class = 0U;
+  audit_last_counts = 0U;
+  audit_last_flags = 0U;
+  audit_last_total_count = 0U;
+  task_status.audit_left_class = 0U;
+  task_status.audit_right_class = 0U;
+  task_status.audit_total_count = 0U;
+  task_status.audit_ready = false;
+  task_status.audit_valid = false;
+}
+
+static void task_apply_complete_target(VisionData *vision, uint32_t now_ms)
+{
+  if (!complete_flow_active) {
+    return;
+  }
+  const VisionMissionCommand *command = &vision->mission;
+  const bool fresh = Vision_MissionIsFresh(
+      command, now_ms, APP_MISSION_COMMAND_TIMEOUT_MS);
+  if (fresh && (command->command == VISION_CMD_APPROACH_TARGET)) {
+    if (!remote_target_sequence_valid ||
+        (remote_target_sequence != command->sequence)) {
+      remote_target_sequence = command->sequence;
+      remote_target_sequence_valid = true;
+      ++remote_target_generation;
+    }
+    vision->x = (uint16_t)command->target_x_mm;
+    vision->y = (uint16_t)command->target_y_mm;
+    vision->distance_mm = 0U;
+    vision->tick_ms = command->tick_ms;
+    vision->report_generation = remote_target_generation;
+    vision->cargo_counts = 1U;
+    vision->found = true;
+    vision->classification_valid = true;
+    vision->distance_valid = false;
+    vision->valid = true;
+  } else {
+    vision->found = false;
+  }
+}
+
+static void task_start_remote_action(RemoteAction type,
+                                     const VisionMissionCommand *command,
+                                     uint32_t now_ms)
+{
+  const LocationPose pose = Location_GetPose();
+  task_enter(TASK_REMOTE_ACTION, now_ms);
+  remote_action = (RemoteActionState){
+    .type = type,
+    .phase = 0U,
+    .command = command->command,
+    .arg_a = command->target_x_mm,
+    .arg_b = command->target_y_mm,
+    .started_ms = now_ms,
+    .phase_path_mm = pose.path_mm,
+    .done = false,
+    .paused = false,
+    .paused_ms = now_ms
+  };
+}
+
 static void task_publish_status(uint32_t now_ms)
 {
   if ((uint32_t)(now_ms - status_sent_ms) < APP_TASK_STATUS_PERIOD_MS) {
@@ -263,7 +493,7 @@ static void task_publish_status(uint32_t now_ms)
   const VisionStmStatus status = {
     .camera_pitch_cdeg = (uint16_t)Camera_GetAngle() * 100U,
     .flags = flags,
-    .mode = (uint8_t)state,
+    .mode = task_protocol_mode(),
     .acknowledged_sequence = task_status.acknowledged_sequence,
     .fault_code = (uint8_t)task_status.fault
   };
@@ -312,42 +542,48 @@ static void task_enter(TaskState next, uint32_t now_ms)
     start_clearance_done = false;
   } else if (next == TASK_SEARCH) {
     const VisionData vision = Vision_GetSnapshot();
-    search_low_first = search_start_low;
-    const uint8_t start_angle = search_start_low ?
-        APP_SEARCH_LOW_CAMERA_ANGLE : APP_SEARCH_CAMERA_ANGLE;
-    Camera_SetAngle(start_angle);
-    camera_angle = (float)start_angle;
+    camera_angle = (float)Camera_GetAngle();
     task_status.found = false;
     locked_cargo_counts = 0U;
-    search_phase = search_start_low ?
-        SEARCH_SWEEP_LOW : SEARCH_SWEEP_HIGH;
-    search_start_low = false;
+    search_phase = SEARCH_CAMERA_TO_90;
     scan_entry_report_generation = vision.report_generation;
     search_counted_report_generation = vision.report_generation;
     search_phase_report_count = 0U;
     scan_report_gate_open = false;
-    reposition_heading_valid = false;
+    reposition_distance_m = 0.0f;
+    audit_received = false;
+    audit_valid = false;
+    audit_initial_stash = false;
+    audit_destination_injury = false;
+    cargo_recheck_pending = false;
+    route_to_initial_stash = false;
+    audit_consistent_count = 0U;
+    audit_last_left_class = 0U;
+    audit_last_right_class = 0U;
+    audit_last_counts = 0U;
+    audit_last_flags = 0U;
+    audit_last_total_count = 0U;
+    task_status.audit_left_class = 0U;
+    task_status.audit_right_class = 0U;
+    task_status.audit_total_count = 0U;
+    task_status.audit_ready = false;
+    task_status.audit_valid = false;
     task_reset_tracking();
     task_reset_turn_tracker();
   } else if (next == TASK_APPROACH) {
     camera_angle = (float)Camera_GetAngle();
     approach_speed_mm_s = APP_APPROACH_SPEED_MM_S;
     approach_close_hold = false;
+    approach_prestop_active = false;
+    approach_prestop_started_ms = now_ms;
     approach_last_target_ms = now_ms;
     approach_report_generation_valid = false;
     task_reset_tracking();
   } else if (next == TASK_APPROACH_RECOVER) {
     const VisionData vision = Vision_GetSnapshot();
-    const LocationPose pose = Location_GetPose();
-    recover_phase = RECOVER_WAIT;
     scan_entry_report_generation = vision.report_generation;
     scan_report_gate_open = false;
-    reposition_heading_valid = pose.valid;
-    if (pose.valid) {
-      reposition_heading_deg = (float)pose.heading_mdeg * 0.001f;
-    }
     task_reset_tracking();
-    task_reset_turn_tracker();
   } else if (next == TASK_GRAB_OBSERVE) {
     task_reset_tracking();
   } else if (next == TASK_GRAB_ROTATE) {
@@ -395,6 +631,7 @@ static void task_initialize(uint32_t now_ms)
   status_sent_ms = now_ms - APP_TASK_STATUS_PERIOD_MS;
   pose_invalid_started_ms = now_ms;
   approach_last_target_ms = now_ms;
+  approach_prestop_started_ms = now_ms;
   nav_payload_change_ms = now_ms;
   nav_final_push_started_ms = now_ms;
   nav_final_push_paused_ms = now_ms;
@@ -403,6 +640,7 @@ static void task_initialize(uint32_t now_ms)
   steering_target_mm_s = 0.0f;
   approach_speed_mm_s = APP_APPROACH_SPEED_MM_S;
   approach_close_hold = false;
+  approach_prestop_active = false;
   remote_speed_mm_s = 0.0f;
   remote_yaw_mm_s = 0.0f;
   nav_locked_heading_deg = 0.0f;
@@ -415,6 +653,7 @@ static void task_initialize(uint32_t now_ms)
   start_reverse_path_mm = 0U;
   start_target_heading_deg = 0.0f;
   reposition_heading_deg = 0.0f;
+  reposition_distance_m = 0.0f;
   scan_entry_report_generation = 0U;
   nav_final_push_start_path_mm = 0U;
   search_phase_report_count = 0U;
@@ -428,9 +667,6 @@ static void task_initialize(uint32_t now_ms)
   steering_active = false;
   nav_ready = false;
   scan_report_gate_open = false;
-  reposition_heading_valid = false;
-  search_start_low = false;
-  search_low_first = false;
   pose_invalid_pending = false;
   start_clearance_done = false;
   distance_command_done = false;
@@ -441,8 +677,25 @@ static void task_initialize(uint32_t now_ms)
   nav_final_push_active = false;
   nav_final_push_done = false;
   nav_final_push_paused = false;
-  search_phase = SEARCH_SWEEP_HIGH;
-  recover_phase = RECOVER_WAIT;
+  first_delivery_done = false;
+  complete_flow_active = false;
+  audit_received = false;
+  audit_valid = false;
+  audit_initial_stash = false;
+  audit_destination_injury = false;
+  cargo_recheck_pending = false;
+  route_to_initial_stash = false;
+  audit_consistent_count = 0U;
+  audit_last_left_class = 0U;
+  audit_last_right_class = 0U;
+  audit_last_counts = 0U;
+  audit_last_flags = 0U;
+  audit_last_total_count = 0U;
+  remote_target_sequence = 0U;
+  remote_target_generation = 0U;
+  remote_target_sequence_valid = false;
+  remote_action = (RemoteActionState){0};
+  search_phase = SEARCH_CAMERA_TO_90;
   task_reset_turn_tracker();
   initialized = true;
 }
@@ -756,56 +1009,6 @@ static void task_process_scatter_exit(uint32_t now_ms)
   }
 }
 
-static bool read_field_pose(const VisionData *vision, uint32_t now_ms,
-                            TaskPose *pose)
-{
-  if (fused_pose_ready(&vision->fused_pose, now_ms)) {
-    pose->x_mm = (float)vision->fused_pose.x_mm;
-    pose->y_mm = (float)vision->fused_pose.y_mm;
-    pose->heading_deg = (float)vision->fused_pose.heading_cdeg * 0.01f;
-    pose->inside_field =
-        (task_abs(pose->x_mm) <= APP_LOCATION_FIELD_HALF_MM) &&
-        (task_abs(pose->y_mm) <= APP_LOCATION_FIELD_HALF_MM);
-    return true;
-  }
-
-  const LocationPose local = Location_GetPose();
-  if (!local.valid) {
-    return false;
-  }
-  pose->x_mm = (float)local.x_mm;
-  pose->y_mm = (float)local.y_mm;
-  pose->heading_deg = (float)local.heading_mdeg * 0.001f;
-  pose->inside_field = local.inside_field;
-  return true;
-}
-
-static bool task_choose_reposition_heading(const VisionData *vision,
-                                           uint32_t now_ms,
-                                           float distance_m,
-                                           float *heading_deg)
-{
-  TaskPose pose;
-  if (!read_field_pose(vision, now_ms, &pose)) {
-    LocationPose local;
-    (void)task_get_location_pose(&local, now_ms);
-    return false;
-  }
-  pose_invalid_pending = false;
-
-  const float heading_rad = *heading_deg * 0.01745329252f;
-  const float distance_mm = distance_m * 1000.0f;
-  const float end_x = pose.x_mm + cosf(heading_rad) * distance_mm;
-  const float end_y = pose.y_mm + sinf(heading_rad) * distance_mm;
-  const float limit = APP_LOCATION_FIELD_HALF_MM -
-                      APP_SEARCH_FIELD_MARGIN_MM;
-  if (!pose.inside_field ||
-      (task_abs(end_x) > limit) || (task_abs(end_y) > limit)) {
-    *heading_deg = atan2f(-pose.y_mm, -pose.x_mm) * 57.2957795f;
-  }
-  return true;
-}
-
 static MotorTurnStatus task_turn_to_heading(float desired_heading_deg,
                                             uint32_t now_ms)
 {
@@ -828,22 +1031,8 @@ static void task_process_search(const VisionData *vision, uint32_t now_ms)
   /* Reports received before this SEARCH epoch may still be younger than the
    * normal 250 ms timeout. They remain visible on the LCD, but cannot select
    * a target or enter APPROACH until a new valid report is received. */
-  const bool camera_ready =
-      ((search_phase == SEARCH_SWEEP_HIGH) &&
-       ((uint32_t)(now_ms -
-        (search_low_first ? step_started_ms : state_started_ms)) >=
-        (search_low_first ? APP_CAMERA_SCAN_ENDPOINT_HOLD_MS :
-                            APP_TARGET_WAIT_MS))) ||
-      ((search_phase == SEARCH_SWEEP_LOW) &&
-       ((uint32_t)(now_ms - step_started_ms) >=
-        APP_CAMERA_SCAN_ENDPOINT_HOLD_MS)) ||
-      ((search_phase != SEARCH_SWEEP_HIGH) &&
-       (search_phase != SEARCH_SWEEP_LOW));
-  if (camera_ready) {
-    task_count_search_report(vision, now_ms);
-  }
-  task_status.found = camera_ready &&
-                      task_scan_target_found(vision, now_ms);
+  task_count_search_report(vision, now_ms);
+  task_status.found = task_scan_target_found(vision, now_ms);
   if (task_status.found) {
     locked_cargo_counts = vision->cargo_counts;
     task_enter(TASK_APPROACH, now_ms);
@@ -851,22 +1040,27 @@ static void task_process_search(const VisionData *vision, uint32_t now_ms)
   }
 
   switch (search_phase) {
-    case SEARCH_SWEEP_HIGH: {
-      const uint32_t wait_started_ms = search_low_first ?
-          step_started_ms : state_started_ms;
-      const uint32_t wait_ms = search_low_first ?
-          APP_CAMERA_SCAN_ENDPOINT_HOLD_MS : APP_TARGET_WAIT_MS;
-      if ((uint32_t)(now_ms - wait_started_ms) < wait_ms) {
-        return;
+    case SEARCH_CAMERA_TO_90:
+      Motor_Stop();
+      task_status.motors_active = false;
+      if (task_scan_camera_to(APP_SEARCH_LOW_CAMERA_ANGLE, now_ms)) {
+        search_phase = SEARCH_HOLD_90;
+        step_started_ms = now_ms;
       }
-      LocationPose pose;
-      if (!task_get_location_pose(&pose, now_ms)) {
-        return;
+      return;
+
+    case SEARCH_HOLD_90:
+      Motor_Stop();
+      task_status.motors_active = false;
+      if ((uint32_t)(now_ms - step_started_ms) >=
+          APP_CAMERA_SCAN_ENDPOINT_HOLD_MS) {
+        search_phase = SEARCH_SWEEP_90;
+        task_reset_turn_tracker();
+        task_reset_search_report_count(vision);
       }
-      if (!reposition_heading_valid) {
-        reposition_heading_deg = (float)pose.heading_mdeg * 0.001f;
-        reposition_heading_valid = true;
-      }
+      return;
+
+    case SEARCH_SWEEP_90:
       if (task_full_turn_reached()) {
         Motor_Stop();
         task_status.motors_active = false;
@@ -876,82 +1070,36 @@ static void task_process_search(const VisionData *vision, uint32_t now_ms)
           task_reset_search_report_count(vision);
           return;
         }
-        if (search_low_first) {
-          if (!task_choose_reposition_heading(
-                  vision, now_ms, APP_SEARCH_ADVANCE_DISTANCE_M,
-                  &reposition_heading_deg)) {
-            return;
-          }
-          search_phase = SEARCH_REALIGN;
-          step_started_ms = now_ms;
-        } else {
-          Camera_SetAngle(APP_SEARCH_LOW_CAMERA_ANGLE);
-          camera_angle = (float)APP_SEARCH_LOW_CAMERA_ANGLE;
-          search_phase = SEARCH_SWEEP_LOW;
-          task_reset_turn_tracker();
-          task_reset_search_report_count(vision);
-          step_started_ms = now_ms;
-        }
-        return;
-      }
-      Motor_Move(0.0f, 0.0f, APP_SEARCH_ROTATE_SPEED_MM_S);
-      task_status.motors_active = true;
-      return;
-    }
-
-    case SEARCH_SWEEP_LOW:
-      if ((uint32_t)(now_ms - step_started_ms) <
-          APP_CAMERA_SCAN_ENDPOINT_HOLD_MS) {
-        return;
-      }
-      {
         LocationPose pose;
         if (!task_get_location_pose(&pose, now_ms)) {
           return;
         }
-        if (!reposition_heading_valid) {
-          reposition_heading_deg = (float)pose.heading_mdeg * 0.001f;
-          reposition_heading_valid = true;
-        }
-      }
-      if (task_full_turn_reached()) {
-        Motor_Stop();
-        task_status.motors_active = false;
-        if (search_phase_report_count <
-            APP_SEARCH_MIN_REPORTS_PER_SWEEP) {
+        const float center_distance_mm = sqrtf(
+            (float)pose.x_mm * (float)pose.x_mm +
+            (float)pose.y_mm * (float)pose.y_mm);
+        if (center_distance_mm <= APP_SEARCH_CENTER_TOLERANCE_MM) {
           task_reset_turn_tracker();
           task_reset_search_report_count(vision);
           return;
         }
-        if (search_low_first) {
-          Camera_SetAngle(APP_SEARCH_CAMERA_ANGLE);
-          camera_angle = (float)APP_SEARCH_CAMERA_ANGLE;
-          search_phase = SEARCH_SWEEP_HIGH;
-          task_reset_turn_tracker();
-          task_reset_search_report_count(vision);
-          step_started_ms = now_ms;
-        } else {
-          if (!task_choose_reposition_heading(
-                  vision, now_ms, APP_SEARCH_ADVANCE_DISTANCE_M,
-                  &reposition_heading_deg)) {
-            return;
-          }
-          search_phase = SEARCH_REALIGN;
-          step_started_ms = now_ms;
-        }
+        reposition_heading_deg = atan2f(-(float)pose.y_mm,
+                                        -(float)pose.x_mm) * 57.2957795f;
+        reposition_distance_m = center_distance_mm * 0.001f;
+        search_phase = SEARCH_RETURN_ALIGN;
+        step_started_ms = now_ms;
         return;
       }
       Motor_Move(0.0f, 0.0f, APP_SEARCH_ROTATE_SPEED_MM_S);
       task_status.motors_active = true;
       return;
 
-    case SEARCH_REALIGN: {
+    case SEARCH_RETURN_ALIGN: {
       const MotorTurnStatus result =
           task_turn_to_heading(reposition_heading_deg, now_ms);
       task_status.motors_active = result == MOTOR_TURN_RUNNING;
       if (result == MOTOR_TURN_DONE) {
         Motor_Stop();
-        search_phase = SEARCH_ADVANCE;
+        search_phase = SEARCH_RETURN_CENTER;
         step_started_ms = now_ms;
       } else if ((result == MOTOR_TURN_FAULT) ||
                  (result == MOTOR_TURN_INVALID)) {
@@ -960,14 +1108,14 @@ static void task_process_search(const VisionData *vision, uint32_t now_ms)
       return;
     }
 
-    case SEARCH_ADVANCE: {
+    case SEARCH_RETURN_CENTER: {
       if ((uint32_t)(now_ms - step_started_ms) <
           APP_NAV_TURN_SETTLE_MS) {
         return;
       }
       const MotorDistanceStatus result = Motor_MoveDistance(
-          APP_SEARCH_ADVANCE_DISTANCE_M,
-          APP_SEARCH_ADVANCE_SPEED_MM_S);
+          reposition_distance_m,
+          APP_SEARCH_RETURN_CENTER_SPEED_MM_S);
       task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
       if (result == MOTOR_DISTANCE_DONE) {
         task_enter(TASK_SEARCH, now_ms);
@@ -1094,6 +1242,24 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
         task_enter(TASK_GRAB_OBSERVE, now_ms);
         return;
       }
+      const uint8_t camera_command = Camera_GetAngle();
+      if ((camera_command >= APP_GRAB_PRESTOP_CAMERA_ANGLE) &&
+          (camera_command < APP_GRAB_VIEW_ANGLE)) {
+        if (!approach_prestop_active) {
+          approach_prestop_active = true;
+          approach_prestop_started_ms = now_ms;
+        }
+        if (!approach_close_hold && tracking_filter_valid &&
+            (task_abs(filtered_target_x - (float)APP_VISION_TARGET_X) <=
+             APP_GRAB_HOLD_X_ERROR_PX) &&
+            ((uint32_t)(now_ms - approach_prestop_started_ms) >=
+             APP_GRAB_PRESTOP_FALLBACK_MS)) {
+          approach_close_hold = true;
+          step_started_ms = now_ms;
+        }
+      } else {
+        approach_prestop_active = false;
+      }
     }
   }
 
@@ -1153,138 +1319,32 @@ static void task_process_approach_recover(const VisionData *vision,
 {
   task_status.auto_approach = true;
   task_status.found = task_scan_locked_target_found(vision, now_ms);
-  const bool loss_hold_complete =
-      (uint32_t)(now_ms - state_started_ms) >=
-      APP_APPROACH_LOSS_HOLD_MS;
   if (task_status.found &&
-      ((recover_phase != RECOVER_WAIT) || loss_hold_complete)) {
+      ((uint32_t)(now_ms - state_started_ms) >=
+       APP_APPROACH_LOSS_HOLD_MS)) {
     task_enter(TASK_APPROACH, now_ms);
     return;
   }
+  Motor_Stop();
+  task_status.motors_active = false;
   if ((uint32_t)(now_ms - state_started_ms) >=
-      APP_APPROACH_RECOVERY_TIMEOUT_MS) {
+      APP_APPROACH_LOSS_HOLD_MS) {
+    /* Reuse the unified 90-degree sweep and odometry return-to-center flow.
+     * SEARCH still accepts a new valid target while the camera is moving. */
     task_enter(TASK_SEARCH, now_ms);
-    return;
-  }
-
-  switch (recover_phase) {
-    case RECOVER_WAIT: {
-      Motor_Stop();
-      task_status.motors_active = false;
-      if (!reposition_heading_valid) {
-        LocationPose pose;
-        if (task_get_location_pose(&pose, now_ms)) {
-          reposition_heading_deg = (float)pose.heading_mdeg * 0.001f;
-          reposition_heading_valid = true;
-        }
-      }
-      if (loss_hold_complete) {
-        recover_phase = RECOVER_CAMERA_TO_140;
-        step_started_ms = now_ms;
-      }
-      return;
-    }
-
-    case RECOVER_CAMERA_TO_140:
-      if (task_scan_camera_to(APP_GRAB_VIEW_ANGLE, now_ms)) {
-        recover_phase = RECOVER_HOLD_140;
-        step_started_ms = now_ms;
-      }
-      return;
-
-    case RECOVER_HOLD_140:
-      if ((uint32_t)(now_ms - step_started_ms) >=
-          APP_CAMERA_SCAN_ENDPOINT_HOLD_MS) {
-        recover_phase = RECOVER_CAMERA_TO_90;
-        step_started_ms = now_ms;
-      }
-      return;
-
-    case RECOVER_CAMERA_TO_90:
-      if (task_scan_camera_to(APP_SEARCH_LOW_CAMERA_ANGLE, now_ms)) {
-        recover_phase = RECOVER_HOLD_90;
-        step_started_ms = now_ms;
-      }
-      return;
-
-    case RECOVER_HOLD_90:
-      if ((uint32_t)(now_ms - step_started_ms) >=
-          APP_CAMERA_SCAN_ENDPOINT_HOLD_MS) {
-        recover_phase = RECOVER_SWEEP_90;
-        task_reset_turn_tracker();
-        step_started_ms = now_ms;
-      }
-      return;
-
-    case RECOVER_SWEEP_90: {
-      LocationPose pose;
-      if (!task_get_location_pose(&pose, now_ms)) {
-        return;
-      }
-      if (!reposition_heading_valid) {
-        reposition_heading_deg = (float)pose.heading_mdeg * 0.001f;
-        reposition_heading_valid = true;
-      }
-      if (task_full_turn_reached()) {
-        Motor_Stop();
-        task_status.motors_active = false;
-        if (!task_choose_reposition_heading(
-                vision, now_ms,
-                APP_APPROACH_RECOVERY_ADVANCE_DISTANCE_M,
-                &reposition_heading_deg)) {
-          return;
-        }
-        recover_phase = RECOVER_REALIGN;
-        step_started_ms = now_ms;
-        return;
-      }
-      Motor_Move(0.0f, 0.0f,
-                 APP_APPROACH_RECOVERY_ROTATE_MM_S);
-      task_status.motors_active = true;
-      return;
-    }
-
-    case RECOVER_REALIGN: {
-      const MotorTurnStatus result =
-          task_turn_to_heading(reposition_heading_deg, now_ms);
-      task_status.motors_active = result == MOTOR_TURN_RUNNING;
-      if (result == MOTOR_TURN_DONE) {
-        Motor_Stop();
-        recover_phase = RECOVER_ADVANCE;
-        step_started_ms = now_ms;
-      } else if ((result == MOTOR_TURN_FAULT) ||
-                 (result == MOTOR_TURN_INVALID)) {
-        task_stop(TASK_FAULT_MOTOR, now_ms);
-      }
-      return;
-    }
-
-    case RECOVER_ADVANCE: {
-      if ((uint32_t)(now_ms - step_started_ms) <
-          APP_NAV_TURN_SETTLE_MS) {
-        return;
-      }
-      const MotorDistanceStatus result = Motor_MoveDistance(
-          APP_APPROACH_RECOVERY_ADVANCE_DISTANCE_M,
-          APP_APPROACH_RECOVERY_ADVANCE_SPEED_MM_S);
-      task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
-      if (result == MOTOR_DISTANCE_DONE) {
-        task_enter(TASK_SEARCH, now_ms);
-      } else if (distance_failed(result)) {
-        task_stop(TASK_FAULT_MOTOR, now_ms);
-      }
-      return;
-    }
-
-    default:
-      task_stop(TASK_FAULT_INVALID_STATE, now_ms);
-      return;
   }
 }
 
 static void task_process_grab_observe(const VisionData *vision,
                                       uint32_t now_ms)
 {
+  if (complete_flow_active) {
+    (void)vision;
+    (void)now_ms;
+    Motor_Stop();
+    task_status.motors_active = false;
+    return;
+  }
   task_status.found = task_target_matches_lock(vision, now_ms);
   if (!Vision_ReportIsFresh(vision, now_ms, APP_VISION_TIMEOUT_MS) ||
       task_status.found) {
@@ -1300,6 +1360,10 @@ static void task_process_grab_observe(const VisionData *vision,
 static void task_process_grab_raise_wait(const VisionData *vision,
                                          uint32_t now_ms)
 {
+  if (complete_flow_active) {
+    task_enter(TASK_GRAB_OBSERVE, now_ms);
+    return;
+  }
   task_status.found = task_target_matches_lock(vision, now_ms);
   if (task_status.found) {
     task_enter(TASK_GRAB_OBSERVE, now_ms);
@@ -1313,6 +1377,10 @@ static void task_process_grab_raise_wait(const VisionData *vision,
 static void task_process_grab_rotate(const VisionData *vision,
                                      uint32_t now_ms)
 {
+  if (complete_flow_active) {
+    task_enter(TASK_GRAB_OBSERVE, now_ms);
+    return;
+  }
   task_status.found = task_target_matches_lock(vision, now_ms);
   if (task_status.found) {
     task_enter(TASK_GRAB_OBSERVE, now_ms);
@@ -1334,15 +1402,6 @@ static void task_process_grab_rotate(const VisionData *vision,
   }
   Motor_Move(0.0f, 0.0f, APP_GRAB_SCAN_ROTATE_MM_S);
   task_status.motors_active = true;
-}
-
-static bool fused_pose_ready(const VisionFusedPose *pose, uint32_t now_ms)
-{
-  return Vision_FusedPoseIsFresh(pose, now_ms,
-                                 APP_FUSED_POSE_TIMEOUT_MS) &&
-         ((pose->status & VISION_POSE_VALID) != 0U) &&
-         ((pose->status & VISION_POSE_T265_GOOD) != 0U) &&
-         ((pose->status & VISION_POSE_T265_UPDATE_REJECTED) == 0U);
 }
 
 static bool turn_to(float desired_deg, float current_deg,
@@ -1472,8 +1531,7 @@ static RemoteRouteStatus task_run_final_push(uint32_t now_ms)
   }
 
   if (!nav_heading_locked) {
-    nav_locked_heading_deg = (configured_color == VISION_COLOR_RED) ?
-        APP_SAFE_ZONE_RED_HEADING_DEG : APP_SAFE_ZONE_BLUE_HEADING_DEG;
+    nav_locked_heading_deg = task_safe_zone_heading();
     nav_heading_locked = true;
     task_status.nav_heading_locked = true;
     task_status.nav_locked_heading_deg =
@@ -1527,8 +1585,11 @@ static RemoteRouteStatus task_run_final_push(uint32_t now_ms)
 
   const uint32_t elapsed_ms = now_ms - nav_final_push_started_ms;
   const uint32_t travelled_mm = pose.path_mm - nav_final_push_start_path_mm;
+  const bool encoder_limit_reached =
+      (elapsed_ms >= APP_NAV_FINAL_PUSH_MIN_TIME_MS) &&
+      (travelled_mm >= APP_NAV_FINAL_PUSH_MAX_DISTANCE_MM);
   if ((elapsed_ms >= APP_NAV_FINAL_PUSH_TIME_MS) ||
-      (travelled_mm >= APP_NAV_FINAL_PUSH_MAX_DISTANCE_MM)) {
+      encoder_limit_reached) {
     Motor_Stop();
     task_status.motors_active = false;
     nav_final_push_active = false;
@@ -1587,6 +1648,18 @@ static RemoteRouteStatus task_follow_remote_route(
     task_reset_remote_targets();
     return REMOTE_ROUTE_REACHED;
   }
+  if (route_to_initial_stash &&
+      (expected_command == VISION_CMD_NAVIGATE_WAYPOINT) &&
+      (command->target_x_mm <=
+       (int16_t)APP_NAV_REMOTE_STOP_DISTANCE_MM)) {
+    Motor_Stop();
+    task_status.motors_active = false;
+    nav_forward_active = false;
+    distance_command_done = true;
+    task_status.nav_done = true;
+    task_reset_remote_targets();
+    return REMOTE_ROUTE_REACHED;
+  }
   distance_command_done = false;
   task_status.nav_done = false;
 
@@ -1597,7 +1670,8 @@ static RemoteRouteStatus task_follow_remote_route(
   const float route_body_heading_deg = reverse_route ?
       task_wrap_angle(command_heading_deg + 180.0f) : command_heading_deg;
   const bool lock_allowed =
-      expected_command == VISION_CMD_NAVIGATE_WAYPOINT;
+      (expected_command == VISION_CMD_NAVIGATE_WAYPOINT) &&
+      !route_to_initial_stash;
 
   if (nav_heading_locked &&
       (!lock_allowed ||
@@ -1610,15 +1684,13 @@ static RemoteRouteStatus task_follow_remote_route(
   if (!nav_heading_locked && lock_allowed &&
       (command->target_x_mm <=
        (int16_t)APP_NAV_HEADING_LOCK_DISTANCE_MM)) {
-    nav_locked_heading_deg =
-        ((command->flags & VISION_CMD_RED_SIDE) != 0U) ?
-        APP_SAFE_ZONE_RED_HEADING_DEG : APP_SAFE_ZONE_BLUE_HEADING_DEG;
+    nav_locked_heading_deg = task_safe_zone_heading();
     nav_heading_locked = true;
     task_status.nav_heading_locked = true;
     task_status.nav_locked_heading_deg =
         (uint16_t)(nav_locked_heading_deg + 0.5f) % 360U;
-    /* The final zone-normal heading is mandatory: stop translation and make
-     * turn_to() complete the 90/270-degree alignment before the last push. */
+    /* Stop translation and complete the configured final alignment before
+     * pushing. The first delivery applies the calibrated side offset. */
     Motor_Stop();
     task_status.motors_active = false;
     nav_ready = false;
@@ -1668,6 +1740,7 @@ static RemoteRouteStatus task_follow_remote_route(
   }
 
   if ((expected_command == VISION_CMD_NAVIGATE_WAYPOINT) &&
+      !route_to_initial_stash &&
       ((command->target_x_mm <=
         (int16_t)APP_NAV_REMOTE_STOP_DISTANCE_MM) ||
        nav_final_push_active)) {
@@ -1819,6 +1892,7 @@ static void task_process_delivery_verify(
     return;
   }
   if (command->command == VISION_CMD_TASK_COMPLETE) {
+    first_delivery_done = true;
     task_enter(TASK_FACE_FIELD_CENTER, now_ms);
   }
 }
@@ -1841,12 +1915,222 @@ static void task_process_face_center(const VisionData *vision,
       command, VISION_CMD_RETURN_CENTER,
       APP_RETURN_CENTER_SPEED_MM_S, now_ms);
   if (result == REMOTE_ROUTE_REACHED) {
-    search_start_low = true;
     task_enter(TASK_SEARCH, now_ms);
   } else if (result == REMOTE_ROUTE_COMMAND_INVALID) {
     task_stop(TASK_FAULT_COMMAND_TIMEOUT, now_ms);
   } else if (result == REMOTE_ROUTE_MOTOR_FAULT) {
     task_stop(TASK_FAULT_MOTOR, now_ms);
+  }
+}
+
+static void task_remote_action_advance(uint32_t now_ms)
+{
+  const LocationPose pose = Location_GetPose();
+  Motor_Stop();
+  task_status.motors_active = false;
+  ++remote_action.phase;
+  remote_action.phase_path_mm = pose.path_mm;
+  step_started_ms = now_ms;
+}
+
+static void task_remote_action_finish(void)
+{
+  Motor_Stop();
+  task_status.motors_active = false;
+  remote_action.done = true;
+}
+
+static bool task_remote_distance(float distance_m, float speed_mm_s,
+                                 uint32_t now_ms)
+{
+  const MotorDistanceStatus result = Motor_MoveDistance(distance_m, speed_mm_s);
+  task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
+  if (result == MOTOR_DISTANCE_DONE) {
+    task_remote_action_advance(now_ms);
+    return true;
+  }
+  if (distance_failed(result)) {
+    task_stop(TASK_FAULT_MOTOR, now_ms);
+  }
+  return false;
+}
+
+static bool task_remote_lateral(int16_t distance_mm, float speed_mm_s,
+                                uint32_t now_ms)
+{
+  if (distance_mm == 0) {
+    task_remote_action_advance(now_ms);
+    return true;
+  }
+  const LocationPose pose = Location_GetPose();
+  if (!pose.valid) {
+    Motor_Stop();
+    task_status.motors_active = false;
+    return false;
+  }
+  const uint32_t travelled_mm = pose.path_mm - remote_action.phase_path_mm;
+  if (travelled_mm >= (uint32_t)((distance_mm < 0) ? -distance_mm : distance_mm)) {
+    task_remote_action_advance(now_ms);
+    return true;
+  }
+  (void)Motor_MoveAngle(speed_mm_s,
+                        (distance_mm > 0) ? 90.0f : 270.0f);
+  task_status.motors_active = true;
+  return false;
+}
+
+static bool task_remote_turn(float angle_deg, uint32_t now_ms)
+{
+  const MotorTurnStatus result = Motor_TurnAngle(angle_deg);
+  task_status.motors_active = result == MOTOR_TURN_RUNNING;
+  if (result == MOTOR_TURN_DONE) {
+    task_remote_action_advance(now_ms);
+    return true;
+  }
+  if ((result == MOTOR_TURN_FAULT) || (result == MOTOR_TURN_INVALID)) {
+    task_stop(TASK_FAULT_MOTOR, now_ms);
+  }
+  return false;
+}
+
+static void task_process_remote_action(const VisionMissionCommand *command,
+                                       uint32_t now_ms)
+{
+  if (remote_action.done) {
+    Motor_Stop();
+    task_status.motors_active = false;
+    return;
+  }
+  if ((uint32_t)(now_ms - remote_action.started_ms) >=
+      APP_REMOTE_ACTION_TIMEOUT_MS) {
+    task_stop(TASK_FAULT_MOTOR, now_ms);
+    return;
+  }
+  if (!Vision_MissionIsFresh(command, now_ms,
+                             APP_MISSION_COMMAND_TIMEOUT_MS) ||
+      (command->command != remote_action.command)) {
+    Motor_Stop();
+    task_status.motors_active = false;
+    return;
+  }
+
+  switch (remote_action.type) {
+    case REMOTE_ACTION_RELEASE_LEFT:
+      if (Claw_OpenLeft(now_ms)) {
+        /* Left is fully open and right remains at its normal 100-degree touch
+         * position.  The complete two-claw grip is not restored yet. */
+        task_status.gripper_closed = false;
+        cargo_recheck_pending = true;
+        task_clear_audit_result();
+        task_remote_action_finish();
+      }
+      return;
+
+    case REMOTE_ACTION_RELEASE_RIGHT:
+      if (Claw_OpenRight(now_ms)) {
+        /* Right is fully open and left remains at its normal 80-degree touch
+         * position.  Report closed only after both claws are secured again. */
+        task_status.gripper_closed = false;
+        cargo_recheck_pending = true;
+        task_clear_audit_result();
+        task_remote_action_finish();
+      }
+      return;
+
+    case REMOTE_ACTION_RELEASE_BOTH:
+      if (Claw_Open(now_ms)) {
+        task_status.gripper_closed = false;
+        cargo_recheck_pending = false;
+        task_clear_audit_result();
+        route_to_initial_stash = false;
+        task_remote_action_finish();
+      }
+      return;
+
+    case REMOTE_ACTION_YIELD:
+      if (remote_action.phase == 0U) {
+        if (task_remote_distance((float)remote_action.arg_a * 0.001f,
+                                 APP_REMOTE_YIELD_SPEED_MM_S, now_ms) &&
+            !cargo_recheck_pending) {
+          task_remote_action_finish();
+        }
+      } else if (remote_action.phase == 1U) {
+        /* A unilateral release keeps the opposite cargo at the normal touch
+         * angle.  After physical separation, look back into the claw before
+         * accepting either navigation or a new search target. */
+        if (task_scan_camera_to(APP_GRAB_VIEW_ANGLE, now_ms)) {
+          task_remote_action_advance(now_ms);
+        }
+      } else if ((uint32_t)(now_ms - step_started_ms) >=
+                 APP_CARGO_RECHECK_SETTLE_MS) {
+        task_remote_action_finish();
+      }
+      return;
+
+    case REMOTE_ACTION_ESCAPE:
+      if (remote_action.phase == 0U) {
+        (void)task_remote_turn((float)remote_action.arg_a, now_ms);
+      } else if (remote_action.phase == 1U) {
+        if (task_remote_lateral(remote_action.arg_b,
+                                APP_REMOTE_ESCAPE_LATERAL_SPEED_MM_S,
+                                now_ms)) {
+          task_remote_action_finish();
+        }
+      }
+      return;
+
+    case REMOTE_ACTION_LANE:
+      if (remote_action.phase == 0U) {
+        (void)task_remote_lateral(remote_action.arg_a,
+                                  APP_REMOTE_LANE_SPEED_MM_S, now_ms);
+      } else if (remote_action.phase == 1U) {
+        if (remote_action.arg_b == 0) {
+          task_remote_action_finish();
+        } else if (task_remote_distance(
+                       (float)remote_action.arg_b * 0.001f,
+                       APP_REMOTE_LANE_SPEED_MM_S, now_ms)) {
+          task_remote_action_finish();
+        }
+      }
+      return;
+
+    case REMOTE_ACTION_DISPERSE:
+      if (remote_action.phase == 0U) {
+        if (Claw_Open(now_ms)) {
+          task_remote_action_advance(now_ms);
+        }
+      } else if (remote_action.phase == 1U) {
+        (void)task_remote_distance(APP_REMOTE_DISPERSE_FORWARD_M,
+                                   APP_REMOTE_DISPERSE_SPEED_MM_S, now_ms);
+      } else if (remote_action.phase == 2U) {
+        (void)task_remote_distance(-APP_REMOTE_DISPERSE_BACK_M,
+                                   APP_REMOTE_DISPERSE_SPEED_MM_S, now_ms);
+      } else if (remote_action.phase == 3U) {
+        (void)task_remote_turn(APP_REMOTE_DISPERSE_TURN_DEG, now_ms);
+      } else if (remote_action.phase == 4U) {
+        (void)task_remote_distance(APP_REMOTE_DISPERSE_FORWARD_M,
+                                   APP_REMOTE_DISPERSE_SPEED_MM_S, now_ms);
+      } else if (remote_action.phase == 5U) {
+        (void)task_remote_distance(-APP_REMOTE_DISPERSE_FORWARD_M,
+                                   APP_REMOTE_DISPERSE_SPEED_MM_S, now_ms);
+      } else if (remote_action.phase == 6U) {
+        (void)task_remote_turn(-2.0f * APP_REMOTE_DISPERSE_TURN_DEG, now_ms);
+      } else if (remote_action.phase == 7U) {
+        (void)task_remote_distance(APP_REMOTE_DISPERSE_FORWARD_M,
+                                   APP_REMOTE_DISPERSE_SPEED_MM_S, now_ms);
+      } else if (remote_action.phase == 8U) {
+        (void)task_remote_distance(-APP_REMOTE_DISPERSE_FORWARD_M,
+                                   APP_REMOTE_DISPERSE_SPEED_MM_S, now_ms);
+      } else if (remote_action.phase == 9U) {
+        if (task_remote_turn(APP_REMOTE_DISPERSE_TURN_DEG, now_ms)) {
+          task_remote_action_finish();
+        }
+      }
+      return;
+
+    default:
+      task_stop(TASK_FAULT_INVALID_STATE, now_ms);
+      return;
   }
 }
 
@@ -1862,12 +2146,61 @@ static void task_accept_mission(const VisionMissionCommand *command,
   mission_sequence = command->sequence;
   mission_sequence_valid = true;
 
+  if (command->command >= VISION_CMD_APPROACH_TARGET) {
+    complete_flow_active = true;
+  }
+
   task_status.last_command = command->command;
   task_status.command_received = true;
 
   if (command->command == VISION_CMD_ABORT) {
     task_status.acknowledged_sequence = command->sequence;
     task_stop(TASK_FAULT_REMOTE_STOP, now_ms);
+  } else if (command->command == VISION_CMD_HOLD) {
+    task_status.acknowledged_sequence = command->sequence;
+    if ((state == TASK_FACE_FIELD_CENTER) && nav_payload_valid &&
+        (nav_last_distance_mm <= APP_COMPLETE_RETURN_HOLD_ACCEPT_MM)) {
+      /* The complete-flow branch currently changes to SEARCH/HOLD at its
+       * configured 0.60 m centre radius instead of transmitting RETURN D=0.
+       * Accept that hand-off only when the last genuine RETURN remainder was
+       * already within a narrow 650 mm gate; never treat a distant HOLD as
+       * arrival. */
+      task_enter(TASK_SEARCH, now_ms);
+    } else if ((state == TASK_REMOTE_ACTION) && remote_action.done &&
+               (remote_action.type == REMOTE_ACTION_DISPERSE)) {
+      task_enter(TASK_SEARCH, now_ms);
+    } else if (state != TASK_SEARCH) {
+      Motor_Stop();
+      task_status.motors_active = false;
+      nav_ready = false;
+      nav_forward_active = false;
+      if ((state == TASK_REMOTE_ACTION) && !remote_action.done &&
+          !remote_action.paused) {
+        remote_action.paused = true;
+        remote_action.paused_ms = now_ms;
+      }
+    }
+  } else if ((command->command == VISION_CMD_CARGO_AUDIT) &&
+             (((state >= TASK_GRAB_OBSERVE) &&
+               (state <= TASK_GRAB_ROTATE)) ||
+              ((state == TASK_REMOTE_ACTION) && remote_action.done &&
+               cargo_recheck_pending))) {
+    task_status.acknowledged_sequence = command->sequence;
+    if (state == TASK_REMOTE_ACTION) {
+      task_enter(TASK_GRAB_OBSERVE, now_ms);
+    }
+    task_latch_audit(command);
+  } else if ((command->command == VISION_CMD_APPROACH_TARGET) &&
+             !cargo_recheck_pending &&
+             ((state == TASK_SEARCH) ||
+              (state == TASK_APPROACH_RECOVER) ||
+              ((state == TASK_REMOTE_ACTION) && remote_action.done))) {
+    task_status.acknowledged_sequence = command->sequence;
+    locked_cargo_counts = 1U;
+    task_enter(TASK_APPROACH, now_ms);
+  } else if ((command->command == VISION_CMD_APPROACH_TARGET) &&
+             (state == TASK_APPROACH)) {
+    task_status.acknowledged_sequence = command->sequence;
   } else if ((command->command == VISION_CMD_STOP) &&
              (state == TASK_NAVIGATE)) {
     /* A fresh external remaining distance makes every NAV hold resumable. */
@@ -1883,8 +2216,15 @@ static void task_accept_mission(const VisionMissionCommand *command,
     return;
   } else if ((command->command == VISION_CMD_GRAB_CONFIRMED) &&
              (state >= TASK_GRAB_OBSERVE) &&
-             (state <= TASK_GRAB_ROTATE)) {
+             (state <= TASK_GRAB_ROTATE) &&
+             (!complete_flow_active || (audit_received && audit_valid))) {
     task_status.acknowledged_sequence = command->sequence;
+    if (cargo_recheck_pending) {
+      /* Backoff has physically separated the released cargo.  Close both
+       * claws to the ordinary touch angles again so the retained cargo cannot
+       * slip out during navigation. */
+      cargo_recheck_pending = false;
+    }
     task_enter(TASK_CLOSE_CLAW, now_ms);
   } else if ((command->command == VISION_CMD_GRAB_CONFIRMED) &&
              ((state == TASK_CLOSE_CLAW) ||
@@ -1894,8 +2234,10 @@ static void task_accept_mission(const VisionMissionCommand *command,
     task_status.acknowledged_sequence = command->sequence;
   } else if ((command->command == VISION_CMD_NAVIGATE_WAYPOINT) &&
              task_status.gripper_closed &&
-             (state == TASK_WAIT_NAVIGATION)) {
+             ((state == TASK_WAIT_NAVIGATION) ||
+              ((state == TASK_REMOTE_ACTION) && remote_action.done))) {
     task_status.acknowledged_sequence = command->sequence;
+    route_to_initial_stash = audit_initial_stash;
     task_enter(TASK_NAVIGATE, now_ms);
   } else if ((command->command == VISION_CMD_NAVIGATE_WAYPOINT) &&
              (state == TASK_NAVIGATE)) {
@@ -1905,8 +2247,8 @@ static void task_accept_mission(const VisionMissionCommand *command,
     /* Compatibility hold only; ALIGN no longer changes Task state. */
     task_status.acknowledged_sequence = command->sequence;
   } else if ((command->command == VISION_CMD_ENTER_SAFE_ZONE) &&
-              task_status.gripper_closed &&
-              (state == TASK_NAVIGATE)) {
+               task_status.gripper_closed &&
+               !route_to_initial_stash && (state == TASK_NAVIGATE)) {
     task_status.acknowledged_sequence = command->sequence;
     if (nav_final_push_done) {
       task_enter(TASK_OPEN_FOR_RAM, now_ms);
@@ -1922,6 +2264,57 @@ static void task_accept_mission(const VisionMissionCommand *command,
   } else if ((command->command == VISION_CMD_RETURN_CENTER) &&
              (state == TASK_FACE_FIELD_CENTER)) {
     task_status.acknowledged_sequence = command->sequence;
+  } else if ((command->command == VISION_CMD_RETURN_CENTER) &&
+             (state == TASK_REMOTE_ACTION) && remote_action.done) {
+    task_status.acknowledged_sequence = command->sequence;
+    task_enter(TASK_FACE_FIELD_CENTER, now_ms);
+  } else if ((state == TASK_REMOTE_ACTION) &&
+             (command->command == remote_action.command)) {
+    /* The upper computer repeats commands with new SEQs. ACK each one while
+     * keeping the already-running or completed physical action idempotent. */
+    task_status.acknowledged_sequence = command->sequence;
+    if (remote_action.paused) {
+      remote_action.started_ms += now_ms - remote_action.paused_ms;
+      remote_action.paused = false;
+    }
+  } else if ((command->command == VISION_CMD_YIELD_BACKOFF) &&
+             (state != TASK_STOPPED) &&
+             ((state != TASK_REMOTE_ACTION) || remote_action.done)) {
+    task_status.acknowledged_sequence = command->sequence;
+    task_start_remote_action(REMOTE_ACTION_YIELD, command, now_ms);
+  } else if ((command->command == VISION_CMD_ESCAPE_MANEUVER) &&
+             (state != TASK_STOPPED) &&
+             ((state != TASK_REMOTE_ACTION) || remote_action.done)) {
+    task_status.acknowledged_sequence = command->sequence;
+    task_start_remote_action(REMOTE_ACTION_ESCAPE, command, now_ms);
+  } else if ((command->command == VISION_CMD_CHANGE_LANE) &&
+             (state != TASK_STOPPED) &&
+             ((state != TASK_REMOTE_ACTION) || remote_action.done)) {
+    task_status.acknowledged_sequence = command->sequence;
+    task_start_remote_action(REMOTE_ACTION_LANE, command, now_ms);
+  } else if ((command->command == VISION_CMD_DISPERSE_PILE) &&
+             !task_status.gripper_closed &&
+             ((state == TASK_SEARCH) ||
+              ((state == TASK_REMOTE_ACTION) && remote_action.done))) {
+    task_status.acknowledged_sequence = command->sequence;
+    task_start_remote_action(REMOTE_ACTION_DISPERSE, command, now_ms);
+  } else if (((command->command == VISION_CMD_RELEASE_LEFT) ||
+              (command->command == VISION_CMD_RELEASE_RIGHT) ||
+              (command->command == VISION_CMD_RELEASE_BOTH)) &&
+             audit_received && (!audit_valid || audit_initial_stash) &&
+             !((state == TASK_REMOTE_ACTION) && !remote_action.done)) {
+    task_status.acknowledged_sequence = command->sequence;
+    /* On the first invalid audit, honour the upper computer's selected side:
+     * that side opens while the opposite side only moves to its normal touch
+     * angle.  If the retained cargo fails the follow-up audit, release both;
+     * never close the previously released side around the same pile again. */
+    const RemoteAction action = cargo_recheck_pending ?
+        REMOTE_ACTION_RELEASE_BOTH :
+        ((command->command == VISION_CMD_RELEASE_LEFT) ?
+             REMOTE_ACTION_RELEASE_LEFT :
+         (command->command == VISION_CMD_RELEASE_RIGHT) ?
+             REMOTE_ACTION_RELEASE_RIGHT : REMOTE_ACTION_RELEASE_BOTH);
+    task_start_remote_action(action, command, now_ms);
   }
 }
 
@@ -1940,13 +2333,25 @@ void Task_Process(uint32_t now_ms)
     return;
   }
 
-  const VisionData vision = Vision_GetSnapshot();
+  VisionData vision = Vision_GetSnapshot();
   task_update_match_time(now_ms);
   task_status.camera_angle = Camera_GetAngle();
   if (task_motor_fault()) {
     task_stop(TASK_FAULT_MOTOR, now_ms);
   }
   task_accept_mission(&vision.mission, now_ms);
+  task_apply_complete_target(&vision, now_ms);
+  if (complete_flow_active &&
+      Vision_MissionIsFresh(&vision.mission, now_ms,
+                            APP_MISSION_COMMAND_TIMEOUT_MS) &&
+      (vision.mission.command == VISION_CMD_HOLD) &&
+      (state != TASK_WAIT_CONFIG) && (state != TASK_START) &&
+      (state != TASK_OPEN_CLAW) && (state != TASK_SEARCH)) {
+    Motor_Stop();
+    task_status.motors_active = false;
+    task_publish_status(now_ms);
+    return;
+  }
 
   switch (state) {
     case TASK_WAIT_CONFIG:
@@ -2067,6 +2472,10 @@ void Task_Process(uint32_t now_ms)
 
     case TASK_FACE_FIELD_CENTER:
       task_process_face_center(&vision, now_ms);
+      break;
+
+    case TASK_REMOTE_ACTION:
+      task_process_remote_action(&vision.mission, now_ms);
       break;
 
     case TASK_STOPPED:

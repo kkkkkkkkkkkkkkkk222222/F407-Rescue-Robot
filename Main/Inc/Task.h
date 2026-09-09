@@ -32,7 +32,8 @@ typedef enum {
   TASK_SCATTER_PAUSE,
   TASK_SCATTER_NEGATIVE,
   TASK_SCATTER_EXIT,
-  TASK_APPROACH_RECOVER
+  TASK_APPROACH_RECOVER,
+  TASK_REMOTE_ACTION
 } TaskState;
 
 typedef enum {
@@ -55,6 +56,9 @@ typedef struct {
   uint8_t acknowledged_sequence;
   uint8_t last_command;
   uint8_t camera_angle;
+  uint8_t audit_left_class;
+  uint8_t audit_right_class;
+  uint8_t audit_total_count;
   uint16_t nav_locked_heading_deg;
   bool command_received;
   bool found;
@@ -62,6 +66,8 @@ typedef struct {
   bool gripper_closed;
   bool motors_active;
   bool auto_approach;
+  bool audit_ready;
+  bool audit_valid;
   bool nav_stale;
   bool nav_done;
   bool nav_final_push;

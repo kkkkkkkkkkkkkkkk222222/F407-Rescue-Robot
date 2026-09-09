@@ -187,8 +187,7 @@ static void gamepad_stop(GamepadState state)
   gamepad_status.yaw_mm_s = 0;
 }
 
-static void gamepad_accept_command(const VisionData *vision,
-                                   uint32_t now_ms)
+static void gamepad_accept_command(const VisionData *vision)
 {
   gamepad_status.received = true;
   gamepad_status.command_sequence = vision->motion_sequence;
@@ -214,7 +213,6 @@ static void gamepad_accept_command(const VisionData *vision,
       (vision->motion_flags & VISION_MOTION_TELEOP_ENABLE) != 0U;
   gamepad_status.state = gamepad_status.armed ?
       GAMEPAD_RUNNING : GAMEPAD_IDLE;
-  (void)now_ms;
 }
 
 void Gamepad_Init(uint32_t now_ms)
@@ -251,7 +249,7 @@ void Gamepad_Process(uint32_t now_ms)
       (!sequence_valid || (vision.motion_sequence != last_sequence))) {
     sequence_valid = true;
     last_sequence = vision.motion_sequence;
-    gamepad_accept_command(&vision, now_ms);
+    gamepad_accept_command(&vision);
   }
 
   uint32_t elapsed_ms = now_ms - last_process_ms;

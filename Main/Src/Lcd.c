@@ -626,6 +626,7 @@ static const char *task_state_name(TaskState state)
     case TASK_SCATTER_NEGATIVE:  return "SPIN-";
     case TASK_SCATTER_EXIT:      return "PILEOUT";
     case TASK_APPROACH_RECOVER:  return "REACQ";
+    case TASK_REMOTE_ACTION:     return "ACTION";
     default:                     return "STOP";
   }
 }
@@ -659,6 +660,16 @@ static const char *task_command_name(uint8_t command, bool received)
     case VISION_CMD_TASK_COMPLETE:     return "DONE";
     case VISION_CMD_ABORT:             return "ABORT";
     case VISION_CMD_RETURN_CENTER:      return "RETURN";
+    case VISION_CMD_APPROACH_TARGET:    return "APP";
+    case VISION_CMD_HOLD:               return "HOLD";
+    case VISION_CMD_YIELD_BACKOFF:      return "YIELD";
+    case VISION_CMD_ESCAPE_MANEUVER:    return "ESCAPE";
+    case VISION_CMD_RELEASE_LEFT:       return "REL-L";
+    case VISION_CMD_RELEASE_RIGHT:      return "REL-R";
+    case VISION_CMD_RELEASE_BOTH:       return "REL-B";
+    case VISION_CMD_DISPERSE_PILE:      return "DISPER";
+    case VISION_CMD_CHANGE_LANE:        return "LANE";
+    case VISION_CMD_CARGO_AUDIT:        return "AUDIT";
     default:                           return "INVALID";
   }
 }
@@ -748,6 +759,22 @@ static void draw_task(const LCDDashboard *dashboard)
     } else {
       (void)strcpy(text, "H:--- D:----");
     }
+  } else if ((task.audit_total_count > 0U) &&
+             (((task.state >= TASK_GRAB_OBSERVE) &&
+               (task.state <= TASK_WAIT_NAVIGATION)) ||
+              (task.state == TASK_REMOTE_ACTION))) {
+    (void)snprintf(text, sizeof(text), "AUD:%s L%u R%u N%u",
+                   task.audit_ready ?
+                       (task.audit_valid ? "OK" : "BAD") : "WAIT",
+                   task.audit_left_class, task.audit_right_class,
+                   task.audit_total_count);
+  } else if (vision->mission.received &&
+             (vision->mission.command == VISION_CMD_APPROACH_TARGET) &&
+             Vision_MissionIsFresh(&vision->mission, dashboard->now_ms,
+                                   APP_MISSION_COMMAND_TIMEOUT_MS)) {
+    (void)snprintf(text, sizeof(text), "X:%04d Y:%04d",
+                   vision->mission.target_x_mm,
+                   vision->mission.target_y_mm);
   } else if (report_fresh) {
     (void)snprintf(text, sizeof(text), "X:%04u Y:%04u",
                    vision->x, vision->y);

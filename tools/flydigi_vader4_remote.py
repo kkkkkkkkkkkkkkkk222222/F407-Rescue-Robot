@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import math
 import os
-import pty
 import select
 import shlex
 import signal
@@ -153,6 +152,8 @@ class VaderInput:
                 self.axis_info[code] = self.device.absinfo(code)
             except OSError:
                 pass
+        self.has_hat_x = ecodes.ABS_HAT0X in self.axis_info
+        self.has_hat_y = ecodes.ABS_HAT0Y in self.axis_info
         self._initialize_state()
 
     @property
@@ -186,14 +187,20 @@ class VaderInput:
         self.state.b = e.BTN_EAST in active
         self.state.x = e.BTN_WEST in active
         self.state.y = e.BTN_NORTH in active
-        if getattr(e, "BTN_DPAD_LEFT", -1) in active:
-            self.state.hat_x = -1
-        elif getattr(e, "BTN_DPAD_RIGHT", -1) in active:
-            self.state.hat_x = 1
-        if getattr(e, "BTN_DPAD_UP", -1) in active:
-            self.state.hat_y = -1
-        elif getattr(e, "BTN_DPAD_DOWN", -1) in active:
-            self.state.hat_y = 1
+        if not self.has_hat_x:
+            if getattr(e, "BTN_DPAD_LEFT", -1) in active:
+                self.state.hat_x = -1
+            elif getattr(e, "BTN_DPAD_RIGHT", -1) in active:
+                self.state.hat_x = 1
+            else:
+                self.state.hat_x = 0
+        if not self.has_hat_y:
+            if getattr(e, "BTN_DPAD_UP", -1) in active:
+                self.state.hat_y = -1
+            elif getattr(e, "BTN_DPAD_DOWN", -1) in active:
+                self.state.hat_y = 1
+            else:
+                self.state.hat_y = 0
 
     def poll(self) -> None:
         e = self.ecodes
@@ -291,6 +298,10 @@ def run(options: argparse.Namespace) -> int:
     map_master = map_slave = None
     map_process = None
     if options.map_command:
+        try:
+            import pty
+        except ImportError as error:
+            raise RuntimeError("--map-command requires a Linux PTY environment") from error
         map_master, map_slave = pty.openpty()
         slave_name = os.ttyname(map_slave)
         command = [part.replace("{pty}", slave_name)

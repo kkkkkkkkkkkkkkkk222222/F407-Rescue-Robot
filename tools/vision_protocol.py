@@ -43,6 +43,16 @@ CMD_ENTER_SAFE_ZONE = 0x05
 CMD_TASK_COMPLETE = 0x06
 CMD_ABORT = 0x07
 CMD_RETURN_CENTER = 0x08
+CMD_APPROACH_TARGET = 0x09
+CMD_HOLD = 0x0A
+CMD_YIELD_BACKOFF = 0x0B
+CMD_ESCAPE_MANEUVER = 0x0C
+CMD_RELEASE_LEFT = 0x0D
+CMD_RELEASE_RIGHT = 0x0E
+CMD_RELEASE_BOTH = 0x0F
+CMD_DISPERSE_PILE = 0x10
+CMD_CHANGE_LANE = 0x11
+CMD_CARGO_AUDIT = 0x12
 
 CMD_VALID = 0x01
 CMD_DRIVE_STRAIGHT = 0x02
@@ -220,16 +230,18 @@ def mission_frame(
     target_y_mm: int = 0,
     heading_cdeg: int = 0,
 ) -> bytes:
-    if command not in (CMD_STOP, CMD_GRAB_CONFIRMED, CMD_NAVIGATE_WAYPOINT,
-                       CMD_ALIGN_SAFE_ZONE, CMD_ENTER_SAFE_ZONE,
-                       CMD_TASK_COMPLETE, CMD_ABORT, CMD_RETURN_CENTER):
+    if command != CMD_STOP and not CMD_GRAB_CONFIRMED <= command <= CMD_CARGO_AUDIT:
         raise ValueError("invalid mission command")
     if not flags & CMD_VALID or flags & 0xE0:
         raise ValueError("invalid mission flags")
     if not -32768 <= target_x_mm <= 32767 or not -32768 <= target_y_mm <= 32767:
         raise ValueError("mission target must fit int16")
-    if not 0 <= heading_cdeg < 36000:
-        raise ValueError("heading must be in 0..35999 cdeg")
+    heading_command = command in (
+        CMD_NAVIGATE_WAYPOINT, CMD_ALIGN_SAFE_ZONE,
+        CMD_ENTER_SAFE_ZONE, CMD_RETURN_CENTER,
+    )
+    if not 0 <= heading_cdeg <= 65535 or (heading_command and heading_cdeg >= 36000):
+        raise ValueError("invalid mission auxiliary/heading value")
     payload = (
         bytes((command, flags))
         + target_x_mm.to_bytes(2, "big", signed=True)

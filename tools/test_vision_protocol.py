@@ -87,6 +87,21 @@ class VisionProtocolTests(unittest.TestCase):
         self.assertEqual(protocol.parse_frame(returning)[2][2:6],
                          bytes.fromhex("01 E0 00 00"))
 
+    def test_complete_flow_commands_use_existing_0x18_frame(self) -> None:
+        approach = protocol.mission_frame(
+            0x31, protocol.CMD_APPROACH_TARGET,
+            protocol.CMD_VALID, 640, 512, 0,
+        )
+        disperse = protocol.mission_frame(
+            0x32, protocol.CMD_DISPERSE_PILE, protocol.CMD_VALID,
+        )
+        self.assertEqual(protocol.parse_frame(approach)[2][0],
+                         protocol.CMD_APPROACH_TARGET)
+        self.assertEqual(protocol.parse_frame(approach)[2][2:6],
+                         bytes.fromhex("02 80 02 00"))
+        self.assertEqual(protocol.parse_frame(disperse)[2][0],
+                         protocol.CMD_DISPERSE_PILE)
+
     def test_stm_status_matches_upper_computer(self) -> None:
         frame = protocol.stm_status_frame(9, 0x29, 2, 7350, 8, 0)
         self.assertEqual(

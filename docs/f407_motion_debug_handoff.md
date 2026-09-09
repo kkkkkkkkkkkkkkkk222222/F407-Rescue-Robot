@@ -4,19 +4,13 @@
 
 ## 模式切换
 
-当前普通CLion `Debug - Debug`默认编译建图固件：
+CLion中直接使用三个CMake配置，不手改`APP_ENABLE_*`宏：
 
-```c
-#define APP_ACTIVE_MODE APP_MODE_MOTION_DEBUG_TASK
-```
+- `NormalRun`执行正式`Task.c`。
+- `MotionDebug`只执行`Main/Src/Debug.c`，不调用`Task.c`且不启动舵机。
+- `Gamepad`执行`Main/Src/Gamepad.c`，用于手柄连续遥控和人工扫图。
 
-它只执行`Main/Src/Debug.c`，不调用`Task.c`且不启动舵机。需要恢复正式任务时把这一行改为：
-
-```c
-#define APP_ACTIVE_MODE APP_MODE_RESCUE_TASK
-```
-
-两种模式都重新编译并使用现有`DAPLink OpenOCD`烧录`build/Debug/WWW.elf`。
+重新编译后使用现有DAPLink/OpenOCD烧录对应目录的ELF，例如运动调试烧录`build/MotionDebug/WWW.elf`。手柄模式见[手柄遥控交接](gamepad_teleop_handoff.md)。
 
 ## 接线和公共帧
 
@@ -80,7 +74,7 @@ P6..P7 IMU场地航向0..35999（0.01°）
 
 ## 运行
 
-1. 选择CLion普通`Debug - Debug`，Rebuild并用`DAPLink OpenOCD`烧录。
+1. 选择CLion的`MotionDebug` CMake配置，Rebuild并用`DAPLink OpenOCD`烧录`build/MotionDebug/WWW.elf`。
 2. 首次必须架空车轮。
 3. RDK更新并编译最新版：
 

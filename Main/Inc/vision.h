@@ -108,8 +108,33 @@ typedef enum {
   VISION_CMD_ENTER_SAFE_ZONE = 5,
   VISION_CMD_TASK_COMPLETE = 6,
   VISION_CMD_ABORT = 7,
-  VISION_CMD_RETURN_CENTER = 8
+  VISION_CMD_RETURN_CENTER = 8,
+  VISION_CMD_APPROACH_TARGET = 9,
+  VISION_CMD_HOLD = 10,
+  VISION_CMD_YIELD_BACKOFF = 11,
+  VISION_CMD_ESCAPE_MANEUVER = 12,
+  VISION_CMD_RELEASE_LEFT = 13,
+  VISION_CMD_RELEASE_RIGHT = 14,
+  VISION_CMD_RELEASE_BOTH = 15,
+  VISION_CMD_DISPERSE_PILE = 16,
+  VISION_CMD_CHANGE_LANE = 17,
+  VISION_CMD_CARGO_AUDIT = 18
 } VisionMissionCode;
+
+#define VISION_AUDIT_INITIAL_STASH      0x01U
+#define VISION_AUDIT_DANGER_PRESENT     0x02U
+#define VISION_AUDIT_UNKNOWN_PRESENT    0x04U
+#define VISION_AUDIT_INJURY_MIXED       0x08U
+#define VISION_AUDIT_STABLE             0x10U
+#define VISION_AUDIT_DESTINATION_INJURY 0x20U
+
+#define VISION_CARGO_NONE           0U
+#define VISION_CARGO_GREEN          1U
+#define VISION_CARGO_CORE           2U
+#define VISION_CARGO_INJURED        3U
+#define VISION_CARGO_DANGER         4U
+#define VISION_CARGO_UNKNOWN        5U
+#define VISION_CARGO_MIXED_MATERIAL 6U
 
 typedef struct {
   int16_t x_mm;
@@ -132,6 +157,12 @@ typedef struct {
   uint8_t sequence;
   uint8_t command;
   uint8_t flags;
+  uint8_t audit_left_class;
+  uint8_t audit_right_class;
+  uint8_t audit_counts;
+  uint8_t audit_flags;
+  uint8_t audit_id;
+  uint8_t audit_total_count;
   bool received;
 } VisionMissionCommand;
 

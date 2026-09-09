@@ -229,7 +229,6 @@
 #define APP_START_TURN_KP_MM_S_PER_DEG     2.2f
 #define APP_START_TURN_MAX_MM_S          380.0f
 #define APP_START_TURN_TOLERANCE_DEG       3.0f
-#define APP_TARGET_WAIT_MS               700U
 #define APP_START_TIMEOUT_MS           30000U
 /* Temporary handoff switch: keep the original pile-scatter states available,
  * but go straight from the open claw to SEARCH while the centre contains a
@@ -242,14 +241,11 @@
 #define APP_SCATTER_TURN_TIMEOUT_MS    10000U
 #define APP_SCATTER_EXIT_DISTANCE_M        0.30f
 #define APP_SCATTER_EXIT_SPEED_MM_S      250.0f
-#define APP_SEARCH_CAMERA_ANGLE          120U
 #define APP_SEARCH_LOW_CAMERA_ANGLE       90U
 #define APP_SEARCH_FULL_TURN_MDEG     360000U
 #define APP_SEARCH_MIN_REPORTS_PER_SWEEP  1U
-#define APP_SEARCH_ADVANCE_DISTANCE_M     0.8f
-#define APP_SEARCH_ADVANCE_SPEED_MM_S    850.0f
 #define APP_CAMERA_SCAN_STEP_DEG            1U
-#define APP_CAMERA_SCAN_STEP_MS            40U
+#define APP_CAMERA_SCAN_STEP_MS            20U
 #define APP_CAMERA_SCAN_ENDPOINT_HOLD_MS  300U
 #define APP_VISION_TIMEOUT_MS            250U
 #define APP_CONFIG_CONFIRM_FRAMES        1U
@@ -257,8 +253,9 @@
 #define APP_VISION_TARGET_Y              512U
 #define APP_VISION_MAX_X                1279U
 #define APP_VISION_MAX_Y                1023U
-#define APP_SEARCH_ROTATE_SPEED_MM_S     160.0f
-#define APP_SEARCH_FIELD_MARGIN_MM       200.0f
+#define APP_SEARCH_ROTATE_SPEED_MM_S     200.0f
+#define APP_SEARCH_CENTER_TOLERANCE_MM   100.0f
+#define APP_SEARCH_RETURN_CENTER_SPEED_MM_S 850.0f
 #define APP_APPROACH_SPEED_MM_S          350.0f
 #define APP_GRAB_MID_SPEED_MM_S          225.0f
 #define APP_GRAB_SLOW_SPEED_MM_S         125.0f
@@ -268,6 +265,7 @@
 #define APP_GRAB_HOLD_X_ERROR_PX          96.0f
 #define APP_GRAB_PRESTOP_CAMERA_ANGLE    135U
 #define APP_GRAB_PRESTOP_SPEED_MM_S       80.0f
+#define APP_GRAB_PRESTOP_FALLBACK_MS     700U
 #define APP_APPROACH_FRAME_HOLD_MS        250U
 #define APP_APPROACH_FRAME_STOP_MS        600U
 #define APP_APPROACH_FRAME_LOSS_MS       1200U
@@ -276,10 +274,6 @@
 #error "Approach frame hold/stop/loss times must be strictly increasing"
 #endif
 #define APP_APPROACH_LOSS_HOLD_MS         500U
-#define APP_APPROACH_RECOVERY_ROTATE_MM_S 120.0f
-#define APP_APPROACH_RECOVERY_ADVANCE_DISTANCE_M 1.0f
-#define APP_APPROACH_RECOVERY_ADVANCE_SPEED_MM_S 500.0f
-#define APP_APPROACH_RECOVERY_TIMEOUT_MS 60000U
 #define APP_STEERING_EXIT_DEAD_ZONE       8
 #define APP_STEERING_ENTER_DEAD_ZONE     16
 #define APP_STEERING_KP_MM_S             0.72f
@@ -311,7 +305,6 @@
 #define APP_CENTERING_CAMERA_STEP_LIMIT_DEG  6.0f
 
 /* Native-resolution mission flow shared with shijue_fangan/mission_test. */
-#define APP_FUSED_POSE_TIMEOUT_MS        150U
 #define APP_MISSION_COMMAND_TIMEOUT_MS   250U
 #define APP_GRAB_VIEW_ANGLE              140U
 #define APP_GRAB_INITIAL_OBSERVE_MS      500U
@@ -331,6 +324,8 @@
 #define APP_NAV_HEADING_UNLOCK_DISTANCE_MM 150U
 #define APP_SAFE_ZONE_RED_HEADING_DEG       90.0f
 #define APP_SAFE_ZONE_BLUE_HEADING_DEG     270.0f
+#define APP_FIRST_DELIVERY_RED_OFFSET_DEG  -10.0f
+#define APP_FIRST_DELIVERY_BLUE_OFFSET_DEG  10.0f
 #define APP_NAV_REMOTE_MAX_DISTANCE_MM     5000U
 #define APP_NAV_REMOTE_PROGRESS_MM            2
 #define APP_NAV_REMOTE_PROGRESS_TIMEOUT_MS  500U
@@ -341,9 +336,10 @@
 #define APP_NAV_YAW_ACCEL_MM_S2             1800.0f
 #define APP_NAV_HEADING_TOLERANCE_DEG      1.0f
 #define APP_NAV_FINAL_TURN_TOLERANCE_DEG   1.5f
-#define APP_NAV_FINAL_PUSH_SPEED_MM_S    150.0f
-#define APP_NAV_FINAL_PUSH_TIME_MS       1200U
-#define APP_NAV_FINAL_PUSH_MAX_DISTANCE_MM 180U
+#define APP_NAV_FINAL_PUSH_SPEED_MM_S    180.0f
+#define APP_NAV_FINAL_PUSH_MIN_TIME_MS   1000U
+#define APP_NAV_FINAL_PUSH_TIME_MS       1800U
+#define APP_NAV_FINAL_PUSH_MAX_DISTANCE_MM 360U
 #define APP_NAV_REALIGN_DEG                4.0f
 #define APP_NAV_TURN_SETTLE_MS            100U
 #define APP_POSE_WAIT_TIMEOUT_MS          1500U
@@ -354,6 +350,16 @@
 #define APP_DELIVERY_VERIFY_WAIT_MS       1200U
 #define APP_RETURN_CENTER_SPEED_MM_S       800.0f
 #define APP_RETURN_CENTER_HEADING_MAX_MM_S 100.0f
+#define APP_REMOTE_YIELD_SPEED_MM_S          750.0f
+#define APP_CARGO_RECHECK_SETTLE_MS             300U
+#define APP_REMOTE_ESCAPE_LATERAL_SPEED_MM_S 800.0f
+#define APP_REMOTE_LANE_SPEED_MM_S           850.0f
+#define APP_REMOTE_DISPERSE_SPEED_MM_S        800.0f
+#define APP_REMOTE_DISPERSE_FORWARD_M           0.18f
+#define APP_REMOTE_DISPERSE_BACK_M              0.24f
+#define APP_REMOTE_DISPERSE_TURN_DEG            25.0f
+#define APP_REMOTE_ACTION_TIMEOUT_MS          7000U
+#define APP_COMPLETE_RETURN_HOLD_ACCEPT_MM     650
 
 /* This 1.8-inch 128x160 ST7735 panel exposes GRAM origin (0, 0). */
 #define APP_LCD_WIDTH       128U

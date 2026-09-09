@@ -1,18 +1,16 @@
-# 快速切换：正常跑图 / UART运动调试
+# 快速切换：正常跑图 / UART运动调试 / 手柄遥控
 
-## 普通 Debug - Debug：当前直接用于建图
+新增`Gamepad` CMake配置用于飞智冰原狼4遥控扫图和机构安装调试：它执行`Main/Src/Gamepad.c`，不执行自动任务`Task.c`。选择`Gamepad`编译并烧录`build/Gamepad/WWW.elf`；切回`NormalRun`即可恢复完整自动流程。手柄通过2.4 GHz USB接收器连接RDK X5，由`tools/flydigi_vader4_remote.py`读取并经USART3发送，完整接线、按键映射、安全保护和扫图进程接法见[手柄遥控交接](docs/gamepad_teleop_handoff.md)。
 
-使用工具栏的`Debug - Debug`和原有DAPLink Debug烧录入口时，当前源码已经设置为：
+## 普通 Debug - Debug
+
+当前源码默认是正式任务：
 
 ```c
-// 当前普通Debug默认：建图运动调试，不调用Task.c
-#define APP_ACTIVE_MODE APP_MODE_MOTION_DEBUG_TASK
-// 以后若要让普通Debug恢复跑图，才改为：
-// #define APP_ACTIVE_MODE APP_MODE_RESCUE_TASK
+#define APP_ACTIVE_MODE APP_MODE_RESCUE_TASK
 ```
 
-直接选择普通`Debug`重新编译，再烧录`build/Debug/WWW.elf`。普通Debug的CMake选项`APP_ACTIVE_MODE_OVERRIDE`必须为空；其他`APP_ENABLE_*`由模式自动推导，不要手改。当前普通Debug只调用`Debug.c`，不会调用`Task.c`。
-NormalRun配置会覆盖源码这一行并恢复正式Task；切换后必须重新烧录对应ELF。
+为避免配置含义混淆，正式自动任务使用`NormalRun`，上位机分段运动调试使用`MotionDebug`，手柄遥控使用`Gamepad`。切换后必须重新编译并烧录对应目录中的ELF；其他`APP_ENABLE_*`由模式自动推导，不要手改。
 
 ## 为什么最新原版不保证上电“张开再闭上”
 
@@ -27,22 +25,22 @@ READY只说明启动时IMU校准成功，不证明舵机已物理到位，也不
 
 ## 给上位机负责人
 
-已对齐`danmo-teng/shijue_fangan@4007ae0`的T265建图工具。直接烧录普通Debug后启动桌面“T265环境扫描与建图”，或运行`t265_map/run_t265_map.sh --enable-motion`；接口和安全步骤见[运动调试交接](docs/f407_motion_debug_handoff.md)。
+已对齐`danmo-teng/shijue_fangan@4007ae0`的T265建图工具。需要上位机自动执行分段扫描动作时烧录`MotionDebug`，再启动桌面“T265环境扫描与建图”或运行`t265_map/run_t265_map.sh --enable-motion`；接口和安全步骤见[运动调试交接](docs/f407_motion_debug_handoff.md)。人工手柄扫图必须改烧`Gamepad`，不要同时启用上位机自动运动。
 
 ## 专用编译与烧录配置
 
 正常跑图基准是原仓库提交 `68a0802b140226c87a510e75190e54ca2a1c222e`。Task、机构和电机底层保留该版本，不是单独视觉居中测试。
 
-- 当前建图只选择普通`Debug`和原有DAPLink Debug烧录入口，烧录`build/Debug/WWW.elf`；不选择`DAPLink MotionDebug`。
-- 普通Debug默认运行`Debug.c`的陀螺仪定角度和编码器方向＋距离功能，不调用Task.c，也不启动舵机。
-- 恢复完整跑图时选择`NormalRun`并烧录`build/NormalRun/WWW.elf`；两套固件是编译期互斥的，不是运行中切换。
-- 不要手改多个`APP_ENABLE_*`宏。普通Debug由`app_config.h`默认模式决定，NormalRun通过CMake覆盖为`APP_MODE_RESCUE_TASK`。
-- 正常USART3协议保持不变；普通`Debug`固件按队友最新版使用 **0x19扫描命令/0x1A扫描状态**，与NormalRun的0x17状态/0x18任务完全分离。协议接收、IMU旋转、里程计定距和状态发布全部位于`Main/Src/Debug.c`，上位机使用`t265_map`桌面程序。LCD显示`RX:True`表示至少收到一帧CRC和载荷均合法的0x19命令。
-- 普通Debug不启动舵机；NormalRun保留机构动作和USART1舵机维护控制台。
+- `NormalRun`烧录`build/NormalRun/WWW.elf`，执行完整救援任务。
+- `MotionDebug`烧录`build/MotionDebug/WWW.elf`，由`Debug.c`执行IMU定角度和编码器定距，不调用`Task.c`且不启动舵机。
+- `Gamepad`烧录`build/Gamepad/WWW.elf`，由`Gamepad.c`执行连续人工遥控，不调用`Task.c`。
+- 三套固件编译期互斥，不是运行中切换；烧录仍使用原有DAPLink/OpenOCD入口。
+- 不要手改多个`APP_ENABLE_*`宏，CMake配置会覆盖唯一的`APP_ACTIVE_MODE`。
+- `MotionDebug`和`Gamepad`都使用 **0x19命令/0x1A状态**，但命令子码不同；`NormalRun`的0x17状态/0x18任务协议与它们分离。
 
 # 当前固件：连续物资抓取与分区投送Task
 
-普通Debug当前启用建图调试而不调用Task；`NormalRun`才启用完整救援Task。正常任务视觉坐标为原生1280×1024、中心`(640,512)`，接收`TYPE=0x11/0x12/0x18`并发送`TYPE=0x15/0x17`；返安全区使用动态航向+剩余距离，投送后采用RETURN行进方向的反向车头姿态直接倒车返中。
+`NormalRun`启用完整救援Task，并已接入上位机`codex/complete-rescue-flow@bdcf0f2`新增的APPROACH、HOLD、夹内审核、独立释放、退让、脱困、换道和受控打散命令。完整流程坐标由`TYPE=0x18/APPROACH_TARGET`发送，仍复用原有1280×1024视觉PID；返安全区使用动态航向+剩余距离，投送后采用RETURN行进方向的反向车头姿态直接倒车返中。危险、未知、超过3件或伤员混装不会直接投送：F407按上位机指定打开异常侧，另一侧仅保持正常触碰角，退让后摄像头低头重新审核；合法后重新合拢双爪再运输，复审仍失败才双爪全开。
 
 > 从“历史设计”到CLion章节之间保留的是旧状态机设计记录，不再作为当前烧录行为或通信协议依据。
 
@@ -299,9 +297,9 @@ TIM6每20 ms发布一次`Task_Process(now_ms)`运行请求，由最低优先级P
 1. `WAIT_CONFIG`：停车等待1帧合法配置并回复1次ACK。
 2. `START`：上电后先完成IMU芯片配置、静止稳定和陀螺仪零偏校准；此期间TIM8舵机PWM尚未启动，四个舵机不会动作。仅在`IMU_Init()`成功并置`ready=true`后才启动舵机PWM，随后依次将左爪舵机4转到23°、右爪舵机2转到147°形成安全Retract姿态。收到合法配置后再执行前600 mm收纳直行和总计1.70 m的出发流程；IMU初始化失败时机构和Task均不会启动。
 3. `DISPERSE`：原有“前进0.20 m、正反各转一圈、后退0.30 m”代码仍保留，但当前`APP_ENABLE_START_SCATTER=0`，正常流程不会进入这些状态。
-4. `FIND_OBJECT`：普通搜索先以摄像头120°等待700 ms，再以160 mm/s原地转满360°；没有目标就停车并快速命令舵机3到90°，稳定300 ms后再转一圈。返中完成后的第一轮反过来从90°开始，未找到再切到120°、稳定300 ms并转一圈。每个视角一整圈只需收到1帧新的合法视觉报告即可判定无目标；整圈完全无新报告才保持当前视角继续旋转。两个视角都确认无目标后才恢复起始航向并前进0.80 m。
-5. `GRAB_OBJECT`：SEARCH收到1帧合法单目标便锁定其类别并进入APPROACH；后续只有相同类别的合法新SEQ可以刷新X/Y、距离和丢失计时，其他类别不能中途接管。水平坐标以0.55权重低通，转向PID目标限±175 mm/s并以1000 mm/s²平滑变化，最低有效转向40 mm/s，方向反转必须经过0；误差≤48 px允许最高350 mm/s，48～160 px线性限速，≥160 px最多150 mm/s，避免大偏差下高速走S形。旧帧转向120 ms后开始衰减、300 ms归零，前进仍在250～600 ms平滑停止，连续1200 ms没有原目标才进入REACQ。有效距离≤500/250 mm时仍降到225/125 mm/s。
-6. `RETURN_SAFE`：夹紧目标后持续接收上位机最新`TYPE=0x18`航向+剩余距离。NAV进入最后300 mm时限速约400 mm/s；首次进入D≤100 mm时，无论当前车头方向如何，F407都立即停车并按赛前锁存颜色选择红方90°/蓝方270°完成放置区法向对正；误差≤1°且停稳复查仍合格后才推进最后100 mm。行进修正死区为1°，动态偏差达到3°会停车重对。此后忽略上位机H变化，只保持固定方向；D重新大于150 mm解除锁定。NAV/RETURN携带的红蓝标志必须与锁存颜色一致。首次收到NAV的D=0后，以150 mm/s继续慢推1.2 s，同时用编码器限制最多推进180 mm，随后停车并置`DISTANCE_DONE`；提前到达的ENTER会被确认但延迟到慢推完成后执行。RETURN不使用末端慢推。
+4. `FIND_OBJECT`：每次从舵机3当前命令角以1°/20 ms直接移到90°，稳定300 ms后以200 mm/s转满360°；所有阶段都继续接收新目标。整圈收到过视觉报告但仍无目标时，删除原0.80 m盲目前进，改由本地Location计算到`(0,0)`的航向和距离：超过100 mm则IMU对正后以850 mm/s编码器闭环返中心，已在中心范围内则继续90°搜索；整圈完全无新报告时原地再转一圈。APPROACH丢失停车500 ms后也进入同一流程，不再经过140°中转或前进1 m。
+5. `GRAB_OBJECT`：SEARCH收到1帧合法单目标便锁定其类别并进入APPROACH。后续只有相同类别的合法新SEQ可以刷新X/Y、距离和丢失计时，其他类别不能中途接管。水平坐标以0.55权重低通，转向PID目标限±175 mm/s并以1000 mm/s²平滑变化，最低有效转向40 mm/s，方向反转必须经过0；误差≤48 px允许最高350 mm/s，48～160 px线性限速，≥160 px最多150 mm/s，避免大偏差下高速走S形。旧帧转向120 ms后开始衰减、300 ms归零，前进仍在250～600 ms平滑停止，连续1200 ms没有原目标才进入REACQ。有效距离≤500/250 mm时仍降到225/125 mm/s。舵机3处于135～139°时把前进限到80 mm/s；仅当同一锁定类别持续有效、该区间保持700 ms且横向误差≤96 px时，才停车并将相机命令移到140°进入抓取观察，作为长物体迟迟不到140°的兜底。
+6. `RETURN_SAFE`：夹紧目标后持续接收上位机最新`TYPE=0x18`航向+剩余距离。NAV进入最后300 mm时限速约400 mm/s；首次进入D≤100 mm时，无论当前车头方向如何，F407都立即停车并锁存放置区法向；第一次投送采用红方右偏10°到80°、蓝方左偏10°到280°的补偿，第一次收到`TASK_COMPLETE`后，后续恢复红方90°/蓝方270°；误差≤1°且停稳复查仍合格后才推进最后100 mm。行进修正死区为1°，动态偏差达到3°会停车重对。此后忽略上位机H变化，只保持固定方向；D重新大于150 mm解除锁定。NAV/RETURN携带的红蓝标志必须与锁存颜色一致。首次收到NAV的D=0后，以180 mm/s继续慢推，保证至少1.0 s、目标总时长1.8 s；编码器360 mm上限只有满1.0 s后才能触发，随后停车并置`DISTANCE_DONE`；提前到达的ENTER会被确认但延迟到慢推完成后执行。RETURN不使用末端慢推。
 7. `DELIVER`：安全区车头对正已经删除。上位机确认到达后直接发送`ENTER_SAFE_ZONE`，F407从NAV同时打开左右爪；完全张开后摄像头转到120°并稳定300 ms，再进入`CHECK`原地保持至少1200 ms，让上位机完成连续5帧“区外→区内”视觉确认。不会进入ALIGN，也不执行碰撞。收到`TASK_COMPLETE`后直接上报`FACE_FIELD_CENTER(mode17)`；最新版上位机随后自动持续发送`RETURN_CENTER`行进方向+剩余距离。F407不原地转向，而是保持车头朝行进方向反向并直接倒车，途中只做限幅100 mm/s的小幅航向修正；D=0后摄像头快速到90°并开始下一轮搜索。实际返中终点由上位机发送的D决定；若上位机仍保留`center_stop_radius_m=0.60`，车辆会在距原点约600 mm处进入SEARCH，而不是到达原点。
 8. `STOPPED`：上位机`STOP/ABORT`、电机、位姿或任务命令安全故障后保持停车。连续任务不设置180秒总时长终止；目标重捕获失败则返回搜索而不是永久停车。
 
