@@ -262,7 +262,7 @@ static void task_reset_turn_tracker(void)
   turn_tracker.valid = false;
 }
 
-static bool task_full_turn_reached(void)
+static bool task_turn_magnitude_reached(uint32_t target_mdeg)
 {
   const LocationPose pose = Location_GetPose();
   if (!pose.valid) {
@@ -283,7 +283,12 @@ static bool task_full_turn_reached(void)
     turn_tracker.valid = true;
   }
   turn_tracker.last_heading_mdeg = pose.heading_mdeg;
-  return turn_tracker.accumulated_mdeg >= APP_SEARCH_FULL_TURN_MDEG;
+  return turn_tracker.accumulated_mdeg >= target_mdeg;
+}
+
+static bool task_full_turn_reached(void)
+{
+  return task_turn_magnitude_reached(APP_SEARCH_FULL_TURN_MDEG);
 }
 
 static uint8_t task_protocol_mode(void)
@@ -1868,6 +1873,7 @@ static void task_remote_action_advance(uint32_t now_ms)
   ++remote_action.phase;
   remote_action.phase_path_mm = pose.path_mm;
   step_started_ms = now_ms;
+  task_reset_turn_tracker();
 }
 
 static void task_remote_action_finish(void)
@@ -1930,6 +1936,35 @@ static bool task_remote_turn(float angle_deg, uint32_t now_ms)
   return false;
 }
 
+static bool task_remote_sweep(float distance_m, float speed_mm_s,
+                              float turn_deg, uint32_t now_ms)
+{
+  LocationPose pose;
+  if (!task_get_location_pose(&pose, now_ms)) {
+    return false;
+  }
+  const uint32_t target_mm = (uint32_t)(distance_m * 1000.0f + 0.5f);
+  const uint32_t target_mdeg = (uint32_t)(task_abs(turn_deg) * 1000.0f + 0.5f);
+  const uint32_t travelled_mm = pose.path_mm - remote_action.phase_path_mm;
+  const bool distance_done = travelled_mm >= target_mm;
+  const bool turn_done = task_turn_magnitude_reached(target_mdeg);
+  if (distance_done && turn_done) {
+    task_remote_action_advance(now_ms);
+    return true;
+  }
+
+  const float translation = distance_done ? 0.0f : speed_mm_s;
+  const float yaw = turn_done ? 0.0f :
+      ((turn_deg < 0.0f) ? -APP_REMOTE_DISPERSE_SWEEP_YAW_MM_S :
+                           APP_REMOTE_DISPERSE_SWEEP_YAW_MM_S);
+  if (!Motor_MoveSpin(translation, 0.0f, yaw)) {
+    task_stop(TASK_FAULT_MOTOR, now_ms);
+    return false;
+  }
+  task_status.motors_active = true;
+  return false;
+}
+
 static void task_process_remote_action(const VisionMissionCommand *command,
                                        uint32_t now_ms)
 {
@@ -1938,8 +1973,10 @@ static void task_process_remote_action(const VisionMissionCommand *command,
     task_status.motors_active = false;
     return;
   }
-  if ((uint32_t)(now_ms - remote_action.started_ms) >=
-      APP_REMOTE_ACTION_TIMEOUT_MS) {
+  const uint32_t action_timeout_ms =
+      (remote_action.type == REMOTE_ACTION_DISPERSE) ?
+          APP_REMOTE_DISPERSE_TIMEOUT_MS : APP_REMOTE_ACTION_TIMEOUT_MS;
+  if ((uint32_t)(now_ms - remote_action.started_ms) >= action_timeout_ms) {
     task_stop(TASK_FAULT_MOTOR, now_ms);
     return;
   }
@@ -2060,29 +2097,31 @@ static void task_process_remote_action(const VisionMissionCommand *command,
           task_remote_action_advance(now_ms);
         }
       } else if (remote_action.phase == 1U) {
-        (void)task_remote_distance(APP_REMOTE_DISPERSE_FORWARD_M,
-                                   APP_REMOTE_DISPERSE_SPEED_MM_S, now_ms);
+        (void)task_remote_distance(-APP_REMOTE_DISPERSE_BUILDUP_BACK_M,
+                                   APP_REMOTE_DISPERSE_BACK_SPEED_MM_S, now_ms);
       } else if (remote_action.phase == 2U) {
-        (void)task_remote_distance(-APP_REMOTE_DISPERSE_BACK_M,
-                                   APP_REMOTE_DISPERSE_SPEED_MM_S, now_ms);
+        (void)task_remote_distance(APP_REMOTE_DISPERSE_CENTER_PUSH_M,
+                                   APP_REMOTE_DISPERSE_PUSH_SPEED_MM_S, now_ms);
       } else if (remote_action.phase == 3U) {
-        (void)task_remote_turn(APP_REMOTE_DISPERSE_TURN_DEG, now_ms);
+        (void)task_remote_distance(-APP_REMOTE_DISPERSE_RECOVER_BACK_M,
+                                   APP_REMOTE_DISPERSE_BACK_SPEED_MM_S, now_ms);
       } else if (remote_action.phase == 4U) {
-        (void)task_remote_distance(APP_REMOTE_DISPERSE_FORWARD_M,
-                                   APP_REMOTE_DISPERSE_SPEED_MM_S, now_ms);
+        (void)task_remote_sweep(APP_REMOTE_DISPERSE_SWEEP_PUSH_M,
+                                APP_REMOTE_DISPERSE_SWEEP_SPEED_MM_S,
+                                APP_REMOTE_DISPERSE_SWEEP_ANGLE_DEG, now_ms);
       } else if (remote_action.phase == 5U) {
-        (void)task_remote_distance(-APP_REMOTE_DISPERSE_FORWARD_M,
-                                   APP_REMOTE_DISPERSE_SPEED_MM_S, now_ms);
+        (void)task_remote_distance(-APP_REMOTE_DISPERSE_RECOVER_BACK_M,
+                                   APP_REMOTE_DISPERSE_BACK_SPEED_MM_S, now_ms);
       } else if (remote_action.phase == 6U) {
-        (void)task_remote_turn(-2.0f * APP_REMOTE_DISPERSE_TURN_DEG, now_ms);
+        (void)task_remote_sweep(APP_REMOTE_DISPERSE_SWEEP_PUSH_M,
+                                APP_REMOTE_DISPERSE_SWEEP_SPEED_MM_S,
+                                -2.0f * APP_REMOTE_DISPERSE_SWEEP_ANGLE_DEG,
+                                now_ms);
       } else if (remote_action.phase == 7U) {
-        (void)task_remote_distance(APP_REMOTE_DISPERSE_FORWARD_M,
-                                   APP_REMOTE_DISPERSE_SPEED_MM_S, now_ms);
+        (void)task_remote_distance(-APP_REMOTE_DISPERSE_RECOVER_BACK_M,
+                                   APP_REMOTE_DISPERSE_BACK_SPEED_MM_S, now_ms);
       } else if (remote_action.phase == 8U) {
-        (void)task_remote_distance(-APP_REMOTE_DISPERSE_FORWARD_M,
-                                   APP_REMOTE_DISPERSE_SPEED_MM_S, now_ms);
-      } else if (remote_action.phase == 9U) {
-        if (task_remote_turn(APP_REMOTE_DISPERSE_TURN_DEG, now_ms)) {
+        if (task_remote_turn(APP_REMOTE_DISPERSE_SWEEP_ANGLE_DEG, now_ms)) {
           task_remote_action_finish();
         }
       }
