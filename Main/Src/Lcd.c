@@ -8,8 +8,9 @@
 
 #include "app_config.h"
 #include "CenteringTask.h"
-#include "DebugMotion.h"
+#include "Debug.h"
 #include "encoder.h"
+#include "Gamepad.h"
 #include "Location.h"
 #include "main.h"
 #include "mechanism.h"
@@ -301,7 +302,8 @@ static bool dashboard_motor_fault(void)
 
 #if !APP_ENABLE_TASK && !APP_ENABLE_CENTERING_TASK && \
     !APP_ENABLE_MOTION_TEST && !APP_ENABLE_MOVE_SPIN_TEST && \
-    !APP_ENABLE_LOCATION_DEMO && !APP_ENABLE_MOTION_DEBUG_TASK
+    !APP_ENABLE_LOCATION_DEMO && !APP_ENABLE_MOTION_DEBUG_TASK && \
+    !APP_ENABLE_GAMEPAD_TASK
 static const char *dashboard_uart_text(const LCDDashboard *dashboard)
 {
   if (!dashboard->uart_active) {
@@ -717,10 +719,14 @@ static void draw_task(const LCDDashboard *dashboard)
         const int distance_mm = (vision->mission.target_x_mm >= 0) ?
             vision->mission.target_x_mm : 0;
         const LocationPose pose = Location_GetPose();
-        const char heading_kind = task.nav_heading_locked ? 'L' : 'T';
-        const unsigned int displayed_heading = task.nav_heading_locked ?
-            task.nav_locked_heading_deg :
-            vision->mission.heading_cdeg / 100U;
+        const bool reverse_return =
+            task.state == TASK_FACE_FIELD_CENTER;
+        const char heading_kind = reverse_return ? 'B' :
+            (task.nav_heading_locked ? 'L' : 'T');
+        const unsigned int displayed_heading = reverse_return ?
+            (vision->mission.heading_cdeg / 100U + 180U) % 360U :
+            (task.nav_heading_locked ? task.nav_locked_heading_deg :
+                                       vision->mission.heading_cdeg / 100U);
         if (pose.valid) {
           (void)snprintf(text, sizeof(text), "%c:%03u A:%03ld D:%04d",
                          heading_kind, displayed_heading,
@@ -821,7 +827,8 @@ static void draw_centering_task(const LCDDashboard *dashboard)
                  centering_uart_state(dashboard));
   dashboard_write(0U, 108U, 128U, text);
 }
-#elif !APP_ENABLE_LOCATION_DEMO && !APP_ENABLE_MOTION_DEBUG_TASK
+#elif !APP_ENABLE_LOCATION_DEMO && !APP_ENABLE_MOTION_DEBUG_TASK && \
+      !APP_ENABLE_GAMEPAD_TASK
 static void dashboard_draw_test(const LCDDashboard *dashboard)
 {
   static bool layout_drawn;
@@ -912,8 +919,30 @@ void LCD_DrawDashboard(const LCDDashboard *dashboard)
   }
 #if APP_ENABLE_TASK
   draw_task(dashboard);
+#elif APP_ENABLE_GAMEPAD_TASK
+  const GamepadStatus pad = Gamepad_GetStatus();
+  char text[24];
+  dashboard_write(0U, 0U, 128U, "GAMEPAD TELEOP");
+  (void)snprintf(text, sizeof(text), "RX:%s ARM:%s S:%u",
+                 pad.received ? "YES" : "NO",
+                 pad.armed ? "YES" : "NO",
+                 (unsigned)pad.state);
+  dashboard_write(0U, 24U, 128U, text);
+  (void)snprintf(text, sizeof(text), "F:%+04d L:%+04d",
+                 (int)pad.forward_mm_s, (int)pad.left_mm_s);
+  dashboard_write(0U, 48U, 128U, text);
+  (void)snprintf(text, sizeof(text), "YAW:%+04d SEQ:%03u",
+                 (int)pad.yaw_mm_s, (unsigned)pad.command_sequence);
+  dashboard_write(0U, 72U, 128U, text);
+  (void)snprintf(text, sizeof(text), "CAM:%03u LIFT:%03u",
+                 (unsigned)pad.camera_angle, (unsigned)pad.lift_angle);
+  dashboard_write(0U, 96U, 128U, text);
+  (void)snprintf(text, sizeof(text), "CLAW L:%03u R:%03u",
+                 (unsigned)pad.left_claw_angle,
+                 (unsigned)pad.right_claw_angle);
+  dashboard_write(0U, 120U, 128U, text);
 #elif APP_ENABLE_MOTION_DEBUG_TASK
-  const DebugMotionStatus motion = DebugMotionTask_GetStatus();
+  const DebugStatus motion = Debug_GetStatus();
   char text[24];
   dashboard_write(0U, 0U, 128U, "MOTION DEBUG");
   (void)snprintf(text, sizeof(text), "STATE %u FAULT %u",
@@ -923,8 +952,12 @@ void LCD_DrawDashboard(const LCDDashboard *dashboard)
                  (unsigned)motion.command, (unsigned)motion.command_sequence);
   dashboard_write(0U, 48U, 128U, text);
   (void)snprintf(text, sizeof(text), "DONE %u LEFT %u",
-                 (unsigned)motion.progress, (unsigned)motion.remaining);
+                 (unsigned)((motion.progress < 0) ?
+                            -motion.progress : motion.progress),
+                 (unsigned)motion.remaining);
   dashboard_write(0U, 72U, 128U, text);
+  dashboard_write(0U, 96U, 128U,
+                  dashboard->vision.motion_valid ? "RX:True" : "RX:False");
 #elif APP_ENABLE_CENTERING_TASK
   draw_centering_task(dashboard);
 #elif APP_ENABLE_LOCATION_DEMO

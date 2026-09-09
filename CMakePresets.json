@@ -38,6 +38,14 @@
                 "CMAKE_BUILD_TYPE": "Debug",
                 "APP_ACTIVE_MODE_OVERRIDE": "APP_MODE_RESCUE_TASK"
             }
+        },
+        {
+            "name": "Gamepad",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "APP_ACTIVE_MODE_OVERRIDE": "APP_MODE_GAMEPAD_TASK"
+            }
         }
     ],
     "buildPresets": [
@@ -56,6 +64,10 @@
         {
             "name": "NormalRun",
             "configurePreset": "NormalRun"
+        },
+        {
+            "name": "Gamepad",
+            "configurePreset": "Gamepad"
         }
     ]
 }

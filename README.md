@@ -1,18 +1,18 @@
 # 快速切换：正常跑图 / UART运动调试
 
-## 普通 Debug - Debug：只改一行
+## 普通 Debug - Debug：当前直接用于建图
 
-如果使用工具栏的 `Debug - Debug` + `DAPLink OpenOCD`，在 `Main/Inc/app_config.h` 中修改：
+使用工具栏的`Debug - Debug`和原有DAPLink Debug烧录入口时，当前源码已经设置为：
 
 ```c
-// 正常跑图（默认）
-#define APP_ACTIVE_MODE APP_MODE_RESCUE_TASK
-// 要切换为运动调试，请用下面这一行替换上面一行，不要同时定义：
-// #define APP_ACTIVE_MODE APP_MODE_MOTION_DEBUG_TASK
+// 当前普通Debug默认：建图运动调试，不调用Task.c
+#define APP_ACTIVE_MODE APP_MODE_MOTION_DEBUG_TASK
+// 以后若要让普通Debug恢复跑图，才改为：
+// #define APP_ACTIVE_MODE APP_MODE_RESCUE_TASK
 ```
 
-重新编译后再烧录 `build/Debug/WWW.elf`。普通Debug的CMake选项 `APP_ACTIVE_MODE_OVERRIDE` 必须为空；其他 `APP_ENABLE_*` 是自动推导结果，不要手改。
-专用NormalRun/MotionDebug配置会覆盖源码这一行，因此不要混用两种切换方法。
+直接选择普通`Debug`重新编译，再烧录`build/Debug/WWW.elf`。普通Debug的CMake选项`APP_ACTIVE_MODE_OVERRIDE`必须为空；其他`APP_ENABLE_*`由模式自动推导，不要手改。当前普通Debug只调用`Debug.c`，不会调用`Task.c`。
+NormalRun配置会覆盖源码这一行并恢复正式Task；切换后必须重新烧录对应ELF。
 
 ## 为什么最新原版不保证上电“张开再闭上”
 
@@ -27,24 +27,22 @@ READY只说明启动时IMU校准成功，不证明舵机已物理到位，也不
 
 ## 给上位机负责人
 
-直接复制[上位机迁移提示词](docs/upper_computer_migration_prompt.md)。已经核对上位机 `39ae746` 的独立调试适配器仍使用旧0x17/0x18，需要迁移到0x1B/0x1C；正常比赛0x17/0x18必须保留。
+已对齐`danmo-teng/shijue_fangan@4007ae0`的T265建图工具。直接烧录普通Debug后启动桌面“T265环境扫描与建图”，或运行`t265_map/run_t265_map.sh --enable-motion`；接口和安全步骤见[运动调试交接](docs/f407_motion_debug_handoff.md)。
 
 ## 专用编译与烧录配置
 
 正常跑图基准是原仓库提交 `68a0802b140226c87a510e75190e54ca2a1c222e`。Task、机构和电机底层保留该版本，不是单独视觉居中测试。
 
-- 首次在 CLion 的 Settings → Build, Execution, Deployment → CMake 中启用 `NormalRun - NormalRun`、`MotionDebug - MotionDebug` 并 Reload。若本机显示为不带重复后缀的名称，在 Run → Edit Configurations 中把下面两个烧录入口的 CMake Profile 对应选好。
-- 工具栏选择 `DAPLink NormalRun` 或 `DAPLink MotionDebug` 再运行；旧 `DAPLink OpenOCD` 仍绑定 Debug，不用于这两个模式切换。
-- CLion 重新加载 CMake 后选择 `NormalRun`：完整跑图，烧录 `build/NormalRun/WWW.elf`。
-- 选择 `MotionDebug`：陀螺仪定角度、编码器方向＋距离，烧录 `build/MotionDebug/WWW.elf`。
-- 两套配置独立目录，切换后必须重新烧录，不是运行中切换。
-- 配置会覆盖源码宏；使用普通 Debug 配置时，才通过 app_config.h 的 `APP_ACTIVE_MODE` 选择 `APP_MODE_RESCUE_TASK`（默认）或 `APP_MODE_MOTION_DEBUG_TASK`。不要再修改多个 APP_ENABLE 宏。
-- 正常 USART3 协议保持不变；新调试使用 **0x1B 命令 / 0x1C 状态**，旧调试 0x17/0x18 不兼容。上位机使用[运动调试交接](docs/f407_motion_debug_handoff.md)及配套脚本。
-- MotionDebug 不启动舵机；正常模式保留原仓库机构动作和 USART1 舵机维护控制台。
+- 当前建图只选择普通`Debug`和原有DAPLink Debug烧录入口，烧录`build/Debug/WWW.elf`；不选择`DAPLink MotionDebug`。
+- 普通Debug默认运行`Debug.c`的陀螺仪定角度和编码器方向＋距离功能，不调用Task.c，也不启动舵机。
+- 恢复完整跑图时选择`NormalRun`并烧录`build/NormalRun/WWW.elf`；两套固件是编译期互斥的，不是运行中切换。
+- 不要手改多个`APP_ENABLE_*`宏。普通Debug由`app_config.h`默认模式决定，NormalRun通过CMake覆盖为`APP_MODE_RESCUE_TASK`。
+- 正常USART3协议保持不变；普通`Debug`固件按队友最新版使用 **0x19扫描命令/0x1A扫描状态**，与NormalRun的0x17状态/0x18任务完全分离。协议接收、IMU旋转、里程计定距和状态发布全部位于`Main/Src/Debug.c`，上位机使用`t265_map`桌面程序。LCD显示`RX:True`表示至少收到一帧CRC和载荷均合法的0x19命令。
+- 普通Debug不启动舵机；NormalRun保留机构动作和USART1舵机维护控制台。
 
 # 当前固件：连续物资抓取与分区投送Task
 
-当前只启用完整`Task`，所有测试模式和独立`CenteringTask`均关闭，并已对照`danmo-teng/shijue_fangan@437c0ef`的100 Hz任务心跳与动态导航协议。视觉坐标为原生1280×1024、中心`(640,512)`；正常任务接收`TYPE=0x11/0x12/0x18`，发送`TYPE=0x15/0x17`。返安全区和回到中心点持续采用RDK按最新融合位置发送的绝对航向+剩余距离；安全区到达后直接ENTER张爪，不再执行ALIGN车头对正。
+普通Debug当前启用建图调试而不调用Task；`NormalRun`才启用完整救援Task。正常任务视觉坐标为原生1280×1024、中心`(640,512)`，接收`TYPE=0x11/0x12/0x18`并发送`TYPE=0x15/0x17`；返安全区使用动态航向+剩余距离，投送后采用RETURN行进方向的反向车头姿态直接倒车返中。
 
 > 从“历史设计”到CLion章节之间保留的是旧状态机设计记录，不再作为当前烧录行为或通信协议依据。
 
@@ -272,7 +270,7 @@ A3 B3 14 21 00 02 01 00 00 00 00 00 86 07 C3
 2. 上位机依据本车颜色、当前位置、货物类别和安全区图像持续输出`HOLD/FORWARD/TURN_LEFT/TURN_RIGHT/BACKWARD`。F407只映射为限速底盘动作，上位机不发送占空比。
 3. 导航短时中断但最后一帧仍未超过200 ms时保持最后一条合法动作；超过200 ms后F407强制停车。上位机在丢失定位、图像不确定或准备停止发送前仍应主动发送`HOLD`。
 4. 收到1帧合法的安全区附近报告后进入`DROP_OBJECT`，F407不再接受导航动作，使用编码器向前0.20 m，使目标越过区域边界。
-5. 停车后舵机1转到65°，夹爪按“左爪舵机4先到128°、右爪舵机2再到52°”的Open顺序释放目标并等待600 ms；摄像头转到0度低头角，等待400 ms让舵机和图像稳定。
+5. 停车后舵机1转到65°，左右夹爪同时打开到左爪舵机4=108°、右爪舵机2=72°并等待机构动作；摄像头转到0度低头角，等待400 ms让舵机和图像稳定。
 6. 上位机只检测夹爪/导向机构ROI，并发送带`CLAW_VIEW`的视觉报告：夹内空为`FOUND=0、P6=0、CLASS_VALID=1`；仍有目标则`FOUND=1、P6=实际剩余数量、CLASS_VALID=1`。模糊或遮挡但能确定ROI内有物体时置`FOUND=1、UNKNOWN=1`。进入复核后3秒内未收到1帧合法结论，F407会把摄像头转回90°并重新执行打开、低头和复核；最多重试2次，仍失败则进入`STOPPED`，不会猜测放置成功或永久等待。
 7. 收到1帧合法的夹内为空报告后计为送达；摄像头回90度，夹爪回到右100°/左80°的Touch姿态后编码器后退0.50 m，回到`FIND_OBJECT`继续旋转搜索。
 8. 若收到1帧合法的夹内仍有货物报告，则重新Touch夹紧目标，后退0.50 m回到`RETURN_SAFE`。剩余货物不合规或电机故障时进入`STOPPED`。
@@ -304,12 +302,12 @@ TIM6每20 ms发布一次`Task_Process(now_ms)`运行请求，由最低优先级P
 4. `FIND_OBJECT`：普通搜索先以摄像头120°等待700 ms，再以160 mm/s原地转满360°；没有目标就停车并快速命令舵机3到90°，稳定300 ms后再转一圈。返中完成后的第一轮反过来从90°开始，未找到再切到120°、稳定300 ms并转一圈。每个视角一整圈只需收到1帧新的合法视觉报告即可判定无目标；整圈完全无新报告才保持当前视角继续旋转。两个视角都确认无目标后才恢复起始航向并前进0.80 m。
 5. `GRAB_OBJECT`：SEARCH收到1帧合法单目标便锁定其类别并进入APPROACH；后续只有相同类别的合法新SEQ可以刷新X/Y、距离和丢失计时，其他类别不能中途接管。水平坐标以0.55权重低通，转向PID目标限±175 mm/s并以1000 mm/s²平滑变化，最低有效转向40 mm/s，方向反转必须经过0；误差≤48 px允许最高350 mm/s，48～160 px线性限速，≥160 px最多150 mm/s，避免大偏差下高速走S形。旧帧转向120 ms后开始衰减、300 ms归零，前进仍在250～600 ms平滑停止，连续1200 ms没有原目标才进入REACQ。有效距离≤500/250 mm时仍降到225/125 mm/s。
 6. `RETURN_SAFE`：夹紧目标后持续接收上位机最新`TYPE=0x18`航向+剩余距离。NAV进入最后300 mm时限速约400 mm/s；首次进入D≤100 mm时，无论当前车头方向如何，F407都立即停车并按赛前锁存颜色选择红方90°/蓝方270°完成放置区法向对正；误差≤1°且停稳复查仍合格后才推进最后100 mm。行进修正死区为1°，动态偏差达到3°会停车重对。此后忽略上位机H变化，只保持固定方向；D重新大于150 mm解除锁定。NAV/RETURN携带的红蓝标志必须与锁存颜色一致。首次收到NAV的D=0后，以150 mm/s继续慢推1.2 s，同时用编码器限制最多推进180 mm，随后停车并置`DISTANCE_DONE`；提前到达的ENTER会被确认但延迟到慢推完成后执行。RETURN不使用末端慢推。
-7. `DELIVER`：安全区车头对正已经删除。上位机确认到达后直接发送`ENTER_SAFE_ZONE`，F407从NAV同时打开左右爪；完全张开后摄像头转到120°并稳定300 ms，再进入`CHECK`原地保持至少1200 ms，让上位机完成连续5帧“区外→区内”视觉确认。不会进入ALIGN，也不执行碰撞。收到`TASK_COMPLETE`后不再先后退0.45 m，而是直接上报`FACE_FIELD_CENTER(mode17)`；最新版上位机随后自动持续发送`RETURN_CENTER`动态航向+剩余距离，完成后摄像头快速到90°并开始下一轮搜索。实际返中终点由上位机发送的D决定；若上位机仍保留`center_stop_radius_m=0.60`，车辆会在距原点约600 mm处进入SEARCH，而不是到达原点。
+7. `DELIVER`：安全区车头对正已经删除。上位机确认到达后直接发送`ENTER_SAFE_ZONE`，F407从NAV同时打开左右爪；完全张开后摄像头转到120°并稳定300 ms，再进入`CHECK`原地保持至少1200 ms，让上位机完成连续5帧“区外→区内”视觉确认。不会进入ALIGN，也不执行碰撞。收到`TASK_COMPLETE`后直接上报`FACE_FIELD_CENTER(mode17)`；最新版上位机随后自动持续发送`RETURN_CENTER`行进方向+剩余距离。F407不原地转向，而是保持车头朝行进方向反向并直接倒车，途中只做限幅100 mm/s的小幅航向修正；D=0后摄像头快速到90°并开始下一轮搜索。实际返中终点由上位机发送的D决定；若上位机仍保留`center_stop_radius_m=0.60`，车辆会在距原点约600 mm处进入SEARCH，而不是到达原点。
 8. `STOPPED`：上位机`STOP/ABORT`、电机、位姿或任务命令安全故障后保持停车。连续任务不设置180秒总时长终止；目标重捕获失败则返回搜索而不是永久停车。
 
-当前夹爪角度为：收缩左23°/右147°，Touch左80°/右100°，Open左128°/右52°。安装机构后必须先断开机构负载标定角度，确认不会顶死舵机。
+当前夹爪角度为：收缩左23°/右147°，Touch左80°/右100°，Open左108°/右72°。安装机构后必须先断开机构负载标定角度，确认不会顶死舵机。
 
-Task模式LCD保留当前任务状态、上位机X/Y、导航角度、距离D、命令状态和摄像头角度。`T`表示上位机目标航向，`L`表示最后100 mm采用的固定放置区航向，`A`表示F407实际航向；`TMO/STALE/PUSH/DONE`分别表示任务帧超时、余量无进展、D=0后的末端慢推和补推完成停车。
+Task模式LCD保留当前任务状态、上位机X/Y、导航角度、距离D、命令状态和摄像头角度。`T`表示上位机目标行进航向，`L`表示最后100 mm采用的固定放置区航向，RETURN中的`B`表示倒车时采用的车头目标航向（上位机H+180°），`A`表示F407实际航向；`TMO/STALE/PUSH/DONE`分别表示任务帧超时、余量无进展、D=0后的末端慢推和补推完成停车。
 
 底层仍为：编码器和速度PID严格每10 ms在TIM6中断执行；IMU每1 ms释放一次主循环采样请求，主循环延迟时合并为最新一次而不重复读取已经过去的样本；任务由TIM6严格每20 ms发布、最低优先级PendSV消费，延迟时只执行最新一次；LCD每100 ms刷新；USART3使用64字节循环DMA，不申请动态内存。PendSV可被TIM6、DMA和USART3抢占，高层状态机不会再占用电机实时中断。
 
@@ -492,7 +490,7 @@ v3 =  sqrt(3)/2 * Vx - 1/2 * Vy + Rω
 - 网盘中的轮趣STM32讲义先在固定周期内平滑`VX/VY/VZ`，再调用底盘逆运动学和四个独立速度PI；松开指令时也不是直接把运动量清零。当前工程沿用“先平滑车体速度、再进行轮速分解”的层次，但使用二维同比矢量斜坡，避免分别修改X/Y导致斜向角度暂时失真。[轮趣R680/ROS资料包](https://pan.baidu.com/s/186VvHGOcfHoDA3TKxAP9tw)
 - ROS官方Nav2速度平滑器同样使用固定周期插值、独立加减速度限制、速度死区和同比缩放，并说明高频低延迟里程计才适合闭环平滑。本工程10 ms速度环使用上一平滑指令推进，只有反向零速确认读取同周期编码器，避免编码器低速量化噪声参与每一步斜坡。[Nav2 Velocity Smoother](https://github.com/ros-navigation/navigation2/tree/main/nav2_velocity_smoother)
 - ROS 2全向轮控制器以车体`x/y/yaw`速度为统一输入、用轮速/位置反馈计算底盘状态；移动控制器还提供速度、加速度、减速度和jerk限制。当前F407保留三轮逐轮PI、航向PI和同比轮速限幅；暂不增加jerk状态，因为固定45%起步PWM和当前低速死区会让第三阶轨迹参数难以独立标定，先把可测的加减速度与停稳阈值调准更可靠。[ROS 2 omni wheel controller](https://control.ros.org/kilted/doc/ros2_controllers/omni_wheel_drive_controller/doc/userdoc.html)、[ROS 2移动底盘运动限制](https://control.ros.org/rolling/doc/ros2_controllers/mecanum_drive_controller/doc/userdoc.html)
-- 轮趣R550全向轮版本标称最高速度0.84 m/s，当前任务的最高直线请求为850 mm/s，已经处于同类教育底盘的极限速度区；高速动作必须保留减速和制动过程，并在实车上检查供电压降、轮胎打滑与电机温升。[轮趣R550产品手册](https://wheeltec.net/R550.pdf)
+- 轮趣R550全向轮版本标称最高速度0.84 m/s，当前任务的中心巡航最高直线请求为900 mm/s，已略高于该标称值；高速动作必须保留减速和制动过程，并在实车上检查供电压降、轮胎打滑与电机温升。[轮趣R550产品手册](https://wheeltec.net/R550.pdf)
 
 `Motor_MoveAngle(speed, angle)`规定`0°=前、90°=左、180°=后、270°=右`，将速度分解成`Vx/Vy`后进入同一逆运动学。第一次启动记录IMU累计航向，之后10 ms一次用航向PI产生`Rω`修正。启动和小角度换向采用二维矢量限速，当前加速度为2500 mm/s²；新旧方向夹角小于120°时直接在速度空间连续过渡，达到120°或更大时以3000 mm/s²先减到0。命令归零后要求三轮实测速度连续3个周期不超过40 mm/s，最多等待400 ms，随后清除三轮速度PI及航向PI积分、保留原目标航向，再向新方向加速。函数在平滑矢量达到目标后返回`true`；当前测试从此时才开始计算3秒倒车时间，单次加速超过2秒则安全停车。只有`Motor_Stop()`、IMU故障或切换到其他运动模式才结束本次航向保持。
 

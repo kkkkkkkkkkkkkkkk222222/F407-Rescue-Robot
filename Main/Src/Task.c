@@ -69,6 +69,7 @@ static float camera_angle;
 static float steering_mm_s;
 static float steering_target_mm_s;
 static float approach_speed_mm_s;
+static bool approach_close_hold;
 static float filtered_target_x;
 static float filtered_target_y;
 static float remote_speed_mm_s;
@@ -331,6 +332,7 @@ static void task_enter(TaskState next, uint32_t now_ms)
   } else if (next == TASK_APPROACH) {
     camera_angle = (float)Camera_GetAngle();
     approach_speed_mm_s = APP_APPROACH_SPEED_MM_S;
+    approach_close_hold = false;
     approach_last_target_ms = now_ms;
     approach_report_generation_valid = false;
     task_reset_tracking();
@@ -400,6 +402,7 @@ static void task_initialize(uint32_t now_ms)
   steering_mm_s = 0.0f;
   steering_target_mm_s = 0.0f;
   approach_speed_mm_s = APP_APPROACH_SPEED_MM_S;
+  approach_close_hold = false;
   remote_speed_mm_s = 0.0f;
   remote_yaw_mm_s = 0.0f;
   nav_locked_heading_deg = 0.0f;
@@ -1053,6 +1056,18 @@ static float task_approach_steering(uint32_t report_age_ms)
   return steering_mm_s;
 }
 
+static bool task_approach_close_enough(const VisionData *vision)
+{
+  if (!tracking_filter_valid ||
+      (task_abs(filtered_target_x - (float)APP_VISION_TARGET_X) >
+       APP_GRAB_HOLD_X_ERROR_PX)) {
+    return false;
+  }
+  return vision->near ||
+      (vision->distance_valid &&
+       (vision->distance_mm <= APP_GRAB_HOLD_DISTANCE_MM));
+}
+
 static void task_process_approach(const VisionData *vision, uint32_t now_ms)
 {
   task_status.auto_approach = true;
@@ -1066,8 +1081,14 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
       approach_last_target_ms = now_ms;
       approach_speed_mm_s = task_approach_speed(vision);
       task_status.found = true;
-      (void)task_track_target(vision);
-      if (camera_angle >= (float)APP_GRAB_VIEW_ANGLE) {
+      if (!approach_close_hold) {
+        (void)task_track_target(vision);
+        if (task_approach_close_enough(vision)) {
+          approach_close_hold = true;
+          step_started_ms = now_ms;
+        }
+      }
+      if (Camera_GetAngle() >= APP_GRAB_VIEW_ANGLE) {
         Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
         camera_angle = (float)APP_GRAB_VIEW_ANGLE;
         task_enter(TASK_GRAB_OBSERVE, now_ms);
@@ -1085,6 +1106,15 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
     return;
   }
 
+  if (approach_close_hold) {
+    Motor_Stop();
+    task_status.motors_active = false;
+    if (task_scan_camera_to(APP_GRAB_VIEW_ANGLE, now_ms)) {
+      task_enter(TASK_GRAB_OBSERVE, now_ms);
+    }
+    return;
+  }
+
   const float freshness_scale =
       task_approach_freshness_scale(report_age_ms);
   const float turn_mm_s = task_approach_steering(report_age_ms);
@@ -1095,8 +1125,12 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
     return;
   }
 
-  const float forward_mm_s = task_approach_aligned_speed(
+  float forward_mm_s = task_approach_aligned_speed(
       approach_speed_mm_s) * freshness_scale;
+  if ((Camera_GetAngle() >= APP_GRAB_PRESTOP_CAMERA_ANGLE) &&
+      (forward_mm_s > APP_GRAB_PRESTOP_SPEED_MM_S)) {
+    forward_mm_s = APP_GRAB_PRESTOP_SPEED_MM_S;
+  }
   Motor_Move(forward_mm_s, 0.0f, turn_mm_s);
   task_status.motors_active = true;
 }
@@ -1558,6 +1592,10 @@ static RemoteRouteStatus task_follow_remote_route(
 
   const float current_heading_deg = (float)pose.heading_mdeg * 0.001f;
   const float command_heading_deg = (float)command->heading_cdeg * 0.01f;
+  const bool reverse_route =
+      expected_command == VISION_CMD_RETURN_CENTER;
+  const float route_body_heading_deg = reverse_route ?
+      task_wrap_angle(command_heading_deg + 180.0f) : command_heading_deg;
   const bool lock_allowed =
       expected_command == VISION_CMD_NAVIGATE_WAYPOINT;
 
@@ -1589,14 +1627,14 @@ static RemoteRouteStatus task_follow_remote_route(
   }
 
   const float desired_heading_deg = nav_heading_locked ?
-      nav_locked_heading_deg : command_heading_deg;
+      nav_locked_heading_deg : route_body_heading_deg;
   const float heading_error_deg = task_wrap_angle(
       desired_heading_deg - current_heading_deg);
   if (nav_ready &&
       ((nav_heading_locked &&
         (task_abs(heading_error_deg) >
          APP_NAV_FINAL_TURN_TOLERANCE_DEG)) ||
-       (!nav_heading_locked &&
+       (!nav_heading_locked && !reverse_route &&
         (task_abs(heading_error_deg) >= APP_NAV_REALIGN_DEG)))) {
     Motor_Stop();
     task_status.motors_active = false;
@@ -1608,6 +1646,14 @@ static RemoteRouteStatus task_follow_remote_route(
   if (!nav_ready) {
     nav_forward_active = false;
     task_reset_remote_targets();
+    if (reverse_route) {
+      /* RETURN heading is the field travel direction. Keep the body facing
+       * opposite that direction and start backing up without a stationary
+       * 180-degree turn. Small yaw corrections remain active while moving. */
+      nav_ready = true;
+      step_started_ms = now_ms;
+      return REMOTE_ROUTE_WAITING;
+    }
     const float turn_tolerance_deg = nav_heading_locked ?
         APP_NAV_FINAL_TURN_TOLERANCE_DEG :
         APP_NAV_HEADING_TOLERANCE_DEG;
@@ -1644,12 +1690,20 @@ static RemoteRouteStatus task_follow_remote_route(
     return REMOTE_ROUTE_WAITING;
   }
 
-  const float target_speed_mm_s = task_remote_route_speed(
+  const float route_speed_mm_s = task_remote_route_speed(
       command->target_x_mm, cruise_speed_mm_s);
-  const float target_yaw_mm_s =
-      task_remote_heading_correction(heading_error_deg);
+  const float target_speed_mm_s = reverse_route ?
+      -route_speed_mm_s : route_speed_mm_s;
+  float target_yaw_mm_s = task_remote_heading_correction(heading_error_deg);
+  if (reverse_route) {
+    if (target_yaw_mm_s > APP_RETURN_CENTER_HEADING_MAX_MM_S) {
+      target_yaw_mm_s = APP_RETURN_CENTER_HEADING_MAX_MM_S;
+    } else if (target_yaw_mm_s < -APP_RETURN_CENTER_HEADING_MAX_MM_S) {
+      target_yaw_mm_s = -APP_RETURN_CENTER_HEADING_MAX_MM_S;
+    }
+  }
   const float speed_rate_mm_s2 =
-      (target_speed_mm_s >= remote_speed_mm_s) ?
+      (task_abs(target_speed_mm_s) >= task_abs(remote_speed_mm_s)) ?
       APP_NAV_SPEED_ACCEL_MM_S2 : APP_NAV_SPEED_DECEL_MM_S2;
   remote_speed_mm_s = task_step_toward(
       remote_speed_mm_s, target_speed_mm_s,

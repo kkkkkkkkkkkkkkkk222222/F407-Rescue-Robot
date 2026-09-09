@@ -4,9 +4,10 @@
 
 #include "app_config.h"
 #include "CenteringTask.h"
+#include "Debug.h"
 #include "DebugConsole.h"
-#include "DebugMotion.h"
 #include "encoder.h"
+#include "Gamepad.h"
 #include "imu.h"
 #include "Lcd.h"
 #include "Location.h"
@@ -86,7 +87,8 @@ static const char *imu_init_result_text(IMUInitResult result)
   }
 }
 
-#if APP_ENABLE_TASK || APP_ENABLE_CENTERING_TASK || APP_ENABLE_MOTION_DEBUG_TASK
+#if APP_ENABLE_TASK || APP_ENABLE_CENTERING_TASK || \
+    APP_ENABLE_MOTION_DEBUG_TASK || APP_ENABLE_GAMEPAD_TASK
 static volatile uint32_t task_release_sequence;
 static volatile uint32_t task_release_ms;
 static uint32_t task_consumed_sequence;
@@ -352,7 +354,8 @@ void Robot_Init(void)
   move_spin_test_end_ms = APP_MOVE_SPIN_TEST_TIME_MS;
   move_spin_test_next_ms = 0U;
 #endif
-#if APP_ENABLE_TASK || APP_ENABLE_CENTERING_TASK || APP_ENABLE_MOTION_DEBUG_TASK
+#if APP_ENABLE_TASK || APP_ENABLE_CENTERING_TASK || \
+    APP_ENABLE_MOTION_DEBUG_TASK || APP_ENABLE_GAMEPAD_TASK
   task_release_sequence = 0U;
   task_release_ms = 0U;
   task_consumed_sequence = 0U;
@@ -378,7 +381,8 @@ void Robot_Init(void)
   HAL_NVIC_SetPriority(USART1_IRQn, 7U, 0U);
   HAL_NVIC_EnableIRQ(USART1_IRQn);
 #endif
-#if APP_ENABLE_TASK || APP_ENABLE_CENTERING_TASK || APP_ENABLE_MOTION_DEBUG_TASK
+#if APP_ENABLE_TASK || APP_ENABLE_CENTERING_TASK || \
+    APP_ENABLE_MOTION_DEBUG_TASK || APP_ENABLE_GAMEPAD_TASK
   HAL_NVIC_SetPriority(PendSV_IRQn, 15U, 0U);
 #endif
 
@@ -399,6 +403,8 @@ void Robot_Init(void)
   Location_Init(LOCATION_START_UNKNOWN);
 #elif APP_ENABLE_MOTION_DEBUG_TASK
   Location_Init(LOCATION_START_UNKNOWN);
+#elif APP_ENABLE_GAMEPAD_TASK
+  Location_Init(LOCATION_START_UNKNOWN);
 #elif APP_ENABLE_LOCATION_DEMO || APP_ENABLE_MOVE_SPIN_TEST
   Location_Init((LocationStart)APP_LOCATION_DEMO_START_ZONE);
 #endif
@@ -414,7 +420,11 @@ void Robot_Init(void)
     CenteringTask_Init(app_milliseconds);
   }
 #elif APP_ENABLE_MOTION_DEBUG_TASK
-  DebugMotionTask_Init(app_milliseconds);
+  Debug_Init(app_milliseconds);
+#elif APP_ENABLE_GAMEPAD_TASK
+  if (application_ready) {
+    Gamepad_Init(app_milliseconds);
+  }
 #endif
 #if APP_ENABLE_RUNTIME_SERVO_DEBUG
   DebugConsole_Init();
@@ -507,7 +517,8 @@ void Robot_Process(void)
 
 void Robot_RunDeferredTask(void)
 {
-#if APP_ENABLE_TASK || APP_ENABLE_CENTERING_TASK || APP_ENABLE_MOTION_DEBUG_TASK
+#if APP_ENABLE_TASK || APP_ENABLE_CENTERING_TASK || \
+    APP_ENABLE_MOTION_DEBUG_TASK || APP_ENABLE_GAMEPAD_TASK
   const uint32_t released = task_release_sequence;
   if (released != task_consumed_sequence) {
     const uint32_t now_ms = task_release_ms;
@@ -522,8 +533,10 @@ void Robot_RunDeferredTask(void)
       Task_Process(now_ms);
 #elif APP_ENABLE_CENTERING_TASK
       CenteringTask_Process(now_ms);
+#elif APP_ENABLE_GAMEPAD_TASK
+      Gamepad_Process(now_ms);
 #else
-      DebugMotionTask_Process(now_ms);
+      Debug_Process(now_ms);
 #endif
     }
   }
@@ -549,7 +562,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *timer)
     motor_control_period_ms = 0U;
     Encoder_Sample10ms();
     ++odom_release_sequence;
-#if APP_ENABLE_LOCATION_DEMO || APP_ENABLE_MOVE_SPIN_TEST || APP_ENABLE_TASK || APP_ENABLE_MOTION_DEBUG_TASK
+#if APP_ENABLE_LOCATION_DEMO || APP_ENABLE_MOVE_SPIN_TEST || APP_ENABLE_TASK || \
+    APP_ENABLE_MOTION_DEBUG_TASK || APP_ENABLE_GAMEPAD_TASK
     Location_Update10ms();
 #endif
     motor_update_due = true;
@@ -560,7 +574,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *timer)
     ++imu_release_sequence;
   }
 
-#if APP_ENABLE_TASK || APP_ENABLE_CENTERING_TASK || APP_ENABLE_MOTION_DEBUG_TASK
+#if APP_ENABLE_TASK || APP_ENABLE_CENTERING_TASK || \
+    APP_ENABLE_MOTION_DEBUG_TASK || APP_ENABLE_GAMEPAD_TASK
   if (++task_period_ms >= APP_TASK_PERIOD_MS) {
     task_period_ms = 0U;
     task_release_ms = app_milliseconds;

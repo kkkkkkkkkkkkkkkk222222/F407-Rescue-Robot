@@ -5,24 +5,51 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "app_config.h"
+
 #define VISION_FRAME_HEAD_1       0xA3U
 #define VISION_FRAME_HEAD_2       0xB3U
 #define VISION_FRAME_TAIL         0xC3U
 #define VISION_FRAME_SIZE         15U
 #define VISION_PAYLOAD_SIZE       8U
 
+#if APP_ENABLE_MOTION_DEBUG_TASK || APP_ENABLE_GAMEPAD_TASK
+/* shijue_fangan 4007ae0 T265 scanner protocol. */
+#define VISION_MSG_MOTION_COMMAND 0x19U
+#define VISION_MSG_MOTION_STATUS  0x1AU
+#else
+/* Kept out of the rescue protocol's 0x17/0x18 namespace. */
 #define VISION_MSG_MOTION_COMMAND 0x1BU
-#define VISION_MSG_MOTION_STATUS 0x1CU
+#define VISION_MSG_MOTION_STATUS  0x1CU
+#endif
 /* UART-controlled motion debug command payload byte 0. */
 #define VISION_MOTION_CMD_STOP          0x00U
-#define VISION_MOTION_CMD_TURN_REL      0x01U
-#define VISION_MOTION_CMD_MOVE_DISTANCE 0x02U
+#define VISION_MOTION_CMD_HOLD          0x01U
+#define VISION_MOTION_CMD_TURN_REL      0x02U
+#define VISION_MOTION_CMD_MOVE_BODY     0x03U
+#define VISION_MOTION_CMD_MOVE_FIELD    0x04U
+#define VISION_MOTION_CMD_RESET_ODOM    0x05U
+#define VISION_MOTION_CMD_TELEOP        0x06U
 
 /* Motion command payload byte 1. The meaning is opcode-specific. */
-#define VISION_MOTION_TURN_NEGATIVE     0x01U
-#define VISION_MOTION_MOVE_FIELD_FRAME 0x01U
+#define VISION_MOTION_VALID             0x01U
+#define VISION_MOTION_KEEP_HEADING      0x02U
+#define VISION_MOTION_FIELD_FRAME       0x04U
+#define VISION_MOTION_ACK_REQUIRED      0x08U
+#define VISION_MOTION_CLEAR_FAULT       0x10U
+#define VISION_MOTION_TELEOP_ENABLE     0x20U
 
-/* TYPE=0x1C status flags in payload byte 6. */
+/* TELEOP payload byte 6. */
+#define VISION_TELEOP_CLAW_CLOSE        0x01U
+#define VISION_TELEOP_CLAW_OPEN         0x02U
+#define VISION_TELEOP_LIFT_UP           0x04U
+#define VISION_TELEOP_LIFT_DOWN         0x08U
+#define VISION_TELEOP_BUTTON_A          0x10U
+#define VISION_TELEOP_BUTTON_B          0x20U
+#define VISION_TELEOP_BUTTON_X          0x40U
+#define VISION_TELEOP_BUTTON_Y          0x80U
+
+/* Motion-status health flags in payload byte 6. */
 #define VISION_MOTION_STATUS_IMU_READY  0x01U
 #define VISION_MOTION_STATUS_ODOM_VALID 0x02U
 #define VISION_MOTION_STATUS_MOTOR_FAULT 0x04U
@@ -133,7 +160,10 @@ typedef struct {
   VisionMissionCommand mission;
   uint32_t motion_tick_ms;
   uint8_t motion_sequence, motion_opcode, motion_flags;
-  uint16_t motion_param_a, motion_param_b, motion_param_c;
+  int16_t motion_arg1, motion_arg2;
+  uint16_t motion_speed;
+  int8_t teleop_forward, teleop_left, teleop_yaw, teleop_camera;
+  uint8_t teleop_buttons, teleop_speed_percent;
   bool motion_valid;
 } VisionData;
 
@@ -152,13 +182,12 @@ typedef struct {
 } VisionOdom;
 
 typedef struct {
-  uint8_t state;
-  uint8_t command;
-  uint16_t progress;
-  uint16_t remaining;
-  uint8_t flags;
-  uint8_t fault;
   uint8_t command_sequence;
+  uint8_t state;
+  uint8_t fault;
+  uint8_t command;
+  int16_t progress;
+  uint16_t heading_cdeg;
 } VisionMotionStatus;
 
 void Vision_QueueMotionStatus(const VisionMotionStatus *status);

@@ -107,7 +107,7 @@ void Lift_SetTravelPosition(void)
 
 bool Claw_Open(uint32_t now_ms)
 {
-  return claw_move_together(CLAW_ACTION_OPEN, now_ms, 128U, 52U, 1000U);
+  return claw_move_together(CLAW_ACTION_OPEN, now_ms, 108U, 72U, 1000U);
 }
 
 bool Claw_Retract(uint32_t now_ms)

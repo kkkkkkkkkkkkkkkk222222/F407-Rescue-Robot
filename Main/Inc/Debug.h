@@ -1,5 +1,5 @@
-#ifndef DEBUG_MOTION_H
-#define DEBUG_MOTION_H
+#ifndef DEBUG_H
+#define DEBUG_H
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -25,14 +25,14 @@ typedef struct {
   DebugMotionState state;
   uint8_t command;
   uint8_t command_sequence;
-  uint16_t progress;
+  int16_t progress;
   uint16_t remaining;
   uint8_t flags;
   DebugMotionFault fault;
-} DebugMotionStatus;
+} DebugStatus;
 
-void DebugMotionTask_Init(uint32_t now_ms);
-void DebugMotionTask_Process(uint32_t now_ms);
-DebugMotionStatus DebugMotionTask_GetStatus(void);
+void Debug_Init(uint32_t now_ms);
+void Debug_Process(uint32_t now_ms);
+DebugStatus Debug_GetStatus(void);
 
 #endif

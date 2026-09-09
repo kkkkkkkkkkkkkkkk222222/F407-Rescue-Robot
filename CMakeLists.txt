@@ -45,7 +45,8 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Main/Src/CenteringTask.c
-    Main/Src/DebugMotion.c
+    Main/Src/Debug.c
+    Main/Src/Gamepad.c
     Main/Src/DebugConsole.c
     Main/Src/Robot.c
     Main/Src/encoder.c

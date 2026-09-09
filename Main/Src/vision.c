@@ -221,42 +221,73 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
   command->received = true;
 }
 
-#if APP_ENABLE_MOTION_DEBUG_TASK
+#if APP_ENABLE_MOTION_DEBUG_TASK || APP_ENABLE_GAMEPAD_TASK
 static bool vision_save_motion_command(const uint8_t *payload,
                                        uint8_t sequence,
                                        uint32_t tick_ms)
 {
   const uint8_t command = payload[0];
   const uint8_t flags = payload[1];
-  const uint16_t parameter_a = ((uint16_t)payload[2] << 8) | payload[3];
-  const uint16_t parameter_b = ((uint16_t)payload[4] << 8) | payload[5];
-  const uint16_t parameter_c = ((uint16_t)payload[6] << 8) | payload[7];
+  const int16_t arg1 = (int16_t)vision_u16_be(&payload[2]);
+  const int16_t arg2 = (int16_t)vision_u16_be(&payload[4]);
+  const uint16_t speed = vision_u16_be(&payload[6]);
 
   if (latest_data.motion_valid &&
       (sequence == latest_data.motion_sequence)) {
     return false;
   }
 
-  bool valid = false;
-  if (command == VISION_MOTION_CMD_STOP) {
-    valid = (flags == 0U) && (parameter_a == 0U) &&
-            (parameter_b == 0U) && (parameter_c == 0U);
+  const uint8_t base_flags = VISION_MOTION_VALID |
+                             VISION_MOTION_ACK_REQUIRED;
+  bool valid = (flags & VISION_MOTION_VALID) != 0U;
+  if ((command == VISION_MOTION_CMD_STOP) ||
+      (command == VISION_MOTION_CMD_HOLD)) {
+    valid = valid && ((flags & (uint8_t)~base_flags) == 0U) &&
+            (arg1 == 0) && (arg2 == 0) && (speed == 0U);
   } else if (command == VISION_MOTION_CMD_TURN_REL) {
-    const bool speed_valid = (parameter_b == 0U) ||
-        ((parameter_b >= (uint16_t)APP_MOTION_DEBUG_MIN_SPEED_MM_S) &&
-         (parameter_b <= (uint16_t)APP_MOTION_DEBUG_MAX_SPEED_MM_S));
-    valid = ((flags & (uint8_t)~VISION_MOTION_TURN_NEGATIVE) == 0U) &&
-            (parameter_a > 0U) &&
-            (parameter_a <= APP_MOTION_DEBUG_MAX_TURN_CDEG) &&
-            speed_valid && (parameter_c == 0U);
-  } else if (command == VISION_MOTION_CMD_MOVE_DISTANCE) {
-    const bool speed_valid = (parameter_c == 0U) ||
-        ((parameter_c >= (uint16_t)APP_MOTION_DEBUG_MIN_SPEED_MM_S) &&
-         (parameter_c <= (uint16_t)APP_MOTION_DEBUG_MAX_SPEED_MM_S));
-    valid = ((flags & (uint8_t)~VISION_MOTION_MOVE_FIELD_FRAME) == 0U) &&
-            (parameter_a < 36000U) && (parameter_b > 0U) &&
-            (parameter_b <= APP_MOTION_DEBUG_MAX_DISTANCE_MM) &&
-            speed_valid;
+    valid = valid && ((flags & (uint8_t)~base_flags) == 0U) &&
+            (arg1 >= -APP_MOTION_DEBUG_MAX_TURN_DDEG) &&
+            (arg1 <= APP_MOTION_DEBUG_MAX_TURN_DDEG) &&
+            (arg1 != 0) && (arg2 == 0) &&
+            (speed <= APP_MOTION_DEBUG_MAX_TURN_RATE_DDEG_S);
+  } else if ((command == VISION_MOTION_CMD_MOVE_BODY) ||
+             (command == VISION_MOTION_CMD_MOVE_FIELD)) {
+    const uint8_t expected_flags = base_flags |
+        ((command == VISION_MOTION_CMD_MOVE_BODY) ?
+         VISION_MOTION_KEEP_HEADING : VISION_MOTION_FIELD_FRAME);
+    const int32_t forward = arg1;
+    const int32_t left = arg2;
+    const int64_t distance_sq = (int64_t)forward * forward +
+                                (int64_t)left * left;
+    valid = valid && ((flags & (uint8_t)~expected_flags) == 0U) &&
+            ((flags & expected_flags) == expected_flags) &&
+            (distance_sq > 0) &&
+            (distance_sq <= (int64_t)APP_MOTION_DEBUG_MAX_DISTANCE_MM *
+                            APP_MOTION_DEBUG_MAX_DISTANCE_MM) &&
+            ((speed == 0U) ||
+             ((speed >= (uint16_t)APP_MOTION_DEBUG_MIN_SPEED_MM_S) &&
+              (speed <= (uint16_t)APP_MOTION_DEBUG_MAX_SPEED_MM_S)));
+  } else if (command == VISION_MOTION_CMD_RESET_ODOM) {
+    const uint8_t reset_flags = base_flags | VISION_MOTION_CLEAR_FAULT;
+    valid = valid && ((flags & (uint8_t)~reset_flags) == 0U) &&
+            (arg1 == 0) && (arg2 == 0) && (speed == 0U);
+#if APP_ENABLE_GAMEPAD_TASK
+  } else if (command == VISION_MOTION_CMD_TELEOP) {
+    const uint8_t teleop_flags = base_flags | VISION_MOTION_TELEOP_ENABLE;
+    const int8_t forward = (int8_t)payload[2];
+    const int8_t left = (int8_t)payload[3];
+    const int8_t yaw = (int8_t)payload[4];
+    const int8_t camera = (int8_t)payload[5];
+    valid = valid && ((flags & (uint8_t)~teleop_flags) == 0U) &&
+            ((flags & base_flags) == base_flags) &&
+            (forward >= -100) && (forward <= 100) &&
+            (left >= -100) && (left <= 100) &&
+            (yaw >= -100) && (yaw <= 100) &&
+            (camera >= -100) && (camera <= 100) &&
+            (payload[7] <= 100U);
+#endif
+  } else {
+    valid = false;
   }
 
   if (!valid) {
@@ -267,9 +298,15 @@ static bool vision_save_motion_command(const uint8_t *payload,
   latest_data.motion_sequence = sequence;
   latest_data.motion_opcode = command;
   latest_data.motion_flags = flags;
-  latest_data.motion_param_a = parameter_a;
-  latest_data.motion_param_b = parameter_b;
-  latest_data.motion_param_c = parameter_c;
+  latest_data.motion_arg1 = arg1;
+  latest_data.motion_arg2 = arg2;
+  latest_data.motion_speed = speed;
+  latest_data.teleop_forward = (int8_t)payload[2];
+  latest_data.teleop_left = (int8_t)payload[3];
+  latest_data.teleop_yaw = (int8_t)payload[4];
+  latest_data.teleop_camera = (int8_t)payload[5];
+  latest_data.teleop_buttons = payload[6];
+  latest_data.teleop_speed_percent = payload[7];
   latest_data.motion_valid = true;
   return true;
 }
@@ -290,7 +327,7 @@ static void vision_save_frame(uint32_t tick_ms)
   latest_data.last_frame_tick_ms = tick_ms;
   latest_data.frame_received = true;
 
-#if APP_ENABLE_MOTION_DEBUG_TASK
+#if APP_ENABLE_MOTION_DEBUG_TASK || APP_ENABLE_GAMEPAD_TASK
   if (type == VISION_MSG_MOTION_COMMAND) {
     (void)vision_save_motion_command(payload, sequence, tick_ms);
   } else
@@ -320,7 +357,7 @@ static bool vision_frame_valid(void)
          ((type == VISION_MSG_CONFIG) || (type == VISION_MSG_REPORT) ||
           (type == VISION_MSG_FUSED_POSE) ||
           (type == VISION_MSG_MISSION)
-#if APP_ENABLE_MOTION_DEBUG_TASK
+#if APP_ENABLE_MOTION_DEBUG_TASK || APP_ENABLE_GAMEPAD_TASK
           || (type == VISION_MSG_MOTION_COMMAND)
 #endif
           ) &&
@@ -519,14 +556,14 @@ void Vision_QueueMotionStatus(const VisionMotionStatus *status)
   }
 
   const uint8_t payload[VISION_PAYLOAD_SIZE] = {
+    status->command_sequence,
     status->state,
+    status->fault,
     status->command,
-    (uint8_t)(status->progress >> 8),
-    (uint8_t)status->progress,
-    (uint8_t)(status->remaining >> 8),
-    (uint8_t)status->remaining,
-    status->flags,
-    status->command_sequence
+    (uint8_t)((uint16_t)status->progress >> 8),
+    (uint8_t)(uint16_t)status->progress,
+    (uint8_t)(status->heading_cdeg >> 8),
+    (uint8_t)status->heading_cdeg
   };
   uint8_t pending[VISION_FRAME_SIZE];
   vision_build_frame(pending, VISION_MSG_MOTION_STATUS,
