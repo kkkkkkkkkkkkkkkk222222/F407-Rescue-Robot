@@ -21,6 +21,9 @@ typedef enum {
   SEARCH_CAMERA_TO_90 = 0,
   SEARCH_HOLD_90,
   SEARCH_SWEEP_90,
+  SEARCH_CAMERA_TO_120,
+  SEARCH_HOLD_120,
+  SEARCH_SWEEP_120,
   SEARCH_RETURN_ALIGN,
   SEARCH_RETURN_CENTER
 } SearchPhase;
@@ -85,7 +88,6 @@ static float remote_yaw_mm_s;
 static float nav_locked_heading_deg;
 static uint32_t tracking_tick_ms;
 static uint32_t approach_report_generation;
-static uint32_t search_counted_report_generation;
 static int16_t nav_last_distance_mm;
 static uint8_t tracking_sequence;
 static uint8_t mission_sequence;
@@ -95,7 +97,6 @@ static float reposition_heading_deg;
 static float reposition_distance_m;
 static uint32_t scan_entry_report_generation;
 static uint32_t nav_final_push_start_path_mm;
-static uint8_t search_phase_report_count;
 static uint8_t locked_cargo_counts;
 static uint8_t configured_color;
 static bool initialized;
@@ -552,8 +553,6 @@ static void task_enter(TaskState next, uint32_t now_ms)
     locked_cargo_counts = 0U;
     search_phase = SEARCH_CAMERA_TO_90;
     scan_entry_report_generation = vision.report_generation;
-    search_counted_report_generation = vision.report_generation;
-    search_phase_report_count = 0U;
     scan_report_gate_open = false;
     reposition_distance_m = 0.0f;
     audit_received = false;
@@ -649,7 +648,6 @@ static void task_initialize(uint32_t now_ms)
   tracking_sequence = 0U;
   tracking_tick_ms = 0U;
   approach_report_generation = 0U;
-  search_counted_report_generation = 0U;
   nav_last_distance_mm = 0;
   mission_sequence = 0U;
   start_reverse_path_mm = 0U;
@@ -658,7 +656,6 @@ static void task_initialize(uint32_t now_ms)
   reposition_distance_m = 0.0f;
   scan_entry_report_generation = 0U;
   nav_final_push_start_path_mm = 0U;
-  search_phase_report_count = 0U;
   locked_cargo_counts = 0U;
   configured_color = 0U;
   initial_claw_ready = false;
@@ -746,24 +743,6 @@ static bool task_scan_locked_target_found(const VisionData *vision,
 {
   return task_scan_report_ready(vision, now_ms) &&
          task_target_matches_lock(vision, now_ms);
-}
-
-static void task_count_search_report(const VisionData *vision,
-                                     uint32_t now_ms)
-{
-  if ((vision->report_generation != search_counted_report_generation) &&
-      Vision_ReportIsFresh(vision, now_ms, APP_VISION_TIMEOUT_MS)) {
-    search_counted_report_generation = vision->report_generation;
-    if (search_phase_report_count < UINT8_MAX) {
-      ++search_phase_report_count;
-    }
-  }
-}
-
-static void task_reset_search_report_count(const VisionData *vision)
-{
-  search_counted_report_generation = vision->report_generation;
-  search_phase_report_count = 0U;
 }
 
 static bool task_scan_camera_to(uint8_t target_angle, uint32_t now_ms)
@@ -889,9 +868,8 @@ static void task_process_start(uint32_t now_ms)
     return;
   }
 
-  const LocationPose pose = Location_GetPose();
-  if (!pose.valid) {
-    task_stop(TASK_FAULT_POSE_TIMEOUT, now_ms);
+  LocationPose pose;
+  if (!task_get_location_pose(&pose, now_ms)) {
     return;
   }
 
@@ -973,7 +951,6 @@ static void task_process_search(const VisionData *vision, uint32_t now_ms)
   /* Reports received before this SEARCH epoch may still be younger than the
    * normal 250 ms timeout. They remain visible on the LCD, but cannot select
    * a target or enter APPROACH until a new valid report is received. */
-  task_count_search_report(vision, now_ms);
   task_status.found = task_scan_target_found(vision, now_ms);
   if (task_status.found) {
     locked_cargo_counts = vision->cargo_counts;
@@ -998,7 +975,6 @@ static void task_process_search(const VisionData *vision, uint32_t now_ms)
           APP_CAMERA_SCAN_ENDPOINT_HOLD_MS) {
         search_phase = SEARCH_SWEEP_90;
         task_reset_turn_tracker();
-        task_reset_search_report_count(vision);
       }
       return;
 
@@ -1006,12 +982,38 @@ static void task_process_search(const VisionData *vision, uint32_t now_ms)
       if (task_full_turn_reached()) {
         Motor_Stop();
         task_status.motors_active = false;
-        if (search_phase_report_count <
-            APP_SEARCH_MIN_REPORTS_PER_SWEEP) {
-          task_reset_turn_tracker();
-          task_reset_search_report_count(vision);
-          return;
-        }
+        search_phase = SEARCH_CAMERA_TO_120;
+        task_reset_turn_tracker();
+        step_started_ms = now_ms;
+        return;
+      }
+      Motor_Move(0.0f, 0.0f, APP_SEARCH_ROTATE_SPEED_MM_S);
+      task_status.motors_active = true;
+      return;
+
+    case SEARCH_CAMERA_TO_120:
+      Motor_Stop();
+      task_status.motors_active = false;
+      if (task_scan_camera_to(APP_SEARCH_HIGH_CAMERA_ANGLE, now_ms)) {
+        search_phase = SEARCH_HOLD_120;
+        step_started_ms = now_ms;
+      }
+      return;
+
+    case SEARCH_HOLD_120:
+      Motor_Stop();
+      task_status.motors_active = false;
+      if ((uint32_t)(now_ms - step_started_ms) >=
+          APP_CAMERA_SCAN_ENDPOINT_HOLD_MS) {
+        search_phase = SEARCH_SWEEP_120;
+        task_reset_turn_tracker();
+      }
+      return;
+
+    case SEARCH_SWEEP_120:
+      if (task_full_turn_reached()) {
+        Motor_Stop();
+        task_status.motors_active = false;
         LocationPose pose;
         if (!task_get_location_pose(&pose, now_ms)) {
           return;
@@ -1020,8 +1022,9 @@ static void task_process_search(const VisionData *vision, uint32_t now_ms)
             (float)pose.x_mm * (float)pose.x_mm +
             (float)pose.y_mm * (float)pose.y_mm);
         if (center_distance_mm <= APP_SEARCH_CENTER_TOLERANCE_MM) {
+          search_phase = SEARCH_CAMERA_TO_90;
           task_reset_turn_tracker();
-          task_reset_search_report_count(vision);
+          step_started_ms = now_ms;
           return;
         }
         reposition_heading_deg = atan2f(-(float)pose.y_mm,
@@ -1762,7 +1765,12 @@ static void task_process_navigation(const VisionData *vision,
   }
   if (vision->mission.command == VISION_CMD_ENTER_SAFE_ZONE) {
     if (!delivery_enter_command_ok(&vision->mission, now_ms)) {
-      task_stop(TASK_FAULT_COMMAND_TIMEOUT, now_ms);
+      task_pause_final_push(now_ms);
+      Motor_Stop();
+      task_status.motors_active = false;
+      nav_ready = false;
+      nav_forward_active = false;
+      task_reset_remote_targets();
       return;
     }
     const RemoteRouteStatus result = task_run_final_push(now_ms);
@@ -1786,14 +1794,23 @@ static void task_process_navigation(const VisionData *vision,
   }
 
   if (vision->mission.command != VISION_CMD_NAVIGATE_WAYPOINT) {
-    task_stop(TASK_FAULT_COMMAND_TIMEOUT, now_ms);
+    task_pause_final_push(now_ms);
+    Motor_Stop();
+    task_status.motors_active = false;
+    nav_ready = false;
+    nav_forward_active = false;
+    task_reset_remote_targets();
     return;
   }
   const RemoteRouteStatus result = task_follow_remote_route(
       &vision->mission, VISION_CMD_NAVIGATE_WAYPOINT,
       APP_NAV_FAST_SPEED_MM_S, now_ms);
   if (result == REMOTE_ROUTE_COMMAND_INVALID) {
-    task_stop(TASK_FAULT_COMMAND_TIMEOUT, now_ms);
+    Motor_Stop();
+    task_status.motors_active = false;
+    nav_ready = false;
+    nav_forward_active = false;
+    task_reset_remote_targets();
   } else if (result == REMOTE_ROUTE_MOTOR_FAULT) {
     task_stop(TASK_FAULT_MOTOR, now_ms);
   }
@@ -1826,7 +1843,10 @@ static void task_process_delivery_verify(
                              APP_MISSION_COMMAND_TIMEOUT_MS) ||
       ((command->command != VISION_CMD_ENTER_SAFE_ZONE) &&
        (command->command != VISION_CMD_TASK_COMPLETE))) {
-    task_stop(TASK_FAULT_COMMAND_TIMEOUT, now_ms);
+    /* This state is already stationary. A delayed camera/planner cycle must
+     * not turn a recoverable communication gap into a latched STOP. */
+    Motor_Stop();
+    task_status.motors_active = false;
     return;
   }
   if ((uint32_t)(now_ms - state_started_ms) <
@@ -1859,7 +1879,11 @@ static void task_process_face_center(const VisionData *vision,
   if (result == REMOTE_ROUTE_REACHED) {
     task_enter(TASK_SEARCH, now_ms);
   } else if (result == REMOTE_ROUTE_COMMAND_INVALID) {
-    task_stop(TASK_FAULT_COMMAND_TIMEOUT, now_ms);
+    Motor_Stop();
+    task_status.motors_active = false;
+    nav_ready = false;
+    nav_forward_active = false;
+    task_reset_remote_targets();
   } else if (result == REMOTE_ROUTE_MOTOR_FAULT) {
     task_stop(TASK_FAULT_MOTOR, now_ms);
   }
@@ -1973,18 +1997,26 @@ static void task_process_remote_action(const VisionMissionCommand *command,
     task_status.motors_active = false;
     return;
   }
-  const uint32_t action_timeout_ms =
-      (remote_action.type == REMOTE_ACTION_DISPERSE) ?
-          APP_REMOTE_DISPERSE_TIMEOUT_MS : APP_REMOTE_ACTION_TIMEOUT_MS;
-  if ((uint32_t)(now_ms - remote_action.started_ms) >= action_timeout_ms) {
-    task_stop(TASK_FAULT_MOTOR, now_ms);
-    return;
-  }
   if (!Vision_MissionIsFresh(command, now_ms,
                              APP_MISSION_COMMAND_TIMEOUT_MS) ||
       (command->command != remote_action.command)) {
     Motor_Stop();
     task_status.motors_active = false;
+    if (!remote_action.paused) {
+      remote_action.paused = true;
+      remote_action.paused_ms = now_ms;
+    }
+    return;
+  }
+  if (remote_action.paused) {
+    remote_action.started_ms += now_ms - remote_action.paused_ms;
+    remote_action.paused = false;
+  }
+  const uint32_t action_timeout_ms =
+      (remote_action.type == REMOTE_ACTION_DISPERSE) ?
+          APP_REMOTE_DISPERSE_TIMEOUT_MS : APP_REMOTE_ACTION_TIMEOUT_MS;
+  if ((uint32_t)(now_ms - remote_action.started_ms) >= action_timeout_ms) {
+    task_stop(TASK_FAULT_MOTOR, now_ms);
     return;
   }
 
@@ -2457,7 +2489,10 @@ void Task_Process(uint32_t now_ms)
 
     case TASK_OPEN_FOR_RAM:
       if (!delivery_enter_command_ok(&vision.mission, now_ms)) {
-        task_stop(TASK_FAULT_COMMAND_TIMEOUT, now_ms);
+        /* Opening is safe to pause. Keep the state and wait for a fresh,
+         * matching ENTER command instead of latching a communication fault. */
+        Motor_Stop();
+        task_status.motors_active = false;
       } else if (task_status.gripper_closed) {
         if (Claw_Open(now_ms)) {
           task_status.gripper_closed = false;
