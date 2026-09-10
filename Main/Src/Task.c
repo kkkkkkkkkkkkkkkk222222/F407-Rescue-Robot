@@ -124,7 +124,7 @@ static bool audit_valid;
 static bool audit_initial_stash;
 static bool audit_destination_injury;
 static bool cargo_recheck_pending;
-static bool route_to_initial_stash;
+static bool route_to_stash;
 static uint8_t audit_consistent_count;
 static uint8_t audit_last_left_class;
 static uint8_t audit_last_right_class;
@@ -561,7 +561,7 @@ static void task_enter(TaskState next, uint32_t now_ms)
     audit_initial_stash = false;
     audit_destination_injury = false;
     cargo_recheck_pending = false;
-    route_to_initial_stash = false;
+    route_to_stash = false;
     audit_consistent_count = 0U;
     audit_last_left_class = 0U;
     audit_last_right_class = 0U;
@@ -686,7 +686,7 @@ static void task_initialize(uint32_t now_ms)
   audit_initial_stash = false;
   audit_destination_injury = false;
   cargo_recheck_pending = false;
-  route_to_initial_stash = false;
+  route_to_stash = false;
   audit_consistent_count = 0U;
   audit_last_left_class = 0U;
   audit_last_right_class = 0U;
@@ -1590,7 +1590,7 @@ static RemoteRouteStatus task_follow_remote_route(
     task_reset_remote_targets();
     return REMOTE_ROUTE_REACHED;
   }
-  if (route_to_initial_stash &&
+  if (route_to_stash &&
       (expected_command == VISION_CMD_NAVIGATE_WAYPOINT) &&
       (command->target_x_mm <=
        (int16_t)APP_NAV_REMOTE_STOP_DISTANCE_MM)) {
@@ -1613,7 +1613,7 @@ static RemoteRouteStatus task_follow_remote_route(
       task_wrap_angle(command_heading_deg + 180.0f) : command_heading_deg;
   const bool lock_allowed =
       (expected_command == VISION_CMD_NAVIGATE_WAYPOINT) &&
-      !route_to_initial_stash;
+      !route_to_stash;
 
   if (nav_heading_locked &&
       (!lock_allowed ||
@@ -1682,7 +1682,7 @@ static RemoteRouteStatus task_follow_remote_route(
   }
 
   if ((expected_command == VISION_CMD_NAVIGATE_WAYPOINT) &&
-      !route_to_initial_stash &&
+      !route_to_stash &&
       ((command->target_x_mm <=
         (int16_t)APP_NAV_REMOTE_STOP_DISTANCE_MM) ||
        nav_final_push_active)) {
@@ -2016,7 +2016,7 @@ static void task_process_remote_action(const VisionMissionCommand *command,
         task_status.gripper_closed = false;
         cargo_recheck_pending = false;
         task_clear_audit_result();
-        route_to_initial_stash = false;
+        route_to_stash = false;
         task_remote_action_finish();
       }
       return;
@@ -2165,9 +2165,33 @@ static void task_accept_mission(const VisionMissionCommand *command,
        * already within a narrow 650 mm gate; never treat a distant HOLD as
        * arrival. */
       task_enter(TASK_SEARCH, now_ms);
+    } else if ((state == TASK_NAVIGATE) && route_to_stash &&
+               !task_status.gripper_closed && nav_payload_valid &&
+               (distance_command_done ||
+                (nav_last_distance_mm <= APP_STASH_ROUTE_HOLD_ACCEPT_MM))) {
+      /* RETURN_STASH uses the existing NAV frame while the claws are empty.
+       * It may change back to SEARCH/HOLD on its tight map tolerance just
+       * before D reaches zero.  Accept that hand-off only after a genuine NAV
+       * payload is already within 100 mm; a distant HOLD remains a stop. */
+      task_enter(TASK_SEARCH, now_ms);
     } else if ((state == TASK_REMOTE_ACTION) && remote_action.done &&
                (remote_action.type == REMOTE_ACTION_DISPERSE)) {
       task_enter(TASK_SEARCH, now_ms);
+    } else if ((state == TASK_REMOTE_ACTION) && !remote_action.done &&
+               (remote_action.type == REMOTE_ACTION_DISPERSE)) {
+      /* HOLD remains a real safety stop and must never be reinterpreted as a
+       * request to scatter.  A short HOLD can be resumed idempotently by a
+       * fresh DISPERSE_PILE command.  If HOLD persists, abandon the partial
+       * scatter and return to SEARCH instead of remaining paused forever. */
+      Motor_Stop();
+      task_status.motors_active = false;
+      if (!remote_action.paused) {
+        remote_action.paused = true;
+        remote_action.paused_ms = now_ms;
+      } else if ((uint32_t)(now_ms - remote_action.paused_ms) >=
+                 APP_REMOTE_DISPERSE_HOLD_CANCEL_MS) {
+        task_enter(TASK_SEARCH, now_ms);
+      }
     } else if (state != TASK_SEARCH) {
       Motor_Stop();
       task_status.motors_active = false;
@@ -2236,7 +2260,19 @@ static void task_accept_mission(const VisionMissionCommand *command,
              ((state == TASK_WAIT_NAVIGATION) ||
               ((state == TASK_REMOTE_ACTION) && remote_action.done))) {
     task_status.acknowledged_sequence = command->sequence;
-    route_to_initial_stash = audit_initial_stash;
+    route_to_stash = audit_initial_stash;
+    task_enter(TASK_NAVIGATE, now_ms);
+  } else if ((command->command == VISION_CMD_NAVIGATE_WAYPOINT) &&
+             !task_status.gripper_closed && (state == TASK_SEARCH) &&
+             task_distance_command_valid(command,
+                                         VISION_CMD_NAVIGATE_WAYPOINT)) {
+    /* The current upper-computer RETURN_STASH state reuses NAV because the
+     * wire protocol has no separate empty-claw waypoint opcode.  Constrain
+     * this compatibility entry to SEARCH + open claws + a fully validated
+     * distance/heading payload, and mark it as a stash route so safe-zone
+     * heading lock and final pushing can never run. */
+    task_status.acknowledged_sequence = command->sequence;
+    route_to_stash = true;
     task_enter(TASK_NAVIGATE, now_ms);
   } else if ((command->command == VISION_CMD_NAVIGATE_WAYPOINT) &&
              (state == TASK_NAVIGATE)) {
@@ -2246,8 +2282,8 @@ static void task_accept_mission(const VisionMissionCommand *command,
     /* Compatibility hold only; ALIGN no longer changes Task state. */
     task_status.acknowledged_sequence = command->sequence;
   } else if ((command->command == VISION_CMD_ENTER_SAFE_ZONE) &&
-               task_status.gripper_closed &&
-               !route_to_initial_stash && (state == TASK_NAVIGATE)) {
+             task_status.gripper_closed &&
+             !route_to_stash && (state == TASK_NAVIGATE)) {
     task_status.acknowledged_sequence = command->sequence;
     if (nav_final_push_done) {
       task_enter(TASK_OPEN_FOR_RAM, now_ms);
