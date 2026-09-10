@@ -73,6 +73,8 @@ static uint32_t pose_invalid_started_ms;
 static uint32_t approach_last_target_ms;
 static uint32_t approach_prestop_started_ms;
 static uint32_t nav_payload_change_ms;
+static uint32_t nav_terminal_candidate_ms;
+static uint32_t nav_terminal_latched_ms;
 static uint32_t nav_final_push_started_ms;
 static uint32_t nav_final_push_paused_ms;
 static float camera_angle;
@@ -113,6 +115,8 @@ static bool start_clearance_done;
 static bool distance_command_done;
 static bool nav_payload_valid;
 static bool nav_payload_stale;
+static bool nav_terminal_candidate;
+static bool nav_terminal_latched;
 static bool nav_forward_active;
 static bool nav_heading_locked;
 static bool nav_final_push_active;
@@ -567,6 +571,8 @@ static void task_enter(TaskState next, uint32_t now_ms)
   nav_final_push_active = false;
   nav_final_push_done = false;
   nav_final_push_paused = false;
+  nav_terminal_candidate = false;
+  nav_terminal_latched = false;
 
   if (next == TASK_START) {
     const LocationPose pose = Location_GetPose();
@@ -662,6 +668,8 @@ static void task_initialize(uint32_t now_ms)
   approach_last_target_ms = now_ms;
   approach_prestop_started_ms = now_ms;
   nav_payload_change_ms = now_ms;
+  nav_terminal_candidate_ms = now_ms;
+  nav_terminal_latched_ms = now_ms;
   nav_final_push_started_ms = now_ms;
   nav_final_push_paused_ms = now_ms;
   camera_angle = (float)Camera_GetAngle();
@@ -699,6 +707,8 @@ static void task_initialize(uint32_t now_ms)
   distance_command_done = false;
   nav_payload_valid = false;
   nav_payload_stale = false;
+  nav_terminal_candidate = false;
+  nav_terminal_latched = false;
   nav_forward_active = false;
   nav_heading_locked = false;
   nav_final_push_active = false;
@@ -1477,6 +1487,37 @@ static bool task_nav_payload_changed(const VisionMissionCommand *command,
   return changed;
 }
 
+static bool task_nav_terminal_timeout(int16_t remaining_mm, uint32_t now_ms)
+{
+  if (nav_terminal_latched) {
+    if (remaining_mm > (int16_t)APP_NAV_TERMINAL_RELEASE_MM) {
+      nav_terminal_candidate = false;
+      nav_terminal_latched = false;
+      return false;
+    }
+    return (uint32_t)(now_ms - nav_terminal_latched_ms) >=
+           APP_NAV_TERMINAL_TIMEOUT_MS;
+  }
+
+  if (remaining_mm > (int16_t)APP_NAV_TERMINAL_WINDOW_MM) {
+    nav_terminal_candidate = false;
+    return false;
+  }
+  if (!nav_terminal_candidate) {
+    nav_terminal_candidate = true;
+    nav_terminal_candidate_ms = now_ms;
+    return false;
+  }
+  if ((uint32_t)(now_ms - nav_terminal_candidate_ms) <
+      APP_NAV_TERMINAL_STABLE_MS) {
+    return false;
+  }
+
+  nav_terminal_latched = true;
+  nav_terminal_latched_ms = now_ms;
+  return false;
+}
+
 static float task_remote_heading_correction(float heading_error_deg)
 {
   const float magnitude = task_abs(heading_error_deg);
@@ -1639,6 +1680,11 @@ static RemoteRouteStatus task_follow_remote_route(
   distance_command_done = false;
   task_status.nav_done = false;
 
+  const bool delivery_route =
+      (expected_command == VISION_CMD_NAVIGATE_WAYPOINT) && !route_to_stash;
+  const bool terminal_timeout = delivery_route &&
+      task_nav_terminal_timeout(command->target_x_mm, now_ms);
+
   const float current_heading_deg = (float)pose.heading_mdeg * 0.001f;
   const float command_heading_deg = (float)command->heading_cdeg * 0.01f;
   const bool reverse_route =
@@ -1715,21 +1761,29 @@ static RemoteRouteStatus task_follow_remote_route(
     return REMOTE_ROUTE_WAITING;
   }
 
-  if ((expected_command == VISION_CMD_NAVIGATE_WAYPOINT) &&
-      !route_to_stash &&
+  if (delivery_route &&
       ((command->target_x_mm <=
         (int16_t)APP_NAV_REMOTE_STOP_DISTANCE_MM) ||
-       nav_final_push_active)) {
+       nav_final_push_active || terminal_timeout)) {
     return task_run_final_push(now_ms);
   }
 
   if (!nav_forward_active) {
     nav_forward_active = true;
     nav_payload_change_ms = now_ms;
-  } else if ((uint32_t)(now_ms - nav_payload_change_ms) >=
-             APP_NAV_REMOTE_PROGRESS_TIMEOUT_MS) {
+  } else if (!nav_terminal_candidate && !nav_terminal_latched &&
+             ((uint32_t)(now_ms - nav_payload_change_ms) >=
+              APP_NAV_REMOTE_PROGRESS_TIMEOUT_MS)) {
     nav_payload_stale = true;
     task_status.nav_stale = true;
+  }
+  if (delivery_route &&
+      (nav_terminal_candidate || nav_terminal_latched)) {
+    /* The terminal envelope is only a background timeout. Keep the original
+     * D-driven motion active and prevent its small pose residual from being
+     * mistaken for a navigation freeze. */
+    nav_payload_stale = false;
+    task_status.nav_stale = false;
   }
   if (nav_payload_stale) {
     Motor_Stop();
@@ -2054,8 +2108,7 @@ static void task_process_remote_action(const VisionMissionCommand *command,
   switch (remote_action.type) {
     case REMOTE_ACTION_RELEASE_LEFT:
       if (Claw_OpenLeft(now_ms)) {
-        /* Left is fully open and right remains at its normal 100-degree touch
-         * position.  The complete two-claw grip is not restored yet. */
+        /* Left is fully open; right holds the retained cargo at 110 degrees. */
         task_status.gripper_closed = false;
         cargo_recheck_pending = true;
         task_clear_audit_result();
@@ -2065,8 +2118,7 @@ static void task_process_remote_action(const VisionMissionCommand *command,
 
     case REMOTE_ACTION_RELEASE_RIGHT:
       if (Claw_OpenRight(now_ms)) {
-        /* Right is fully open and left remains at its normal 80-degree touch
-         * position.  Report closed only after both claws are secured again. */
+        /* Right is fully open; left holds the retained cargo at 70 degrees. */
         task_status.gripper_closed = false;
         cargo_recheck_pending = true;
         task_clear_audit_result();

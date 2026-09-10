@@ -114,18 +114,17 @@ bool Claw_Open(uint32_t now_ms)
 
 bool Claw_OpenLeft(uint32_t now_ms)
 {
-  /* Release the left cargo while the right claw stays at the ordinary
-   * touch position.  Never drive the retained side to its compact/retracted
-   * limit: a large cargo could otherwise stall that servo. */
+  /* Release the left cargo while the right claw holds the retained cargo
+   * 10 degrees tighter than its ordinary 100-degree touch position. */
   return claw_move_together(CLAW_ACTION_OPEN_LEFT, now_ms,
-                            108U, 100U, 600U);
+                            108U, 110U, 600U);
 }
 
 bool Claw_OpenRight(uint32_t now_ms)
 {
-  /* Mirror of Claw_OpenLeft: left stays at its normal touch position. */
+  /* Mirror of Claw_OpenLeft: 70 degrees is 10 degrees tighter than touch. */
   return claw_move_together(CLAW_ACTION_OPEN_RIGHT, now_ms,
-                            80U, 72U, 600U);
+                            70U, 72U, 600U);
 }
 
 bool Claw_Retract(uint32_t now_ms)
