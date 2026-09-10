@@ -89,7 +89,7 @@ static float nav_locked_heading_deg;
 static uint32_t tracking_tick_ms;
 static uint32_t approach_report_generation;
 static int16_t nav_last_distance_mm;
-static uint8_t tracking_sequence;
+static uint32_t tracking_report_generation;
 static uint8_t mission_sequence;
 static uint32_t start_reverse_path_mm;
 static float start_target_heading_deg;
@@ -254,6 +254,34 @@ static void task_reset_tracking(void)
   steering_target_mm_s = 0.0f;
   Pid_Reset(&steering_pid);
   Pid_Reset(&camera_pid);
+}
+
+static bool task_yield_allowed(void)
+{
+  if ((state == TASK_APPROACH) || (state == TASK_NAVIGATE) ||
+      (state == TASK_FACE_FIELD_CENTER)) {
+    return true;
+  }
+  if ((state != TASK_REMOTE_ACTION) || !remote_action.done) {
+    return false;
+  }
+  return (remote_action.type == REMOTE_ACTION_RELEASE_LEFT) ||
+         (remote_action.type == REMOTE_ACTION_RELEASE_RIGHT) ||
+         (remote_action.type == REMOTE_ACTION_RELEASE_BOTH) ||
+         (remote_action.type == REMOTE_ACTION_ESCAPE);
+}
+
+static bool task_escape_allowed(void)
+{
+  return (state == TASK_APPROACH) || (state == TASK_NAVIGATE) ||
+         (state == TASK_FACE_FIELD_CENTER) ||
+         ((state == TASK_REMOTE_ACTION) && remote_action.done &&
+          (remote_action.type == REMOTE_ACTION_YIELD));
+}
+
+static bool task_lane_allowed(void)
+{
+  return (state == TASK_APPROACH) || (state == TASK_NAVIGATE);
 }
 
 static void task_reset_turn_tracker(void)
@@ -645,7 +673,7 @@ static void task_initialize(uint32_t now_ms)
   remote_speed_mm_s = 0.0f;
   remote_yaw_mm_s = 0.0f;
   nav_locked_heading_deg = 0.0f;
-  tracking_sequence = 0U;
+  tracking_report_generation = 0U;
   tracking_tick_ms = 0U;
   approach_report_generation = 0U;
   nav_last_distance_mm = 0;
@@ -789,11 +817,14 @@ static float task_tracking_dt(uint32_t tick_ms)
 
 static float task_track_target(const VisionData *vision)
 {
-  if (tracking_valid && (vision->sequence == tracking_sequence)) {
+  /* Legacy target reports and TYPE=0x18 APPROACH_TARGET commands both advance
+   * report_generation, but they do not share one 8-bit sequence field. */
+  if (tracking_valid &&
+      (vision->report_generation == tracking_report_generation)) {
     return steering_target_mm_s;
   }
   const float dt_s = task_tracking_dt(vision->tick_ms);
-  tracking_sequence = vision->sequence;
+  tracking_report_generation = vision->report_generation;
   tracking_tick_ms = vision->tick_ms;
   tracking_valid = true;
 
@@ -2345,18 +2376,15 @@ static void task_accept_mission(const VisionMissionCommand *command,
       remote_action.paused = false;
     }
   } else if ((command->command == VISION_CMD_YIELD_BACKOFF) &&
-             (state != TASK_STOPPED) &&
-             ((state != TASK_REMOTE_ACTION) || remote_action.done)) {
+             task_yield_allowed()) {
     task_status.acknowledged_sequence = command->sequence;
     task_start_remote_action(REMOTE_ACTION_YIELD, command, now_ms);
   } else if ((command->command == VISION_CMD_ESCAPE_MANEUVER) &&
-             (state != TASK_STOPPED) &&
-             ((state != TASK_REMOTE_ACTION) || remote_action.done)) {
+             task_escape_allowed()) {
     task_status.acknowledged_sequence = command->sequence;
     task_start_remote_action(REMOTE_ACTION_ESCAPE, command, now_ms);
   } else if ((command->command == VISION_CMD_CHANGE_LANE) &&
-             (state != TASK_STOPPED) &&
-             ((state != TASK_REMOTE_ACTION) || remote_action.done)) {
+             task_lane_allowed()) {
     task_status.acknowledged_sequence = command->sequence;
     task_start_remote_action(REMOTE_ACTION_LANE, command, now_ms);
   } else if ((command->command == VISION_CMD_DISPERSE_PILE) &&
@@ -2417,6 +2445,23 @@ void Task_Process(uint32_t now_ms)
       (state != TASK_OPEN_CLAW) && (state != TASK_SEARCH)) {
     Motor_Stop();
     task_status.motors_active = false;
+    if (state == TASK_APPROACH) {
+      /* HOLD stops immediately, but it must not freeze mode=20 forever after
+       * the upper computer has abandoned a lost target. */
+      task_status.auto_approach = true;
+      task_status.found = false;
+      if ((uint32_t)(now_ms - approach_last_target_ms) >=
+          APP_APPROACH_FRAME_LOSS_MS) {
+        task_enter(TASK_APPROACH_RECOVER, now_ms);
+      }
+    } else if (state == TASK_APPROACH_RECOVER) {
+      task_status.auto_approach = true;
+      task_status.found = false;
+      if ((uint32_t)(now_ms - state_started_ms) >=
+          APP_APPROACH_LOSS_HOLD_MS) {
+        task_enter(TASK_SEARCH, now_ms);
+      }
+    }
     task_publish_status(now_ms);
     return;
   }

@@ -367,3 +367,10 @@ RUN         停车并复位MCU，重新进入正常模式
 - NAV、RETURN、OPEN_FOR_RAM和RAM_VERIFY中的任务命令短暂过期或阶段暂时不匹配时只停车并保留状态，不再产生锁存的`COMMAND_TIMEOUT`。明确STOP/ABORT仍立即进入STOPPED，电机、持续位姿和内部状态故障仍保留原保护。
 - 远程动作遇到任务命令断流或不匹配时记录暂停时间；收到同一动作的新鲜命令后从原阶段继续，暂停时间不计入7秒/15秒物理动作超时，避免通信调度延迟被误报成电机故障。
 - 上位机不应再复制F407的250/600/1200 ms APPROACH帧龄控制，也不应在普通目标丢失、ID变化或恢复等待时发送ABORT。高层只保留长期STM失联、明确STM故障、确认越界和用户急停；其余异常统一降级为HOLD/SEARCH，并让F407完成短周期底盘保护。
+
+## 39. 2026-09-10修复TYPE=0x18逐帧跟踪与ACTION越状态执行
+
+- 运行记录曾出现上位机已经进入SEARCH并持续发送HOLD、F407仍停在`mode=20`的状态分裂。现在APPROACH收到HOLD仍立即停车，但不会冻结恢复计时：距最后合法目标达到1200 ms进入`mode=24`，再静止500 ms进入`mode=3/SEARCH`。最新版上位机的`WAIT_SEARCH_RECOVERY`仍应停止刷新HOLD并等待该握手；底盘处理持续HOLD只是防止双方再次互相等待。
+- `TYPE=0x18/APPROACH_TARGET`转换原先只递增`report_generation`，而水平PID和舵机3仍用旧`TYPE=0x12`的8位`sequence`判重，导致完整流程通常只处理第一帧坐标。现统一使用32位`report_generation`作为目标帧标识，两种目标协议都能逐帧刷新X/Y滤波、水平转向和相机俯仰。
+- SEARCH自身没有横移。为防止relay残留的新SEQ动作帧抢占SEARCH，`YIELD_BACKOFF`只允许APPROACH、NAV、RETURN或已完成的释放/脱困动作进入，`ESCAPE_MANEUVER`只允许上述运动状态或已完成YIELD进入，`CHANGE_LANE`只允许APPROACH/NAV进入；SEARCH仅保留合法`DISPERSE_PILE`进入ACTION。重复的同一动作仍可在ACTION中ACK，不会重启动作。
+- 回归重点：连续发送不同SEQ且Y坐标变化的APPROACH帧时LCD Angle必须连续变化；X误差收敛后旋转量必须同步下降；`mode=3`下注入YIELD/ESCAPE/LANE不得进入ACTION，合法DISPERSE仍应进入并最终上报`mode=35`；持续HOLD应观测到`mode20 -> mode24 -> mode3`而不是永久停在mode20。
