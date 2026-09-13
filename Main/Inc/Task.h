@@ -16,16 +16,14 @@ typedef enum {
   TASK_CLOSE_CLAW,
   TASK_WAIT_NAVIGATION,
   TASK_NAVIGATE,
-  /* Reserved protocol value: safe-zone heading alignment was removed. */
-  TASK_ALIGN_SAFE_ZONE,
-  TASK_OPEN_FOR_RAM,
-  /* Reserved protocol values: collision delivery has been removed. */
-  TASK_RAM_BACK,
-  TASK_RAM_FORWARD,
-  TASK_RAM_VERIFY,
-  TASK_EXIT_SAFE_ZONE,
-  TASK_FACE_FIELD_CENTER,
-  TASK_STOPPED,
+  /* Keep wire mode values stable while omitting removed modes 11, 13, 14. */
+  TASK_OPEN_FOR_RAM = 12,
+  TASK_RAM_VERIFY = 15,
+  /* Encoder/IMU backoff after unloading, before remote H/D return. */
+  TASK_EXIT_SAFE_ZONE = 16,
+  /* Turn to the remote H direction, then drive forward using remote D. */
+  TASK_FACE_FIELD_CENTER = 17,
+  TASK_STOPPED = 18,
   /* Values 19..23 belonged to the removed blind start-scatter sequence. */
   TASK_APPROACH_RECOVER = 24,
   TASK_REMOTE_ACTION = 25

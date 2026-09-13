@@ -190,6 +190,7 @@ static void vision_save_fused_pose(const uint8_t *payload, uint8_t sequence,
 static bool vision_mission_code_valid(uint8_t command)
 {
   return (command == VISION_CMD_STOP) ||
+         (command == VISION_CMD_PAUSE) ||
          ((command >= VISION_CMD_GRAB_CONFIRMED) &&
           (command <= VISION_CMD_CARGO_AUDIT));
 }

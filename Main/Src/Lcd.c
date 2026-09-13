@@ -613,10 +613,7 @@ static const char *task_state_name(TaskState state)
     case TASK_CLOSE_CLAW:        return "CLOSE";
     case TASK_WAIT_NAVIGATION:   return "WAITNAV";
     case TASK_NAVIGATE:          return "NAV";
-    case TASK_ALIGN_SAFE_ZONE:   return "ALIGN";
     case TASK_OPEN_FOR_RAM:      return "OPENRAM";
-    case TASK_RAM_BACK:          return "RAMBACK";
-    case TASK_RAM_FORWARD:       return "RAMFWD";
     case TASK_RAM_VERIFY:        return "CHECK";
     case TASK_EXIT_SAFE_ZONE:    return "EXITSAFE";
     case TASK_FACE_FIELD_CENTER: return "CENTER";
@@ -648,6 +645,7 @@ static const char *task_command_name(uint8_t command, bool received)
   }
   switch (command) {
     case VISION_CMD_STOP:              return "STOP";
+    case VISION_CMD_PAUSE:             return "PAUSE";
     case VISION_CMD_GRAB_CONFIRMED:    return "GRAB";
     case VISION_CMD_NAVIGATE_WAYPOINT: return "NAV";
     case VISION_CMD_ALIGN_SAFE_ZONE:   return "ALIGN";
@@ -717,7 +715,6 @@ static void draw_task(const LCDDashboard *dashboard)
                    task.gripper_closed ? "OK" : "WAIT",
                    task.acknowledged_sequence);
   } else if ((task.state == TASK_NAVIGATE) ||
-             (task.state == TASK_ALIGN_SAFE_ZONE) ||
              (task.state == TASK_FACE_FIELD_CENTER)) {
     if (vision->mission.received &&
         (vision->mission.command != VISION_CMD_STOP)) {
@@ -725,14 +722,9 @@ static void draw_task(const LCDDashboard *dashboard)
         const int distance_mm = (vision->mission.target_x_mm >= 0) ?
             vision->mission.target_x_mm : 0;
         const LocationPose pose = Location_GetPose();
-        const bool reverse_return =
-            task.state == TASK_FACE_FIELD_CENTER;
-        const char heading_kind = reverse_return ? 'B' :
-            (task.nav_heading_locked ? 'L' : 'T');
-        const unsigned int displayed_heading = reverse_return ?
-            (vision->mission.heading_cdeg / 100U + 180U) % 360U :
-            (task.nav_heading_locked ? task.nav_locked_heading_deg :
-                                       vision->mission.heading_cdeg / 100U);
+        const char heading_kind = task.nav_heading_locked ? 'L' : 'T';
+        const unsigned int displayed_heading = task.nav_heading_locked ?
+            task.nav_locked_heading_deg : vision->mission.heading_cdeg / 100U;
         if (pose.valid) {
           (void)snprintf(text, sizeof(text), "%c:%03u A:%03ld D:%04d",
                          heading_kind, displayed_heading,

@@ -102,6 +102,12 @@ class VisionProtocolTests(unittest.TestCase):
         self.assertEqual(protocol.parse_frame(disperse)[2][0],
                          protocol.CMD_DISPERSE_PILE)
 
+    def test_pause_uses_reserved_mission_code(self) -> None:
+        pause = protocol.mission_frame(
+            0x33, protocol.CMD_PAUSE, protocol.CMD_VALID,
+        )
+        self.assertEqual(protocol.parse_frame(pause)[2][0], 0x01)
+
     def test_stm_status_matches_upper_computer(self) -> None:
         frame = protocol.stm_status_frame(9, 0x29, 2, 7350, 8, 0)
         self.assertEqual(

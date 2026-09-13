@@ -36,6 +36,7 @@ STM_DISTANCE_DONE = 0x20
 STM_FAULT = 0x80
 
 CMD_STOP = 0x00
+CMD_PAUSE = 0x01
 CMD_GRAB_CONFIRMED = 0x02
 CMD_NAVIGATE_WAYPOINT = 0x03
 CMD_ALIGN_SAFE_ZONE = 0x04
@@ -230,7 +231,8 @@ def mission_frame(
     target_y_mm: int = 0,
     heading_cdeg: int = 0,
 ) -> bytes:
-    if command != CMD_STOP and not CMD_GRAB_CONFIRMED <= command <= CMD_CARGO_AUDIT:
+    if (command not in (CMD_STOP, CMD_PAUSE) and
+            not CMD_GRAB_CONFIRMED <= command <= CMD_CARGO_AUDIT):
         raise ValueError("invalid mission command")
     if not flags & CMD_VALID or flags & 0xE0:
         raise ValueError("invalid mission flags")
