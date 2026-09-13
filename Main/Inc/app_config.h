@@ -59,6 +59,9 @@
 #define APP_ENABLE_SERVO_SWEEP_TEST      0
 #define APP_ENABLE_TASK (APP_ACTIVE_MODE == APP_MODE_RESCUE_TASK)
 #define APP_ENABLE_CENTERING_TASK (APP_ACTIVE_MODE == APP_MODE_CENTERING_TASK)
+/* NormalRun relies on the upper computer's fused-pose progress monitor.
+ * Standalone debug/gamepad firmware keeps the local encoder fault guard. */
+#define APP_ENABLE_LOCAL_MOTOR_FAULT_STOP (!APP_ENABLE_TASK)
 /* USART1 (PCB serial port 2) text console. It can suspend TASK and position
  * one servo at a time without changing the USART3 RDK protocol. */
 #define APP_ENABLE_RUNTIME_SERVO_DEBUG \
@@ -244,22 +247,16 @@
 #define APP_VISION_MAX_Y                1023U
 #define APP_SEARCH_ROTATE_SPEED_MM_S     200.0f
 #define APP_APPROACH_SPEED_MM_S          350.0f
-#define APP_GRAB_MID_SPEED_MM_S          225.0f
+#define APP_GRAB_MID_SPEED_MM_S          350.0f
 #define APP_GRAB_SLOW_SPEED_MM_S         125.0f
 #define APP_GRAB_MID_DISTANCE_MM         500U
 #define APP_GRAB_SLOW_DISTANCE_MM        250U
-#define APP_GRAB_HOLD_DISTANCE_MM        120U
-#define APP_GRAB_HOLD_X_ERROR_PX          96.0f
-#define APP_GRAB_PRESTOP_CAMERA_ANGLE    135U
-#define APP_GRAB_PRESTOP_SPEED_MM_S       80.0f
-#define APP_GRAB_PRESTOP_FALLBACK_MS     700U
-#define APP_APPROACH_FRAME_HOLD_MS        250U
-#define APP_APPROACH_FRAME_STOP_MS        600U
-#define APP_APPROACH_FRAME_LOSS_MS       1200U
-#if (APP_APPROACH_FRAME_HOLD_MS >= APP_APPROACH_FRAME_STOP_MS) || \
-    (APP_APPROACH_FRAME_STOP_MS >= APP_APPROACH_FRAME_LOSS_MS)
-#error "Approach frame hold/stop/loss times must be strictly increasing"
-#endif
+#define APP_GRAB_ALIGN_CAMERA_ANGLE      125U
+#define APP_GRAB_ALIGN_X_ERROR_PX         24.0f
+#define APP_GRAB_REACQUIRE_X_ERROR_PX     96.0f
+#define APP_GRAB_REACQUIRE_SPEED_MM_S    350.0f
+#define APP_GRAB_REACQUIRE_DISTANCE_MM   300U
+#define APP_GRAB_REACQUIRE_STEP_MS        40U
 #define APP_APPROACH_LOSS_HOLD_MS         500U
 #define APP_STEERING_EXIT_DEAD_ZONE       8
 #define APP_STEERING_ENTER_DEAD_ZONE     16
@@ -270,8 +267,6 @@
 #define APP_STEERING_MIN_MM_S             40.0f
 #define APP_STEERING_LIMIT_MM_S          175.0f
 #define APP_STEERING_RATE_MM_S2         1000.0f
-#define APP_STEERING_FRAME_HOLD_MS        120U
-#define APP_STEERING_FRAME_STOP_MS        300U
 #define APP_STEERING_DIRECTION           1.0f
 #define APP_CAMERA_DEAD_ZONE              12
 #define APP_CAMERA_KP_DEG_PER_PX          0.0350f
@@ -292,7 +287,6 @@
 #define APP_CENTERING_CAMERA_STEP_LIMIT_DEG  6.0f
 
 /* Native-resolution mission flow shared with shijue_fangan/mission_test. */
-#define APP_MISSION_COMMAND_TIMEOUT_MS   250U
 #define APP_GRAB_VIEW_ANGLE              140U
 #define APP_GRAB_INITIAL_OBSERVE_MS      500U
 #define APP_GRAB_CAMERA_RAISE_STEP_DEG    10U
@@ -347,21 +341,18 @@
 #define APP_RETURN_CENTER_HEADING_MAX_MM_S 100.0f
 #define APP_RETURN_CENTER_TURN_TOLERANCE_DEG 3.0f
 #define APP_RETURN_CENTER_REALIGN_DEG       8.0f
+#define APP_STASH_RETURN_BACKOFF_M           0.35f
+#define APP_STASH_RETURN_BACKOFF_SPEED_MM_S 650.0f
 #define APP_REMOTE_YIELD_SPEED_MM_S          750.0f
 #define APP_CARGO_SEPARATE_START_MM            100U
 #define APP_CARGO_SEPARATE_START_SPEED_MM_S  450.0f
 #define APP_CARGO_RECHECK_SETTLE_MS             300U
 #define APP_REMOTE_ESCAPE_LATERAL_SPEED_MM_S 800.0f
 #define APP_REMOTE_LANE_SPEED_MM_S           850.0f
-#define APP_REMOTE_DISPERSE_PUSH_SPEED_MM_S    1000.0f
-#define APP_REMOTE_DISPERSE_SWEEP_SPEED_MM_S    900.0f
-#define APP_REMOTE_DISPERSE_BACK_SPEED_MM_S     900.0f
-#define APP_REMOTE_DISPERSE_SWEEP_YAW_MM_S      350.0f
-#define APP_REMOTE_DISPERSE_BUILDUP_BACK_M        0.30f
-#define APP_REMOTE_DISPERSE_CENTER_PUSH_M         0.50f
-#define APP_REMOTE_DISPERSE_SWEEP_PUSH_M          0.48f
-#define APP_REMOTE_DISPERSE_RECOVER_BACK_M        0.38f
-#define APP_REMOTE_DISPERSE_SWEEP_ANGLE_DEG      60.0f
+#define APP_REMOTE_DISPERSE_SPEED_MM_S          700.0f
+#define APP_REMOTE_DISPERSE_RETURN_SPEED_MM_S   650.0f
+#define APP_REMOTE_DISPERSE_YAW_MM_S            450.0f
+#define APP_REMOTE_DISPERSE_DISTANCE_M             0.50f
 #define APP_REMOTE_DISPERSE_TIMEOUT_MS          15000U
 #define APP_REMOTE_DISPERSE_HOLD_CANCEL_MS       1000U
 #define APP_REMOTE_ACTION_TIMEOUT_MS          7000U

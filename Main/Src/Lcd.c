@@ -631,10 +631,6 @@ static const char *task_uart_state(const LCDDashboard *dashboard)
   if (!dashboard->uart_received) {
     return "WAIT";
   }
-  if ((uint32_t)(dashboard->now_ms - dashboard->uart_last_rx_ms) >
-      APP_VISION_TIMEOUT_MS) {
-    return "TMO";
-  }
   return "OK";
 }
 
@@ -674,10 +670,6 @@ static const char *task_command_state(const LCDDashboard *dashboard,
   if (!command->received) {
     return task_uart_state(dashboard);
   }
-  if (!Vision_MissionIsFresh(command, dashboard->now_ms,
-                             APP_MISSION_COMMAND_TIMEOUT_MS)) {
-    return "TMO";
-  }
   if (task->nav_final_push) {
     return "PUSH";
   }
@@ -695,8 +687,7 @@ static void draw_task(const LCDDashboard *dashboard)
   char text[32];
   const TaskStatus task = Task_GetStatus();
   const VisionData *vision = &dashboard->vision;
-  const bool report_fresh =
-      Vision_IsFresh(vision, dashboard->now_ms, APP_VISION_TIMEOUT_MS);
+  const bool report_valid = vision->valid && vision->found;
 
   if (dashboard->debug_mode) {
     (void)strcpy(text, "MODE:DEBUG");
@@ -756,13 +747,11 @@ static void draw_task(const LCDDashboard *dashboard)
                    task.audit_left_class, task.audit_right_class,
                    task.audit_total_count);
   } else if (vision->mission.received &&
-             (vision->mission.command == VISION_CMD_APPROACH_TARGET) &&
-             Vision_MissionIsFresh(&vision->mission, dashboard->now_ms,
-                                   APP_MISSION_COMMAND_TIMEOUT_MS)) {
+             (vision->mission.command == VISION_CMD_APPROACH_TARGET)) {
     (void)snprintf(text, sizeof(text), "X:%04d Y:%04d",
                    vision->mission.target_x_mm,
                    vision->mission.target_y_mm);
-  } else if (report_fresh) {
+  } else if (report_valid) {
     (void)snprintf(text, sizeof(text), "X:%04u Y:%04u",
                    vision->x, vision->y);
   } else {

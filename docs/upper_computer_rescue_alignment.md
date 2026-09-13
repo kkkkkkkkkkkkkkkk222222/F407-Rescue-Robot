@@ -12,7 +12,7 @@
 
 ### HOLD、PAUSE、STOP、ABORT语义
 
-- `HOLD=10`：正常流程心跳。SEARCH继续扫描；其他运动阶段安全停车，但保留既有的APPROACH丢目标恢复和DISPERSE持续HOLD取消语义。
+- `HOLD=10`：正常流程心跳。SEARCH继续扫描；APPROACH常规跟踪/125°对正、NAV、RETURN和远程动作安全停车。F407进入125→140°、140°最多300 mm限距重获或140→90°慢抬重获后，HOLD表示“本帧未见目标”但不会打断已触发的本地序列；需要真正冻结必须发送PAUSE。
 - `PAUSE=1`：操作员暂停、定位短时不可用但希望保留当前阶段、或上位机内部重建状态时使用。F407 ACK后锁存停车并保持Task状态；帧过期也不会自行恢复，且不会触发DISPERSE的HOLD取消。
 - 解除PAUSE必须发送一条当前状态可接受、SEQ递增的非PAUSE命令：SEARCH发HOLD，APPROACH发APPROACH_TARGET，NAV发NAVIGATE_WAYPOINT，RETURN发RETURN_CENTER，远程动作重发原动作命令。无效或阶段不匹配的命令不会解除暂停。
 - `STOP=0`不是普通暂停；除NAV兼容入口外会形成远程停止故障。`ABORT=7`始终用于不可自动恢复的终止。
@@ -23,16 +23,17 @@
 - 稳定审核只需满足`total_count>0`。左右2-bit计数字段可能饱和，不要求`left_count + right_count == total_count`，危险、未知或混合类别也不作为本次临时搬堆的拒绝条件。
 - 上位机实现上应删除`_pile_batch()`对`max_batch_count`的截断，并在`_audit_valid()`中把`selected_batch.initial_stash`的`total_count>0`判断放到正式投送的数量、类别和计数一致性判断之前。编码时左右计数仍饱和到0～3，P7保留实际总数；F407在initial_stash中不会用饱和计数拒绝动作。
 - 这一放宽只适用于临时藏堆；从藏点取回并准备正式投送时必须重新执行完整审核，不能沿用暂存审核结果。
+- 藏点`RELEASE_BOTH`完成后，上位机应立即进入`RETURN_CENTER`并持续发送最新H/D。F407会屏蔽残留的`APPROACH_TARGET`和`DISPERSE_PILE`，先保持释放时的车头方向直退0.35 m，再使用最新H调头返中；这段期间上位机不得因mode17尚未开始转向而改发HOLD、重发RELEASE或判定卡住。正常投送的mode16退出流程不受影响。
 
 ## 3. 普通与核心混装必须先拆分
 
 当前机械结构不能可靠地把普通与核心混装批次一次卸出。请在`_audit_valid()`正式物资分支之前增加“普通+核心同时存在”的判断，不要直接进入GRAB/NAV。
 
 - 左右侧类别分别为`green_supply`和`core_black`：进入`INVALID_RELEASE`。首件绿色尚未完成时保留绿色侧并释放核心侧；之后优先保留数量为1且类别明确的一侧。
-- 任一侧为`mixed_material`，或无法确定普通/核心分别位于哪侧：发送`RELEASE_BOTH`，完成YIELD后进入SEARCH并发送`DISPERSE_PILE`。
+- 任一侧为`mixed_material`，或无法确定普通/核心分别位于哪侧：第一次发送`RELEASE_BOTH`。F407会按不明侧约定只打开左爪、右爪保持正常Touch；随后发送`YIELD_BACKOFF(-250 mm)`，等待mode30后必须重新进入`CAPTURE_AUDIT`，不能直接SEARCH。
 - 单侧释放完成后发送`YIELD_BACKOFF(-250 mm)`；等待新鲜`mode=30`后重新进入`CAPTURE_AUDIT`，不得直接SEARCH。
 - 复审合法时把`selected_batch`替换为实际保留的单件，再发送`GRAB_CONFIRMED`直到F407上报`GRIPPER_CLOSED=1`。被释放物资不计入本次投送，留待后续重新搜索。
-- 复审仍非法时只发送`RELEASE_BOTH`，随后YIELD并返回SEARCH/打散。
+- 复审合法时持续发送`GRAB_CONFIRMED`直到双爪重新闭合；复审仍非法时再次发送`RELEASE_BOTH`，此时F407才会双爪全开，随后YIELD并返回SEARCH/按策略打散。
 
 F407会校验释放侧计数：`RELEASE_LEFT/RIGHT`对应侧必须非空；复审失败阶段只接受`RELEASE_BOTH`。命令与最近稳定审核不一致时不会ACK或动作。
 
@@ -57,6 +58,7 @@ F407会校验释放侧计数：`RELEASE_LEFT/RIGHT`对应侧必须非空；复�
 - 每个`YIELD_BACKOFF`都必须持续发送到新鲜`mode=30`，包括双爪释放后的退让。
 - `ESCAPE_MANEUVER`持续发送到新鲜`mode=31`。F407会先把大舵机恢复85°行驶位置，再执行旋转和横移。
 - 远程动作暂时丢帧、但仍允许F407执行既有恢复策略时可发HOLD；若要求动作原地冻结且恢复后从当前阶段继续，应发PAUSE。两者都不能把未完成动作直接标记完成，恢复时继续重复原命令并递增SEQ。
+- `DISPERSE_PILE`开始后持续发送同一命令的新SEQ，必须等到mode35才进入SEARCH。删除固定5秒伪完成分支；F407的新动作是Touch闭爪、700 mm/s直冲0.50 m、双爪全开、分段摆头到`+45/-45/+60/-60/0°`、再以650 mm/s倒退0.50 m，内部保护上限15秒，建议上位机只在超过18秒仍未收到mode35时停车告警。
 
 ## 7. 必测回归
 
@@ -70,6 +72,8 @@ F407会校验释放侧计数：`RELEASE_LEFT/RIGHT`对应侧必须非空；复�
 8. mode15视觉确认两次超时后不会无限ENTER：无区外反证时能TASK_COMPLETE，有明确区外反证时安全停车告警。
 9. TASK_COMPLETE后依次看到mode16、mode17、mode3；mode17阶段H变化时重新计算朝向，D=0才结束。
 10. RETURN中途HOLD只停车，恢复RETURN后继续；HOLD不能伪造回中完成。
+11. 临时藏堆释放后发送RETURN，确认F407先直退0.35 m且车头不旋转，随后才按最新H调头；正常投送返中不得多退一次。
+12. DISPERSE两段均完成0.50 m和360°后才出现mode35；第二次触发时旋转方向与第一次相反，上位机5秒时不得提前退出。
 
 ## 8. 上位机下一步优化建议
 

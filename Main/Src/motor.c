@@ -550,6 +550,7 @@ static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
     return;
   }
 
+#if APP_ENABLE_LOCAL_MOTOR_FAULT_STOP
   if ((targets[0] != 0) || (targets[1] != 0)) {
     const float progress = travelled_mm - distance_move.last_progress_mm;
     if (progress >= APP_GO_DISTANCE_PROGRESS_MM) {
@@ -565,6 +566,7 @@ static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
       return;
     }
   }
+#endif
 
   float requested_speed_mm_s = distance_move.max_speed_mm_s;
 
@@ -924,6 +926,7 @@ void Motor_Update(void)
       --stall_grace_cycles[index];
     }
 
+#if APP_ENABLE_LOCAL_MOTOR_FAULT_STOP
     const bool wrong_direction = (direction_grace_cycles[index] == 0U) &&
         (((targets[index] > 0) && (measured <= -APP_MOTOR_DIRECTION_FAULT_COUNT)) ||
          ((targets[index] < 0) && (measured >= APP_MOTOR_DIRECTION_FAULT_COUNT)));
@@ -947,6 +950,7 @@ void Motor_Update(void)
     } else {
       stall_cycles[index] = 0U;
     }
+#endif
 
     if (fault_detected) {
       continue;
