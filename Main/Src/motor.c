@@ -1141,15 +1141,21 @@ MotorDistanceStatus Motor_MoveDistanceLinear(float distance_m,
 
 MotorTurnStatus Motor_TurnAngle(float angle_deg)
 {
+  return Motor_TurnAngleSpeed(angle_deg, APP_MOTOR_TURN_FAST_MM_S);
+}
+
+MotorTurnStatus Motor_TurnAngleSpeed(float angle_deg, float speed_mm_s)
+{
   const uint32_t primask = motor_enter_critical();
   if (angle_turn.status != MOTOR_TURN_IDLE) {
     const MotorTurnStatus status = angle_turn.status;
     motor_leave_critical(primask);
     return status;
   }
-  if (!isfinite(angle_deg) ||
+  if (!isfinite(angle_deg) || !isfinite(speed_mm_s) ||
       (angle_deg < -APP_MOTOR_TURN_MAX_DEG) ||
-      (angle_deg > APP_MOTOR_TURN_MAX_DEG)) {
+      (angle_deg > APP_MOTOR_TURN_MAX_DEG) ||
+      (speed_mm_s <= 0.0f) || (speed_mm_s > (float)MOTOR_MAX_SPEED)) {
     motor_leave_critical(primask);
     return MOTOR_TURN_INVALID;
   }
@@ -1182,7 +1188,7 @@ MotorTurnStatus Motor_TurnAngle(float angle_deg)
   angle_turn.target_mdeg = target_mdeg;
   angle_turn.start_yaw_mdeg = imu.yaw_mdeg;
   angle_turn.start_ms = HAL_GetTick();
-  motor_set_rotate_speed(APP_MOTOR_TURN_FAST_MM_S *
+  motor_set_rotate_speed(speed_mm_s *
                          (float)angle_turn.direction);
   motor_leave_critical(primask);
   return MOTOR_TURN_RUNNING;

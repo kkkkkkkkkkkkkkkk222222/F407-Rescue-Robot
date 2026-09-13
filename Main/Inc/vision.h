@@ -99,6 +99,9 @@
 #define VISION_CMD_USE_FINAL_HEADING 0x04U
 #define VISION_CMD_RED_SIDE          0x08U
 #define VISION_CMD_DISTANCE_VALID    0x10U
+/* APPROACH_TARGET describes the centre of a pile that must be approached
+ * before the upper computer requests the fixed local disperse action. */
+#define VISION_CMD_CLUSTER_TARGET    0x20U
 
 typedef enum {
   VISION_CMD_STOP = 0,

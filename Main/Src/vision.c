@@ -206,9 +206,15 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
   const uint8_t code = payload[0];
   const uint8_t flags = payload[1];
   const uint16_t heading = vision_u16_be(&payload[6]);
+  const uint8_t allowed_flags = (uint8_t)(
+      VISION_CMD_VALID | VISION_CMD_DRIVE_STRAIGHT |
+      VISION_CMD_USE_FINAL_HEADING | VISION_CMD_RED_SIDE |
+      VISION_CMD_DISTANCE_VALID |
+      ((code == VISION_CMD_APPROACH_TARGET) ?
+          VISION_CMD_CLUSTER_TARGET : 0U));
   if (!vision_mission_code_valid(code) ||
       ((flags & VISION_CMD_VALID) == 0U) ||
-      ((flags & 0xE0U) != 0U)) {
+      ((flags & (uint8_t)~allowed_flags) != 0U)) {
     return;
   }
 

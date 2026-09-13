@@ -40,6 +40,8 @@ MotorDistanceStatus Motor_MoveDistanceLinear(float distance_m,
                                              float slowdown_mm,
                                              float end_speed_mm_s);
 MotorTurnStatus Motor_TurnAngle(float angle_deg);
+/* Same relative IMU turn with a caller-specific initial rotation speed. */
+MotorTurnStatus Motor_TurnAngleSpeed(float angle_deg, float speed_mm_s);
 /* yaw_tangent_mm_s is R*omega, so all three inputs use mm/s. */
 void Motor_Move(float forward_mm_s, float lateral_mm_s,
                 float yaw_tangent_mm_s);

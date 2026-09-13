@@ -619,6 +619,7 @@ static const char *task_state_name(TaskState state)
     case TASK_FACE_FIELD_CENTER: return "CENTER";
     case TASK_APPROACH_RECOVER:  return "REACQ";
     case TASK_REMOTE_ACTION:     return "ACTION";
+    case TASK_DISPERSE_READY:    return "DSPRDY";
     default:                     return "STOP";
   }
 }
@@ -679,6 +680,9 @@ static const char *task_command_state(const LCDDashboard *dashboard,
   if (task->nav_stale) {
     return "STALE";
   }
+  if (command->sequence != task->acknowledged_sequence) {
+    return "REJ";
+  }
   return "OK";
 }
 
@@ -737,6 +741,9 @@ static void draw_task(const LCDDashboard *dashboard)
     } else {
       (void)strcpy(text, "H:--- D:----");
     }
+  } else if (task.audit_recheck_pending &&
+             (task.state == TASK_REMOTE_ACTION)) {
+    (void)strcpy(text, "WAIT:RE-AUDIT");
   } else if ((task.audit_total_count > 0U) &&
              (((task.state >= TASK_GRAB_OBSERVE) &&
                (task.state <= TASK_WAIT_NAVIGATION)) ||

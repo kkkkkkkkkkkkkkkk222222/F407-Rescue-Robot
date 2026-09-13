@@ -10,7 +10,6 @@ typedef enum {
   CLAW_ACTION_OPEN,
   CLAW_ACTION_OPEN_LEFT,
   CLAW_ACTION_OPEN_RIGHT,
-  CLAW_ACTION_SPLIT_LEFT,
   CLAW_ACTION_RETRACT,
   CLAW_ACTION_TOUCH
 } ClawAction;
@@ -126,15 +125,6 @@ bool Claw_OpenRight(uint32_t now_ms)
   /* Mirror of Claw_OpenLeft: 70 degrees is 10 degrees tighter than touch. */
   return claw_move_together(CLAW_ACTION_OPEN_RIGHT, now_ms,
                             70U, 72U, 600U);
-}
-
-bool Claw_SplitLeft(uint32_t now_ms)
-{
-  /* Unknown side assignment: release the left side while the right claw
-   * stays at its ordinary touch angle. Avoid the extra-tight hold angles,
-   * which can stall against a large cargo item. */
-  return claw_move_together(CLAW_ACTION_SPLIT_LEFT, now_ms,
-                            108U, 100U, 600U);
 }
 
 bool Claw_Retract(uint32_t now_ms)

@@ -102,6 +102,22 @@ class VisionProtocolTests(unittest.TestCase):
         self.assertEqual(protocol.parse_frame(disperse)[2][0],
                          protocol.CMD_DISPERSE_PILE)
 
+    def test_cluster_target_flag_is_approach_only(self) -> None:
+        approach = protocol.mission_frame(
+            0x34, protocol.CMD_APPROACH_TARGET,
+            protocol.CMD_VALID | protocol.CMD_CLUSTER_TARGET,
+            640, 700, 0,
+        )
+        self.assertEqual(
+            protocol.parse_frame(approach)[2][1],
+            protocol.CMD_VALID | protocol.CMD_CLUSTER_TARGET,
+        )
+        with self.assertRaises(ValueError):
+            protocol.mission_frame(
+                0x35, protocol.CMD_HOLD,
+                protocol.CMD_VALID | protocol.CMD_CLUSTER_TARGET,
+            )
+
     def test_pause_uses_reserved_mission_code(self) -> None:
         pause = protocol.mission_frame(
             0x33, protocol.CMD_PAUSE, protocol.CMD_VALID,

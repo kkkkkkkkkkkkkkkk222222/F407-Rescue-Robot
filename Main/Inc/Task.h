@@ -26,7 +26,8 @@ typedef enum {
   TASK_STOPPED = 18,
   /* Values 19..23 belonged to the removed blind start-scatter sequence. */
   TASK_APPROACH_RECOVER = 24,
-  TASK_REMOTE_ACTION = 25
+  TASK_REMOTE_ACTION = 25,
+  TASK_DISPERSE_READY = 26
 } TaskState;
 
 typedef enum {
@@ -61,6 +62,7 @@ typedef struct {
   bool auto_approach;
   bool audit_ready;
   bool audit_valid;
+  bool audit_recheck_pending;
   bool nav_stale;
   bool nav_done;
   bool nav_final_push;
