@@ -32,6 +32,9 @@ typedef enum {
   APPROACH_CLUSTER_CLEAR_BACKOFF,
   APPROACH_CLUSTER_CLOSE,
   APPROACH_CLUSTER_ALIGN,
+  APPROACH_CLUSTER_CAMERA_TO_140,
+  APPROACH_CLUSTER_SETTLE_140,
+  APPROACH_CLUSTER_CAPTURE,
   APPROACH_ALIGN_125,
   APPROACH_CAMERA_TO_140,
   APPROACH_SETTLE_140,
@@ -234,20 +237,9 @@ static float task_heading_360(float angle_deg)
 
 static float task_safe_zone_heading(void)
 {
-  float heading_deg = (configured_color == VISION_COLOR_RED) ?
+  const float heading_deg = (configured_color == VISION_COLOR_RED) ?
       APP_SAFE_ZONE_RED_HEADING_DEG : APP_SAFE_ZONE_BLUE_HEADING_DEG;
-  if (!first_delivery_done) {
-    heading_deg += (configured_color == VISION_COLOR_RED) ?
-        APP_FIRST_DELIVERY_RED_OFFSET_DEG :
-        APP_FIRST_DELIVERY_BLUE_OFFSET_DEG;
-  }
-  if (heading_deg < 0.0f) {
-    heading_deg += 360.0f;
-  }
-  if (heading_deg >= 360.0f) {
-    heading_deg -= 360.0f;
-  }
-  return heading_deg;
+  return task_heading_360(heading_deg);
 }
 
 static bool task_side_flag_valid(uint8_t flags)
@@ -374,6 +366,9 @@ static uint8_t task_protocol_mode(void)
   }
   if (complete_flow_active) {
     if (state == TASK_APPROACH) {
+      if (approach_phase == APPROACH_CLUSTER_CAPTURE) {
+        return 38U;
+      }
       return 20U;
     }
     if (state == TASK_DISPERSE_READY) {
@@ -1316,11 +1311,79 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
            APP_DISPERSE_ALIGN_X_ERROR_PX)) {
         Motor_Stop();
         task_status.motors_active = false;
-        task_enter(TASK_DISPERSE_READY, now_ms);
+        task_clear_audit_result();
+        approach_phase = APPROACH_CLUSTER_CAMERA_TO_140;
+        step_started_ms = now_ms;
         return;
       }
       Motor_Move(0.0f, 0.0f, task_approach_steering());
       task_status.motors_active = task_abs(steering_mm_s) > 0.5f;
+      return;
+
+    case APPROACH_CLUSTER_CAMERA_TO_140:
+      Motor_Stop();
+      task_status.motors_active = false;
+      if (task_scan_camera_to(APP_DISPERSE_CAPTURE_ANGLE, now_ms)) {
+        approach_phase = APPROACH_CLUSTER_SETTLE_140;
+        step_started_ms = now_ms;
+      }
+      return;
+
+    case APPROACH_CLUSTER_SETTLE_140:
+      Motor_Stop();
+      task_status.motors_active = false;
+      Camera_SetAngle(APP_DISPERSE_CAPTURE_ANGLE);
+      camera_angle = (float)APP_DISPERSE_CAPTURE_ANGLE;
+      if ((uint32_t)(now_ms - step_started_ms) >=
+          APP_GRAB_CAMERA_SETTLE_MS) {
+        LocationPose pose;
+        if (task_get_location_pose(&pose, now_ms)) {
+          approach_phase_path_mm = pose.path_mm;
+          approach_locked_heading_deg =
+              (float)pose.heading_mdeg * 0.001f;
+          task_clear_audit_result();
+          task_status.claw_visible = true;
+          approach_phase = APPROACH_CLUSTER_CAPTURE;
+          step_started_ms = now_ms;
+        }
+      }
+      return;
+
+    case APPROACH_CLUSTER_CAPTURE:
+      Camera_SetAngle(APP_DISPERSE_CAPTURE_ANGLE);
+      camera_angle = (float)APP_DISPERSE_CAPTURE_ANGLE;
+      if (audit_received && task_mission_valid(&vision->mission) &&
+          (vision->mission.command == VISION_CMD_CARGO_AUDIT) &&
+          ((vision->mission.audit_flags & VISION_AUDIT_STABLE) != 0U) &&
+          (vision->mission.audit_total_count > 0U)) {
+        Motor_Stop();
+        task_status.motors_active = false;
+        task_enter(TASK_DISPERSE_READY, now_ms);
+        return;
+      }
+      {
+        LocationPose pose;
+        if (!task_get_location_pose(&pose, now_ms)) {
+          return;
+        }
+        if (((pose.path_mm - approach_phase_path_mm) >=
+             APP_DISPERSE_CAPTURE_DISTANCE_MM) ||
+            ((uint32_t)(now_ms - step_started_ms) >=
+             APP_DISPERSE_CAPTURE_TIMEOUT_MS)) {
+          Motor_Stop();
+          task_status.motors_active = false;
+          task_status.claw_visible = false;
+          cluster_target_active = false;
+          task_enter(TASK_OPEN_CLAW, now_ms);
+          return;
+        }
+        const float heading_deg = (float)pose.heading_mdeg * 0.001f;
+        const float heading_error = task_wrap_angle(
+            approach_locked_heading_deg - heading_deg);
+        Motor_Move(APP_DISPERSE_CAPTURE_SPEED_MM_S, 0.0f,
+                   nav_yaw(heading_error));
+        task_status.motors_active = true;
+      }
       return;
 
     case APPROACH_ALIGN_125:
@@ -2837,10 +2900,12 @@ static void task_accept_mission(const VisionMissionCommand *command,
       }
     }
   } else if ((command->command == VISION_CMD_CARGO_AUDIT) &&
-             (((state >= TASK_GRAB_OBSERVE) &&
-               (state <= TASK_GRAB_ROTATE)) ||
-              ((state == TASK_REMOTE_ACTION) && remote_action.done &&
-               cargo_recheck_pending))) {
+              (((state >= TASK_GRAB_OBSERVE) &&
+                (state <= TASK_GRAB_ROTATE)) ||
+               ((state == TASK_APPROACH) &&
+                (approach_phase == APPROACH_CLUSTER_CAPTURE)) ||
+               ((state == TASK_REMOTE_ACTION) && remote_action.done &&
+                cargo_recheck_pending))) {
     task_status.acknowledged_sequence = command->sequence;
     if (state == TASK_REMOTE_ACTION) {
       task_enter(TASK_GRAB_OBSERVE, now_ms);
@@ -2901,6 +2966,14 @@ static void task_accept_mission(const VisionMissionCommand *command,
   } else if (state == TASK_STOPPED) {
     return;
   } else if ((command->command == VISION_CMD_GRAB_CONFIRMED) &&
+             (state == TASK_DISPERSE_READY) &&
+             audit_received && audit_valid) {
+    /* A clustered target that proves to contain one legal retained cargo no
+     * longer needs separation. Close normally and continue to navigation. */
+    task_status.acknowledged_sequence = command->sequence;
+    cluster_target_active = false;
+    task_enter(TASK_CLOSE_CLAW, now_ms);
+  } else if ((command->command == VISION_CMD_GRAB_CONFIRMED) &&
              (state >= TASK_GRAB_OBSERVE) &&
              (state <= TASK_GRAB_ROTATE) &&
              (!complete_flow_active || (audit_received && audit_valid))) {
@@ -2954,7 +3027,8 @@ static void task_accept_mission(const VisionMissionCommand *command,
      * also covers the host's map-tolerance branch without a deadlock. */
     task_status.acknowledged_sequence = command->sequence;
     task_enter(TASK_ALIGN_SAFE_ZONE, now_ms);
-    safe_align_target_deg = (float)command->heading_cdeg * 0.01f;
+    safe_align_target_deg = task_heading_360(
+        (float)command->heading_cdeg * 0.01f);
     safe_align_done = false;
     safe_align_visual_started = false;
     nav_ready = false;
@@ -2997,10 +3071,7 @@ static void task_accept_mission(const VisionMissionCommand *command,
                safe_align_visual_started) ||
               (((command->flags & VISION_CMD_VISUAL_CORRECTION_VALID) == 0U) &&
                !safe_align_visual_started))) {
-    const bool visual =
-        (command->flags & VISION_CMD_VISUAL_CORRECTION_VALID) != 0U;
-    const float final_heading_deg = visual ? safe_align_target_deg :
-        (float)command->heading_cdeg * 0.01f;
+    const float final_heading_deg = safe_align_target_deg;
     task_status.acknowledged_sequence = command->sequence;
     task_enter(TASK_NAVIGATE, now_ms);
     delivery_enter_active = true;
@@ -3066,9 +3137,10 @@ static void task_accept_mission(const VisionMissionCommand *command,
     task_status.acknowledged_sequence = command->sequence;
     task_start_remote_action(REMOTE_ACTION_LANE, command, now_ms);
   } else if ((command->command == VISION_CMD_DISPERSE_PILE) &&
-             !stash_backoff_pending &&
-             !cargo_recheck_pending &&
-             !task_status.gripper_closed &&
+              !stash_backoff_pending &&
+              !cargo_recheck_pending &&
+              audit_received && (audit_last_total_count > 0U) &&
+              !task_status.gripper_closed &&
              (state == TASK_DISPERSE_READY)) {
     task_status.acknowledged_sequence = command->sequence;
     if ((command->flags & VISION_CMD_SIDE_VALID) != 0U) {

@@ -1,14 +1,14 @@
 # 上位机救援流程对接要求
 
 对照基线：`danmo-teng/shijue_fangan`分支`codex/gamepad-teleop`提交`775bef3`。
-下位机已实现400 mm预备点、两次ALIGN、锁存航向ENTER和50 mm本地编码器补推；安全区退出与返中流程保持原样。
+下位机已实现400 mm预备点、两次ALIGN、锁存航向ENTER和200 mm本地编码器补推；安全区退出与返中流程保持原样。
 
 ## 1. SEARCH职责
 
 - F407自主完成摄像头90°一圈、120°一圈并循环扫描；上位机不需要发送底盘旋转命令。
 - `6c802ec`一旦锁定候选即可持续发送`APPROACH_TARGET`；F407收到第一帧合法命令便进入APPROACH，不再增加第二套确认门限。
 - 上位机在视觉过期、暂未选中目标或等待策略决策时可以发送HOLD，但SEARCH中的HOLD只是任务心跳，F407仍继续本地扫描。若确实要求底盘冻结当前SEARCH阶段，发送新增的`PAUSE=1`，不能再复用HOLD表达两种相反行为。
-- 上位机可在SEARCH的任意扫描阶段发送普通/聚集APPROACH或空爪藏点NAV接管，不必等待F407额外报告“720°完成”；聚集目标必须先靠近到mode37，不能从远处直接发送DISPERSE。
+- 上位机可在SEARCH的任意扫描阶段发送普通/聚集APPROACH或空爪藏点NAV接管，不必等待F407额外报告“720°完成”；聚集目标必须先靠近到mode38完成夹内审核，再由F407进入mode37，不能从远处直接发送DISPERSE。
 - 普通APPROACH进入`mode=21 + CLAW_VISIBLE=1`后，F407会以150 mm/s继续慢爬，而不是原地等待。上位机应立即切入CAPTURE_AUDIT，即使普通目标已经因过近而离开全局检测结果；暂时空爪持续发送非STABLE全零审核，稳定非空审核到达后F407立即停车，审核ACK后再发送GRAB。若F407在累计300 mm内仍未确认物体，会进入mode24/REACQ并最终mode3；CAPTURE_AUDIT/AUDIT_CONFIRM必须识别这两个mode，清除待审核数据并回到搜索恢复，不能继续发送审核帧。
 
 ### HOLD、PAUSE、STOP、ABORT语义
@@ -41,11 +41,12 @@ F407会校验释放侧计数：`RELEASE_LEFT/RIGHT`对应侧必须非空；复�
 ## 4. 去放置区与投送确认
 
 - 正式投送NAV必须置`STAGE_ONLY(bit6)`，目标是相应半区安全区入口前400 mm预备点；持续发送几何H/D直到新鲜`mode=10 + DISTANCE_DONE + ACK变化`。不要在该点发送旧式ENTER，F407明确禁止预备点补推。
-- 第一次ALIGN置`USE_FINAL_HEADING`，P6/P7为红方9000或蓝方27000。持续发送到新鲜`mode=11 + ACK变化`。
+- 第一次ALIGN置`USE_FINAL_HEADING`，P6/P7始终发送红方9000或蓝方27000；所有投送使用相同航向，不再区分首趟偏置。持续发送到新鲜`mode=11 + ACK变化`。
 - 连续3个不同新视觉帧冻结安全区框；第二次ALIGN置`VISUAL_CORRECTION_VALID(bit6)`，P2/P3发送`target_x_px-640`的有符号像素误差，P4/P5/P6/P7为0。持续发送到第二个新鲜`mode=11 + 本阶段ACK变化`。5秒仍无法冻结时跳过第二次ALIGN，沿第一次航向进入回退ENTER。
 - ENTER始终置`DRIVE_STRAIGHT | DISTANCE_VALID`，P2/P3持续发送当前位置到围栏直线的法向剩余距离，P4/P5为0。视觉修正成功时置bit6且P6/P7=0；回退路径置`USE_FINAL_HEADING`且P6/P7=9000/27000。F407不会再按ENTER的动态H转向。
-- F407在D约113 mm时进入本地最终补推并忽略后续D，以250 mm/s编码器推进50 mm；张爪和相机120°稳定完成后才上报mode15。上位机等待新鲜`mode=15 + ACK变化`后进入原投送视觉确认。
+- F407在D约113 mm时进入本地最终补推并忽略后续D，以300 mm/s编码器推进200 mm，最长1200 ms；张爪和相机120°稳定完成后才上报mode15。上位机等待新鲜`mode=15 + ACK变化`后进入原投送视觉确认。
 - `6c802ec`第二次视觉确认超时后会永久停在ENTER。上位机应增加有限兜底：F407已新鲜处于`mode=15`、观察窗口结束且没有明确“目标仍在安全区外”的证据时，发送并持续保持`TASK_COMPLETE`；若明确仍在区外则保持停车并报告人工处理，不得伪造完成。
+- 第二次视觉ALIGN只叠加一次冻结框修正；ENTER无视觉回退时仍发送9000/27000，F407继续使用第一次ALIGN锁存的90°/270°目标。
 
 ## 5. 投送后返中（F407现有安全区退出不修改）
 
@@ -60,7 +61,7 @@ F407会校验释放侧计数：`RELEASE_LEFT/RIGHT`对应侧必须非空；复�
 - `YIELD_BACKOFF`只能在上位机已经看到对应释放命令ACK变化和新鲜`mode=32/33`后发送，并持续发送到新鲜`mode=30`；F407现在拒绝APPROACH、NAV、RETURN以及其他动作后直接到来的YIELD。第一次不明左右的特殊`RELEASE_BOTH`已在F407内部完成退让和撞分，是明确例外，不得追加YIELD。普通脱困改用`ESCAPE_MANEUVER`，不能复用YIELD。
 - `ESCAPE_MANEUVER`持续发送到新鲜`mode=31`。F407会先把大舵机恢复85°行驶位置，再执行旋转和横移。
 - 远程动作暂时丢帧、但仍允许F407执行既有恢复策略时可发HOLD；若要求动作原地冻结且恢复后从当前阶段继续，应发PAUSE。两者都不能把未完成动作直接标记完成，恢复时继续重复原命令并递增SEQ。
-- 聚集目标不能在SEARCH中直接发送`DISPERSE_PILE`。先用`APPROACH_TARGET.flags bit5=CLUSTER_TARGET`持续发送聚集中心X/Y；F407闭合到Touch并以最高300 mm/s靠近，到相机130°并水平对正后报告mode37。若稳定跟踪能确定准备保留的目标位于左/右侧，发送带`SIDE_VALID(bit6)`的`DISPERSE_PILE`，保留右侧时再置`TARGET_RIGHT(bit7)`；F407只打开非目标侧并沿0.30 m镜像曲线退出，mode35后进入`CAPTURE_AUDIT`。若无法可靠分侧，发送仅带`CMD_VALID`的`DISPERSE_PILE`；F407执行整堆撞分并报告mode34。上位机此时进入`DISPERSE_RESELECT`，保留原目标类别和track线索，在原区域重新选择：找到单目标便直接发普通APPROACH，仍为聚集目标则再发CLUSTER APPROACH；只有确认重选失败才发HOLD回普通SEARCH。整堆撞分建议最多2次，`TARGET_RIGHT`不得在缺少`SIDE_VALID`时单独置位。
+- 聚集目标不能在SEARCH中直接发送`DISPERSE_PILE`。先用`APPROACH_TARGET.flags bit5=CLUSTER_TARGET`持续发送聚集中心X/Y；F407闭合到Touch并以最高300 mm/s靠近，相机到130°且X误差≤40 px后先转到140°并稳定500 ms，再报告`mode=38`、以200 mm/s保持航向慢爬。上位机看到新鲜mode38后立即切换夹爪ROI：暂未确认时持续发送非STABLE全零`CARGO_AUDIT`，确认夹内非空时发送带STABLE的非空审核。F407收到后停车并进入mode37。审核合法且无需分离时持续发送`GRAB_CONFIRMED`；需要分离且左右可靠时发送带`SIDE_VALID(bit6)`的`DISPERSE_PILE`，保留右侧时再置`TARGET_RIGHT(bit7)`；左右不明则发送仅带`CMD_VALID`的`DISPERSE_PILE`触发整堆撞分。F407在300 mm或2000 ms内未收到稳定非空审核会张爪回SEARCH，上位机必须清除该轮审核，不能继续发送旧GRAB/DISPERSE。
 
 ## ACTION/WATCH卡死的必须修复项
 
@@ -71,19 +72,19 @@ F407会校验释放侧计数：`RELEASE_LEFT/RIGHT`对应侧必须非空；复�
 ## 7. 必测回归
 
 1. SEARCH连续HOLD时F407仍扫描；第一帧合法APPROACH只触发一次靠近。
-2. 90°/120°扫描任一阶段，上位机都能用普通/聚集APPROACH或藏点NAV接管；DISPERSE必须等聚集APPROACH到mode37。
+2. 90°/120°扫描任一阶段，上位机都能用普通/聚集APPROACH或藏点NAV接管；聚集目标必须先到mode38完成稳定非空夹内审核，DISPERSE只能在随后mode37发送。
 3. initial_stash总数大于0时，即使数量超过3、左右计数饱和或类别混合也能完成暂存；总数为0时不得GRAB。
 4. 左绿右核心、左核心右绿分别释放正确一侧，YIELD后重新审核。
 5. 左右归属不明时发送无bit6/bit7的DISPERSE触发本地撞分；mode34后先重选原目标并可直接APPROACH，重选失败才HOLD回SEARCH，不发送YIELD或CARGO_AUDIT。
 6. 释放命令与审核侧不一致时F407不动作，上位机能够重新审核恢复。
 7. 正式投送NAV携带STAGE_ONLY，在400 mm预备点D=0只得到mode10+DISTANCE_DONE，不能出现张爪或本地长距离补推。
-8. 红/蓝第一次ALIGN分别完成90°/270°定位对正；第二次只应用一次冻结框像素修正。若5秒取框失败，ENTER回退航向仍为90°/270°。
-9. ENTER期间改变上位机动态H不影响锁存航向；D到约113 mm后改变或回跳也不打断50 mm本地补推，最终才出现mode15。
+8. 每次投送第一次ALIGN均完成红90°/蓝270°定位对正，第二次只应用一次冻结框像素修正，不再添加首趟±10°。
+9. ENTER期间改变上位机动态H不影响锁存航向；D到约113 mm后改变或回跳也不打断300 mm/s、200 mm本地补推，最终才出现mode15。
 10. mode15视觉确认两次超时后不会无限ENTER：无区外反证时能TASK_COMPLETE，有明确区外反证时安全停车告警。
 11. TASK_COMPLETE后依次看到mode16、mode17、mode3；mode17阶段H变化时重新计算朝向，D=0才结束。
 12. RETURN中途HOLD只停车，恢复RETURN后继续；HOLD不能伪造回中完成。
 13. 临时藏堆释放后发送RETURN，确认F407先直退0.35 m且车头不旋转，随后才按最新H调头；正常投送返中不得多退一次。
-14. 聚集APPROACH到相机130°且X误差≤40 px才出现mode37；带有效左右选择的DISPERSE完成单侧张开、0.30 m曲线退出和140°相机稳定后才出现mode35，随后必须进行夹内审核。
+14. 聚集APPROACH到相机130°且X误差≤40 px后先转140°并出现mode38；非STABLE空审核不能结束200 mm/s慢爬，稳定非空审核才进入mode37。合法单件可GRAB，多件/混装才DISPERSE；300 mm或2000 ms无确认必须回SEARCH。
 
 ## 8. 上位机下一步优化建议
 
@@ -96,4 +97,4 @@ F407会校验释放侧计数：`RELEASE_LEFT/RIGHT`对应侧必须非空；复�
 - RETURN完成握手不能只在最后比较`acknowledged_sequence != return_initial_ack`：任务SEQ只有8位，100 Hz发送约2.56 s就会回绕。进入RETURN时清零`return_command_accepted`；本阶段确认已发送RETURN且观察到一次对应ACK后永久锁存为真。之后收到新鲜`mode=3`且该锁存为真即可进入上位机SEARCH。F407目前会在返中完成后的1500 ms内继续ACK重复RETURN作为旧版本兼容，但正确性不能依赖这个窗口。
 - 正式投送必须采用STAGE NAV→定位ALIGN→可选视觉ALIGN→ENTER，不能再沿用D≤50 mm本地法向锁存或在预备点直接发送ENTER。第二次ALIGN的P2/P3保持发送有符号像素误差；不要擅自改成0.01°角度，除非同步修改F407协议和标定。
 - initial_stash只要求稳定且`total_count>0`；正式投送继续执行危险、未知、伤员混装和总数检查，首件绿色完成后接受普通、核心及`mixed_material`批次。单侧分离后必须YIELD、重新审核，合法后再GRAB，不能直接回SEARCH。
-- 聚集目标左右可靠时使用`DISPERSE_PILE + SIDE_VALID`并在mode35后复审；左右不可靠时使用不带bit6/bit7的DISPERSE，mode34后进入`DISPERSE_RESELECT`。重选期间不要发HOLD，否则F407会立即离开原地进入普通SEARCH；目标重现可从mode34直接发普通或聚集APPROACH，整堆撞分最多重试2次。
+- 聚集目标进入mode38后先完成稳定非空夹内审核；mode37中审核合法且不需分离时直接GRAB，需要分离且左右可靠时使用`DISPERSE_PILE + SIDE_VALID`并在mode35后复审，左右不可靠时使用不带bit6/bit7的DISPERSE，mode34后进入`DISPERSE_RESELECT`。重选期间不要发HOLD，否则F407会立即离开原地进入普通SEARCH；目标重现可从mode34直接发普通或聚集APPROACH，整堆撞分最多重试2次。
