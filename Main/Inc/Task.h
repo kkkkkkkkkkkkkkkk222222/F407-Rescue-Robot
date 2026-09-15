@@ -16,7 +16,10 @@ typedef enum {
   TASK_CLOSE_CLAW,
   TASK_WAIT_NAVIGATION,
   TASK_NAVIGATE,
-  /* Keep wire mode values stable while omitting removed modes 11, 13, 14. */
+  /* Safe-zone pose/visual alignment. Wire mode 11 is reported only after the
+   * current alignment motion has settled. */
+  TASK_ALIGN_SAFE_ZONE = 11,
+  /* Keep the remaining wire mode values stable while omitting modes 13, 14. */
   TASK_OPEN_FOR_RAM = 12,
   TASK_RAM_VERIFY = 15,
   /* Encoder/IMU backoff after unloading, before remote H/D return. */
@@ -50,6 +53,8 @@ typedef struct {
   uint8_t acknowledged_sequence;
   uint8_t last_command;
   uint8_t camera_angle;
+  uint8_t action_command;
+  uint8_t action_phase;
   uint8_t audit_left_class;
   uint8_t audit_right_class;
   uint8_t audit_total_count;
@@ -63,6 +68,8 @@ typedef struct {
   bool audit_ready;
   bool audit_valid;
   bool audit_recheck_pending;
+  bool action_done;
+  bool action_impact;
   bool nav_stale;
   bool nav_done;
   bool nav_final_push;

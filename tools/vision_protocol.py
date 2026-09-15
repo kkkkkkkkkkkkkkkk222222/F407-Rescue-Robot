@@ -61,6 +61,10 @@ CMD_USE_FINAL_HEADING = 0x04
 CMD_RED_SIDE = 0x08
 CMD_DISTANCE_VALID = 0x10
 CMD_CLUSTER_TARGET = 0x20
+CMD_STAGE_ONLY = 0x40
+CMD_VISUAL_CORRECTION_VALID = 0x40
+CMD_SIDE_VALID = 0x40
+CMD_TARGET_RIGHT = 0x80
 
 
 def crc16_modbus(data: bytes) -> int:
@@ -238,8 +242,17 @@ def mission_frame(
     allowed_flags = 0x1F
     if command == CMD_APPROACH_TARGET:
         allowed_flags |= CMD_CLUSTER_TARGET
+    if command in (
+            CMD_NAVIGATE_WAYPOINT, CMD_ALIGN_SAFE_ZONE,
+            CMD_ENTER_SAFE_ZONE):
+        allowed_flags |= CMD_STAGE_ONLY
+    if command == CMD_DISPERSE_PILE:
+        allowed_flags |= CMD_SIDE_VALID | CMD_TARGET_RIGHT
     if not flags & CMD_VALID or flags & ~allowed_flags:
         raise ValueError("invalid mission flags")
+    if (command == CMD_DISPERSE_PILE and
+            flags & CMD_TARGET_RIGHT and not flags & CMD_SIDE_VALID):
+        raise ValueError("TARGET_RIGHT requires SIDE_VALID")
     if not -32768 <= target_x_mm <= 32767 or not -32768 <= target_y_mm <= 32767:
         raise ValueError("mission target must fit int16")
     heading_command = command in (
@@ -248,6 +261,24 @@ def mission_frame(
     )
     if not 0 <= heading_cdeg <= 65535 or (heading_command and heading_cdeg >= 36000):
         raise ValueError("invalid mission auxiliary/heading value")
+    if command == CMD_ALIGN_SAFE_ZONE:
+        visual = bool(flags & CMD_VISUAL_CORRECTION_VALID)
+        if visual:
+            if flags & CMD_USE_FINAL_HEADING or target_y_mm or heading_cdeg:
+                raise ValueError("invalid visual ALIGN payload")
+        elif (not flags & CMD_USE_FINAL_HEADING or target_x_mm or
+              target_y_mm):
+            raise ValueError("invalid pose ALIGN payload")
+    if command == CMD_ENTER_SAFE_ZONE:
+        required = CMD_DRIVE_STRAIGHT | CMD_DISTANCE_VALID
+        visual = bool(flags & CMD_VISUAL_CORRECTION_VALID)
+        if flags & required != required or target_x_mm < 0 or target_y_mm:
+            raise ValueError("invalid ENTER distance payload")
+        if visual:
+            if flags & CMD_USE_FINAL_HEADING or heading_cdeg:
+                raise ValueError("invalid visual ENTER payload")
+        elif not flags & CMD_USE_FINAL_HEADING:
+            raise ValueError("fallback ENTER requires final heading")
     payload = (
         bytes((command, flags))
         + target_x_mm.to_bytes(2, "big", signed=True)

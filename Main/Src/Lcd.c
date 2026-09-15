@@ -613,6 +613,7 @@ static const char *task_state_name(TaskState state)
     case TASK_CLOSE_CLAW:        return "CLOSE";
     case TASK_WAIT_NAVIGATION:   return "WAITNAV";
     case TASK_NAVIGATE:          return "NAV";
+    case TASK_ALIGN_SAFE_ZONE:   return "ALIGN";
     case TASK_OPEN_FOR_RAM:      return "OPENRAM";
     case TASK_RAM_VERIFY:        return "CHECK";
     case TASK_EXIT_SAFE_ZONE:    return "EXITSAFE";
@@ -686,6 +687,42 @@ static const char *task_command_state(const LCDDashboard *dashboard,
   return "OK";
 }
 
+static const char *task_action_stage(const TaskStatus *task)
+{
+  if (task->action_done) {
+    return "DONE";
+  }
+  if (task->action_impact) {
+    switch (task->action_phase) {
+      case 0U: return "OPEN";
+      case 1U: return "BACK";
+      case 2U: return "TOUCH";
+      case 3U: return "RAM";
+      case 4U: return "RETURN";
+      case 5U: return "OPEN";
+      default: return "RUN";
+    }
+  }
+  if (task->action_command == VISION_CMD_YIELD_BACKOFF) {
+    switch (task->action_phase) {
+      case 0U: return "CURVE";
+      case 1U: return "CAM";
+      case 2U: return "WAIT";
+      default: return "RUN";
+    }
+  }
+  if (task->action_command == VISION_CMD_DISPERSE_PILE) {
+    switch (task->action_phase) {
+      case 0U: return "SIDE";
+      case 1U: return "CURVE";
+      case 2U: return "CAM";
+      case 3U: return "WAIT";
+      default: return "RUN";
+    }
+  }
+  return "RUN";
+}
+
 static void draw_task(const LCDDashboard *dashboard)
 {
   char text[32];
@@ -695,6 +732,10 @@ static void draw_task(const LCDDashboard *dashboard)
 
   if (dashboard->debug_mode) {
     (void)strcpy(text, "MODE:DEBUG");
+  } else if (task.state == TASK_REMOTE_ACTION) {
+    (void)snprintf(text, sizeof(text), "ACT:%s %s",
+                   task_command_name(task.action_command, true),
+                   task_action_stage(&task));
   } else if (task.remaining_s == UINT16_MAX) {
     (void)snprintf(text, sizeof(text), "STATE:%s T:--",
                    task_state_name(task.state));
@@ -709,6 +750,19 @@ static void draw_task(const LCDDashboard *dashboard)
     (void)snprintf(text, sizeof(text), "GRIP:%s A:%03u",
                    task.gripper_closed ? "OK" : "WAIT",
                    task.acknowledged_sequence);
+  } else if (task.state == TASK_ALIGN_SAFE_ZONE) {
+    const LocationPose pose = Location_GetPose();
+    if (pose.valid) {
+      (void)snprintf(text, sizeof(text), "H:%03u A:%03ld PX:%d",
+                     task.nav_locked_heading_deg,
+                     (long)(pose.heading_mdeg / 1000L),
+                     (vision->mission.flags &
+                      VISION_CMD_VISUAL_CORRECTION_VALID) ?
+                         vision->mission.target_x_mm : 0);
+    } else {
+      (void)snprintf(text, sizeof(text), "H:%03u A:---",
+                     task.nav_locked_heading_deg);
+    }
   } else if ((task.state == TASK_NAVIGATE) ||
              (task.state == TASK_FACE_FIELD_CENTER)) {
     if (vision->mission.received &&

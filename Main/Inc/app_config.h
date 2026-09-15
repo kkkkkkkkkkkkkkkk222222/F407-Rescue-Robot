@@ -254,12 +254,18 @@
 #define APP_GRAB_ALIGN_CAMERA_ANGLE      125U
 #define APP_GRAB_ALIGN_X_ERROR_PX         24.0f
 #define APP_GRAB_REACQUIRE_X_ERROR_PX     96.0f
+#define APP_GRAB_CAMERA_SETTLE_MS          500U
 #define APP_GRAB_REACQUIRE_SPEED_MM_S    350.0f
+#define APP_GRAB_WATCH_CRAWL_SPEED_MM_S  150.0f
 #define APP_GRAB_REACQUIRE_DISTANCE_MM   300U
 #define APP_GRAB_REACQUIRE_STEP_MS        40U
 #define APP_DISPERSE_APPROACH_ANGLE       130U
 #define APP_DISPERSE_APPROACH_SPEED_MM_S 300.0f
 #define APP_DISPERSE_ALIGN_X_ERROR_PX      40.0f
+#define APP_DISPERSE_CLEAR_CAMERA_ANGLE    120U
+#define APP_DISPERSE_CLEAR_MIN_Y_PX        600U
+#define APP_DISPERSE_CLEAR_BACKOFF_M        0.12f
+#define APP_DISPERSE_CLEAR_BACK_SPEED_MM_S 300.0f
 #define APP_APPROACH_LOSS_HOLD_MS         500U
 #define APP_STEERING_EXIT_DEAD_ZONE       8
 #define APP_STEERING_ENTER_DEAD_ZONE     16
@@ -330,8 +336,25 @@
 #define APP_NAV_FINAL_PUSH_MIN_TIME_MS   1500U
 #define APP_NAV_FINAL_PUSH_TIME_MS       2000U
 #define APP_NAV_FINAL_PUSH_MAX_DISTANCE_MM 440U
-#define APP_NAV_REALIGN_DEG                4.0f
+#define APP_NAV_REALIGN_DEG                6.0f
+#define APP_NAV_FINAL_REALIGN_DEG          3.0f
+#define APP_NAV_FINAL_REALIGN_HOLD_MS      150U
 #define APP_NAV_TURN_SETTLE_MS            100U
+/* Updated safe-zone flow: stop at the 0.40 m staging point, align once from
+ * pose and once from a frozen image, then approach the fence while holding
+ * the latched heading. The upper computer sends signed pixel error; the
+ * equivalent focal length and sign are kept here for field calibration. */
+#define APP_SAFE_ALIGN_TOLERANCE_DEG        1.5f
+#define APP_SAFE_VISUAL_FOCAL_LENGTH_PX   640.0f
+#define APP_SAFE_VISUAL_YAW_SIGN           -1.0f
+#define APP_SAFE_VISUAL_MAX_CORRECTION_DEG 15.0f
+#define APP_SAFE_ENTER_CRUISE_SPEED_MM_S   400.0f
+#define APP_SAFE_ENTER_MIN_SPEED_MM_S      200.0f
+#define APP_SAFE_ENTER_SLOWDOWN_MM         300.0f
+#define APP_SAFE_ENTER_CONTACT_DISTANCE_MM 113U
+#define APP_SAFE_FINAL_PUSH_DISTANCE_MM     50U
+#define APP_SAFE_FINAL_PUSH_SPEED_MM_S     250.0f
+#define APP_SAFE_FINAL_PUSH_TIMEOUT_MS     1200U
 #define APP_POSE_WAIT_TIMEOUT_MS          1500U
 #define APP_LIFT_START_ANGLE              55U
 #define APP_LIFT_TRAVEL_ANGLE             85U
@@ -344,22 +367,27 @@
 #define APP_RETURN_CENTER_HEADING_MAX_MM_S 100.0f
 #define APP_RETURN_CENTER_TURN_TOLERANCE_DEG 3.0f
 #define APP_RETURN_CENTER_REALIGN_DEG       8.0f
+/* After RETURN reaches D=0, briefly ACK repeated RETURN frames in SEARCH.
+ * This lets an older upper computer observe a post-return ACK even when its
+ * 8-bit sequence has wrapped back to the value saved at RETURN entry. */
+#define APP_RETURN_SEARCH_ACK_GRACE_MS    1500U
 #define APP_STASH_RETURN_BACKOFF_M           0.35f
 #define APP_STASH_RETURN_BACKOFF_SPEED_MM_S 650.0f
 #define APP_REMOTE_YIELD_SPEED_MM_S          750.0f
-#define APP_CARGO_SEPARATE_START_MM            100U
-#define APP_CARGO_SEPARATE_START_SPEED_MM_S  450.0f
+#define APP_CARGO_SEPARATE_CURVE_BACK_MM_S    500.0f
+#define APP_CARGO_SEPARATE_CURVE_SIDE_MM_S    180.0f
+#define APP_CARGO_SEPARATE_CURVE_YAW_MM_S     100.0f
+#define APP_SELECTIVE_DISPERSE_CURVE_MM          300U
 #define APP_CARGO_RECHECK_SETTLE_MS             300U
 #define APP_REMOTE_ESCAPE_LATERAL_SPEED_MM_S 800.0f
 #define APP_REMOTE_LANE_SPEED_MM_S           850.0f
-#define APP_REMOTE_DISPERSE_TURN_SPEED_MM_S  400.0f
-#define APP_REMOTE_DISPERSE_BACKOFF_M              0.30f
-#define APP_REMOTE_DISPERSE_BACK_SPEED_MM_S       550.0f
-#define APP_REMOTE_DISPERSE_TIMEOUT_MS          15000U
+#define APP_REMOTE_DISPERSE_TIMEOUT_MS          18000U
 #define APP_REMOTE_DISPERSE_HOLD_CANCEL_MS       1000U
-#define APP_CARGO_IMPACT_DISTANCE_M                0.40f
-#define APP_CARGO_IMPACT_SPEED_MM_S              700.0f
-#define APP_CARGO_IMPACT_BACK_SPEED_MM_S         450.0f
+#define APP_CARGO_IMPACT_RUNUP_M                   0.40f
+#define APP_CARGO_IMPACT_FORWARD_M                 0.60f
+#define APP_CARGO_IMPACT_RETURN_M                  0.60f
+#define APP_CARGO_IMPACT_SPEED_MM_S             1000.0f
+#define APP_CARGO_IMPACT_BACK_SPEED_MM_S         500.0f
 #define APP_CARGO_IMPACT_TIMEOUT_MS            12000U
 #define APP_REMOTE_ACTION_TIMEOUT_MS          7000U
 #define APP_STASH_ROUTE_HOLD_ACCEPT_MM          100U

@@ -1139,6 +1139,14 @@ MotorDistanceStatus Motor_MoveDistanceLinear(float distance_m,
                              end_speed_mm_s, false);
 }
 
+MotorDistanceStatus Motor_MoveDistanceConstant(float distance_m,
+                                               float speed_mm_s)
+{
+  return motor_move_distance(distance_m, speed_mm_s,
+                             APP_GO_DISTANCE_TOLERANCE_MM + 1.0f,
+                             speed_mm_s, false);
+}
+
 MotorTurnStatus Motor_TurnAngle(float angle_deg)
 {
   return Motor_TurnAngleSpeed(angle_deg, APP_MOTOR_TURN_FAST_MM_S);

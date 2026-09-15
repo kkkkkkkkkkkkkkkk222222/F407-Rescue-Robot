@@ -1,21 +1,22 @@
 # 连续物资抓取与分区投送流程
 
-本固件已接入`danmo-teng/shijue_fangan@bdcf0f2`的完整比赛流程命令，运行模式为`APP_ENABLE_TASK=1`，其他测试和独立视觉居中Task均关闭。RDK X5与F407使用USART3（PD8 TX、PD9 RX）、115200 8N1、3.3 V TTL和公共15字节帧。临时底盘改动及恢复方法见[`docs/TEMP_CHASSIS_HANDOFF.md`](docs/TEMP_CHASSIS_HANDOFF.md)。
+本固件已接入`danmo-teng/shijue_fangan`的`codex/gamepad-teleop@775bef3`完整比赛流程命令，运行模式为`APP_ENABLE_TASK=1`，其他测试和独立视觉居中Task均关闭。RDK X5与F407使用USART3（PD8 TX、PD9 RX）、115200 8N1、3.3 V TTL和公共15字节帧。临时底盘改动及恢复方法见[`docs/TEMP_CHASSIS_HANDOFF.md`](docs/TEMP_CHASSIS_HANDOFF.md)。
 
 ## 整体流程
 
 1. 上电后先保持TIM8舵机PWM关闭，完成IMU配置、静止稳定和陀螺仪零偏校准。只有`IMU_Init()`成功后才启动4路舵机PWM，随后摄像头到90°、舵机1到55°，左右爪依次收缩到左23°、右147°；IMU失败则机构和正式Task均不启动。
 2. 收到合法`TYPE=0x11`红蓝方和出发区配置后回复一次`A3 B3 01 C3`并启动连续任务，不设置180秒自动终止。
 3. 用编码器累计路程倒车1.70 m。前600 mm由`Motor_MoveDistance(-0.60 m, 800 mm/s)`直接锁存两路前向编码器起点，以3 mm容差做定距闭环并用IMU保持启动航向；舵机1保持55°、左右爪保持Retract，确保机构不碰障碍区。完成600 mm后舵机1才到85°、左右爪同时打开到左108°/右72°；剩余约1.10 m以最高900 mm/s使用`Motor_MoveSpin()`保持地面直线路径，同时根据IMU航向误差闭环转向约180°。总里程最后100 mm降到160 mm/s，进入10 mm容差后制动。
-4. 到达中心附近后不执行Touch、单独转180°、停车等待或无条件开局打乱；确认并行开爪动作已经完成后立即进入`SEARCH`。上位机确认聚集目标后不能在远处直接发`DISPERSE_PILE`，而应持续发送带`CLUSTER_TARGET`的APPROACH，使F407以最高300 mm/s靠近到相机130°并水平对正；看到新鲜`mode=37`后才持续发送DISPERSE。
+4. 到达中心附近后不执行Touch、单独转180°、停车等待或无条件开局打乱；确认并行开爪动作已经完成后立即进入`SEARCH`。上位机确认聚集目标后不能在远处直接发`DISPERSE_PILE`，而应持续发送带`CLUSTER_TARGET`的APPROACH，使F407以最高300 mm/s靠近到相机130°并水平对正；看到新鲜`mode=37`后，能可靠判断目标左右侧便发送带`SIDE_VALID`的选择性曲线分离，无法判断则发送不带bit6/bit7的整堆撞分。整堆撞分mode34后先在原地重选原目标，重选失败才HOLD回普通SEARCH。
 5. 每次进入`SEARCH`都把舵机3从当前命令角移到90°，稳定300 ms后以200 mm/s原地旋转一整圈；随后切到120°、稳定300 ms再转一圈。两层共约720°完成后F407仍保持`SEARCH`并重新开始90°扫描，不自行启动本地返中心动作。上位机可在任意阶段通过普通或聚集标记的`APPROACH_TARGET`、空爪藏点NAV接管；SEARCH中的`HOLD`不停止本地扫描。F407收到第一条合法APPROACH即进入靠近，不在下位机重复增加确认帧数。
-6. 收到1帧原生1280×1024合法单目标坐标后锁定该类别并进入`APPROACH`。居中时以350 mm/s前进；后续只有同一类别的合法单目标新SEQ才能刷新X/Y。水平坐标使用0.55低通、Kp=0.72、Kd=0.020，旋转目标限制±175 mm/s并以1000 mm/s²平滑变化；相机PID以30°/s限速。舵机3首次达到125°时底盘立即停止平移并只做水平对正，横向误差≤24 px后把相机非阻塞移到140°；随后锁存当前IMU航向，以350 mm/s直行最多300 mm并等待目标产生新的有效报告。目标在该段重新出现且横向误差≤96 px便停车进入抓取观察；偏差更大则回125°重新对正。300 mm内仍未重获时停车，舵机3以1°/40 ms从140°慢慢抬到90°，全过程继续接收视觉帧；重获立即恢复APPROACH，到90°仍无目标则返回SEARCH。
-7. 上述140°限距重获成功后停车，并持续通过`TYPE=0x17`置`CLAW_VISIBLE=1`，让上位机检查抓取画面。
+6. 收到1帧原生1280×1024合法单目标坐标后锁定该类别并进入`APPROACH`。居中时以350 mm/s前进；后续只有同一类别的合法单目标新SEQ才能刷新X/Y。水平坐标使用0.55低通、Kp=0.72、Kd=0.020，旋转目标限制±175 mm/s并以1000 mm/s²平滑变化；相机PID以30°/s限速。舵机3首次达到125°时底盘立即停止平移并只做水平对正，横向误差≤24 px后把相机非阻塞移到140°；随后锁存当前IMU航向，以350 mm/s直行并等待目标产生新的有效报告。目标在该段重新出现且横向误差≤96 px便进入抓取观察；偏差更大则回125°重新对正。
+7. 上述140°限距重获成功后，F407持续通过`TYPE=0x17`置`CLAW_VISIBLE=1`，同时保持锁存航向并以150 mm/s慢速前进，不把横向误差≤96 px当成停车条件。收到上位机带`STABLE`的非空`CARGO_AUDIT`后立即停车等待`GRAB_CONFIRMED`。350 mm/s重获段和150 mm/s观察段从140°稳定点共用300 mm编码器上限；达到上限仍未确认物体则停车进入`REACQ`，舵机3以1°/40 ms慢慢抬到90°寻找，仍无目标才回`SEARCH`。单侧分离后的夹内复审始终原地进行，不使用慢速前进。
 8. 如果上位机报告画面无物体，摄像头每次抬高10°（舵机角度140→130→…→90），每次抬高后停车观察1秒；仍没有物体就以100 mm/s慢速旋转观察。转满一圈仍没有物体则再次抬高并重复。在视觉报告超时期间保持停车。
 9. 上位机在F407持续上报`CLAW_VISIBLE=1`且状态帧不超过250 ms时，连续3个视觉周期确认画面仍有目标，然后以20～50 Hz重复发送`TYPE=0x18 / GRAB_CONFIRMED`。F407第一次接受时让左右爪同时合到Touch姿态，后续帧只更新`acknowledged_sequence`而不重启舵机动作；仍保留2秒机构完成窗口，之后才通过20 Hz的`TYPE=0x17`持续置`GRIPPER_CLOSED=1`。合爪后摄像头保持当前抓取观察角，不提前抬头。
-10. 抓取闭合后，上位机根据最新T265+编码器融合位置持续计算绝对航向和剩余距离。剩余超过300 mm时NAV最高800 mm/s；进入最后300 mm后限速约400 mm/s。首次进入`D≤50 mm`时，F407不采用当前车头或上位机后续H，而是按赛前锁存颜色选择放置区法向；第一次投送时红方由90°右偏到80°、蓝方由270°左偏到280°，第一次收到`TASK_COMPLETE`后，后续恢复红方90°、蓝方270°；立即停车并原地对正到误差≤1.5°后推进末段。行驶修正死区为1°，动态航向偏差达到4°会停车重新对正。锁存后只用IMU保持固定方向，D重新大于100 mm才解除锁存。首次收到NAV的`D=0 mm`后，不立即置`DISTANCE_DONE`，而是在IMU保持锁存方向下以200 mm/s慢推，保证至少1.5 s、最长2.0 s；编码器累计440 mm仅在满1.5 s后才允许作为安全停止上限。上位机若提前发送ENTER，F407仍会先建立同一最终航向锁存、完成对正和末端慢推，再张爪。
-11. 安全区车头对正状态已经删除。上位机确认NAV到达放置点后直接发送`ENTER_SAFE_ZONE`，F407从`TASK_NAVIGATE`直接进入张爪，不再进入旧mode11，也不后退0.30 m或前冲0.55 m。双爪完全张开后摄像头转到120°，稳定300 ms才进入`RAM_VERIFY/CHECK`并原地停车至少1200 ms，给上位机连续确认物资“区外→区内”的视野和时间。命令4保留为协议兼容值；若旧上位机仍发送ALIGN，F407只停车等待新版ENTER，不会旋转。
-12. 1200 ms最短静止窗口结束后，收到`TASK_COMPLETE`先进入`EXIT_SAFE_ZONE(mode16)`，以400 mm/s、编码器定距和IMU航向保持后退0.30 m，避免贴围栏原地掉头。完成后进入`FACE_FIELD_CENTER(mode17)`；最新版上位机看到mode16或mode17后持续发送`RETURN_CENTER`行进方向H和剩余距离D。F407在mode17读取最新H，先原地转到3°误差内，再按D以最高800 mm/s向前返中；行驶中继续做限幅100 mm/s的小幅航向修正，偏差达到8°才停车重新对向。收到`D=0 mm`后停车并进入90°/120°两层`SEARCH`。是否真正到达场地原点完全取决于上位机发送的D。
+10. 抓取闭合后，上位机先用带`STAGE_ONLY(bit6)`的`NAVIGATE_WAYPOINT`引导到本半区中心前约400 mm预备点。F407继续使用H/D导航，但到`D=0`只停车、置`DISTANCE_DONE=1`并保持`mode=10`，严禁启动旧安全区补推。藏堆和返中命令不使用该标志，原流程不变。
+11. 上位机随后发送第一次`ALIGN_SAFE_ZONE`：P6/P7为红方90°或蓝方270°，F407用IMU原地对正，稳定在1.5°范围后上报`mode=11`。上位机连续3帧冻结安全区框后发送第二次带`VISUAL_CORRECTION_VALID(bit6)`的ALIGN；P2/P3为有符号水平像素误差而不是角度。F407按可标定焦距把像素误差转换为一次相对转角，最大限制±15°，完成后再次上报新鲜`mode=11`并锁存最终航向。视觉5秒失败时，上位机跳过第二次ALIGN，直接沿第一次90°/270°结果推进。
+12. `ENTER_SAFE_ZONE`持续携带当前位置到围栏直线的法向距离。F407不再使用动态H或横移，只以IMU保持已锁存的最终航向；D从300 mm向机构接触位置靠近时，前进速度由400平滑降至200 mm/s。D到约113 mm机构理论接触距离后锁存最终补推，忽略后续定位D，以250 mm/s和编码器再前进50 mm，最迟1200 ms按预期接触完成。随后停车、双爪完全张开、摄像头到120°并稳定300 ms，才上报`mode=15`供上位机执行原投送确认。
+13. 1200 ms最短静止窗口结束后，收到`TASK_COMPLETE`先进入`EXIT_SAFE_ZONE(mode16)`，以400 mm/s、编码器定距和IMU航向保持后退0.30 m，避免贴围栏原地掉头。完成后进入`FACE_FIELD_CENTER(mode17)`；最新版上位机看到mode16或mode17后持续发送`RETURN_CENTER`行进方向H和剩余距离D。F407在mode17读取最新H，先原地转到3°误差内，再按D以最高800 mm/s向前返中；行驶中继续做限幅100 mm/s的小幅航向修正，偏差达到8°才停车重新对向。收到`D=0 mm`后停车并进入90°/120°两层`SEARCH`。是否真正到达场地原点完全取决于上位机发送的D。
 
 上位机在收到STM32的`TYPE=0x17`退出、返中或搜索状态后进入下一轮；第一次投送完成前只选择单个绿色物资，之后允许同类普通/核心批次或单个伤员，危险目标不进入正式投送。
 
@@ -65,7 +66,7 @@ A3 B3 12 10 02 80 02 00 00 00 01 09 DD FD C3
 
 ### `TYPE=0x18`任务命令
 
-`P0=COMMAND、P1=FLAGS、P2/P3=REMAINING_DISTANCE_mm、P4/P5=0、P6/P7=HEADING_cdeg`。距离为0～5000 mm，表示上位机依据最新融合位置计算的实时剩余距离；航向范围0～35999，单位0.01°。FLAGS bit0必须为1，bit1要求直行，bit2使用航向，bit3表示红方，bit4表示距离有效。bit5仅在`APPROACH_TARGET`中表示`CLUSTER_TARGET`，其他命令携带bit5会被整帧拒绝。上位机应持续递增SEQ并更新航向/余量；F407只执行最新合法值。
+`P0=COMMAND、P1=FLAGS、P2..P7=命令相关载荷`。FLAGS bit0必须为1，bit1要求直行，bit2使用绝对航向，bit3表示红方，bit4表示距离有效。bit5仅在`APPROACH_TARGET`中表示`CLUSTER_TARGET`。bit6按opcode复用：NAV为`STAGE_ONLY`，ALIGN/ENTER为`VISUAL_CORRECTION_VALID`，DISPERSE为`SIDE_VALID`；bit7仅在DISPERSE中表示`TARGET_RIGHT`。其他命令携带这些高位会被整帧拒绝。
 
 命令值：`0 STOP、1 PAUSE、2 GRAB_CONFIRMED、3 NAVIGATE_WAYPOINT、4 ALIGN_SAFE_ZONE、5 ENTER_SAFE_ZONE、6 TASK_COMPLETE、7 ABORT、8 RETURN_CENTER、9 APPROACH_TARGET、10 HOLD、11 YIELD_BACKOFF、12 ESCAPE_MANEUVER、13 RELEASE_LEFT、14 RELEASE_RIGHT、15 RELEASE_BOTH、16 DISPERSE_PILE、17 CHANGE_LANE、18 CARGO_AUDIT`。
 
@@ -73,17 +74,19 @@ A3 B3 12 10 02 80 02 00 00 00 01 09 DD FD C3
 - `GRAB_CONFIRMED`会重复发送直到新鲜`TYPE=0x17`置`GRIPPER_CLOSED=1`；F407对舵机动作幂等，但每个新SEQ都必须更新P4 ACK。
 - `HOLD`是高层“本周期没有新动作”的心跳：在`SEARCH`中F407仍执行本地90°/120°扫描；在APPROACH正常跟踪、125°水平对正、NAV、RETURN和远程动作中安全停车。相机由125°移到140°、140°限距前进以及140→90°慢抬重获属于已经触发的本地近距序列，HOLD只表示当前没有新目标帧，不会中止这三个子阶段。需要冻结任何阶段时使用`PAUSE=1`；F407会ACK并锁存停车，直到收到一条当前状态接受的新SEQ非PAUSE命令。
 - `STOP`只在NAV中保留原有可恢复兼容行为，其他状态会进入远程停止故障；`ABORT`始终是锁存故障停止。普通等待、视觉暂时不确定不得用STOP或ABORT代替HOLD/PAUSE。
-- 当上位机NAV剩余距离首次为0时，F407保持`MODE=NAVIGATE`执行200 mm/s末端慢推，至少持续1.5 s、最长2.0 s，满1.5 s后才允许440 mm编码器上限提前结束；补推完成后才置`P0 bit5 DISTANCE_DONE=1`作为诊断。正常状态切换仍由上位机发送`ENTER_SAFE_ZONE`，提前到达的ENTER会等待补推完成。
-- 合法命令前驱固定为`WAIT_NAVIGATION→NAVIGATE→ENTER_SAFE_ZONE→CHECK→TASK_COMPLETE→EXIT_SAFE_ZONE→RETURN_CENTER`。命令`ALIGN_SAFE_ZONE=4`仅保留帧解析兼容，旧mode11、13、14已经从Task状态枚举和LCD中删除，但mode12、15、16、17等现用编号保持不变。需要Location的阶段允许短暂失效并停车等待，连续1500 ms无效才报告`POSE_TIMEOUT`。
-- `NAVIGATE_WAYPOINT`和`RETURN_CENTER`使用持续更新的航向+剩余距离；`ENTER_SAFE_ZONE`只触发张爪放置，不再触发航向对正。
+- 正式投送的`STAGE_ONLY NAV`在预备点D=0后置`DISTANCE_DONE`并保持mode10，不执行旧D=0补推；旧非STAGE NAV仍作为兼容后备保留，藏堆和RETURN语义不变。
+- 合法新流程为`WAIT_NAVIGATION→STAGE NAV(mode10)→定位ALIGN(mode11)→可选视觉ALIGN(新鲜mode11)→ENTER→CHECK(mode15)→TASK_COMPLETE→EXIT_SAFE_ZONE→RETURN_CENTER`。
+- 第一次ALIGN的P6/P7是90°/270°绝对航向；第二次ALIGN的P2/P3是冻结框相对640 px中心的有符号像素误差。视觉修正只能应用一次，重复帧只更新ACK，不能重复累加角度。
+- ENTER的P2/P3是围栏法向剩余距离、P4/P5为0；视觉对正成功时bit6置位且P6/P7为0，视觉失败回退时bit2置位并在P6/P7重复90°/270°。F407锁存航向后不再接受动态H。
 - 红方前置点为`(0,+950 mm)`，蓝方前置点为`(0,-950 mm)`。F407不接收PWM值，只接收任务目标并在本地完成转向、速度限制和失联停车。
 
 ### 完整比赛流程扩展
 
 - `APPROACH_TARGET`的P2/P3和P4/P5分别为原生图像X/Y；完整流程激活后它是靠近控制的唯一坐标源。F407不再按250 ms帧龄自动减速或退出，HOLD/PAUSE/STOP以及阶段切换必须由上位机明确发送。
-- `CARGO_AUDIT`按字节编码左右类别、数量、审核标志、audit_id和总数量。F407接受显式STABLE帧，也兼容上位机在第3帧直接切换GRAB的行为：前两帧审核内容一致即可建立本地稳定门。`initial_stash=1`只用于把开局物资堆搬离中心，稳定审核只要求`total_count>0`，不限制类别、总数量，也不把左右2-bit饱和计数之和作为容量联锁；正式投送仍要求首件恰好1件绿色、后续同类普通或同类核心为1～3件、伤员单独1件。危险、未知、超过3件、计数矛盾、伤员混装以及普通+核心混装均不允许直接正式投送。
-- 非法组合优先单侧分离。F407只接受与最近稳定审核一致的释放侧：`RELEASE_LEFT`为左108°/右110°，`RELEASE_RIGHT`为左70°/右72°，这两条单侧分离仍按既有YIELD和复审流程。若上位机无法判断左右，发送`RELEASE_BOTH`触发特殊撞分：`双开留物→后退0.40 m→Touch闭爪→700 mm/s前撞0.40 m→450 mm/s退回0.40 m→再次双开`，完成后上报`mode=34`。该动作没有保留夹内物资，上位机不得发送YIELD或CARGO_AUDIT；确认新鲜mode34和ACK后清除当前批次并发送HOLD，F407进入SEARCH。临时藏堆的`RELEASE_BOTH`仍是普通双开。
-- 临时藏堆NAV不执行安全区D=0末端慢推；到点后`RELEASE_BOTH`。释放完成后至返中完成期间，F407拒绝`APPROACH_TARGET`和`DISPERSE_PILE`，避免残留找物命令抢占藏堆回程。第一条`RETURN_CENTER`先触发F407保持释放航向直退0.35 m，编码器累计距离且IMU修正航向；退到安全距离后才使用上位机持续更新的H原地调头并按D返中。该退让只对临时藏堆生效，正式安全区投送仍使用既有mode16后退0.30 m，不会重复后退。正式安全区NAV仍保留200 mm/s、至少1.5 s、最长2.0 s和440 mm安全上限。
-- 普通`YIELD_BACKOFF`使用750 mm/s编码器定距和IMU航向保持；单侧分离后，最初100 mm为450 mm/s，后段恢复750 mm/s，退让后舵机3到140°并稳定300 ms才报告`YIELD_DONE`。`DISPERSE_PILE`只在空爪、未等待复审且已到`mode=37`时执行：F407接受命令时锁存IMU航向为0°，双爪先同时闭到Touch（左80°、右100°），再以400 mm/s专用转速分别闭环到`+45°、-45°、+90°、-90°`，取消最后回正，并从当前航向以550 mm/s后退0.30 m。动作完成报告mode35，专用保护上限15秒；Touch仅作为打散接触面，不会置`GRIPPER_CLOSED`状态位。
+- 普通目标到达抓取前沿后，F407在舵机3命令到140°后先停车等待500 ms，并丢弃等待前的旧目标帧；随后以350 mm/s重新观察。第一帧重新出现的锁定目标若`|X-640|<=96`，只表示具备夹内观察基础条件：F407进入WATCH、置`CLAW_VISIBLE=1`，但保持IMU锁向并以150 mm/s慢速爬行，不再立即停车。上位机发送带`STABLE`的非空`CARGO_AUDIT`后F407立即停车并等待GRAB；从140°稳定点累计最多前进300 mm，仍未确认夹内物体则转入mode24/REACQ。该入口不增加Y坐标或目标连续帧门槛；单侧释放后的复审仍原地进行。
+- `CARGO_AUDIT`按字节编码左右类别、数量、审核标志、audit_id和总数量。F407接受显式STABLE帧，也兼容上位机在第3帧直接切换GRAB的行为：前两帧审核内容一致即可建立本地稳定门。`initial_stash=1`只用于把开局物资堆搬离中心，稳定审核只要求`total_count>0`，不限制类别、总数量，也不把左右2-bit饱和计数之和作为容量联锁；正式投送仍要求首件恰好1件绿色，首件完成后允许1～3件普通、核心或`MIXED_MATERIAL`组合，伤员仍须单独1件。危险、未知、超过3件、计数矛盾和伤员混装均不允许直接正式投送。
+- 非法组合优先单侧分离。F407只接受与最近稳定审核一致的释放侧：`RELEASE_LEFT`为左108°/右100°，`RELEASE_RIGHT`为左80°/右72°；释放侧完全打开，保留侧只维持普通Touch，不再额外夹紧。随后`YIELD_BACKOFF`不做分段直退，而按上位机给出的退让距离执行镜像曲线退出：500 mm/s后向、180 mm/s向保留侧横移、100 mm/s向释放侧转头。曲线完成后相机到140°并重新审核；合法非空批次继续GRAB，带`STABLE`的空爪审核则双开并回SEARCH。若上位机无法判断左右，仍发送`RELEASE_BOTH`触发特殊撞分：`双开留物→500 mm/s后退0.40 m→Touch闭爪并等待到位→1000 mm/s恒速前撞0.60 m→500 mm/s退回0.60 m→再次双开`，完成后上报`mode=34`并回SEARCH。
+- 临时藏堆NAV不使用`STAGE_ONLY`，也不执行任何安全区补推；到点后`RELEASE_BOTH`。释放完成后至返中完成期间，F407拒绝`APPROACH_TARGET`和`DISPERSE_PILE`，避免残留找物命令抢占藏堆回程。第一条`RETURN_CENTER`先触发F407保持释放航向直退0.35 m，编码器累计距离且IMU修正航向；退到安全距离后才使用上位机持续更新的H原地调头并按D返中。该退让只对临时藏堆生效，正式安全区投送仍使用既有mode16后退0.30 m，不会重复后退。
+- `YIELD_BACKOFF`只在F407已确认完成`RELEASE_LEFT/RIGHT`且`cargo_recheck_pending=1`时接受；参数A仍是退让距离（建议-300 mm，符号仅为兼容，F407按绝对值执行曲线长度）。聚集APPROACH仍先Touch靠近至相机130°并在`mode=37`等待。`DISPERSE_PILE`有两种合法语义：带`SIDE_VALID(bit6)`时，`TARGET_RIGHT(bit7)=0/1`分别表示保留左/右目标，F407打开非目标侧、目标侧维持普通Touch，以固定0.30 m镜像曲线退出，相机到140°稳定300 ms后报告`mode=35`并等待新的`CARGO_AUDIT`；不带bit6/bit7时表示上位机无法可靠判断左右，F407执行`双开留物→500 mm/s后退0.40 m→Touch闭爪→1000 mm/s恒速前撞0.60 m→500 mm/s退回0.60 m→双开`的整堆撞分并报告`mode=34`。`TARGET_RIGHT=1`但`SIDE_VALID=0`是非法组合。mode34后F407原地等待，上位机应先在原区域重选原目标；找到后可直接发送普通或聚集`APPROACH_TARGET`，确认重选失败时才发送HOLD回普通SEARCH，建议整堆撞分最多重复2次。
 - 对外mode映射为`20 APPROACH_TARGET、21 CAPTURE_AUDIT、22 CAPTURE_DONE、30 YIELD_DONE、31 ESCAPE_DONE、32/33/34 RELEASE_DONE、35 DISPERSE_DONE、36 LANE_DONE、37 DISPERSE_READY`，不改变旧内部TaskState数值。
-- 返中只接受新鲜`RETURN_CENTER D=0`作为到达；HOLD无论距离远近都只停车，不再用旧的650 mm兼容门提前伪造回中完成。上位机必须持续发送RETURN直到F407上报`mode=3 SEARCH`。
+- 返中只接受新鲜`RETURN_CENTER D=0`作为到达；HOLD无论距离远近都只停车，不再用旧的650 mm兼容门提前伪造回中完成。F407进入`mode=3 SEARCH`后的1500 ms交接窗口内仍会确认重复RETURN帧的SEQ，但不会停止或改变SEARCH动作，用于兼容仅比较当前8位ACK的旧上位机。上位机仍必须把“本次RETURN曾被确认”锁存为布尔状态，不能把该兼容窗口作为长期握手机制。

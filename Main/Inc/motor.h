@@ -39,6 +39,10 @@ MotorDistanceStatus Motor_MoveDistanceLinear(float distance_m,
                                              float max_speed_mm_s,
                                              float slowdown_mm,
                                              float end_speed_mm_s);
+/* Encoder distance control without terminal deceleration; acceleration,
+ * heading hold, target braking and distance tolerance remain active. */
+MotorDistanceStatus Motor_MoveDistanceConstant(float distance_m,
+                                               float speed_mm_s);
 MotorTurnStatus Motor_TurnAngle(float angle_deg);
 /* Same relative IMU turn with a caller-specific initial rotation speed. */
 MotorTurnStatus Motor_TurnAngleSpeed(float angle_deg, float speed_mm_s);

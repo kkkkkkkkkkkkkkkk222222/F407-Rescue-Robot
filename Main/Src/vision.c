@@ -211,7 +211,13 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
       VISION_CMD_USE_FINAL_HEADING | VISION_CMD_RED_SIDE |
       VISION_CMD_DISTANCE_VALID |
       ((code == VISION_CMD_APPROACH_TARGET) ?
-          VISION_CMD_CLUSTER_TARGET : 0U));
+          VISION_CMD_CLUSTER_TARGET : 0U) |
+      (((code == VISION_CMD_NAVIGATE_WAYPOINT) ||
+        (code == VISION_CMD_ALIGN_SAFE_ZONE) ||
+        (code == VISION_CMD_ENTER_SAFE_ZONE)) ?
+          VISION_CMD_STAGE_ONLY : 0U) |
+      ((code == VISION_CMD_DISPERSE_PILE) ?
+          (VISION_CMD_SIDE_VALID | VISION_CMD_TARGET_RIGHT) : 0U));
   if (!vision_mission_code_valid(code) ||
       ((flags & VISION_CMD_VALID) == 0U) ||
       ((flags & (uint8_t)~allowed_flags) != 0U)) {
@@ -236,7 +242,37 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
        (arg_a < 0) || (arg_b != 0) || (heading >= 36000U))) {
     return;
   }
-  if ((code == VISION_CMD_ENTER_SAFE_ZONE) && (heading >= 36000U)) {
+  if (code == VISION_CMD_ALIGN_SAFE_ZONE) {
+    const bool visual =
+        (flags & VISION_CMD_VISUAL_CORRECTION_VALID) != 0U;
+    if (visual) {
+      if (((flags & VISION_CMD_USE_FINAL_HEADING) != 0U) ||
+          (arg_a < -(int16_t)APP_VISION_MAX_X) ||
+          (arg_a > (int16_t)APP_VISION_MAX_X) ||
+          (arg_b != 0) || (heading != 0U)) {
+        return;
+      }
+    } else if (((flags & VISION_CMD_USE_FINAL_HEADING) == 0U) ||
+               (arg_a != 0) || (arg_b != 0) || (heading >= 36000U)) {
+      return;
+    }
+  }
+  if (code == VISION_CMD_ENTER_SAFE_ZONE) {
+    const bool visual =
+        (flags & VISION_CMD_VISUAL_CORRECTION_VALID) != 0U;
+    const uint8_t required = VISION_CMD_DRIVE_STRAIGHT |
+                             VISION_CMD_DISTANCE_VALID;
+    if (((flags & required) != required) || (arg_a < 0) || (arg_b != 0) ||
+        (visual ? (((flags & VISION_CMD_USE_FINAL_HEADING) != 0U) ||
+                   (heading != 0U)) :
+                  (((flags & VISION_CMD_USE_FINAL_HEADING) == 0U) ||
+                   (heading >= 36000U)))) {
+      return;
+    }
+  }
+  if ((code == VISION_CMD_DISPERSE_PILE) &&
+      ((flags & VISION_CMD_TARGET_RIGHT) != 0U) &&
+      ((flags & VISION_CMD_SIDE_VALID) == 0U)) {
     return;
   }
   if ((code == VISION_CMD_CARGO_AUDIT) &&

@@ -102,6 +102,15 @@
 /* APPROACH_TARGET describes the centre of a pile that must be approached
  * before the upper computer requests the fixed local disperse action. */
 #define VISION_CMD_CLUSTER_TARGET    0x20U
+/* Bit 6 is opcode-specific in shijue_fangan's current protocol. */
+#define VISION_CMD_STAGE_ONLY        0x40U
+#define VISION_CMD_VISUAL_CORRECTION_VALID 0x40U
+/* DISPERSE_PILE reuses the high bits for optional side selection. With
+ * SIDE_VALID set, TARGET_RIGHT clear/set retains the left/right target and
+ * runs selective separation. Without SIDE_VALID, F407 runs the whole-pile
+ * impact fallback. TARGET_RIGHT without SIDE_VALID is invalid. */
+#define VISION_CMD_SIDE_VALID        0x40U
+#define VISION_CMD_TARGET_RIGHT      0x80U
 
 typedef enum {
   VISION_CMD_STOP = 0,

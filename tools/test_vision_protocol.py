@@ -93,7 +93,8 @@ class VisionProtocolTests(unittest.TestCase):
             protocol.CMD_VALID, 640, 512, 0,
         )
         disperse = protocol.mission_frame(
-            0x32, protocol.CMD_DISPERSE_PILE, protocol.CMD_VALID,
+            0x32, protocol.CMD_DISPERSE_PILE,
+            protocol.CMD_VALID | protocol.CMD_SIDE_VALID,
         )
         self.assertEqual(protocol.parse_frame(approach)[2][0],
                          protocol.CMD_APPROACH_TARGET)
@@ -116,6 +117,97 @@ class VisionProtocolTests(unittest.TestCase):
             protocol.mission_frame(
                 0x35, protocol.CMD_HOLD,
                 protocol.CMD_VALID | protocol.CMD_CLUSTER_TARGET,
+            )
+
+    def test_disperse_side_flags_are_disperse_only(self) -> None:
+        disperse = protocol.mission_frame(
+            0x36, protocol.CMD_DISPERSE_PILE,
+            protocol.CMD_VALID | protocol.CMD_SIDE_VALID |
+            protocol.CMD_TARGET_RIGHT,
+        )
+        self.assertEqual(
+            protocol.parse_frame(disperse)[2][1],
+            protocol.CMD_VALID | protocol.CMD_SIDE_VALID |
+            protocol.CMD_TARGET_RIGHT,
+        )
+        whole_pile = protocol.mission_frame(
+            0x37, protocol.CMD_DISPERSE_PILE, protocol.CMD_VALID,
+        )
+        self.assertEqual(
+            protocol.parse_frame(whole_pile)[2][1], protocol.CMD_VALID,
+        )
+        with self.assertRaises(ValueError):
+            protocol.mission_frame(
+                0x38, protocol.CMD_DISPERSE_PILE,
+                protocol.CMD_VALID | protocol.CMD_TARGET_RIGHT,
+            )
+        with self.assertRaises(ValueError):
+            protocol.mission_frame(
+                0x39, protocol.CMD_HOLD,
+                protocol.CMD_VALID | protocol.CMD_SIDE_VALID,
+            )
+
+    def test_staged_safe_zone_delivery_commands(self) -> None:
+        side = protocol.CMD_RED_SIDE
+        stage_flags = (
+            protocol.CMD_VALID | protocol.CMD_DRIVE_STRAIGHT |
+            protocol.CMD_USE_FINAL_HEADING | protocol.CMD_DISTANCE_VALID |
+            protocol.CMD_STAGE_ONLY | side
+        )
+        stage = protocol.mission_frame(
+            0x40, protocol.CMD_NAVIGATE_WAYPOINT, stage_flags,
+            400, 0, 9000,
+        )
+        pose_align = protocol.mission_frame(
+            0x41, protocol.CMD_ALIGN_SAFE_ZONE,
+            protocol.CMD_VALID | protocol.CMD_USE_FINAL_HEADING | side,
+            0, 0, 9000,
+        )
+        visual_align = protocol.mission_frame(
+            0x42, protocol.CMD_ALIGN_SAFE_ZONE,
+            protocol.CMD_VALID |
+            protocol.CMD_VISUAL_CORRECTION_VALID | side,
+            -52, 0, 0,
+        )
+        enter = protocol.mission_frame(
+            0x43, protocol.CMD_ENTER_SAFE_ZONE,
+            protocol.CMD_VALID | protocol.CMD_DRIVE_STRAIGHT |
+            protocol.CMD_DISTANCE_VALID |
+            protocol.CMD_VISUAL_CORRECTION_VALID | side,
+            325, 0, 0,
+        )
+        self.assertEqual(protocol.parse_frame(stage)[2][1], stage_flags)
+        self.assertEqual(
+            int.from_bytes(protocol.parse_frame(pose_align)[2][6:8], "big"),
+            9000,
+        )
+        self.assertEqual(
+            int.from_bytes(
+                protocol.parse_frame(visual_align)[2][2:4],
+                "big", signed=True,
+            ),
+            -52,
+        )
+        self.assertEqual(
+            int.from_bytes(protocol.parse_frame(enter)[2][2:4], "big"),
+            325,
+        )
+
+    def test_visual_align_and_enter_reject_mixed_semantics(self) -> None:
+        with self.assertRaises(ValueError):
+            protocol.mission_frame(
+                0x44, protocol.CMD_ALIGN_SAFE_ZONE,
+                protocol.CMD_VALID | protocol.CMD_USE_FINAL_HEADING |
+                protocol.CMD_VISUAL_CORRECTION_VALID,
+                20, 0, 9000,
+            )
+        with self.assertRaises(ValueError):
+            protocol.mission_frame(
+                0x45, protocol.CMD_ENTER_SAFE_ZONE,
+                protocol.CMD_VALID | protocol.CMD_DRIVE_STRAIGHT |
+                protocol.CMD_DISTANCE_VALID |
+                protocol.CMD_VISUAL_CORRECTION_VALID,
+                200, 0, 9000,
             )
 
     def test_pause_uses_reserved_mission_code(self) -> None:

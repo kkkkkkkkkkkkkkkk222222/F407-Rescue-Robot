@@ -114,17 +114,18 @@ bool Claw_Open(uint32_t now_ms)
 
 bool Claw_OpenLeft(uint32_t now_ms)
 {
-  /* Release the left cargo while the right claw holds the retained cargo
-   * 10 degrees tighter than its ordinary 100-degree touch position. */
+  /* Release the left cargo while the right claw remains at its ordinary
+   * 100-degree Touch position.  The curved chassis exit provides separation;
+   * do not squeeze large retained cargo harder than a normal grasp. */
   return claw_move_together(CLAW_ACTION_OPEN_LEFT, now_ms,
-                            108U, 110U, 600U);
+                            108U, 100U, 600U);
 }
 
 bool Claw_OpenRight(uint32_t now_ms)
 {
-  /* Mirror of Claw_OpenLeft: 70 degrees is 10 degrees tighter than touch. */
+  /* Mirror of Claw_OpenLeft: keep the left claw at normal 80-degree Touch. */
   return claw_move_together(CLAW_ACTION_OPEN_RIGHT, now_ms,
-                            70U, 72U, 600U);
+                            80U, 72U, 600U);
 }
 
 bool Claw_Retract(uint32_t now_ms)
