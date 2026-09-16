@@ -74,7 +74,7 @@ A3 B3 12 10 02 80 02 00 00 00 01 09 DD FD C3
 - `GRAB_CONFIRMED`会重复发送直到新鲜`TYPE=0x17`置`GRIPPER_CLOSED=1`；F407对舵机动作幂等，但每个新SEQ都必须更新P4 ACK。
 - `HOLD`是高层“本周期没有新动作”的心跳：在`SEARCH`中F407仍执行本地90°/120°扫描；在APPROACH正常跟踪、125°水平对正、NAV、RETURN和远程动作中安全停车。相机由125°移到140°、140°限距前进以及140→90°慢抬重获属于已经触发的本地近距序列，HOLD只表示当前没有新目标帧，不会中止这三个子阶段。需要冻结任何阶段时使用`PAUSE=1`；F407会ACK并锁存停车，直到收到一条当前状态接受的新SEQ非PAUSE命令。
 - `STOP`只在NAV中保留原有可恢复兼容行为，其他状态会进入远程停止故障；`ABORT`始终是锁存故障停止。普通等待、视觉暂时不确定不得用STOP或ABORT代替HOLD/PAUSE。
-- 正式投送的`STAGE_ONLY NAV`在预备点D=0后置`DISTANCE_DONE`并保持mode10，不执行旧D=0补推；旧非STAGE NAV仍作为兼容后备保留，藏堆和RETURN语义不变。
+- 正式投送的`STAGE_ONLY NAV`兼容两种flags：精简形式`VALID|DISTANCE_VALID|STAGE_ONLY|阵营位`，以及在此基础上同时增加`DRIVE_STRAIGHT|USE_FINAL_HEADING`的完整形式；两方向位只出现一个属于非法帧。P2/P3仍为剩余距离/0，P6/P7仍为0～35999的场地平移方向。预备点D=0后置`DISTANCE_DONE`并保持mode10，不执行旧D=0补推；旧非STAGE NAV、藏堆NAV和RETURN仍强制要求完整方向flags，原语义不变。
 - 合法新流程为`WAIT_NAVIGATION→STAGE NAV(mode10)→定位ALIGN(mode11)→可选视觉ALIGN(新鲜mode11)→ENTER→CHECK(mode15)→TASK_COMPLETE→EXIT_SAFE_ZONE→RETURN_CENTER`。
 - 第一次ALIGN的P6/P7是90°/270°绝对航向；第二次ALIGN的P2/P3是冻结框相对640 px中心的有符号像素误差。视觉修正只能应用一次，重复帧只更新ACK，不能重复累加角度。
 - ENTER的P2/P3是围栏法向剩余距离、P4/P5为0；视觉对正成功时bit6置位且P6/P7为0，视觉失败回退时bit2置位并在P6/P7重复90°/270°。F407锁存航向后不再接受动态H。

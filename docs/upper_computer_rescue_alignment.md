@@ -41,7 +41,7 @@ F407会校验释放侧计数：`RELEASE_LEFT/RIGHT`对应侧必须非空；复�
 
 ## 4. 去放置区与投送确认
 
-- 正式投送NAV必须置`STAGE_ONLY(bit6)`，目标是相应半区安全区入口前600 mm预备点；持续发送几何H/D直到新鲜`mode=10 + DISTANCE_DONE + ACK变化`。F407在首次D=0时立即把摄像头抬到120°；不要在该点发送旧式ENTER，F407明确禁止预备点补推。
+- 正式投送NAV必须置`STAGE_ONLY(bit6)`，目标是相应半区安全区入口前600 mm预备点；持续发送几何H/D直到新鲜`mode=10 + DISTANCE_DONE + ACK变化`。F407现已兼容上位机`952853c`当前使用的精简flags `VALID|DISTANCE_VALID|STAGE_ONLY|阵营位`，也兼容旧版同时携带`DRIVE_STRAIGHT|USE_FINAL_HEADING`的完整形式；不要只设置两个方向位中的一个。F407在首次D=0时立即把摄像头抬到120°；不要在该点发送旧式ENTER，F407明确禁止预备点补推。
 - 第一次ALIGN置`USE_FINAL_HEADING`，P6/P7始终发送红方9000或蓝方27000；所有投送使用相同航向，不再区分首趟偏置。F407会保证摄像头120°命令后至少稳定300 ms再上报完成，持续发送到新鲜`mode=11 + ACK变化`。
 - 连续3个不同新视觉帧冻结安全区框；第二次ALIGN置`VISUAL_CORRECTION_VALID(bit6)`，P2/P3发送`target_x_px-640`的有符号像素误差，P4/P5/P6/P7为0。持续发送到第二个新鲜`mode=11 + 本阶段ACK变化`。5秒仍无法冻结时跳过第二次ALIGN，沿第一次航向进入回退ENTER。
 - ENTER始终置`DRIVE_STRAIGHT | DISTANCE_VALID`，P2/P3持续发送当前位置到围栏直线的法向剩余距离，P4/P5为0。视觉修正成功时置bit6且P6/P7=0；回退路径置`USE_FINAL_HEADING`且P6/P7=9000/27000。F407不会再按ENTER的动态H转向。
@@ -78,7 +78,7 @@ F407会校验释放侧计数：`RELEASE_LEFT/RIGHT`对应侧必须非空；复�
 4. 左绿右核心、左核心右绿分别释放正确一侧，YIELD后重新审核。
 5. 左右归属不明时发送无bit6/bit7的DISPERSE触发12°观察转向；mode35后丢弃旧审核并重新发送CARGO_AUDIT，分侧成功后再发送带SIDE_VALID的DISPERSE。
 6. 释放命令与审核侧不一致时F407不动作，上位机能够重新审核恢复。
-7. 正式投送NAV携带STAGE_ONLY，在400 mm预备点D=0只得到mode10+DISTANCE_DONE，不能出现张爪或本地长距离补推。
+7. 正式投送NAV携带STAGE_ONLY，在600 mm预备点D=0只得到mode10+DISTANCE_DONE，不能出现张爪或本地长距离补推；分别用蓝方`0x51`、红方`0x59`精简flags验证WAITNAV能够立即ACK并进入mode10。
 8. 每次投送第一次ALIGN均完成红90°/蓝270°定位对正，第二次只应用一次冻结框像素修正，不再添加首趟±10°。
 9. ENTER期间改变上位机动态H不影响锁存航向；D到约113 mm后改变或回跳也不打断300 mm/s、200 mm本地补推，最终才出现mode15。
 10. mode15视觉确认两次超时后不会无限ENTER：无区外反证时能TASK_COMPLETE，有明确区外反证时安全停车告警。

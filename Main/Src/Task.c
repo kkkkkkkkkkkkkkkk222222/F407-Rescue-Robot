@@ -1748,15 +1748,26 @@ static bool turn_to(float desired_deg, float current_deg,
 static bool task_distance_command_valid(const VisionMissionCommand *command,
                                         uint8_t expected_command)
 {
-  const uint8_t required_flags = VISION_CMD_DRIVE_STRAIGHT |
-                                 VISION_CMD_USE_FINAL_HEADING |
-                                 VISION_CMD_DISTANCE_VALID;
-  return (command->command == expected_command) &&
-         ((command->flags & required_flags) == required_flags) &&
-         task_side_flag_valid(command->flags) &&
+  if ((command == NULL) || (command->command != expected_command)) {
+    return false;
+  }
+
+  const uint8_t direction_flags = VISION_CMD_DRIVE_STRAIGHT |
+                                  VISION_CMD_USE_FINAL_HEADING;
+  const uint8_t direction = command->flags & direction_flags;
+  const bool stage_nav =
+      (expected_command == VISION_CMD_NAVIGATE_WAYPOINT) &&
+      ((command->flags & VISION_CMD_STAGE_ONLY) != 0U);
+  const bool direction_valid = stage_nav ?
+      ((direction == 0U) || (direction == direction_flags)) :
+      (direction == direction_flags);
+
+  return ((command->flags & VISION_CMD_DISTANCE_VALID) != 0U) &&
+         direction_valid && task_side_flag_valid(command->flags) &&
          (command->target_x_mm >= 0) &&
          (command->target_x_mm <= APP_NAV_REMOTE_MAX_DISTANCE_MM) &&
-         (command->target_y_mm == 0);
+         (command->target_y_mm == 0) &&
+         (command->heading_cdeg < 36000U);
 }
 
 static bool task_stage_command(const VisionMissionCommand *command)

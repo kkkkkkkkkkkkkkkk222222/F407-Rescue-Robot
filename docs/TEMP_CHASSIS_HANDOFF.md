@@ -560,3 +560,10 @@ RUN         停车并复位MCU，重新进入正常模式
 - 第68节的不明侧正面撞分已被完全替代。无`SIDE_VALID`的`DISPERSE_PILE`或旧上位机首次不明侧的`RELEASE_BOTH`现在只触发12°原地观察转向；相机保持140°并稳定300 ms，随后上报`mode=35`并等待新夹爪ROI审核。LCD显示`TURN→CAM→WAIT→DONE`。不再存在1000 mm/s整堆前撞及mode34自动回搜分支。
 - 新审核选侧顺序由上位机负责：单侧含绿色优先该侧；两侧都含绿色时保留数量较少侧；都无绿色时同样优先数量少侧；再平局才比较锁定目标、轨迹稳定度和距离。分侧成功后发送`DISPERSE_PILE + SIDE_VALID`，F407继续使用0.30 m镜像曲线剥离并在mode35后复审。观察转向完成后的复审状态也允许直接接收这条带侧DISPERSE。
 - 每次进入`TASK_FACE_FIELD_CENTER`都把舵机3命令到120°并在返中途中保持。RETURN D=0进入SEARCH后，新增只用于返中的`120°稳定→90°`准备阶段；到达90°时刷新视觉帧门槛，只有随后到达的新帧才能进入APPROACH，防止返中旧画面或相机移动帧提前锁定中心物资。
+
+## 70. 2026-09-16 STAGE NAV精简flags兼容
+
+- 现场出现`STATE:WAITNAV / CMD:GRAB OK`：上位机已经进入NAVIGATE并持续发送蓝方`flags=0x51`的`STAGE_ONLY NAV`，但旧F407协议解析层仍强制要求`DRIVE_STRAIGHT|USE_FINAL_HEADING`，因此NAV在进入Task前被丢弃，ACK停在旧GRAB序号，小车始终停车。这不是夹爪动作未完成。
+- `vision.c`与`Task.c`两层校验现在一致：正式投送`STAGE_ONLY NAV`接受精简形式`VALID|DISTANCE_VALID|STAGE_ONLY|阵营位`和完整形式；两个方向位只出现一个仍拒绝。普通NAV、藏堆NAV和RETURN继续强制完整方向flags，未放宽。
+- 上位机可以保持`952853c`当前精简STAGE格式，但`STAGE D=0`的完成握手仍应使用永久锁存：匹配D=0命令确实在本阶段经relay发送且ACK曾相对阶段初值变化即可锁存，不要要求ACK在同一次采样中恰好等于持续递增的relay最新SEQ。
+- WAITNAV诊断应覆盖`upper=NAVIGATE + F407=mode22`。若relay持续发送NAV但ACK超过500 ms不变化，明确报告`NAV_REJECTED_OR_NOT_ACKED`并记录完整payload/flags，不能只监控上位机仍处于GRAB的情形。

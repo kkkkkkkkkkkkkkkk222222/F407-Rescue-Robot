@@ -231,16 +231,27 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
        (arg_b < 0) || (arg_b > (int16_t)APP_VISION_MAX_Y))) {
     return;
   }
-  if (((code == VISION_CMD_NAVIGATE_WAYPOINT) ||
-       (code == VISION_CMD_RETURN_CENTER)) &&
-      (((flags & (VISION_CMD_DRIVE_STRAIGHT |
-                  VISION_CMD_USE_FINAL_HEADING |
-                  VISION_CMD_DISTANCE_VALID)) !=
-        (VISION_CMD_DRIVE_STRAIGHT |
-         VISION_CMD_USE_FINAL_HEADING |
-         VISION_CMD_DISTANCE_VALID)) ||
-       (arg_a < 0) || (arg_b != 0) || (heading >= 36000U))) {
-    return;
+  if ((code == VISION_CMD_NAVIGATE_WAYPOINT) ||
+      (code == VISION_CMD_RETURN_CENTER)) {
+    const uint8_t direction_flags = VISION_CMD_DRIVE_STRAIGHT |
+                                    VISION_CMD_USE_FINAL_HEADING;
+    const bool stage_nav =
+        (code == VISION_CMD_NAVIGATE_WAYPOINT) &&
+        ((flags & VISION_CMD_STAGE_ONLY) != 0U);
+    const uint8_t direction = flags & direction_flags;
+
+    /* The current host uses the heading field as a field-frame translation
+     * direction for STAGE_ONLY NAV, but deliberately omits the two legacy
+     * direction bits.  Accept both that compact form and the older complete
+     * pair.  A partial pair remains invalid.  Normal NAV/RETURN keep the
+     * stricter legacy contract. */
+    if (((flags & VISION_CMD_DISTANCE_VALID) == 0U) ||
+        (!stage_nav && (direction != direction_flags)) ||
+        (stage_nav && (direction != 0U) &&
+         (direction != direction_flags)) ||
+        (arg_a < 0) || (arg_b != 0) || (heading >= 36000U)) {
+      return;
+    }
   }
   if (code == VISION_CMD_ALIGN_SAFE_ZONE) {
     const bool visual =
