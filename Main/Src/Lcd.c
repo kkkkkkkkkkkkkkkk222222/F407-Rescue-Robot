@@ -694,12 +694,10 @@ static const char *task_action_stage(const TaskStatus *task)
   }
   if (task->action_impact) {
     switch (task->action_phase) {
-      case 0U: return "OPEN";
-      case 1U: return "BACK";
-      case 2U: return "TOUCH";
-      case 3U: return "RAM";
-      case 4U: return "RETURN";
-      case 5U: return "OPEN";
+      case 0U: return "TOUCH";
+      case 1U: return "RAM";
+      case 2U: return "BACK";
+      case 3U: return "OPEN";
       default: return "RUN";
     }
   }

@@ -1,7 +1,7 @@
 # 上位机救援流程对接要求
 
-对照基线：`danmo-teng/shijue_fangan`分支`codex/gamepad-teleop`提交`775bef3`。
-下位机已实现400 mm预备点、两次ALIGN、锁存航向ENTER和200 mm本地编码器补推；安全区退出与返中流程保持原样。
+对照基线：`danmo-teng/shijue_fangan`分支`codex/gamepad-teleop`提交`5b6164f`。
+下位机已实现上位机当前600 mm预备点、两次ALIGN、锁存航向ENTER和200 mm本地编码器补推；安全区退出与返中流程保持原样。
 
 ## 1. SEARCH职责
 
@@ -30,8 +30,9 @@
 
 为与最新版上位机保持一致，首件绿色物资正式投送完成后，F407允许总数1～3件的普通、核心或`mixed_material`组合直接进入GRAB/NAV。左右分别为`green_supply`和`core_black`同样允许直接抓取，不再进入`INVALID_RELEASE`。危险、未知、伤员混装及超过3件仍必须进入释放或恢复流程。
 
-- 上位机能够可靠确认非法物资所在侧时，发送`RELEASE_LEFT/RIGHT`，随后持续发送`YIELD_BACKOFF(-300 mm)`直到新鲜mode30。释放侧完全打开，保留侧只维持普通Touch；F407沿镜像曲线退出后到140°重新审核。稳定空爪仍发送带`STABLE`的全零`CARGO_AUDIT`，暂未识别到时的全零占位必须保持非STABLE。
-- 上位机判定审核非法但无法可靠指定释放侧时，发送`RELEASE_BOTH`。F407会自行双开留物、以500 mm/s后退0.40 m、Touch闭爪并等待机构到位、以1000 mm/s恒速前撞0.60 m、再以500 mm/s后退0.60 m回到撞击起点，最后重新双开并报告mode34。约0.40 m处接触物块后还会继续推散0.20 m。该分支已将整批物资留在场上，不能进入夹内复审；确认新鲜mode34及ACK后进入`DISPERSE_RESELECT`，先在原区域重选原目标，重选失败时才清空批次并HOLD回SEARCH。
+- 上位机能够可靠确认应保留侧时，发送相反侧的`RELEASE_LEFT/RIGHT`，随后持续发送`YIELD_BACKOFF(-300 mm)`直到新鲜mode30。释放侧完全打开，保留侧由普通Touch额外夹紧15°：保留左侧为左65°/右72°，保留右侧为左108°/右115°。F407沿镜像曲线退出后到140°重新审核。稳定空爪仍发送带`STABLE`的全零`CARGO_AUDIT`，暂未识别到时的全零占位必须保持非STABLE。
+- 当左右两侧都是当前任务允许的物资但仍需拆成单侧时，先选保留侧：恰好一侧含绿色则保留绿色侧；否则两侧均非空时保留数量较少侧；仍相同再按锁定目标数、轨迹稳定度和距离择优。`RELEASE_LEFT/RIGHT`编码的是“打开哪侧”，而`DISPERSE_PILE + SIDE_VALID`中的`TARGET_RIGHT`编码的是“保留哪侧”，两者不能写反。
+- 上位机判定无法可靠指定保留侧时，发送`RELEASE_BOTH`。F407不再先后退蓄力，而会在当前位置闭到Touch、以1000 mm/s恒速前撞0.25 m，再以500 mm/s后退0.25 m，最后重新双开并报告mode34约500 ms，然后自动进入从90°开始的SEARCH。该分支不能进入夹内复审；上位机看到新鲜mode34或随后新鲜mode3均应结束本次撞分、清空旧批次并进入SEARCH，不再进入无命令的`DISPERSE_RESELECT`等待。
 - 单侧释放完成后发送`YIELD_BACKOFF(-300 mm)`；该距离现在是曲线路径长度，不是直线倒车距离。等待新鲜`mode=30`后重新进入`CAPTURE_AUDIT`，不得直接SEARCH。
 - 复审合法时把`selected_batch`替换为实际保留的单件，再发送`GRAB_CONFIRMED`直到F407上报`GRIPPER_CLOSED=1`。被释放物资不计入本次投送，留待后续重新搜索。
 - 上述复审只适用于`RELEASE_LEFT/RIGHT`单侧保留分支：合法时持续发送GRAB，仍非法时按策略最终释放。左右不明的撞分分支不再复审。
@@ -40,8 +41,8 @@ F407会校验释放侧计数：`RELEASE_LEFT/RIGHT`对应侧必须非空；复�
 
 ## 4. 去放置区与投送确认
 
-- 正式投送NAV必须置`STAGE_ONLY(bit6)`，目标是相应半区安全区入口前400 mm预备点；持续发送几何H/D直到新鲜`mode=10 + DISTANCE_DONE + ACK变化`。不要在该点发送旧式ENTER，F407明确禁止预备点补推。
-- 第一次ALIGN置`USE_FINAL_HEADING`，P6/P7始终发送红方9000或蓝方27000；所有投送使用相同航向，不再区分首趟偏置。持续发送到新鲜`mode=11 + ACK变化`。
+- 正式投送NAV必须置`STAGE_ONLY(bit6)`，目标是相应半区安全区入口前600 mm预备点；持续发送几何H/D直到新鲜`mode=10 + DISTANCE_DONE + ACK变化`。F407在首次D=0时立即把摄像头抬到120°；不要在该点发送旧式ENTER，F407明确禁止预备点补推。
+- 第一次ALIGN置`USE_FINAL_HEADING`，P6/P7始终发送红方9000或蓝方27000；所有投送使用相同航向，不再区分首趟偏置。F407会保证摄像头120°命令后至少稳定300 ms再上报完成，持续发送到新鲜`mode=11 + ACK变化`。
 - 连续3个不同新视觉帧冻结安全区框；第二次ALIGN置`VISUAL_CORRECTION_VALID(bit6)`，P2/P3发送`target_x_px-640`的有符号像素误差，P4/P5/P6/P7为0。持续发送到第二个新鲜`mode=11 + 本阶段ACK变化`。5秒仍无法冻结时跳过第二次ALIGN，沿第一次航向进入回退ENTER。
 - ENTER始终置`DRIVE_STRAIGHT | DISTANCE_VALID`，P2/P3持续发送当前位置到围栏直线的法向剩余距离，P4/P5为0。视觉修正成功时置bit6且P6/P7=0；回退路径置`USE_FINAL_HEADING`且P6/P7=9000/27000。F407不会再按ENTER的动态H转向。
 - F407在D约113 mm时进入本地最终补推并忽略后续D，以300 mm/s编码器推进200 mm，最长1200 ms；张爪和相机120°稳定完成后才上报mode15。上位机等待新鲜`mode=15 + ACK变化`后进入原投送视觉确认。
@@ -66,8 +67,8 @@ F407会校验释放侧计数：`RELEASE_LEFT/RIGHT`对应侧必须非空；复�
 ## ACTION/WATCH卡死的必须修复项
 
 - STM32状态`mode=25/ACTION`而LCD显示`CMD:APP REJ`，表示APP帧格式有效但当前阶段拒绝，不是串口断线。上位机必须比较状态帧`acknowledged_sequence`，不能仅凭发送成功或LCD曾显示APP判定已接管。
-- 左右不明的整堆撞分完成并收到新鲜mode34后，必须进入`DISPERSE_RESELECT`而不是`CAPTURE_AUDIT`：清空夹内审核缓存，但保留原目标类别/track线索；此时可以直接发送新的APPROACH，不能发送YIELD或CARGO_AUDIT。
-- 删除该分支的`cargo_recheck_pending=True`、`audit_recheck_frame_floor`和无限`CAPTURE_AUDIT`跳转。只有重选窗口结束且确实没有候选时才发送HOLD，让F407从mode34进入mode3。此前WATCH永久等待的直接原因是撞分后车已退回、爪内为空，上位机却继续等待夹内审核。
+- 左右不明的整堆撞分完成并收到新鲜mode34或随后新鲜mode3后，直接进入`SEARCH`：清空夹内审核缓存、旧批次及旧track锁定；不能发送YIELD或CARGO_AUDIT。F407只保留mode34约500 ms，之后会自行进入90° SEARCH，所以上位机不得要求mode34必须一直保持。
+- 删除该分支的`cargo_recheck_pending=True`、`audit_recheck_frame_floor`、无限`CAPTURE_AUDIT`跳转以及无命令的`DISPERSE_RESELECT`等待。此前卡死的直接原因是撞分后F407等待HOLD，而上位机又在`DISPERSE_RESELECT`抑制命令；现在以mode34/mode3双完成条件消除互锁。
 
 ## 7. 必测回归
 
@@ -97,4 +98,4 @@ F407会校验释放侧计数：`RELEASE_LEFT/RIGHT`对应侧必须非空；复�
 - RETURN完成握手不能只在最后比较`acknowledged_sequence != return_initial_ack`：任务SEQ只有8位，100 Hz发送约2.56 s就会回绕。进入RETURN时清零`return_command_accepted`；本阶段确认已发送RETURN且观察到一次对应ACK后永久锁存为真。之后收到新鲜`mode=3`且该锁存为真即可进入上位机SEARCH。F407目前会在返中完成后的1500 ms内继续ACK重复RETURN作为旧版本兼容，但正确性不能依赖这个窗口。
 - 正式投送必须采用STAGE NAV→定位ALIGN→可选视觉ALIGN→ENTER，不能再沿用D≤50 mm本地法向锁存或在预备点直接发送ENTER。第二次ALIGN的P2/P3保持发送有符号像素误差；不要擅自改成0.01°角度，除非同步修改F407协议和标定。
 - initial_stash只要求稳定且`total_count>0`；正式投送继续执行危险、未知、伤员混装和总数检查，首件绿色完成后接受普通、核心及`mixed_material`批次。单侧分离后必须YIELD、重新审核，合法后再GRAB，不能直接回SEARCH。
-- 聚集目标进入mode38后先完成稳定非空夹内审核；mode37中审核合法且不需分离时直接GRAB，需要分离且左右可靠时使用`DISPERSE_PILE + SIDE_VALID`并在mode35后复审，左右不可靠时使用不带bit6/bit7的DISPERSE，mode34后进入`DISPERSE_RESELECT`。重选期间不要发HOLD，否则F407会立即离开原地进入普通SEARCH；目标重现可从mode34直接发普通或聚集APPROACH，整堆撞分最多重试2次。
+- 聚集目标进入mode38后先完成稳定非空夹内审核；mode37中审核合法且不需分离时直接GRAB，需要分离且左右可靠时按“绿色优先、否则数量较少侧优先”选择保留侧，使用`DISPERSE_PILE + SIDE_VALID`并在mode35后复审；左右不可靠时使用不带bit6/bit7的DISPERSE。新鲜mode34或随后mode3结束本次撞分并直接进入SEARCH；500 ms的mode34窗口内如已选中新目标仍可直接发普通或聚集APPROACH。整堆撞分最多重试2次。

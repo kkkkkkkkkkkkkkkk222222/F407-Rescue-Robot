@@ -347,6 +347,8 @@
  * the latched heading. The upper computer sends signed pixel error; the
  * equivalent focal length and sign are kept here for field calibration. */
 #define APP_SAFE_ALIGN_TOLERANCE_DEG        1.5f
+#define APP_SAFE_ALIGN_CAMERA_ANGLE           120U
+#define APP_SAFE_ALIGN_CAMERA_SETTLE_MS       300U
 #define APP_SAFE_VISUAL_FOCAL_LENGTH_PX   640.0f
 #define APP_SAFE_VISUAL_YAW_SIGN           -1.0f
 #define APP_SAFE_VISUAL_MAX_CORRECTION_DEG 15.0f
@@ -376,6 +378,8 @@
 #define APP_STASH_RETURN_BACKOFF_M           0.35f
 #define APP_STASH_RETURN_BACKOFF_SPEED_MM_S 650.0f
 #define APP_REMOTE_YIELD_SPEED_MM_S          750.0f
+#define APP_CLAW_LEFT_SEPARATE_HOLD_ANGLE       65U
+#define APP_CLAW_RIGHT_SEPARATE_HOLD_ANGLE     115U
 #define APP_CARGO_SEPARATE_CURVE_BACK_MM_S    500.0f
 #define APP_CARGO_SEPARATE_CURVE_SIDE_MM_S    180.0f
 #define APP_CARGO_SEPARATE_CURVE_YAW_MM_S     100.0f
@@ -385,12 +389,12 @@
 #define APP_REMOTE_LANE_SPEED_MM_S           850.0f
 #define APP_REMOTE_DISPERSE_TIMEOUT_MS          18000U
 #define APP_REMOTE_DISPERSE_HOLD_CANCEL_MS       1000U
-#define APP_CARGO_IMPACT_RUNUP_M                   0.40f
-#define APP_CARGO_IMPACT_FORWARD_M                 0.60f
-#define APP_CARGO_IMPACT_RETURN_M                  0.60f
+#define APP_CARGO_IMPACT_FORWARD_M                 0.25f
+#define APP_CARGO_IMPACT_RETURN_M                  0.25f
 #define APP_CARGO_IMPACT_SPEED_MM_S             1000.0f
 #define APP_CARGO_IMPACT_BACK_SPEED_MM_S         500.0f
 #define APP_CARGO_IMPACT_TIMEOUT_MS            12000U
+#define APP_CARGO_IMPACT_SEARCH_HANDOFF_MS       500U
 #define APP_REMOTE_ACTION_TIMEOUT_MS          7000U
 #define APP_STASH_ROUTE_HOLD_ACCEPT_MM          100U
 

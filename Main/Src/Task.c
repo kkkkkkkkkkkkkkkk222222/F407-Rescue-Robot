@@ -490,6 +490,19 @@ static bool task_release_command_valid(uint8_t command)
   return command == VISION_CMD_RELEASE_BOTH;
 }
 
+static bool task_disperse_keep_side_valid(
+    const VisionMissionCommand *command)
+{
+  if ((command == NULL) ||
+      ((command->flags & VISION_CMD_SIDE_VALID) == 0U)) {
+    return true;
+  }
+  const uint8_t left_count = audit_last_counts & 0x03U;
+  const uint8_t right_count = (audit_last_counts >> 2) & 0x03U;
+  return ((command->flags & VISION_CMD_TARGET_RIGHT) != 0U) ?
+      (right_count > 0U) : (left_count > 0U);
+}
+
 static void task_latch_audit(const VisionMissionCommand *command)
 {
   const uint8_t semantic_flags = command->audit_flags &
@@ -1994,6 +2007,13 @@ static RemoteRouteStatus nav_follow(
       (distance_command_done ||
        (command->target_x_mm <=
         (int16_t)APP_NAV_REMOTE_STOP_DISTANCE_MM))) {
+    if (!distance_command_done) {
+      /* The staging point is where the upper computer starts observing the
+       * safe-zone entrance. Raise the camera before advertising arrival so
+       * the following ALIGN handshake cannot wait forever on a low view. */
+      Camera_SetAngle(APP_SAFE_ALIGN_CAMERA_ANGLE);
+      camera_angle = (float)APP_SAFE_ALIGN_CAMERA_ANGLE;
+    }
     Motor_Stop();
     task_status.motors_active = false;
     nav_forward_active = false;
@@ -2197,7 +2217,10 @@ static void task_process_safe_align(uint32_t now_ms)
     }
     return;
   }
-  if ((uint32_t)(now_ms - step_started_ms) < APP_NAV_TURN_SETTLE_MS) {
+  const uint32_t settle_ms =
+      (APP_SAFE_ALIGN_CAMERA_SETTLE_MS > APP_NAV_TURN_SETTLE_MS) ?
+      APP_SAFE_ALIGN_CAMERA_SETTLE_MS : APP_NAV_TURN_SETTLE_MS;
+  if ((uint32_t)(now_ms - step_started_ms) < settle_ms) {
     return;
   }
 
@@ -2655,6 +2678,17 @@ static void task_process_remote_action(const VisionMissionCommand *command,
                                        uint32_t now_ms)
 {
   if (remote_action.done) {
+    if ((remote_action.type == REMOTE_ACTION_RELEASE_BOTH) &&
+        (remote_action.arg_b == 1) &&
+        ((uint32_t)(now_ms - step_started_ms) >=
+         APP_CARGO_IMPACT_SEARCH_HANDOFF_MS)) {
+      /* Publish mode 34 briefly so the host can acknowledge completion, then
+       * resume the local 90-degree SEARCH even if the host is still in its
+       * no-command reselect window. A fresh APPROACH may still take over
+       * during this grace period. */
+      task_enter(TASK_SEARCH, now_ms);
+      return;
+    }
     Motor_Stop();
     task_status.motors_active = false;
     return;
@@ -2705,37 +2739,31 @@ static void task_process_remote_action(const VisionMissionCommand *command,
     case REMOTE_ACTION_RELEASE_BOTH:
       if (remote_action.arg_b == 1) {
         if (remote_action.phase == 0U) {
-          if (Claw_Open(now_ms)) {
-            task_status.gripper_closed = false;
-            task_remote_action_advance(now_ms);
-          }
-        } else if (remote_action.phase == 1U) {
-          (void)task_remote_distance(-APP_CARGO_IMPACT_RUNUP_M,
-                                     APP_CARGO_IMPACT_BACK_SPEED_MM_S,
-                                     now_ms);
-        } else if (remote_action.phase == 2U) {
+          /* Cluster approach already brought the chassis close to the pile.
+           * Build a rigid contact face here and strike immediately; backing
+           * away first only wastes that alignment and can lose the target. */
           if (Claw_Touch(now_ms)) {
             task_remote_action_advance(now_ms);
           }
-        } else if (remote_action.phase == 3U) {
-          /* The pile is about 0.40 m ahead. Keep driving another 0.20 m
-           * after contact instead of braking at the impact point. */
+        } else if (remote_action.phase == 1U) {
+          /* Accelerate forward without terminal deceleration, then keep
+           * pushing through the cluster until the full encoder distance. */
           (void)task_remote_distance_constant(
               APP_CARGO_IMPACT_FORWARD_M,
               APP_CARGO_IMPACT_SPEED_MM_S, now_ms);
-        } else if (remote_action.phase == 4U) {
+        } else if (remote_action.phase == 2U) {
           (void)task_remote_distance(-APP_CARGO_IMPACT_RETURN_M,
                                      APP_CARGO_IMPACT_BACK_SPEED_MM_S,
                                      now_ms);
-        } else if (remote_action.phase == 5U) {
-          /* This branch has dropped and rammed the whole ambiguous batch;
-           * unlike unilateral release, no cargo remains for an in-claw audit.
-           * Reopen before SEARCH so the next object can enter normally. */
+        } else if (remote_action.phase == 3U) {
+          /* The pile has been pushed away and the chassis has retreated from
+           * it. Reopen before the automatic 90-degree SEARCH hand-off. */
           if (Claw_Open(now_ms)) {
             task_status.gripper_closed = false;
             cargo_recheck_pending = false;
             task_clear_audit_result();
             task_remote_action_finish();
+            step_started_ms = now_ms;
           }
         }
       } else if (Claw_Open(now_ms)) {
@@ -2809,8 +2837,8 @@ static void task_process_remote_action(const VisionMissionCommand *command,
 
     case REMOTE_ACTION_DISPERSE:
       if (remote_action.phase == 0U) {
-        /* Retain the selected cargo at normal Touch and fully open only the
-         * interfering side before the continuous curved exit. */
+        /* Clamp the retained cargo 15 degrees beyond Touch and fully open
+         * only the interfering side before the continuous curved exit. */
         const bool ready = (separation_keep_side > 0) ?
             Claw_OpenRight(now_ms) : Claw_OpenLeft(now_ms);
         if (ready) {
@@ -3027,6 +3055,8 @@ static void task_accept_mission(const VisionMissionCommand *command,
      * also covers the host's map-tolerance branch without a deadlock. */
     task_status.acknowledged_sequence = command->sequence;
     task_enter(TASK_ALIGN_SAFE_ZONE, now_ms);
+    Camera_SetAngle(APP_SAFE_ALIGN_CAMERA_ANGLE);
+    camera_angle = (float)APP_SAFE_ALIGN_CAMERA_ANGLE;
     safe_align_target_deg = task_heading_360(
         (float)command->heading_cdeg * 0.01f);
     safe_align_done = false;
@@ -3140,6 +3170,7 @@ static void task_accept_mission(const VisionMissionCommand *command,
               !stash_backoff_pending &&
               !cargo_recheck_pending &&
               audit_received && (audit_last_total_count > 0U) &&
+              task_disperse_keep_side_valid(command) &&
               !task_status.gripper_closed &&
              (state == TASK_DISPERSE_READY)) {
     task_status.acknowledged_sequence = command->sequence;
