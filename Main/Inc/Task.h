@@ -46,6 +46,14 @@ typedef enum {
   TASK_FAULT_TARGET_LOST
 } TaskFault;
 
+typedef enum {
+  TASK_COMMAND_REJECT_NONE = 0,
+  TASK_COMMAND_REJECT_STATE,
+  TASK_COMMAND_REJECT_AUDIT,
+  TASK_COMMAND_REJECT_EMPTY,
+  TASK_COMMAND_REJECT_SIDE
+} TaskCommandReject;
+
 typedef struct {
   TaskState state;
   TaskFault fault;
@@ -58,6 +66,7 @@ typedef struct {
   uint8_t audit_left_class;
   uint8_t audit_right_class;
   uint8_t audit_total_count;
+  uint8_t command_reject_reason;
   uint16_t nav_locked_heading_deg;
   bool command_received;
   bool found;

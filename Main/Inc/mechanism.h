@@ -12,6 +12,8 @@ void Lift_SetTravelPosition(void);
 bool Claw_Open(uint32_t now_ms);
 bool Claw_OpenLeft(uint32_t now_ms);
 bool Claw_OpenRight(uint32_t now_ms);
+bool Claw_ClusterOpenLeft(uint32_t now_ms);
+bool Claw_ClusterOpenRight(uint32_t now_ms);
 bool Claw_Retract(uint32_t now_ms);
 bool Claw_Touch(uint32_t now_ms);
 

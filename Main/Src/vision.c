@@ -271,13 +271,15 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
   if (code == VISION_CMD_ENTER_SAFE_ZONE) {
     const bool visual =
         (flags & VISION_CMD_VISUAL_CORRECTION_VALID) != 0U;
-    const uint8_t required = VISION_CMD_DRIVE_STRAIGHT |
-                             VISION_CMD_DISTANCE_VALID;
-    if (((flags & required) != required) || (arg_a < 0) || (arg_b != 0) ||
+    const bool red = (flags & VISION_CMD_RED_SIDE) != 0U;
+    const uint16_t fallback_heading = red ? 9000U : 27000U;
+    if (((flags & VISION_CMD_DRIVE_STRAIGHT) == 0U) ||
+        ((flags & VISION_CMD_DISTANCE_VALID) != 0U) ||
+        (arg_a != 0) || (arg_b != 0) ||
         (visual ? (((flags & VISION_CMD_USE_FINAL_HEADING) != 0U) ||
                    (heading != 0U)) :
                   (((flags & VISION_CMD_USE_FINAL_HEADING) == 0U) ||
-                   (heading >= 36000U)))) {
+                   (heading != fallback_heading)))) {
       return;
     }
   }

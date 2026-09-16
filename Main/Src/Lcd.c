@@ -682,6 +682,15 @@ static const char *task_command_state(const LCDDashboard *dashboard,
     return "STALE";
   }
   if (command->sequence != task->acknowledged_sequence) {
+    if (command->command == VISION_CMD_DISPERSE_PILE) {
+      switch ((TaskCommandReject)task->command_reject_reason) {
+        case TASK_COMMAND_REJECT_STATE: return "R:STATE";
+        case TASK_COMMAND_REJECT_AUDIT: return "R:AUD";
+        case TASK_COMMAND_REJECT_EMPTY: return "R:EMPTY";
+        case TASK_COMMAND_REJECT_SIDE:  return "R:SIDE";
+        default:                        break;
+      }
+    }
     return "REJ";
   }
   return "OK";

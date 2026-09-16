@@ -10,6 +10,8 @@ typedef enum {
   CLAW_ACTION_OPEN,
   CLAW_ACTION_OPEN_LEFT,
   CLAW_ACTION_OPEN_RIGHT,
+  CLAW_ACTION_CLUSTER_OPEN_LEFT,
+  CLAW_ACTION_CLUSTER_OPEN_RIGHT,
   CLAW_ACTION_RETRACT,
   CLAW_ACTION_TOUCH
 } ClawAction;
@@ -114,7 +116,7 @@ bool Claw_Open(uint32_t now_ms)
 
 bool Claw_OpenLeft(uint32_t now_ms)
 {
-  /* Release the left cargo and hold the retained right-hand cargo 15 degrees
+  /* Release the left cargo and hold the retained right-hand cargo 25 degrees
    * tighter than Touch while the chassis follows the separation curve. */
   return claw_move_together(CLAW_ACTION_OPEN_LEFT, now_ms,
                             108U, APP_CLAW_RIGHT_SEPARATE_HOLD_ANGLE, 600U);
@@ -125,6 +127,21 @@ bool Claw_OpenRight(uint32_t now_ms)
   /* Mirror of Claw_OpenLeft: a smaller left-servo angle closes it farther. */
   return claw_move_together(CLAW_ACTION_OPEN_RIGHT, now_ms,
                             APP_CLAW_LEFT_SEPARATE_HOLD_ANGLE, 72U, 600U);
+}
+
+bool Claw_ClusterOpenLeft(uint32_t now_ms)
+{
+  /* First pass through a visible pile: release the left side and retain the
+   * right side only 15 degrees beyond Touch so adjacent pieces do not jam. */
+  return claw_move_together(CLAW_ACTION_CLUSTER_OPEN_LEFT, now_ms,
+                            108U, APP_CLAW_RIGHT_CLUSTER_HOLD_ANGLE, 600U);
+}
+
+bool Claw_ClusterOpenRight(uint32_t now_ms)
+{
+  /* Mirror of Claw_ClusterOpenLeft for a retained left-side target. */
+  return claw_move_together(CLAW_ACTION_CLUSTER_OPEN_RIGHT, now_ms,
+                            APP_CLAW_LEFT_CLUSTER_HOLD_ANGLE, 72U, 600U);
 }
 
 bool Claw_Retract(uint32_t now_ms)
@@ -138,5 +155,7 @@ bool Claw_Touch(uint32_t now_ms)
 {
   /* Both claws move together, but keep the existing two-second confirmation
    * window before GRIPPER_CLOSED is reported to the RDK. */
-  return claw_move_together(CLAW_ACTION_TOUCH, now_ms, 80U, 100U, 2000U);
+  return claw_move_together(CLAW_ACTION_TOUCH, now_ms,
+                            APP_CLAW_LEFT_TOUCH_ANGLE,
+                            APP_CLAW_RIGHT_TOUCH_ANGLE, 2000U);
 }

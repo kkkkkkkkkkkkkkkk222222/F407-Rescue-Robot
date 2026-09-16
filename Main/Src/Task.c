@@ -31,18 +31,13 @@ typedef enum {
 
 typedef enum {
   APPROACH_TRACK = 0,
-  APPROACH_CLUSTER_CLEAR_OPEN,
-  APPROACH_CLUSTER_CLEAR_BACKOFF,
-  APPROACH_CLUSTER_CLOSE,
   APPROACH_CLUSTER_ALIGN,
   APPROACH_CLUSTER_CAMERA_TO_140,
   APPROACH_CLUSTER_SETTLE_140,
   APPROACH_CLUSTER_CAPTURE,
   APPROACH_ALIGN_125,
   APPROACH_CAMERA_TO_140,
-  APPROACH_SETTLE_140,
-  APPROACH_ADVANCE_140,
-  APPROACH_RAISE_REACQUIRE
+  APPROACH_SETTLE_140
 } ApproachPhase;
 
 typedef enum {
@@ -74,6 +69,7 @@ typedef struct {
   uint32_t phase_path_mm;
   bool done;
   bool paused;
+  bool firm_hold;
   uint32_t paused_ms;
 } RemoteActionState;
 
@@ -117,13 +113,15 @@ static float safe_align_target_deg;
 static uint32_t tracking_tick_ms;
 static uint32_t approach_report_generation;
 static uint32_t approach_phase_path_mm;
-static uint32_t approach_reacquire_generation;
 static uint32_t tracking_report_generation;
 static uint8_t mission_sequence;
 static uint32_t start_reverse_path_mm;
 static float start_target_heading_deg;
 static uint32_t scan_entry_report_generation;
 static uint32_t nav_final_push_start_path_mm;
+static uint32_t safe_enter_start_path_mm;
+static uint32_t nav_stage_start_path_mm;
+static uint32_t nav_stage_limit_mm;
 static uint8_t locked_cargo_counts;
 static uint8_t configured_color;
 static bool initialized;
@@ -146,6 +144,8 @@ static bool nav_final_push_active;
 static bool nav_final_push_done;
 static bool nav_final_push_paused;
 static bool nav_realign_pending;
+static bool safe_enter_path_valid;
+static bool nav_stage_guard_valid;
 static bool delivery_stage_only;
 static bool safe_align_done;
 static bool safe_align_visual_started;
@@ -162,7 +162,7 @@ static bool route_to_stash;
 static bool stash_backoff_pending;
 static bool cluster_target_active;
 static bool cluster_claws_ready;
-static bool approach_open_before_track;
+static bool cluster_soft_split_done;
 /* +1 keeps the left cargo, -1 keeps the right cargo. */
 static int8_t separation_keep_side;
 static uint8_t audit_consistent_count;
@@ -171,6 +171,7 @@ static uint8_t audit_last_right_class;
 static uint8_t audit_last_counts;
 static uint8_t audit_last_flags;
 static uint8_t audit_last_total_count;
+static uint8_t audit_last_id;
 static uint8_t remote_target_sequence;
 static uint32_t remote_target_generation;
 static bool remote_target_sequence_valid;
@@ -506,6 +507,25 @@ static bool task_disperse_keep_side_valid(
       (right_count > 0U) : (left_count > 0U);
 }
 
+static TaskCommandReject task_disperse_reject_reason(
+    const VisionMissionCommand *command)
+{
+  if (!((state == TASK_DISPERSE_READY) ||
+        ((state == TASK_GRAB_OBSERVE) && cargo_recheck_pending))) {
+    return TASK_COMMAND_REJECT_STATE;
+  }
+  if (!audit_received) {
+    return TASK_COMMAND_REJECT_AUDIT;
+  }
+  if (audit_last_total_count == 0U) {
+    return TASK_COMMAND_REJECT_EMPTY;
+  }
+  if (!task_disperse_keep_side_valid(command)) {
+    return TASK_COMMAND_REJECT_SIDE;
+  }
+  return TASK_COMMAND_REJECT_NONE;
+}
+
 static void task_latch_audit(const VisionMissionCommand *command)
 {
   const uint8_t semantic_flags = command->audit_flags &
@@ -517,7 +537,10 @@ static void task_latch_audit(const VisionMissionCommand *command)
       (semantic_flags == audit_last_flags) &&
       (command->audit_total_count == audit_last_total_count);
   if (same) {
-    if (audit_consistent_count < 255U) {
+    /* The upper computer may retransmit one camera result with many UART
+     * SEQs. Count only a changed audit_id as a second visual frame. */
+    if ((command->audit_id != audit_last_id) &&
+        (audit_consistent_count < 255U)) {
       ++audit_consistent_count;
     }
   } else {
@@ -528,6 +551,7 @@ static void task_latch_audit(const VisionMissionCommand *command)
     audit_last_total_count = command->audit_total_count;
     audit_consistent_count = 1U;
   }
+  audit_last_id = command->audit_id;
   audit_initial_stash =
       (command->audit_flags & VISION_AUDIT_INITIAL_STASH) != 0U;
   audit_destination_injury =
@@ -555,6 +579,7 @@ static void task_clear_audit_result(void)
   audit_last_counts = 0U;
   audit_last_flags = 0U;
   audit_last_total_count = 0U;
+  audit_last_id = 0U;
   task_status.audit_left_class = 0U;
   task_status.audit_right_class = 0U;
   task_status.audit_total_count = 0U;
@@ -607,6 +632,7 @@ static void task_start_remote_action(RemoteAction type,
     .phase_path_mm = pose.path_mm,
     .done = false,
     .paused = false,
+    .firm_hold = false,
     .paused_ms = now_ms
   };
 }
@@ -672,6 +698,11 @@ static void task_enter(TaskState next, uint32_t now_ms)
   nav_final_push_active = false;
   nav_final_push_done = false;
   nav_final_push_paused = false;
+  safe_enter_path_valid = false;
+  safe_enter_start_path_mm = 0U;
+  nav_stage_guard_valid = false;
+  nav_stage_start_path_mm = 0U;
+  nav_stage_limit_mm = 0U;
   delivery_stage_only = false;
   safe_align_done = false;
   safe_align_visual_started = false;
@@ -706,13 +737,14 @@ static void task_enter(TaskState next, uint32_t now_ms)
     stash_backoff_pending = false;
     cluster_target_active = false;
     cluster_claws_ready = false;
-    approach_open_before_track = false;
+    cluster_soft_split_done = false;
     audit_consistent_count = 0U;
     audit_last_left_class = 0U;
     audit_last_right_class = 0U;
     audit_last_counts = 0U;
     audit_last_flags = 0U;
     audit_last_total_count = 0U;
+    audit_last_id = 0U;
     task_status.audit_left_class = 0U;
     task_status.audit_right_class = 0U;
     task_status.audit_total_count = 0U;
@@ -725,9 +757,7 @@ static void task_enter(TaskState next, uint32_t now_ms)
     approach_speed_mm_s = APP_APPROACH_SPEED_MM_S;
     approach_phase = APPROACH_TRACK;
     approach_phase_path_mm = 0U;
-    approach_reacquire_generation = 0U;
     cluster_claws_ready = false;
-    approach_open_before_track = false;
     approach_locked_heading_deg = 0.0f;
     approach_report_generation_valid = false;
     task_reset_tracking();
@@ -799,12 +829,14 @@ static void task_initialize(uint32_t now_ms)
   tracking_tick_ms = 0U;
   approach_report_generation = 0U;
   approach_phase_path_mm = 0U;
-  approach_reacquire_generation = 0U;
   mission_sequence = 0U;
   start_reverse_path_mm = 0U;
   start_target_heading_deg = 0.0f;
   scan_entry_report_generation = 0U;
   nav_final_push_start_path_mm = 0U;
+  safe_enter_start_path_mm = 0U;
+  nav_stage_start_path_mm = 0U;
+  nav_stage_limit_mm = 0U;
   locked_cargo_counts = 0U;
   configured_color = 0U;
   initial_claw_ready = false;
@@ -826,6 +858,8 @@ static void task_initialize(uint32_t now_ms)
   nav_final_push_active = false;
   nav_final_push_done = false;
   nav_final_push_paused = false;
+  safe_enter_path_valid = false;
+  nav_stage_guard_valid = false;
   first_delivery_done = false;
   complete_flow_active = false;
   mission_paused = false;
@@ -838,14 +872,15 @@ static void task_initialize(uint32_t now_ms)
   stash_backoff_pending = false;
   cluster_target_active = false;
   cluster_claws_ready = false;
+  cluster_soft_split_done = false;
   separation_keep_side = 0;
-  approach_open_before_track = false;
   audit_consistent_count = 0U;
   audit_last_left_class = 0U;
   audit_last_right_class = 0U;
   audit_last_counts = 0U;
   audit_last_flags = 0U;
   audit_last_total_count = 0U;
+  audit_last_id = 0U;
   remote_target_sequence = 0U;
   remote_target_generation = 0U;
   remote_target_sequence_valid = false;
@@ -1277,25 +1312,16 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
 
   switch (approach_phase) {
     case APPROACH_TRACK:
-      if (!cluster_target_active && approach_open_before_track) {
-        Motor_Stop();
-        task_status.motors_active = false;
-        if (Claw_Open(now_ms)) {
-          approach_open_before_track = false;
-        }
-        return;
-      }
       if (cluster_target_active && !cluster_claws_ready) {
         Motor_Stop();
         task_status.motors_active = false;
-        /* A late cluster classification may arrive after open claws have
-         * already enveloped cargo. Clear that cargo before making the claws
-         * into a closed pushing surface. */
-        approach_phase =
-            ((Camera_GetAngle() >= APP_DISPERSE_CLEAR_CAMERA_ANGLE) ||
-             (new_locked_target &&
-              (vision->y >= APP_DISPERSE_CLEAR_MIN_Y_PX))) ?
-                APPROACH_CLUSTER_CLEAR_OPEN : APPROACH_CLUSTER_CLOSE;
+        /* A pile is approached with both claws fully open.  Do not infer
+         * cargo entry from camera angle or image Y and do not back away or
+         * close both claws before the fresh 140-degree claw audit. */
+        if (Claw_Open(now_ms)) {
+          cluster_claws_ready = true;
+          task_reset_tracking();
+        }
         return;
       }
       if (new_locked_target) {
@@ -1331,42 +1357,6 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
       Motor_Move(task_approach_aligned_speed(approach_speed_mm_s),
                  0.0f, task_approach_steering());
       task_status.motors_active = true;
-      return;
-
-    case APPROACH_CLUSTER_CLEAR_OPEN:
-      Motor_Stop();
-      task_status.motors_active = false;
-      if (Claw_Open(now_ms)) {
-        approach_phase = APPROACH_CLUSTER_CLEAR_BACKOFF;
-      }
-      return;
-
-    case APPROACH_CLUSTER_CLEAR_BACKOFF:
-      {
-        const MotorDistanceStatus result = Motor_MoveDistance(
-            -APP_DISPERSE_CLEAR_BACKOFF_M,
-            APP_DISPERSE_CLEAR_BACK_SPEED_MM_S);
-        task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
-        if (result == MOTOR_DISTANCE_DONE) {
-          Motor_Stop();
-          task_status.motors_active = false;
-          approach_phase = APPROACH_CLUSTER_CLOSE;
-        } else if (distance_failed(result)) {
-          task_stop(TASK_FAULT_MOTOR, now_ms);
-        }
-      }
-      return;
-
-    case APPROACH_CLUSTER_CLOSE:
-      Motor_Stop();
-      task_status.motors_active = false;
-      if (Claw_Touch(now_ms)) {
-        /* Closed Touch claws are only a pushing surface here. Do not report
-         * GRIPPER_CLOSED because no legal cargo has been audited. */
-        cluster_claws_ready = true;
-        approach_phase = APPROACH_TRACK;
-        task_reset_tracking();
-      }
       return;
 
     case APPROACH_CLUSTER_ALIGN:
@@ -1500,84 +1490,12 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
           approach_phase_path_mm = pose.path_mm;
           approach_locked_heading_deg =
               (float)pose.heading_mdeg * 0.001f;
-          /* Frames received while the servo was moving or settling cannot
-           * trigger WATCH. */
-          approach_reacquire_generation = vision->report_generation;
-          approach_phase = APPROACH_ADVANCE_140;
-        }
-      }
-      return;
-
-    case APPROACH_ADVANCE_140:
-      task_status.found = false;
-      if (new_locked_target &&
-          (vision->report_generation != approach_reacquire_generation)) {
-        Motor_Stop();
-        task_status.motors_active = false;
-        task_status.found = true;
-        if (task_abs((float)vision->x - (float)APP_VISION_TARGET_X) <=
-            APP_GRAB_REACQUIRE_X_ERROR_PX) {
-          Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
-          camera_angle = (float)APP_GRAB_VIEW_ANGLE;
+          /* Near-field cargo can disappear from the detector exactly when it
+           * enters the claws. Open the claw-audit gate immediately instead of
+           * requiring the old target track to reappear at 140 degrees. */
+          task_clear_audit_result();
           task_enter(TASK_GRAB_OBSERVE, now_ms);
-        } else {
-          Camera_SetAngle(APP_GRAB_ALIGN_CAMERA_ANGLE);
-          camera_angle = (float)APP_GRAB_ALIGN_CAMERA_ANGLE;
-          approach_phase = APPROACH_ALIGN_125;
-          task_reset_tracking();
-          (void)task_track_target(vision, false);
         }
-        return;
-      }
-      {
-        LocationPose pose;
-        if (!task_get_location_pose(&pose, now_ms)) {
-          return;
-        }
-        if ((pose.path_mm - approach_phase_path_mm) >=
-            APP_GRAB_REACQUIRE_DISTANCE_MM) {
-          Motor_Stop();
-          task_status.motors_active = false;
-          approach_reacquire_generation = vision->report_generation;
-          approach_phase = APPROACH_RAISE_REACQUIRE;
-          step_started_ms = now_ms;
-          return;
-        }
-        const float heading_deg = (float)pose.heading_mdeg * 0.001f;
-        const float heading_error = task_wrap_angle(
-            approach_locked_heading_deg - heading_deg);
-        Motor_Move(APP_GRAB_REACQUIRE_SPEED_MM_S, 0.0f,
-                   nav_yaw(heading_error));
-        task_status.motors_active = true;
-      }
-      return;
-
-    case APPROACH_RAISE_REACQUIRE:
-      Motor_Stop();
-      task_status.motors_active = false;
-      task_status.found = false;
-      if (new_locked_target &&
-          (vision->report_generation != approach_reacquire_generation)) {
-        approach_phase = APPROACH_TRACK;
-        approach_speed_mm_s = APP_GRAB_REACQUIRE_SPEED_MM_S;
-        task_reset_tracking();
-        (void)task_track_target(vision, true);
-        task_status.found = true;
-        Motor_Move(task_approach_aligned_speed(approach_speed_mm_s),
-                   0.0f, task_approach_steering());
-        task_status.motors_active = true;
-        return;
-      }
-      if ((uint32_t)(now_ms - step_started_ms) >=
-          APP_GRAB_REACQUIRE_STEP_MS) {
-        const uint8_t current_angle = Camera_GetAngle();
-        if (current_angle <= APP_GRAB_CAMERA_MIN_ANGLE) {
-          task_enter(TASK_SEARCH, now_ms);
-          return;
-        }
-        Camera_SetAngle((uint8_t)(current_angle - 1U));
-        camera_angle = (float)Camera_GetAngle();
-        step_started_ms = now_ms;
       }
       return;
 
@@ -1626,16 +1544,16 @@ static void task_process_grab_observe(const VisionData *vision,
 {
   if (complete_flow_active) {
     const VisionMissionCommand *command = &vision->mission;
-    const bool stable_cargo_audit = task_mission_valid(command) &&
+    const bool two_frame_cargo_audit = task_mission_valid(command) &&
         (command->command == VISION_CMD_CARGO_AUDIT) &&
-        ((command->audit_flags & VISION_AUDIT_STABLE) != 0U) &&
+        (audit_consistent_count >= 2U) &&
         (command->audit_total_count > 0U);
 
     /* A post-release re-audit must remain stationary.  During an ordinary
      * pickup, however, CLAW_VISIBLE means "start inspecting", not "cargo is
      * already inside".  Crawl straight until the upper computer confirms a
      * stable non-empty claw audit, then stop before it sends GRAB. */
-    if (cargo_recheck_pending || stable_cargo_audit) {
+    if (cargo_recheck_pending || two_frame_cargo_audit) {
       Motor_Stop();
       task_status.motors_active = false;
       return;
@@ -2071,10 +1989,24 @@ static RemoteRouteStatus nav_follow(
   const bool stage_route =
       (expected_command == VISION_CMD_NAVIGATE_WAYPOINT) &&
       task_stage_command(command) && !route_to_stash;
+  if (stage_route && !nav_stage_guard_valid) {
+    nav_stage_start_path_mm = pose.path_mm;
+    nav_stage_limit_mm = (uint32_t)command->target_x_mm +
+                         APP_NAV_STAGE_OVERRUN_MARGIN_MM;
+    nav_stage_guard_valid = true;
+  }
+  const uint32_t stage_travelled_mm =
+      (nav_stage_guard_valid && (pose.path_mm >= nav_stage_start_path_mm)) ?
+          pose.path_mm - nav_stage_start_path_mm : 0U;
+  const bool stage_encoder_arrived = stage_route && nav_stage_guard_valid &&
+      (command->target_x_mm <=
+       (int16_t)APP_NAV_STAGE_NEAR_DISTANCE_MM) &&
+      (stage_travelled_mm >= nav_stage_limit_mm);
   if (stage_route &&
       (distance_command_done ||
        (command->target_x_mm <=
-        (int16_t)APP_NAV_REMOTE_STOP_DISTANCE_MM))) {
+        (int16_t)APP_NAV_REMOTE_STOP_DISTANCE_MM) ||
+       stage_encoder_arrived)) {
     if (!distance_command_done) {
       /* The staging point is where the upper computer starts observing the
        * safe-zone entrance. Raise the camera before advertising arrival so
@@ -2089,6 +2021,17 @@ static RemoteRouteStatus nav_follow(
     task_status.nav_done = true;
     nav_stop_output();
     return REMOTE_ROUTE_REACHED;
+  }
+  if (stage_route && nav_stage_guard_valid &&
+      (stage_travelled_mm >= nav_stage_limit_mm)) {
+    /* The chassis has already exceeded the first advertised stage distance by
+     * the configured margin, but the host still reports D > 30 mm.  Stop and
+     * wait for a corrected D instead of driving indefinitely. */
+    Motor_Stop();
+    task_status.motors_active = false;
+    nav_forward_active = false;
+    nav_stop_output();
+    return REMOTE_ROUTE_WAITING;
   }
   if ((expected_command == VISION_CMD_RETURN_CENTER) &&
       ((command->target_x_mm <=
@@ -2342,14 +2285,27 @@ static RemoteRouteStatus safe_enter_follow(
     return REMOTE_ROUTE_REACHED;
   }
 
+  if (!safe_enter_path_valid) {
+    /* ENTER is repeated with new SEQs, but this encoder origin belongs to the
+     * physical action and is latched exactly once on its first valid pose. */
+    safe_enter_start_path_mm = pose.path_mm;
+    safe_enter_path_valid = true;
+  }
+
   const float current_heading_deg = (float)pose.heading_mdeg * 0.001f;
   const float heading_error_deg = task_wrap_angle(
       nav_locked_heading_deg - current_heading_deg);
   const float yaw_mm_s = nav_yaw(heading_error_deg);
 
+  const uint32_t chassis_approach_mm =
+      APP_SAFE_ENTER_STAGE_DISTANCE_MM - APP_SAFE_ENTER_FRONT_OFFSET_MM;
+  const uint32_t contact_start_mm =
+      chassis_approach_mm - APP_SAFE_ENTER_CONTACT_DISTANCE_MM;
+  const uint32_t enter_travelled_mm =
+      pose.path_mm - safe_enter_start_path_mm;
+
   if (!nav_final_push_active &&
-      (command->target_x_mm <=
-       (int16_t)APP_SAFE_ENTER_CONTACT_DISTANCE_MM)) {
+      (enter_travelled_mm >= contact_start_mm)) {
     nav_final_push_active = true;
     nav_final_push_paused = false;
     nav_final_push_started_ms = now_ms;
@@ -2383,7 +2339,11 @@ static RemoteRouteStatus safe_enter_follow(
     return REMOTE_ROUTE_RUNNING;
   }
 
-  const float target_speed_mm_s = safe_enter_speed(command->target_x_mm);
+  const uint32_t estimated_fence_distance_mm =
+      (enter_travelled_mm < chassis_approach_mm) ?
+          chassis_approach_mm - enter_travelled_mm : 0U;
+  const float target_speed_mm_s = safe_enter_speed(
+      (int16_t)estimated_fence_distance_mm);
   const float speed_rate_mm_s2 =
       (target_speed_mm_s >= remote_speed_mm_s) ?
           APP_NAV_SPEED_ACCEL_MM_S2 : APP_NAV_SPEED_DECEL_MM_S2;
@@ -2482,22 +2442,23 @@ static bool distance_failed(MotorDistanceStatus result)
 
 static bool delivery_enter_command_ok(const VisionMissionCommand *command)
 {
-  const uint8_t required_flags = VISION_CMD_DRIVE_STRAIGHT |
-                                 VISION_CMD_DISTANCE_VALID;
   const bool visual = (command != NULL) &&
       ((command->flags & VISION_CMD_VISUAL_CORRECTION_VALID) != 0U);
+  const bool red = (command != NULL) &&
+      ((command->flags & VISION_CMD_RED_SIDE) != 0U);
+  const uint16_t fallback_heading = red ? 9000U : 27000U;
   return task_mission_valid(command) &&
          (command->command == VISION_CMD_ENTER_SAFE_ZONE) &&
-         ((command->flags & required_flags) == required_flags) &&
+         ((command->flags & VISION_CMD_DRIVE_STRAIGHT) != 0U) &&
+         ((command->flags & VISION_CMD_DISTANCE_VALID) == 0U) &&
          task_side_flag_valid(command->flags) &&
-         (command->target_x_mm >= 0) &&
-         (command->target_x_mm <= APP_NAV_REMOTE_MAX_DISTANCE_MM) &&
+         (command->target_x_mm == 0) &&
          (command->target_y_mm == 0) &&
          (visual ?
               (((command->flags & VISION_CMD_USE_FINAL_HEADING) == 0U) &&
                (command->heading_cdeg == 0U)) :
               (((command->flags & VISION_CMD_USE_FINAL_HEADING) != 0U) &&
-               (command->heading_cdeg < 36000U)));
+               (command->heading_cdeg == fallback_heading)));
 }
 
 static void task_process_delivery_verify(
@@ -2754,7 +2715,7 @@ static void task_process_remote_action(const VisionMissionCommand *command,
   switch (remote_action.type) {
     case REMOTE_ACTION_RELEASE_LEFT:
       if (Claw_OpenLeft(now_ms)) {
-        /* Left is fully open; right stays at its normal 100-degree Touch. */
+        /* Left is fully open; retained right uses the firm 127-degree hold. */
         separation_keep_side = -1;
         task_status.gripper_closed = false;
         cargo_recheck_pending = true;
@@ -2765,7 +2726,7 @@ static void task_process_remote_action(const VisionMissionCommand *command,
 
     case REMOTE_ACTION_RELEASE_RIGHT:
       if (Claw_OpenRight(now_ms)) {
-        /* Right is fully open; left stays at its normal 80-degree Touch. */
+        /* Right is fully open; retained left uses the firm 53-degree hold. */
         separation_keep_side = 1;
         task_status.gripper_closed = false;
         cargo_recheck_pending = true;
@@ -2864,17 +2825,25 @@ static void task_process_remote_action(const VisionMissionCommand *command,
         return;
       }
       if (remote_action.phase == 0U) {
-        /* Clamp the retained cargo 15 degrees beyond Touch and fully open
-         * only the interfering side before the continuous curved exit. */
-        const bool ready = (separation_keep_side > 0) ?
-            Claw_OpenRight(now_ms) : Claw_OpenLeft(now_ms);
+        /* The first split of an externally visible pile uses a gentle
+         * 15-degree hold.  Once a curve has already left multiple pieces in
+         * the claw, or for ordinary invalid in-claw cargo, use the existing
+         * 25-degree hold so the retained side cannot slip out. */
+        const bool ready = remote_action.firm_hold ?
+            ((separation_keep_side > 0) ?
+                Claw_OpenRight(now_ms) : Claw_OpenLeft(now_ms)) :
+            ((separation_keep_side > 0) ?
+                Claw_ClusterOpenRight(now_ms) :
+                Claw_ClusterOpenLeft(now_ms));
         if (ready) {
           task_status.gripper_closed = false;
           task_remote_action_advance(now_ms);
         }
       } else if (remote_action.phase == 1U) {
-        (void)task_remote_separation_curve(
-            APP_SELECTIVE_DISPERSE_CURVE_MM, now_ms);
+        if (task_remote_separation_curve(
+                APP_SELECTIVE_DISPERSE_CURVE_MM, now_ms)) {
+          cluster_soft_split_done = true;
+        }
       } else if (remote_action.phase == 2U) {
         if (task_scan_camera_to(APP_GRAB_VIEW_ANGLE, now_ms)) {
           task_remote_action_advance(now_ms);
@@ -2911,6 +2880,7 @@ static void task_accept_mission(const VisionMissionCommand *command,
 
   task_status.last_command = command->command;
   task_status.command_received = true;
+  task_status.command_reject_reason = TASK_COMMAND_REJECT_NONE;
 
   if (command->command == VISION_CMD_ABORT) {
     task_status.acknowledged_sequence = command->sequence;
@@ -2989,16 +2959,16 @@ static void task_accept_mission(const VisionMissionCommand *command,
     task_enter(TASK_APPROACH, now_ms);
     cluster_target_active =
         (command->flags & VISION_CMD_CLUSTER_TARGET) != 0U;
+    cluster_soft_split_done = false;
   } else if ((command->command == VISION_CMD_APPROACH_TARGET) &&
              (state == TASK_APPROACH)) {
     task_status.acknowledged_sequence = command->sequence;
     const bool cluster =
         (command->flags & VISION_CMD_CLUSTER_TARGET) != 0U;
     if (cluster != cluster_target_active) {
-      const bool reopen_for_normal = cluster_target_active && !cluster;
       task_enter(TASK_APPROACH, now_ms);
       cluster_target_active = cluster;
-      approach_open_before_track = reopen_for_normal;
+      cluster_soft_split_done = false;
     }
   } else if ((command->command == VISION_CMD_APPROACH_TARGET) &&
              (state == TASK_DISPERSE_READY)) {
@@ -3006,7 +2976,7 @@ static void task_accept_mission(const VisionMissionCommand *command,
     if ((command->flags & VISION_CMD_CLUSTER_TARGET) == 0U) {
       task_enter(TASK_APPROACH, now_ms);
       cluster_target_active = false;
-      approach_open_before_track = true;
+      cluster_soft_split_done = false;
     }
   } else if ((command->command == VISION_CMD_STOP) &&
              (state == TASK_NAVIGATE)) {
@@ -3032,7 +3002,10 @@ static void task_accept_mission(const VisionMissionCommand *command,
   } else if ((command->command == VISION_CMD_GRAB_CONFIRMED) &&
              (state >= TASK_GRAB_OBSERVE) &&
              (state <= TASK_GRAB_ROTATE) &&
-             (!complete_flow_active || (audit_received && audit_valid))) {
+             (!complete_flow_active ||
+              (audit_received && audit_valid &&
+               (cargo_recheck_pending ||
+                (audit_consistent_count >= 2U))))) {
     task_status.acknowledged_sequence = command->sequence;
     if (cargo_recheck_pending) {
       /* Backoff has physically separated the released cargo.  Close both
@@ -3142,14 +3115,16 @@ static void task_accept_mission(const VisionMissionCommand *command,
         (uint16_t)(nav_locked_heading_deg + 0.5f) % 360U;
   } else if ((command->command == VISION_CMD_ENTER_SAFE_ZONE) &&
              task_status.gripper_closed &&
-             !route_to_stash && (state == TASK_NAVIGATE)) {
+             !route_to_stash && (state == TASK_NAVIGATE) &&
+             delivery_enter_command_ok(command)) {
     task_status.acknowledged_sequence = command->sequence;
     if (nav_final_push_done) {
       task_enter(TASK_OPEN_FOR_RAM, now_ms);
     }
   } else if ((command->command == VISION_CMD_ENTER_SAFE_ZONE) &&
              ((state == TASK_OPEN_FOR_RAM) ||
-              (state == TASK_RAM_VERIFY))) {
+              (state == TASK_RAM_VERIFY)) &&
+             delivery_enter_command_ok(command)) {
     task_status.acknowledged_sequence = command->sequence;
   } else if ((command->command == VISION_CMD_TASK_COMPLETE) &&
              !task_status.gripper_closed &&
@@ -3195,14 +3170,12 @@ static void task_accept_mission(const VisionMissionCommand *command,
     task_status.acknowledged_sequence = command->sequence;
     task_start_remote_action(REMOTE_ACTION_LANE, command, now_ms);
   } else if ((command->command == VISION_CMD_DISPERSE_PILE) &&
-              !stash_backoff_pending &&
-              audit_received && (audit_last_total_count > 0U) &&
-              task_disperse_keep_side_valid(command) &&
-              !task_status.gripper_closed &&
-              ((state == TASK_DISPERSE_READY) ||
-               ((state == TASK_GRAB_OBSERVE) && cargo_recheck_pending))) {
+             (task_disperse_reject_reason(command) ==
+              TASK_COMMAND_REJECT_NONE)) {
+    const bool firm_hold = !cluster_target_active || cluster_soft_split_done;
     task_status.acknowledged_sequence = command->sequence;
     task_start_remote_action(REMOTE_ACTION_DISPERSE, command, now_ms);
+    remote_action.firm_hold = firm_hold;
     cargo_recheck_pending = false;
     if ((command->flags & VISION_CMD_SIDE_VALID) != 0U) {
       remote_action.arg_b = 0;
@@ -3214,6 +3187,9 @@ static void task_accept_mission(const VisionMissionCommand *command,
       remote_action.arg_b = 1;
       separation_keep_side = 0;
     }
+  } else if (command->command == VISION_CMD_DISPERSE_PILE) {
+    task_status.command_reject_reason =
+        (uint8_t)task_disperse_reject_reason(command);
   } else if (((command->command == VISION_CMD_RELEASE_LEFT) ||
               (command->command == VISION_CMD_RELEASE_RIGHT) ||
               (command->command == VISION_CMD_RELEASE_BOTH)) &&
@@ -3279,9 +3255,7 @@ void Task_Process(uint32_t now_ms)
   const bool local_approach_reacquire =
       (state == TASK_APPROACH) &&
       ((approach_phase == APPROACH_CAMERA_TO_140) ||
-       (approach_phase == APPROACH_SETTLE_140) ||
-       (approach_phase == APPROACH_ADVANCE_140) ||
-       (approach_phase == APPROACH_RAISE_REACQUIRE));
+       (approach_phase == APPROACH_SETTLE_140));
   if (complete_flow_active && !local_approach_reacquire &&
       task_mission_valid(&vision.mission) &&
       (vision.mission.command == VISION_CMD_HOLD) &&
