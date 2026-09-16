@@ -13,10 +13,10 @@
 
 ### HOLD、PAUSE、STOP、ABORT语义
 
-- `HOLD=10`：正常流程心跳。SEARCH继续扫描；APPROACH常规跟踪/125°对正、NAV、RETURN和远程动作安全停车。F407进入125→140°、140°最多300 mm限距重获或140→90°慢抬重获后，HOLD表示“本帧未见目标”但不会打断已触发的本地序列；需要真正冻结必须发送PAUSE。
+- `HOLD=10`：正常流程心跳。SEARCH继续扫描；APPROACH常规跟踪/125°对正、NAV、RETURN和远程动作安全停车。F407进入125→140°稳定阶段后，HOLD不打断已经触发的相机动作；需要真正冻结必须发送PAUSE。mode16若曾被PAUSE冻结，恢复后发送合法RETURN即可解除锁存并继续剩余本地后退。
 - `PAUSE=1`：操作员暂停、定位短时不可用但希望保留当前阶段、或上位机内部重建状态时使用。F407 ACK后锁存停车并保持Task状态；帧过期也不会自行恢复，且不会触发DISPERSE的HOLD取消。
 - 解除PAUSE必须发送一条当前状态可接受、SEQ递增的非PAUSE命令：SEARCH发HOLD，APPROACH发APPROACH_TARGET，NAV发NAVIGATE_WAYPOINT，RETURN发RETURN_CENTER，远程动作重发原动作命令。无效或阶段不匹配的命令不会解除暂停。
-- `STOP=0`不是普通暂停；除NAV兼容入口外会形成远程停止故障。`ABORT=7`始终用于不可自动恢复的终止。
+- `STOP=0`不是普通暂停；除NAV兼容入口外会形成远程停止故障。`ABORT=7`进入`REMOTE_STOP/fault1`；操作员下一次明确发送新的连续合法赛前配置可以重启一轮任务，其他故障不能自动清除。
 
 ## 2. 初始藏堆
 
@@ -45,7 +45,7 @@ F407会校验释放侧计数：`RELEASE_LEFT/RIGHT`对应侧必须非空；复�
 - 第一次ALIGN置`USE_FINAL_HEADING`，P6/P7始终发送红方9000或蓝方27000；所有投送使用相同航向，不再区分首趟偏置。F407会保证摄像头120°命令后至少稳定300 ms再上报完成，持续发送到新鲜`mode=11 + ACK变化`。
 - 连续3个不同新视觉帧冻结安全区框；第二次ALIGN置`VISUAL_CORRECTION_VALID(bit6)`，P2/P3发送`target_x_px-640`的有符号像素误差，P4/P5/P6/P7为0。持续发送到第二个新鲜`mode=11 + 本阶段ACK变化`。5秒仍无法冻结时跳过第二次ALIGN，沿第一次航向进入回退ENTER。
 - `STAGE_ONLY NAV`不能只在上位机`_at_target()`成立后才处理下位机完成状态。F407现在会在本段编码器达到`首帧D+100 mm`且最新`D<=30 mm`时置`DISTANCE_DONE`；上位机看到新鲜`mode=10 + DISTANCE_DONE + GRIPPER_CLOSED`且本阶段NAV已被ACK后，应锁存预备点完成、补发并确认一次STAGE `D=0`，然后进入ALIGN。否则下位机已停车完成而上位机仍持续发送动态D，两端仍可能卡在NAV。
-- ENTER对齐`codex/gamepad-teleop@f7f4793`：始终置`DRIVE_STRAIGHT`且清除`DISTANCE_VALID`，P2/P3和P4/P5全部为0。视觉修正成功时置bit6、清除`USE_FINAL_HEADING`且P6/P7=0；定位降级时清除bit6、置`USE_FINAL_HEADING`且发送红9000/蓝27000。蓝方常用flags为0x43/0x07，红方为0x4B/0x0F。
+- ENTER对齐`codex/gamepad-teleop@b827303`：始终置`DRIVE_STRAIGHT`且清除`DISTANCE_VALID`，P2/P3和P4/P5全部为0。视觉修正成功时置bit6、清除`USE_FINAL_HEADING`且P6/P7=0；定位降级时清除bit6、置`USE_FINAL_HEADING`且发送红9000/蓝27000。蓝方常用flags为0x43/0x07，红方为0x4B/0x0F。
 - F407首次收到合法ENTER并取得有效LocationPose时只锁存一次编码器起点。600 mm是预备点相对围栏的几何定义，扣除旋转中心到前挡板约200 mm后，本地接近距离按400 mm计算；累计287 mm时相当于前挡板剩余约113 mm，随后以300 mm/s编码器补推200 mm，最长1200 ms。重复ENTER只ACK，不重置距离。电机停车、双爪完全打开且相机120°稳定300 ms后才上报mode15；上位机从mode15后的新视觉帧开始确认投送。
 - `6c802ec`第二次视觉确认超时后会永久停在ENTER。上位机应增加有限兜底：F407已新鲜处于`mode=15`、观察窗口结束且没有明确“目标仍在安全区外”的证据时，发送并持续保持`TASK_COMPLETE`；若明确仍在区外则保持停车并报告人工处理，不得伪造完成。
 - 第二次视觉ALIGN只叠加一次冻结框修正；ENTER无视觉回退时仍发送9000/27000，F407继续使用第一次ALIGN锁存的90°/270°目标。
@@ -54,7 +54,7 @@ F407会校验释放侧计数：`RELEASE_LEFT/RIGHT`对应侧必须非空；复�
 
 1. 上位机在`RAM_VERIFY(mode=15)`确认投送后持续发送`TASK_COMPLETE`。
 2. F407接受后进入`EXIT_SAFE_ZONE(mode=16)`，以400 mm/s后退0.30 m；该动作由本地编码器定距和IMU保持航向。
-3. 上位机看到新鲜mode16或mode17后进入`RETURN_CENTER`，根据最新融合位姿持续发送：`H=当前点到中心的场地航向`、`D=到中心的剩余距离`。
+3. 上位机看到新鲜mode16或mode17后进入`RETURN_CENTER`并持续发送H/D。mode16会ACK和缓存RETURN以解除PAUSE，但不会提前结束0.30 m本地后退；mode17直接使用最新帧正式返中。
 4. F407退出完成后进入`FACE_FIELD_CENTER(mode=17)`，先原地转到H误差3°内，再最高800 mm/s向前行驶；途中偏差达到8°才停车重对。
 5. 上位机进入中心容差后必须继续发送`RETURN_CENTER D=0`，直到看到F407上报`mode=3 SEARCH`。不能用HOLD代替返中完成。
 

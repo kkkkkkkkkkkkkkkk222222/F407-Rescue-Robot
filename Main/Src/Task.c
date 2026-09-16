@@ -122,6 +122,7 @@ static uint32_t nav_final_push_start_path_mm;
 static uint32_t safe_enter_start_path_mm;
 static uint32_t nav_stage_start_path_mm;
 static uint32_t nav_stage_limit_mm;
+static uint32_t delivery_exit_start_path_mm;
 static uint8_t locked_cargo_counts;
 static uint8_t configured_color;
 static bool initialized;
@@ -146,6 +147,7 @@ static bool nav_final_push_paused;
 static bool nav_realign_pending;
 static bool safe_enter_path_valid;
 static bool nav_stage_guard_valid;
+static bool delivery_exit_path_valid;
 static bool delivery_stage_only;
 static bool safe_align_done;
 static bool safe_align_visual_started;
@@ -267,6 +269,11 @@ static void task_pause_final_push(uint32_t now_ms)
 
 static void task_stop(TaskFault fault, uint32_t now_ms)
 {
+  if (fault == TASK_FAULT_REMOTE_STOP) {
+    /* A new confirmed TYPE=0x11 configuration is the only supported restart
+     * request after an operator ABORT/STOP. Hardware faults remain latched. */
+    Vision_RearmConfig();
+  }
   task_status.fault = fault;
   task_enter(TASK_STOPPED, now_ms);
 }
@@ -510,8 +517,11 @@ static bool task_disperse_keep_side_valid(
 static TaskCommandReject task_disperse_reject_reason(
     const VisionMissionCommand *command)
 {
+  const bool no_side = (command != NULL) &&
+      ((command->flags & VISION_CMD_SIDE_VALID) == 0U);
   if (!((state == TASK_DISPERSE_READY) ||
-        ((state == TASK_GRAB_OBSERVE) && cargo_recheck_pending))) {
+        ((state == TASK_GRAB_OBSERVE) &&
+         (cargo_recheck_pending || no_side)))) {
     return TASK_COMMAND_REJECT_STATE;
   }
   if (!audit_received) {
@@ -703,6 +713,8 @@ static void task_enter(TaskState next, uint32_t now_ms)
   nav_stage_guard_valid = false;
   nav_stage_start_path_mm = 0U;
   nav_stage_limit_mm = 0U;
+  delivery_exit_path_valid = false;
+  delivery_exit_start_path_mm = 0U;
   delivery_stage_only = false;
   safe_align_done = false;
   safe_align_visual_started = false;
@@ -837,6 +849,7 @@ static void task_initialize(uint32_t now_ms)
   safe_enter_start_path_mm = 0U;
   nav_stage_start_path_mm = 0U;
   nav_stage_limit_mm = 0U;
+  delivery_exit_start_path_mm = 0U;
   locked_cargo_counts = 0U;
   configured_color = 0U;
   initial_claw_ready = false;
@@ -860,6 +873,7 @@ static void task_initialize(uint32_t now_ms)
   nav_final_push_paused = false;
   safe_enter_path_valid = false;
   nav_stage_guard_valid = false;
+  delivery_exit_path_valid = false;
   first_delivery_done = false;
   complete_flow_active = false;
   mission_paused = false;
@@ -3131,6 +3145,14 @@ static void task_accept_mission(const VisionMissionCommand *command,
              (state == TASK_RAM_VERIFY)) {
     task_status.acknowledged_sequence = command->sequence;
   } else if ((command->command == VISION_CMD_RETURN_CENTER) &&
+             (state == TASK_EXIT_SAFE_ZONE) &&
+             task_distance_command_valid(command,
+                                         VISION_CMD_RETURN_CENTER)) {
+    /* Cache/ACK RETURN while mode16 finishes its local 0.30 m retreat. This
+     * also releases a PAUSE latch, but never changes state or restarts the
+     * local distance action. mode17 consumes the latest H/D afterwards. */
+    task_status.acknowledged_sequence = command->sequence;
+  } else if ((command->command == VISION_CMD_RETURN_CENTER) &&
              (state == TASK_FACE_FIELD_CENTER)) {
     task_status.acknowledged_sequence = command->sequence;
   } else if ((command->command == VISION_CMD_RETURN_CENTER) &&
@@ -3374,8 +3396,23 @@ void Task_Process(uint32_t now_ms)
 
     case TASK_EXIT_SAFE_ZONE:
       {
+        const LocationPose pose = Location_GetPose();
+        if (!delivery_exit_path_valid) {
+          delivery_exit_start_path_mm = pose.path_mm;
+          delivery_exit_path_valid = true;
+        }
+        const uint32_t target_mm = (uint32_t)(
+            APP_DELIVERY_EXIT_DISTANCE_M * 1000.0f + 0.5f);
+        const uint32_t travelled_mm =
+            pose.path_mm - delivery_exit_start_path_mm;
+        if (travelled_mm >= target_mm) {
+          task_enter(TASK_FACE_FIELD_CENTER, now_ms);
+          break;
+        }
+        const float remaining_m =
+            (float)(target_mm - travelled_mm) * 0.001f;
         const MotorDistanceStatus result = Motor_MoveDistance(
-            -APP_DELIVERY_EXIT_DISTANCE_M,
+            -remaining_m,
             APP_DELIVERY_EXIT_SPEED_MM_S);
         task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
         if (result == MOTOR_DISTANCE_DONE) {
@@ -3397,6 +3434,13 @@ void Task_Process(uint32_t now_ms)
     case TASK_STOPPED:
       Motor_Stop();
       task_status.motors_active = false;
+      if ((task_status.fault == TASK_FAULT_REMOTE_STOP) &&
+          vision.config_ready) {
+        /* Vision_RearmConfig() made this readiness possible only after a new
+         * confirmed operator configuration. Rebuild task-local state and
+         * repeat the normal safe claw retraction before consuming it. */
+        task_initialize(now_ms);
+      }
       break;
 
     default:

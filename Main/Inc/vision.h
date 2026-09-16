@@ -100,15 +100,15 @@
 #define VISION_CMD_RED_SIDE          0x08U
 #define VISION_CMD_DISTANCE_VALID    0x10U
 /* APPROACH_TARGET describes the centre of a pile that must be approached
- * before the upper computer requests the fixed local disperse action. */
+ * before the upper computer requests visual selective separation. */
 #define VISION_CMD_CLUSTER_TARGET    0x20U
 /* Bit 6 is opcode-specific in shijue_fangan's current protocol. */
 #define VISION_CMD_STAGE_ONLY        0x40U
 #define VISION_CMD_VISUAL_CORRECTION_VALID 0x40U
 /* DISPERSE_PILE reuses the high bits for optional side selection. With
  * SIDE_VALID set, TARGET_RIGHT clear/set retains the left/right target and
- * runs selective separation. Without SIDE_VALID, F407 runs the whole-pile
- * impact fallback. TARGET_RIGHT without SIDE_VALID is invalid. */
+ * runs selective separation. Without SIDE_VALID, F407 only turns 12 degrees
+ * for a new claw audit; it never impacts the whole pile. */
 #define VISION_CMD_SIDE_VALID        0x40U
 #define VISION_CMD_TARGET_RIGHT      0x80U
 
@@ -140,6 +140,9 @@ typedef enum {
 #define VISION_AUDIT_INJURY_MIXED       0x08U
 #define VISION_AUDIT_STABLE             0x10U
 #define VISION_AUDIT_DESTINATION_INJURY 0x20U
+/* UNKNOWN_PRESENT may describe cargo inside the overall claw ROI whose side
+ * cannot be assigned. total_count may therefore exceed left_count+right_count;
+ * the audit is retained for no-side DISPERSE but is invalid for direct GRAB. */
 
 #define VISION_CARGO_NONE           0U
 #define VISION_CARGO_GREEN          1U
@@ -238,6 +241,7 @@ void Vision_QueueMotionStatus(const VisionMotionStatus *status);
 
 void Vision_Init(void);
 void Vision_ResetParser(void);
+void Vision_RearmConfig(void);
 void Vision_ParseBytes(const uint8_t *data, size_t size, uint32_t tick_ms);
 VisionData Vision_GetSnapshot(void);
 bool Vision_IsFresh(const VisionData *data, uint32_t now_ms,

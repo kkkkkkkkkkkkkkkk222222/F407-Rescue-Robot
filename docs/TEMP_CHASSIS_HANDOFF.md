@@ -595,3 +595,11 @@ RUN         停车并复位MCU，重新进入正常模式
 - mode21按锁存IMU航向以180 mm/s慢爬，编码器上限由300 mm提高到500 mm。这样近场目标即使因为遮挡或track ID改变而消失，上位机仍可直接使用夹爪ROI判断实际入爪情况。
 - 普通抓取不要求`VISION_AUDIT_STABLE`。F407使用P6的`audit_id`区分真实视觉帧；只有两个不同audit_id且类别、左右计数、审核标志和总数一致的非空审核才停车并允许`GRAB_CONFIRMED`。重复发送同一视觉结果、即使SEQ变化，也不会伪造第二帧。聚集mode38/mode37和单侧释放复审仍保留原有STABLE兼容语义。
 - 投送完成后的既有退出顺序不变：mode15收到TASK_COMPLETE且满足静止观察窗口后，先进入mode16以400 mm/s后退0.30 m，再进入mode17消费上位机RETURN_CENTER H/D返中；不得再额外增加第二段本地倒车。
+
+## 75. 2026-09-16 mode16 RETURN交接与REMOTE_STOP重新开局
+
+- 对齐上位机`codex/gamepad-teleop@b827303`。mode16现在接受并ACK格式完整的RETURN_CENTER；ACK变化可以解除此前PAUSE，但不会切换到mode17。最新H/D保留在Vision快照中，0.30 m本地后退完成后mode17直接消费。
+- PAUSE的`Motor_Stop()`会清掉电机定距上下文，因此mode16改为用Location累计路径锁存整段起点；恢复时根据`300 mm-已行驶距离`只启动剩余定距，速度仍为400 mm/s，路线和总距离不变，重复RETURN不会重启或多退。
+- 收到ABORT或非NAV STOP进入`TASK_FAULT_REMOTE_STOP`时调用`Vision_RearmConfig()`，只清除config_ready、确认连帧和配置SEQ接收状态，不重置UART解析器及其他视觉数据。STOPPED仅在fault1且收到一组新的连续合法TYPE=0x11配置后调用任务初始化，随后重新安全收爪、应用新红蓝方/出发区并自主出发。
+- MOTOR、POSE_TIMEOUT、INVALID_STATE、IMU及真实硬件故障不进入上述重启入口，继续要求人工复位。
+- 大ROI内无法归属左右的物体允许`total_count > left_count + right_count`并置UNKNOWN_PRESENT。审核被完整接收但`task_validate_audit()`判为不可运输；无SIDE_VALID的DISPERSE仍可从mode21/mode37进入12°观察，带SIDE_VALID仍校验保留侧count非零。

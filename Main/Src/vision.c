@@ -526,6 +526,19 @@ void Vision_ResetParser(void)
   frame_index = 0U;
 }
 
+void Vision_RearmConfig(void)
+{
+  const uint32_t primask = __get_PRIMASK();
+  __disable_irq();
+  latest_data.config_ready = false;
+  config_streak = 0U;
+  config_last_sequence = 0U;
+  config_sequence_valid = false;
+  if (primask == 0U) {
+    __enable_irq();
+  }
+}
+
 void Vision_ParseBytes(const uint8_t *data, size_t size, uint32_t tick_ms)
 {
   if (data == 0) {

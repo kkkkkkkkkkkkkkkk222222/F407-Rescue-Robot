@@ -66,6 +66,21 @@ CMD_VISUAL_CORRECTION_VALID = 0x40
 CMD_SIDE_VALID = 0x40
 CMD_TARGET_RIGHT = 0x80
 
+AUDIT_INITIAL_STASH = 0x01
+AUDIT_DANGER_PRESENT = 0x02
+AUDIT_UNKNOWN_PRESENT = 0x04
+AUDIT_INJURY_MIXED = 0x08
+AUDIT_STABLE = 0x10
+AUDIT_DESTINATION_INJURY = 0x20
+
+CARGO_NONE = 0
+CARGO_GREEN = 1
+CARGO_CORE = 2
+CARGO_INJURED = 3
+CARGO_DANGER = 4
+CARGO_UNKNOWN = 5
+CARGO_MIXED_MATERIAL = 6
+
 
 def crc16_modbus(data: bytes) -> int:
     crc = 0xFFFF
@@ -270,21 +285,58 @@ def mission_frame(
               target_y_mm):
             raise ValueError("invalid pose ALIGN payload")
     if command == CMD_ENTER_SAFE_ZONE:
-        required = CMD_DRIVE_STRAIGHT | CMD_DISTANCE_VALID
         visual = bool(flags & CMD_VISUAL_CORRECTION_VALID)
-        if flags & required != required or target_x_mm < 0 or target_y_mm:
-            raise ValueError("invalid ENTER distance payload")
+        fallback_heading = 9000 if flags & CMD_RED_SIDE else 27000
+        if (not flags & CMD_DRIVE_STRAIGHT or
+                flags & CMD_DISTANCE_VALID or
+                target_x_mm or target_y_mm):
+            raise ValueError("ENTER uses F407 encoder distance with zero D")
         if visual:
             if flags & CMD_USE_FINAL_HEADING or heading_cdeg:
                 raise ValueError("invalid visual ENTER payload")
-        elif not flags & CMD_USE_FINAL_HEADING:
-            raise ValueError("fallback ENTER requires final heading")
+        elif (not flags & CMD_USE_FINAL_HEADING or
+              heading_cdeg != fallback_heading):
+            raise ValueError("fallback ENTER requires the side heading")
     payload = (
         bytes((command, flags))
         + target_x_mm.to_bytes(2, "big", signed=True)
         + target_y_mm.to_bytes(2, "big", signed=True)
         + heading_cdeg.to_bytes(2, "big")
     )
+    return build_frame(MSG_MISSION, sequence, payload)
+
+
+def cargo_audit_frame(
+    sequence: int,
+    left_class: int,
+    right_class: int,
+    left_count: int,
+    right_count: int,
+    audit_flags: int,
+    audit_id: int,
+    total_count: int,
+) -> bytes:
+    if left_class not in range(CARGO_MIXED_MATERIAL + 1):
+        raise ValueError("invalid left cargo class")
+    if right_class not in range(CARGO_MIXED_MATERIAL + 1):
+        raise ValueError("invalid right cargo class")
+    if left_count not in range(4) or right_count not in range(4):
+        raise ValueError("per-side cargo count must be 0..3")
+    if audit_flags & ~0x3F:
+        raise ValueError("invalid cargo audit flags")
+    if not 0 <= audit_id <= 0xFF or not 0 <= total_count <= 0xFF:
+        raise ValueError("invalid audit id or total count")
+    counts = left_count | (right_count << 2)
+    payload = bytes((
+        CMD_CARGO_AUDIT,
+        CMD_VALID,
+        left_class,
+        right_class,
+        counts,
+        audit_flags,
+        audit_id,
+        total_count,
+    ))
     return build_frame(MSG_MISSION, sequence, payload)
 
 

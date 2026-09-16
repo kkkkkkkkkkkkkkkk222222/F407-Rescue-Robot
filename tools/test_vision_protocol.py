@@ -172,9 +172,8 @@ class VisionProtocolTests(unittest.TestCase):
         enter = protocol.mission_frame(
             0x43, protocol.CMD_ENTER_SAFE_ZONE,
             protocol.CMD_VALID | protocol.CMD_DRIVE_STRAIGHT |
-            protocol.CMD_DISTANCE_VALID |
             protocol.CMD_VISUAL_CORRECTION_VALID | side,
-            325, 0, 0,
+            0, 0, 0,
         )
         self.assertEqual(protocol.parse_frame(stage)[2][1], stage_flags)
         self.assertEqual(
@@ -190,8 +189,33 @@ class VisionProtocolTests(unittest.TestCase):
         )
         self.assertEqual(
             int.from_bytes(protocol.parse_frame(enter)[2][2:4], "big"),
-            325,
+            0,
         )
+
+        fallback = protocol.mission_frame(
+            0x44, protocol.CMD_ENTER_SAFE_ZONE,
+            protocol.CMD_VALID | protocol.CMD_DRIVE_STRAIGHT |
+            protocol.CMD_USE_FINAL_HEADING | side,
+            0, 0, 9000,
+        )
+        self.assertEqual(
+            int.from_bytes(protocol.parse_frame(fallback)[2][6:8], "big"),
+            9000,
+        )
+
+        blue_visual = protocol.mission_frame(
+            0x45, protocol.CMD_ENTER_SAFE_ZONE,
+            protocol.CMD_VALID | protocol.CMD_DRIVE_STRAIGHT |
+            protocol.CMD_VISUAL_CORRECTION_VALID,
+        )
+        blue_fallback = protocol.mission_frame(
+            0x46, protocol.CMD_ENTER_SAFE_ZONE,
+            protocol.CMD_VALID | protocol.CMD_DRIVE_STRAIGHT |
+            protocol.CMD_USE_FINAL_HEADING,
+            0, 0, 27000,
+        )
+        self.assertEqual(protocol.parse_frame(blue_visual)[2][1], 0x43)
+        self.assertEqual(protocol.parse_frame(blue_fallback)[2][1], 0x07)
 
     def test_visual_align_and_enter_reject_mixed_semantics(self) -> None:
         with self.assertRaises(ValueError):
@@ -209,6 +233,38 @@ class VisionProtocolTests(unittest.TestCase):
                 protocol.CMD_VISUAL_CORRECTION_VALID,
                 200, 0, 9000,
             )
+
+    def test_two_frame_normal_audit_and_unknown_side_audit(self) -> None:
+        first = protocol.cargo_audit_frame(
+            0x50,
+            protocol.CARGO_GREEN,
+            protocol.CARGO_NONE,
+            1, 0, 0, 10, 1,
+        )
+        second = protocol.cargo_audit_frame(
+            0x51,
+            protocol.CARGO_GREEN,
+            protocol.CARGO_NONE,
+            1, 0, protocol.AUDIT_STABLE, 11, 1,
+        )
+        first_payload = protocol.parse_frame(first)[2]
+        second_payload = protocol.parse_frame(second)[2]
+        self.assertEqual(first_payload[6], 10)
+        self.assertEqual(second_payload[6], 11)
+        self.assertFalse(first_payload[5] & protocol.AUDIT_STABLE)
+        self.assertTrue(second_payload[5] & protocol.AUDIT_STABLE)
+        self.assertEqual(first_payload[2:5], second_payload[2:5])
+
+        unassigned = protocol.cargo_audit_frame(
+            0x52,
+            protocol.CARGO_GREEN,
+            protocol.CARGO_NONE,
+            1, 0, protocol.AUDIT_UNKNOWN_PRESENT, 12, 2,
+        )
+        unknown_payload = protocol.parse_frame(unassigned)[2]
+        self.assertEqual(unknown_payload[7], 2)
+        self.assertEqual((unknown_payload[4] & 0x03), 1)
+        self.assertTrue(unknown_payload[5] & protocol.AUDIT_UNKNOWN_PRESENT)
 
     def test_pause_uses_reserved_mission_code(self) -> None:
         pause = protocol.mission_frame(
