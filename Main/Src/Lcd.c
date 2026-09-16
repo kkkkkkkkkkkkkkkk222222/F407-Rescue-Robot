@@ -692,12 +692,11 @@ static const char *task_action_stage(const TaskStatus *task)
   if (task->action_done) {
     return "DONE";
   }
-  if (task->action_impact) {
+  if (task->action_disambiguate) {
     switch (task->action_phase) {
-      case 0U: return "TOUCH";
-      case 1U: return "RAM";
-      case 2U: return "BACK";
-      case 3U: return "OPEN";
+      case 0U: return "TURN";
+      case 1U: return "CAM";
+      case 2U: return "WAIT";
       default: return "RUN";
     }
   }
