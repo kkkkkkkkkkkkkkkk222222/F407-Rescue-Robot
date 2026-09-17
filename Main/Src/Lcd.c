@@ -701,6 +701,16 @@ static const char *task_action_stage(const TaskStatus *task)
   if (task->action_done) {
     return "DONE";
   }
+  if (task->action_green_bump) {
+    switch (task->action_phase) {
+      case 0U: return "BACK";
+      case 1U: return "CLOSE";
+      case 2U: return "PUSH";
+      case 3U: return "BACK";
+      case 4U: return "OPEN";
+      default: return "RUN";
+    }
+  }
   if (task->action_disambiguate) {
     switch (task->action_phase) {
       case 0U: return "TURN";

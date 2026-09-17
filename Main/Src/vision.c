@@ -217,7 +217,8 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
         (code == VISION_CMD_ENTER_SAFE_ZONE)) ?
           VISION_CMD_STAGE_ONLY : 0U) |
       ((code == VISION_CMD_DISPERSE_PILE) ?
-          (VISION_CMD_SIDE_VALID | VISION_CMD_TARGET_RIGHT) : 0U));
+          (VISION_CMD_FIRST_GREEN_BUMP |
+           VISION_CMD_SIDE_VALID | VISION_CMD_TARGET_RIGHT) : 0U));
   if (!vision_mission_code_valid(code) ||
       ((flags & VISION_CMD_VALID) == 0U) ||
       ((flags & (uint8_t)~allowed_flags) != 0U)) {
@@ -286,6 +287,12 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
   if ((code == VISION_CMD_DISPERSE_PILE) &&
       ((flags & VISION_CMD_TARGET_RIGHT) != 0U) &&
       ((flags & VISION_CMD_SIDE_VALID) == 0U)) {
+    return;
+  }
+  if ((code == VISION_CMD_DISPERSE_PILE) &&
+      ((flags & VISION_CMD_FIRST_GREEN_BUMP) != 0U) &&
+      ((flags & (VISION_CMD_SIDE_VALID |
+                 VISION_CMD_TARGET_RIGHT)) != 0U)) {
     return;
   }
   if ((code == VISION_CMD_CARGO_AUDIT) &&

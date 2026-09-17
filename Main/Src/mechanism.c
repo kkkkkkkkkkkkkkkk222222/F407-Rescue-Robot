@@ -131,8 +131,8 @@ bool Claw_OpenRight(uint32_t now_ms)
 
 bool Claw_ClusterOpenLeft(uint32_t now_ms)
 {
-  /* First pass through a visible pile: release the left side and retain the
-   * right side only 15 degrees beyond Touch so adjacent pieces do not jam. */
+  /* Curve separation: release the left side and retain the right side only
+   * 15 degrees beyond Touch so adjacent pieces do not jam. */
   return claw_move_together(CLAW_ACTION_CLUSTER_OPEN_LEFT, now_ms,
                             108U, APP_CLAW_RIGHT_CLUSTER_HOLD_ANGLE, 600U);
 }

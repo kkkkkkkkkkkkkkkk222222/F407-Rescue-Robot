@@ -61,6 +61,7 @@ CMD_USE_FINAL_HEADING = 0x04
 CMD_RED_SIDE = 0x08
 CMD_DISTANCE_VALID = 0x10
 CMD_CLUSTER_TARGET = 0x20
+CMD_FIRST_GREEN_BUMP = 0x20
 CMD_STAGE_ONLY = 0x40
 CMD_VISUAL_CORRECTION_VALID = 0x40
 CMD_SIDE_VALID = 0x40
@@ -262,12 +263,18 @@ def mission_frame(
             CMD_ENTER_SAFE_ZONE):
         allowed_flags |= CMD_STAGE_ONLY
     if command == CMD_DISPERSE_PILE:
-        allowed_flags |= CMD_SIDE_VALID | CMD_TARGET_RIGHT
+        allowed_flags |= (
+            CMD_FIRST_GREEN_BUMP | CMD_SIDE_VALID | CMD_TARGET_RIGHT
+        )
     if not flags & CMD_VALID or flags & ~allowed_flags:
         raise ValueError("invalid mission flags")
     if (command == CMD_DISPERSE_PILE and
             flags & CMD_TARGET_RIGHT and not flags & CMD_SIDE_VALID):
         raise ValueError("TARGET_RIGHT requires SIDE_VALID")
+    if (command == CMD_DISPERSE_PILE and
+            flags & CMD_FIRST_GREEN_BUMP and
+            flags & (CMD_SIDE_VALID | CMD_TARGET_RIGHT)):
+        raise ValueError("FIRST_GREEN_BUMP cannot select a claw side")
     if not -32768 <= target_x_mm <= 32767 or not -32768 <= target_y_mm <= 32767:
         raise ValueError("mission target must fit int16")
     heading_command = command in (

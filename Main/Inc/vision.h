@@ -102,6 +102,9 @@
 /* APPROACH_TARGET describes the centre of a pile that must be approached
  * before the upper computer requests visual selective separation. */
 #define VISION_CMD_CLUSTER_TARGET    0x20U
+/* DISPERSE_PILE bit5: first formal green only. Execute the short local
+ * backoff/Touch/forward/back/open bump, then return directly to SEARCH. */
+#define VISION_CMD_FIRST_GREEN_BUMP  0x20U
 /* Bit 6 is opcode-specific in shijue_fangan's current protocol. */
 #define VISION_CMD_STAGE_ONLY        0x40U
 #define VISION_CMD_VISUAL_CORRECTION_VALID 0x40U

@@ -603,3 +603,17 @@ RUN         停车并复位MCU，重新进入正常模式
 - 收到ABORT或非NAV STOP进入`TASK_FAULT_REMOTE_STOP`时调用`Vision_RearmConfig()`，只清除config_ready、确认连帧和配置SEQ接收状态，不重置UART解析器及其他视觉数据。STOPPED仅在fault1且收到一组新的连续合法TYPE=0x11配置后调用任务初始化，随后重新安全收爪、应用新红蓝方/出发区并自主出发。
 - MOTOR、POSE_TIMEOUT、INVALID_STATE、IMU及真实硬件故障不进入上述重启入口，继续要求人工复位。
 - 大ROI内无法归属左右的物体允许`total_count > left_count + right_count`并置UNKNOWN_PRESENT。审核被完整接收但`task_validate_audit()`判为不可运输；无SIDE_VALID的DISPERSE仍可从mode21/mode37进入12°观察，带SIDE_VALID仍校验保留侧count非零。
+
+## 76. 2026-09-16 140°ROI暴力分拣与600 mm ENTER
+
+- 分离判断的唯一物资集合改为摄像头3命令140°时，满足专用overall夹爪ROI的检测物；左右归属和每侧绿色数量只能从左右夹爪ROI统计，禁止使用全局画面中的其他目标。每次mode35完成后必须用新frame floor重新建立集合，不沿用动作前框。
+- 选侧由上位机确定：仅一侧有绿色保留该侧；两侧都有绿色时保留绿色数量较少侧，平局选左；两侧都没有绿色时选左，左侧实际为空才选右。上位机应保留每侧绿色数量作为本地元数据，不改15字节协议。对于大ROI内但夹在左右ROI中线的UNKNOWN物体，F407允许上位机用SIDE_VALID强制指定一侧；普通情况下仍优先要求指定侧count非零。
+- 第一次实际曲线和mode35复审后的所有后续带侧曲线均使用15°保持。普通`RELEASE_LEFT/RIGHT → YIELD_BACKOFF`单侧释放继续使用25°强保持。动作完成且相机140°稳定后F407置`CLAW_VISIBLE=1`；无侧12°观察只保留为异常兜底。
+- ENTER本地编码器总目标改为600 mm：前400 mm沿用现有接近减速，随后保留300 mm/s、200 mm最终补推和1200 ms接触保护。STAGE预备点、两次ALIGN、ENTER帧格式和mode15之后流程均未改变。
+- 对齐上位机`codex/gamepad-teleop@db76b00`，聚集和分离复审后的最终合法GRAB也要求两个不同audit_id内容一致；无效审核仍允许一张显式STABLE后立即选择分离侧。F407的mode37和mode21 GRAB入口同步增加`audit_consistent_count>=2`，防止上位机异常提前发送GRAB时一帧闭爪。
+
+## 77. 2026-09-16 首件绿色轻撞与SEARCH返中
+
+- `DISPERSE_PILE`的bit5新增opcode专用`FIRST_GREEN_BUMP`，不能与SIDE_VALID/TARGET_RIGHT同时使用。只在第一件正式绿色尚未完成、140°审核总数至少2且含绿色、非initial_stash时接受，每轮任务最多一次。
+- 本地轻撞严格执行：500 mm/s后退0.10 m→双爪Touch闭合并等待机构到位→500 mm/s前进0.20 m→500 mm/s后退0.10 m→双爪完全打开→清除旧审核并直接进入SEARCH。无侧DISPERSE仍是12°观察，不受影响。
+- SEARCH顺序改为120°整圈→90°整圈。两圈无目标后进入`SEARCH_WAIT_RETURN`，保持mode3和停车；上位机发送完整RETURN_CENTER H/D后F407进入mode17返中心，D=0再从120°开始。任意一圈中合法APPROACH仍可立即接管。

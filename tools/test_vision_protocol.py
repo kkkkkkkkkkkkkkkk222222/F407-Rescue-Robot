@@ -147,6 +147,21 @@ class VisionProtocolTests(unittest.TestCase):
                 protocol.CMD_VALID | protocol.CMD_SIDE_VALID,
             )
 
+        bump = protocol.mission_frame(
+            0x3A, protocol.CMD_DISPERSE_PILE,
+            protocol.CMD_VALID | protocol.CMD_FIRST_GREEN_BUMP,
+        )
+        self.assertEqual(
+            protocol.parse_frame(bump)[2][1],
+            protocol.CMD_VALID | protocol.CMD_FIRST_GREEN_BUMP,
+        )
+        with self.assertRaises(ValueError):
+            protocol.mission_frame(
+                0x3B, protocol.CMD_DISPERSE_PILE,
+                protocol.CMD_VALID | protocol.CMD_FIRST_GREEN_BUMP |
+                protocol.CMD_SIDE_VALID,
+            )
+
     def test_staged_safe_zone_delivery_commands(self) -> None:
         side = protocol.CMD_RED_SIDE
         stage_flags = (

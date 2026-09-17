@@ -79,6 +79,7 @@ typedef struct {
   bool audit_recheck_pending;
   bool action_done;
   bool action_disambiguate;
+  bool action_green_bump;
   bool nav_stale;
   bool nav_done;
   bool nav_final_push;
