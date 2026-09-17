@@ -81,6 +81,23 @@ typedef struct {
   bool stale;
 } NavProgress;
 
+typedef enum {
+  AUDIT_SEMANTIC_INVALID = 0,
+  AUDIT_SEMANTIC_STASH_NONEMPTY,
+  AUDIT_SEMANTIC_FIRST_GREEN,
+  AUDIT_SEMANTIC_MATERIAL_LEGAL,
+  AUDIT_SEMANTIC_INJURY_SINGLE
+} AuditSemantic;
+
+typedef enum {
+  POST_AUDIT_WAIT_PRIMARY = 0,
+  POST_AUDIT_NUDGE_LOW,
+  POST_AUDIT_WAIT_LOW,
+  POST_AUDIT_NUDGE_HIGH,
+  POST_AUDIT_WAIT_HIGH,
+  POST_AUDIT_RELEASE
+} PostGrabAuditPhase;
+
 static volatile TaskStatus task_status;
 static Pid_t steering_pid;
 static Pid_t camera_pid;
@@ -173,8 +190,16 @@ static uint8_t audit_last_counts;
 static uint8_t audit_last_flags;
 static uint8_t audit_last_total_count;
 static uint8_t audit_last_id;
-static bool audit_legal_candidate_pending;
-static uint8_t audit_invalid_after_legal_count;
+static AuditSemantic audit_last_semantic;
+static bool audit_core_seen_in_streak;
+static bool grab_core_advance_required;
+static bool grab_core_advance_started;
+static uint32_t grab_core_advance_start_path_mm;
+static float grab_core_advance_heading_deg;
+static PostGrabAuditPhase post_grab_audit_phase;
+static uint32_t post_grab_audit_phase_started_ms;
+static uint32_t post_grab_invalid_started_ms;
+static bool post_grab_invalid_waiting;
 static uint8_t remote_target_sequence;
 static uint32_t remote_target_generation;
 static bool remote_target_sequence_valid;
@@ -413,7 +438,8 @@ static bool task_audit_class_is(uint8_t value, uint8_t cargo)
   return value == cargo;
 }
 
-static bool task_validate_audit(const VisionMissionCommand *command)
+static AuditSemantic task_audit_semantic(
+    const VisionMissionCommand *command)
 {
   const uint8_t left_count = command->audit_counts & 0x03U;
   const uint8_t right_count = (command->audit_counts >> 2) & 0x03U;
@@ -433,34 +459,42 @@ static bool task_validate_audit(const VisionMissionCommand *command)
   const bool injury_mixed =
       ((command->audit_flags & VISION_AUDIT_INJURY_MIXED) != 0U) ||
       (injury && (total != 1U));
+  const bool initial_stash =
+      (command->audit_flags & VISION_AUDIT_INITIAL_STASH) != 0U;
+  const bool destination_injury =
+      (command->audit_flags & VISION_AUDIT_DESTINATION_INJURY) != 0U;
 
   /* The opening temporary stash only clears the centre pile. Per-side counts
    * are saturated diagnostics and neither category nor quantity is a formal
    * delivery interlock for this move; only a non-empty stable audit matters. */
-  if (audit_initial_stash) {
-    return total > 0U;
+  if (initial_stash) {
+    return (total > 0U) ?
+        AUDIT_SEMANTIC_STASH_NONEMPTY : AUDIT_SEMANTIC_INVALID;
   }
 
   if ((total == 0U) || (total > 3U) ||
       ((uint8_t)(left_count + right_count) != total) ||
       dangerous || unknown || injury_mixed) {
-    return false;
+    return AUDIT_SEMANTIC_INVALID;
   }
   if (!first_delivery_done) {
-    return (total == 1U) &&
+    return (!destination_injury && (total == 1U) &&
            ((task_audit_class_is(left, VISION_CARGO_GREEN) &&
              (left_count == 1U)) ||
             (task_audit_class_is(right, VISION_CARGO_GREEN) &&
-             (right_count == 1U)));
+             (right_count == 1U)))) ?
+        AUDIT_SEMANTIC_FIRST_GREEN : AUDIT_SEMANTIC_INVALID;
   }
-  if (audit_destination_injury) {
-    return (total == 1U) && injury;
+  if (injury) {
+    return (destination_injury && (total == 1U)) ?
+        AUDIT_SEMANTIC_INJURY_SINGLE : AUDIT_SEMANTIC_INVALID;
   }
   /* Match the upper computer's post-first-delivery policy: one to three
    * ordinary/core supplies may be transported together, including a side
    * reported as MIXED_MATERIAL. Danger, unknown and injury mixtures were
    * rejected above. */
-  return !injury &&
+  const bool material =
+         !destination_injury &&
          ((left == VISION_CARGO_NONE) ||
           (left == VISION_CARGO_GREEN) ||
           (left == VISION_CARGO_CORE) ||
@@ -469,6 +503,8 @@ static bool task_validate_audit(const VisionMissionCommand *command)
           (right == VISION_CARGO_GREEN) ||
           (right == VISION_CARGO_CORE) ||
           (right == VISION_CARGO_MIXED_MATERIAL));
+  return material ? AUDIT_SEMANTIC_MATERIAL_LEGAL :
+                    AUDIT_SEMANTIC_INVALID;
 }
 
 static bool task_audit_is_empty(const VisionMissionCommand *command)
@@ -531,13 +567,25 @@ static bool task_audit_has_green(void)
          (audit_last_right_class == VISION_CARGO_MIXED_MATERIAL);
 }
 
+static void task_begin_close_claw(uint32_t now_ms)
+{
+  const bool advance_for_core = complete_flow_active &&
+      audit_core_seen_in_streak;
+  task_enter(TASK_CLOSE_CLAW, now_ms);
+  grab_core_advance_required = advance_for_core;
+  grab_core_advance_started = false;
+  grab_core_advance_start_path_mm = 0U;
+  grab_core_advance_heading_deg = 0.0f;
+}
+
 static TaskCommandReject task_disperse_reject_reason(
     const VisionMissionCommand *command)
 {
   const bool first_green_bump = (command != NULL) &&
       ((command->flags & VISION_CMD_FIRST_GREEN_BUMP) != 0U);
   if (!((state == TASK_DISPERSE_READY) ||
-        (state == TASK_GRAB_OBSERVE))) {
+        (state == TASK_GRAB_OBSERVE) ||
+        (state == TASK_POST_GRAB_AUDIT))) {
     return TASK_COMMAND_REJECT_STATE;
   }
   if (!audit_received) {
@@ -552,7 +600,8 @@ static TaskCommandReject task_disperse_reject_reason(
     return TASK_COMMAND_REJECT_AUDIT;
   }
   if (first_green_bump &&
-      (first_delivery_done || first_green_bump_done || audit_initial_stash ||
+      ((state == TASK_POST_GRAB_AUDIT) || first_delivery_done ||
+       first_green_bump_done || audit_initial_stash ||
        (audit_last_total_count < 2U) || !task_audit_has_green())) {
     return TASK_COMMAND_REJECT_AUDIT;
   }
@@ -566,42 +615,35 @@ static void task_latch_audit(const VisionMissionCommand *command)
 {
   const uint8_t semantic_flags = command->audit_flags &
       (uint8_t)~VISION_AUDIT_STABLE;
-  const uint8_t left_count = command->audit_counts & 0x03U;
-  const uint8_t right_count = (command->audit_counts >> 2) & 0x03U;
-  const uint8_t last_left_count = audit_last_counts & 0x03U;
-  const uint8_t last_right_count = (audit_last_counts >> 2) & 0x03U;
-  const bool same_sides =
-      (command->audit_left_class == audit_last_left_class) &&
-      (command->audit_right_class == audit_last_right_class) &&
-      (left_count == last_left_count) &&
-      (right_count == last_right_count);
-  const bool swapped_sides =
-      (command->audit_left_class == audit_last_right_class) &&
-      (command->audit_right_class == audit_last_left_class) &&
-      (left_count == last_right_count) &&
-      (right_count == last_left_count);
-  const bool same =
-      (same_sides || swapped_sides) &&
-      (semantic_flags == audit_last_flags) &&
-      (command->audit_total_count == audit_last_total_count);
+  const AuditSemantic semantic = task_audit_semantic(command);
+  const bool current_has_core =
+      (command->audit_left_class == VISION_CARGO_CORE) ||
+      (command->audit_right_class == VISION_CARGO_CORE) ||
+      (command->audit_left_class == VISION_CARGO_MIXED_MATERIAL) ||
+      (command->audit_right_class == VISION_CARGO_MIXED_MATERIAL);
+  bool same = false;
+  if ((semantic != AUDIT_SEMANTIC_INVALID) &&
+      (semantic == audit_last_semantic)) {
+    /* Legal cargo is normalized by task meaning, not claw side or exact
+     * ordinary/core distribution. Material batches only need the same total;
+     * stash merely needs to remain non-empty. */
+    same = (semantic == AUDIT_SEMANTIC_STASH_NONEMPTY) ||
+           (command->audit_total_count == audit_last_total_count);
+  } else if ((semantic == AUDIT_SEMANTIC_INVALID) &&
+             (audit_last_semantic == AUDIT_SEMANTIC_INVALID)) {
+    /* Invalid decisions are normalized to total count and illegal semantic
+     * flags. mixed_material versus split green/core and left/right movement
+     * must not make the two controllers disagree on the three-frame gate. */
+    same = (semantic_flags == audit_last_flags) &&
+           (command->audit_total_count == audit_last_total_count);
+  }
   audit_initial_stash =
       (command->audit_flags & VISION_AUDIT_INITIAL_STASH) != 0U;
   audit_destination_injury =
       (command->audit_flags & VISION_AUDIT_DESTINATION_INJURY) != 0U;
-  const bool current_payload_legal = task_validate_audit(command);
-  const bool tolerate_one_invalid = !current_payload_legal &&
-      audit_legal_candidate_pending &&
-      (audit_invalid_after_legal_count == 0U);
-
-  if (tolerate_one_invalid) {
-    /* Keep the first legal frame as the comparison baseline. The upper
-     * computer may transmit one transient invalid frame while applying its
-     * hysteresis; letting it overwrite the baseline would make alternating
-     * legal/invalid detections impossible to confirm. */
-    audit_invalid_after_legal_count = 1U;
-  } else if (same) {
+  if (same) {
     /* The upper computer may retransmit one camera result with many UART
-     * SEQs. Count only a changed audit_id as a second visual frame. */
+     * SEQs. Count only a changed audit_id as another visual frame. */
     if ((command->audit_id != audit_last_id) &&
         (audit_consistent_count < 255U)) {
       ++audit_consistent_count;
@@ -609,28 +651,30 @@ static void task_latch_audit(const VisionMissionCommand *command)
   } else {
     audit_consistent_count = 1U;
   }
-  if (!tolerate_one_invalid) {
-    /* Retain the newest accepted left/right assignment for SIDE_VALID while
-     * treating a complete left/right swap as the same transport payload. */
-    audit_last_left_class = command->audit_left_class;
-    audit_last_right_class = command->audit_right_class;
-    audit_last_counts = command->audit_counts;
-    audit_last_flags = semantic_flags;
-    audit_last_total_count = command->audit_total_count;
-    audit_last_id = command->audit_id;
-    audit_legal_candidate_pending = current_payload_legal;
-    audit_invalid_after_legal_count = 0U;
+  if (same) {
+    audit_core_seen_in_streak =
+        audit_core_seen_in_streak || current_has_core;
+  } else {
+    audit_core_seen_in_streak =
+        (semantic != AUDIT_SEMANTIC_INVALID) && current_has_core;
   }
+  /* Always preserve the newest side assignment for release/disperse choices,
+   * while the normalized semantic above controls final GRAB continuity. */
+  audit_last_left_class = command->audit_left_class;
+  audit_last_right_class = command->audit_right_class;
+  audit_last_counts = command->audit_counts;
+  audit_last_flags = semantic_flags;
+  audit_last_total_count = command->audit_total_count;
+  audit_last_id = command->audit_id;
+  audit_last_semantic = semantic;
   task_status.audit_left_class = command->audit_left_class;
   task_status.audit_right_class = command->audit_right_class;
   task_status.audit_total_count = command->audit_total_count;
-  /* bdcf0f2 switches to GRAB on its third matching camera frame, so only the
-   * first two non-STABLE audit frames reach the UART. Accept those two equal
-   * payloads; a future explicit STABLE frame is accepted immediately. */
-  audit_received = !tolerate_one_invalid &&
-      ((audit_consistent_count >= 2U) ||
-       ((command->audit_flags & VISION_AUDIT_STABLE) != 0U));
-  audit_valid = audit_received && current_payload_legal;
+  /* STABLE is descriptive only. Three distinct audit_id values are required
+   * for every pre-grab, post-grab, cluster and separation audit. */
+  audit_received = audit_consistent_count >= 3U;
+  audit_valid = audit_received &&
+      (semantic != AUDIT_SEMANTIC_INVALID);
   task_status.audit_ready = audit_received;
   task_status.audit_valid = audit_valid;
 }
@@ -646,8 +690,12 @@ static void task_clear_audit_result(void)
   audit_last_flags = 0U;
   audit_last_total_count = 0U;
   audit_last_id = 0U;
-  audit_legal_candidate_pending = false;
-  audit_invalid_after_legal_count = 0U;
+  audit_last_semantic = AUDIT_SEMANTIC_INVALID;
+  audit_core_seen_in_streak = false;
+  grab_core_advance_required = false;
+  grab_core_advance_started = false;
+  grab_core_advance_start_path_mm = 0U;
+  grab_core_advance_heading_deg = 0.0f;
   task_status.audit_left_class = 0U;
   task_status.audit_right_class = 0U;
   task_status.audit_total_count = 0U;
@@ -715,6 +763,8 @@ static void task_publish_status(uint32_t now_ms)
   flags |= task_status.gripper_closed ? VISION_STM_GRIPPER_CLOSED : 0U;
   flags |= task_status.motors_active ? VISION_STM_MOTORS_ACTIVE : 0U;
   flags |= task_status.auto_approach ? VISION_STM_AUTO_APPROACH : 0U;
+  flags |= (audit_received && audit_valid) ?
+      VISION_STM_AUDIT_VALID : 0U;
   flags |= ((state == TASK_NAVIGATE) && distance_command_done) ?
       VISION_STM_DISTANCE_DONE : 0U;
   flags |= (task_status.fault != TASK_FAULT_NONE) ? VISION_STM_FAULT : 0U;
@@ -753,7 +803,8 @@ static void task_enter(TaskState next, uint32_t now_ms)
   task_status.nav_heading_locked = false;
   task_status.nav_locked_heading_deg = 0U;
   task_status.claw_visible =
-      (next >= TASK_GRAB_OBSERVE) && (next <= TASK_CLOSE_CLAW);
+      (((next >= TASK_GRAB_OBSERVE) && (next <= TASK_CLOSE_CLAW)) ||
+       (next == TASK_POST_GRAB_AUDIT));
   state_started_ms = now_ms;
   step_started_ms = now_ms;
   pose_invalid_pending = false;
@@ -813,8 +864,8 @@ static void task_enter(TaskState next, uint32_t now_ms)
     audit_last_flags = 0U;
     audit_last_total_count = 0U;
     audit_last_id = 0U;
-    audit_legal_candidate_pending = false;
-    audit_invalid_after_legal_count = 0U;
+    audit_last_semantic = AUDIT_SEMANTIC_INVALID;
+    audit_core_seen_in_streak = false;
     task_status.audit_left_class = 0U;
     task_status.audit_right_class = 0U;
     task_status.audit_total_count = 0U;
@@ -838,6 +889,11 @@ static void task_enter(TaskState next, uint32_t now_ms)
     task_reset_tracking();
   } else if (next == TASK_GRAB_OBSERVE) {
     task_reset_tracking();
+  } else if (next == TASK_POST_GRAB_AUDIT) {
+    post_grab_audit_phase = POST_AUDIT_WAIT_PRIMARY;
+    post_grab_audit_phase_started_ms = now_ms;
+    post_grab_invalid_started_ms = now_ms;
+    post_grab_invalid_waiting = false;
   } else if (next == TASK_GRAB_ROTATE) {
     task_reset_turn_tracker();
   } else if ((next == TASK_NAVIGATE) ||
@@ -953,8 +1009,16 @@ static void task_initialize(uint32_t now_ms)
   audit_last_flags = 0U;
   audit_last_total_count = 0U;
   audit_last_id = 0U;
-  audit_legal_candidate_pending = false;
-  audit_invalid_after_legal_count = 0U;
+  audit_last_semantic = AUDIT_SEMANTIC_INVALID;
+  audit_core_seen_in_streak = false;
+  grab_core_advance_required = false;
+  grab_core_advance_started = false;
+  grab_core_advance_start_path_mm = 0U;
+  grab_core_advance_heading_deg = 0.0f;
+  post_grab_audit_phase = POST_AUDIT_WAIT_PRIMARY;
+  post_grab_audit_phase_started_ms = now_ms;
+  post_grab_invalid_started_ms = now_ms;
+  post_grab_invalid_waiting = false;
   remote_target_sequence = 0U;
   remote_target_generation = 0U;
   remote_target_sequence_valid = false;
@@ -1485,7 +1549,6 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
       camera_angle = (float)APP_DISPERSE_CAPTURE_ANGLE;
       if (audit_received && task_mission_valid(&vision->mission) &&
           (vision->mission.command == VISION_CMD_CARGO_AUDIT) &&
-          ((vision->mission.audit_flags & VISION_AUDIT_STABLE) != 0U) &&
           (vision->mission.audit_total_count > 0U)) {
         Motor_Stop();
         task_status.motors_active = false;
@@ -1615,16 +1678,16 @@ static void task_process_grab_observe(const VisionData *vision,
 {
   if (complete_flow_active) {
     const VisionMissionCommand *command = &vision->mission;
-    const bool two_frame_cargo_audit = task_mission_valid(command) &&
+    const bool three_frame_cargo_audit = task_mission_valid(command) &&
         (command->command == VISION_CMD_CARGO_AUDIT) &&
-        (audit_consistent_count >= 2U) &&
+        (audit_consistent_count >= 3U) &&
         (command->audit_total_count > 0U);
 
     /* A post-release re-audit must remain stationary.  During an ordinary
      * pickup, however, CLAW_VISIBLE means "start inspecting", not "cargo is
      * already inside".  Crawl straight until the upper computer confirms a
      * stable non-empty claw audit, then stop before it sends GRAB. */
-    if (cargo_recheck_pending || two_frame_cargo_audit) {
+    if (cargo_recheck_pending || three_frame_cargo_audit) {
       Motor_Stop();
       task_status.motors_active = false;
       return;
@@ -1706,6 +1769,100 @@ static void task_process_grab_rotate(const VisionData *vision,
   }
   Motor_Move(0.0f, 0.0f, APP_GRAB_SCAN_ROTATE_MM_S);
   task_status.motors_active = true;
+}
+
+static void task_process_post_grab_audit(uint32_t now_ms)
+{
+  Motor_Stop();
+  task_status.motors_active = false;
+  task_status.gripper_closed = true;
+  task_status.claw_visible = true;
+
+  if (audit_received && !audit_valid) {
+    if (!post_grab_invalid_waiting) {
+      post_grab_invalid_waiting = true;
+      post_grab_invalid_started_ms = now_ms;
+    }
+    if ((uint32_t)(now_ms - post_grab_invalid_started_ms) <
+        APP_POST_GRAB_DECISION_WAIT_MS) {
+      Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
+      camera_angle = (float)APP_GRAB_VIEW_ANGLE;
+      return;
+    }
+    post_grab_audit_phase = POST_AUDIT_RELEASE;
+  } else {
+    post_grab_invalid_waiting = false;
+  }
+
+  switch (post_grab_audit_phase) {
+    case POST_AUDIT_WAIT_PRIMARY:
+      Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
+      if ((uint32_t)(now_ms - post_grab_audit_phase_started_ms) >=
+          APP_POST_GRAB_AUDIT_WINDOW_MS) {
+        Camera_SetAngle((uint8_t)(APP_GRAB_VIEW_ANGLE -
+                                  APP_POST_GRAB_CAMERA_NUDGE_DEG));
+        post_grab_audit_phase = POST_AUDIT_NUDGE_LOW;
+        post_grab_audit_phase_started_ms = now_ms;
+      }
+      break;
+
+    case POST_AUDIT_NUDGE_LOW:
+      Camera_SetAngle((uint8_t)(APP_GRAB_VIEW_ANGLE -
+                                APP_POST_GRAB_CAMERA_NUDGE_DEG));
+      if ((uint32_t)(now_ms - post_grab_audit_phase_started_ms) >=
+          APP_POST_GRAB_CAMERA_NUDGE_MS) {
+        Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
+        task_clear_audit_result();
+        post_grab_audit_phase = POST_AUDIT_WAIT_LOW;
+        post_grab_audit_phase_started_ms = now_ms;
+      }
+      break;
+
+    case POST_AUDIT_WAIT_LOW:
+      Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
+      if ((uint32_t)(now_ms - post_grab_audit_phase_started_ms) >=
+          APP_POST_GRAB_AUDIT_WINDOW_MS) {
+        Camera_SetAngle((uint8_t)(APP_GRAB_VIEW_ANGLE +
+                                  APP_POST_GRAB_CAMERA_NUDGE_DEG));
+        post_grab_audit_phase = POST_AUDIT_NUDGE_HIGH;
+        post_grab_audit_phase_started_ms = now_ms;
+      }
+      break;
+
+    case POST_AUDIT_NUDGE_HIGH:
+      Camera_SetAngle((uint8_t)(APP_GRAB_VIEW_ANGLE +
+                                APP_POST_GRAB_CAMERA_NUDGE_DEG));
+      if ((uint32_t)(now_ms - post_grab_audit_phase_started_ms) >=
+          APP_POST_GRAB_CAMERA_NUDGE_MS) {
+        Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
+        task_clear_audit_result();
+        post_grab_audit_phase = POST_AUDIT_WAIT_HIGH;
+        post_grab_audit_phase_started_ms = now_ms;
+      }
+      break;
+
+    case POST_AUDIT_WAIT_HIGH:
+      Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
+      if ((uint32_t)(now_ms - post_grab_audit_phase_started_ms) >=
+          APP_POST_GRAB_AUDIT_WINDOW_MS) {
+        post_grab_audit_phase = POST_AUDIT_RELEASE;
+      }
+      break;
+
+    case POST_AUDIT_RELEASE:
+      Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
+      if (Claw_Open(now_ms)) {
+        task_status.gripper_closed = false;
+        task_clear_audit_result();
+        task_enter(TASK_SEARCH, now_ms);
+      }
+      break;
+
+    default:
+      task_stop(TASK_FAULT_INVALID_STATE, now_ms);
+      break;
+  }
+  camera_angle = (float)Camera_GetAngle();
 }
 
 static bool turn_to(float desired_deg, float current_deg,
@@ -3015,7 +3172,8 @@ static void task_accept_mission(const VisionMissionCommand *command,
                (((remote_action.type == REMOTE_ACTION_DISPERSE) &&
                  !cargo_recheck_pending) ||
                 ((remote_action.type == REMOTE_ACTION_RELEASE_BOTH) &&
-                 (remote_action.arg_b == 1)))) {
+                 ((remote_action.arg_b == 1) ||
+                  !stash_backoff_pending)))) {
       task_enter(TASK_SEARCH, now_ms);
     } else if (state != TASK_SEARCH) {
       if ((state == TASK_REMOTE_ACTION) && !remote_action.done) {
@@ -3034,6 +3192,7 @@ static void task_accept_mission(const VisionMissionCommand *command,
   } else if ((command->command == VISION_CMD_CARGO_AUDIT) &&
               (((state >= TASK_GRAB_OBSERVE) &&
                 (state <= TASK_GRAB_ROTATE)) ||
+               (state == TASK_POST_GRAB_AUDIT) ||
                ((state == TASK_APPROACH) &&
                 (approach_phase == APPROACH_CLUSTER_CAPTURE)) ||
                ((state == TASK_REMOTE_ACTION) && remote_action.done &&
@@ -3043,8 +3202,16 @@ static void task_accept_mission(const VisionMissionCommand *command,
       task_enter(TASK_GRAB_OBSERVE, now_ms);
     }
     task_latch_audit(command);
-    if (cargo_recheck_pending && task_audit_is_empty(command) &&
-        ((command->audit_flags & VISION_AUDIT_STABLE) != 0U)) {
+    if ((state == TASK_POST_GRAB_AUDIT) && audit_received) {
+      if (task_audit_is_empty(command)) {
+        task_status.gripper_closed = false;
+        task_clear_audit_result();
+        task_enter(TASK_OPEN_CLAW, now_ms);
+      } else if (audit_valid) {
+        task_enter(TASK_WAIT_NAVIGATION, now_ms);
+      }
+    } else if (cargo_recheck_pending && audit_received &&
+        task_audit_is_empty(command)) {
       /* Nothing remained after unilateral separation.  There is no cargo to
        * grab, release or navigate with, so reopen and resume SEARCH locally
        * instead of leaving both controllers waiting in the audit state.  A
@@ -3098,18 +3265,18 @@ static void task_accept_mission(const VisionMissionCommand *command,
   } else if ((command->command == VISION_CMD_GRAB_CONFIRMED) &&
              (state == TASK_DISPERSE_READY) &&
              audit_received && audit_valid &&
-             (audit_consistent_count >= 2U)) {
+             (audit_consistent_count >= 3U)) {
     /* A clustered target that proves to contain one legal retained cargo no
      * longer needs separation. Close normally and continue to navigation. */
     task_status.acknowledged_sequence = command->sequence;
     cluster_target_active = false;
-    task_enter(TASK_CLOSE_CLAW, now_ms);
+    task_begin_close_claw(now_ms);
   } else if ((command->command == VISION_CMD_GRAB_CONFIRMED) &&
              (state >= TASK_GRAB_OBSERVE) &&
              (state <= TASK_GRAB_ROTATE) &&
              (!complete_flow_active ||
               (audit_received && audit_valid &&
-               (audit_consistent_count >= 2U)))) {
+               (audit_consistent_count >= 3U)))) {
     task_status.acknowledged_sequence = command->sequence;
     if (cargo_recheck_pending) {
       /* Backoff has physically separated the released cargo.  Close both
@@ -3117,7 +3284,7 @@ static void task_accept_mission(const VisionMissionCommand *command,
        * slip out during navigation. */
       cargo_recheck_pending = false;
     }
-    task_enter(TASK_CLOSE_CLAW, now_ms);
+    task_begin_close_claw(now_ms);
   } else if ((command->command == VISION_CMD_GRAB_CONFIRMED) &&
              ((state == TASK_CLOSE_CLAW) ||
               (state == TASK_WAIT_NAVIGATION))) {
@@ -3457,10 +3624,43 @@ void Task_Process(uint32_t now_ms)
       break;
 
     case TASK_CLOSE_CLAW:
+      if (grab_core_advance_required) {
+        LocationPose pose;
+        if (!task_get_location_pose(&pose, now_ms)) {
+          break;
+        }
+        if (!grab_core_advance_started) {
+          grab_core_advance_started = true;
+          grab_core_advance_start_path_mm = pose.path_mm;
+          grab_core_advance_heading_deg =
+              (float)pose.heading_mdeg * 0.001f;
+        }
+        const uint32_t travelled_mm =
+            pose.path_mm - grab_core_advance_start_path_mm;
+        if (travelled_mm < APP_CORE_GRAB_ADVANCE_DISTANCE_MM) {
+          const float heading_deg = (float)pose.heading_mdeg * 0.001f;
+          const float heading_error = task_wrap_angle(
+              grab_core_advance_heading_deg - heading_deg);
+          Motor_Move(APP_GRAB_WATCH_CRAWL_SPEED_MM_S, 0.0f,
+                     nav_yaw(heading_error));
+          task_status.motors_active = true;
+          break;
+        }
+        Motor_Stop();
+        task_status.motors_active = false;
+        grab_core_advance_required = false;
+      }
       if (Claw_Touch(now_ms)) {
         task_status.gripper_closed = true;
-        task_enter(TASK_WAIT_NAVIGATION, now_ms);
+        Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
+        camera_angle = (float)APP_GRAB_VIEW_ANGLE;
+        task_clear_audit_result();
+        task_enter(TASK_POST_GRAB_AUDIT, now_ms);
       }
+      break;
+
+    case TASK_POST_GRAB_AUDIT:
+      task_process_post_grab_audit(now_ms);
       break;
 
     case TASK_WAIT_NAVIGATION:

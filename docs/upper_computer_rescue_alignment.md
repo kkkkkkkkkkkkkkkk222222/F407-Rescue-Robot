@@ -1,7 +1,13 @@
 # 上位机救援流程对接要求
 
-对照基线：`danmo-teng/shijue_fangan`分支`codex/gamepad-teleop`提交`2183fdf`。
+对照基线：`danmo-teng/shijue_fangan`分支`codex/gamepad-teleop`提交`666758f`。
 下位机已实现上位机当前600 mm预备点、两次ALIGN、锁存航向ENTER和200 mm本地编码器补推；安全区退出与返中流程保持原样。
+
+> 最新抓取握手覆盖本文后面的历史两帧描述：抓前mode21/mode38/mode37及分离复审统一等待3个不同audit_id语义一致，合法后F407置`AUDIT_VALID(bit4)`才接受GRAB。含核心/mixed时先前进50 mm再Touch；合爪后进入mode23并清空旧审核，再取得3帧。抓后合法进入mode22并置AUDIT_VALID，mode22才允许NAV；空爪回SEARCH，非法留在mode23执行释放/分离。STABLE不能跳过三帧。
+>
+> mode23有限恢复期间F407会短暂报告138°或142°，上位机不得发送HOLD/PAUSE冻结本地恢复；继续发送同audit_id的非STABLE空审核即可。检测到角度从非140°回到140°时，必须重新设置frame floor并清空audit_hits/signature，确保只累计恢复后的3张新帧。若F407最终双开回mode3，上位机清空抓取批次并重新SEARCH。
+>
+> 审核签名必须与F407一致：initial stash非空、FIRST_GREEN、`MATERIAL_LEGAL+total_count`、INJURY_SINGLE分别归一化；非法审核只比较`total_count`与DANGER/UNKNOWN/INJURY_MIXED/目的地等语义flags，不比较mixed与左右拆分的具体表达。合法三帧中只要任意一帧含core或mixed，上位机诊断应记录`core_seen_in_streak=true`，并预期F407执行50 mm前移。
 
 ## 1. SEARCH职责
 
@@ -10,7 +16,7 @@
 - 上位机在视觉过期、暂未选中目标或等待策略决策时可以发送HOLD，但SEARCH中的HOLD只是任务心跳，F407仍继续本地扫描。若确实要求底盘冻结当前SEARCH阶段，发送新增的`PAUSE=1`，不能再复用HOLD表达两种相反行为。
 - 上位机可在两圈未完成时发送普通/聚集APPROACH接管；累计720°仍无目标时必须切入RETURN_CENTER。F407在SEARCH_WAIT_RETURN中只接受RETURN，不再开始第三圈。
 - 首件正式绿色仍未完成时，如果140°overall ROI内至少2件且包含绿色、绿色位于堆中无法通过普通带侧曲线取得，上位机可对每个目标堆最多一次发送`DISPERSE_PILE | FIRST_GREEN_BUMP(bit5)`。bit5不得和SIDE_VALID/TARGET_RIGHT并存。F407执行后退0.10 m→Touch闭爪→前进0.20 m→后退0.10 m→双开并回SEARCH；上位机动作期间持续同一命令，看到mode3后清除旧cluster/audit/track并重新寻找绿色。第一件绿色完成后永久禁止该标志。
-- 普通APPROACH进入`mode=21 + CLAW_VISIBLE=1`后，F407以180 mm/s最多慢爬500 mm。上位机立即切入CAPTURE_AUDIT；合法GRAB必须两张新帧一致，超出500 mm仍无确认时识别mode24并恢复SEARCH。
+- 普通APPROACH进入`mode=21 + CLAW_VISIBLE=1`后，F407以180 mm/s最多慢爬500 mm。上位机立即切入CAPTURE_AUDIT；合法GRAB必须3张不同audit_id语义一致，超出500 mm仍无确认时识别mode24并恢复SEARCH。
 
 ### HOLD、PAUSE、STOP、ABORT语义
 

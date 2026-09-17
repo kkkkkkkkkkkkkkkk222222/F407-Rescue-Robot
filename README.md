@@ -40,9 +40,11 @@ READY只说明启动时IMU校准成功，不证明舵机已物理到位，也不
 
 # 当前固件：连续物资抓取与分区投送Task
 
-`NormalRun`启用完整救援Task，并已对照上位机`codex/gamepad-teleop@2183fdf`的APPROACH、审核、分离、STAGE/ALIGN/ENTER和返中命令，同时扩展首件绿色轻撞与两圈无目标返中语义。正式投送先到围栏前600 mm预备点并完成两次ALIGN；ENTER由F407本地执行前400 mm接近和后200 mm补推，总目标600 mm，停车、张爪、相机120°稳定后才上报mode15。
+`NormalRun`启用完整救援Task，并已对照上位机`codex/gamepad-teleop@666758f`的抓前/抓后双重审核、分离、STAGE/ALIGN/ENTER和返中命令。正式投送先到围栏前600 mm预备点并完成两次ALIGN；ENTER由F407本地执行前400 mm接近和后200 mm补推，总目标600 mm，停车、张爪、相机120°稳定后才上报mode15。
 
-普通目标在125°完成水平对正后把舵机3转到140°并停车稳定500 ms，随后不再要求原目标重新入镜，直接进入`WATCH/mode21`并置`CLAW_VISIBLE=1`。底盘保持锁存IMU航向，以180 mm/s慢速爬行；普通以及聚集/分离后的最终合法GRAB均要求两张新帧一致，无效审核一张STABLE即可选侧。聚集目标保持双爪完全打开靠近；第一次带侧曲线和mode35后的后续带侧曲线都使用15°保持。普通`RELEASE_LEFT/RIGHT`单侧释放继续使用25°强保持；稳定空爪审核会完全张爪并返回SEARCH。
+普通、聚集、分离复审及合爪后复审统一要求3个不同`audit_id`语义一致，STABLE不能提前放行；合法时状态flags bit4置`AUDIT_VALID`。合法GRAB若包含核心或mixed，F407先以180 mm/s保持航向前进50 mm再Touch合爪。合爪后进入mode23、清空抓前审核并重新取得3帧；合法才进入mode22允许NAV，空爪张开回SEARCH，非法保持mode23并允许现有释放/分离。所有带侧曲线使用15°保持，普通RELEASE/YIELD使用25°。
+
+mode23带有限恢复：先在140°等待3.5 s，未形成3帧则短暂观察138°并回140°重置审核，再观察142°并回140°做最后一次3.5 s复审；仍无结论则双开回SEARCH。若已得到三帧稳定非法审核，等待上位机释放/分离命令4 s，仍无动作同样双开回SEARCH；绝不因超时进入mode22或NAV。同一合法三帧中任意一帧出现core或mixed都会锁存核心证据并执行50 mm前移。
 
 安全区航向不再区分首趟：上位机与F407统一使用红方90°、蓝方270°的绝对ALIGN，冻结框视觉相对修正只叠加一次并锁存到ENTER。
 
@@ -303,7 +305,7 @@ TIM6每20 ms发布一次`Task_Process(now_ms)`运行请求，由最低优先级P
 3. `OPEN_CLAW`：到达中心并完成开爪后直接进入`SEARCH`。上位机确认目标聚集时，持续发送带`CLUSTER_TARGET(bit5)`的`APPROACH_TARGET`；F407保持双爪完全打开并以最高300 mm/s靠近。相机到130°并水平对正后转到140°，以200 mm/s慢爬，新的非空夹爪ROI审核进入`mode=37/DISPERSE_READY`。带`SIDE_VALID`的第一次曲线及mode35复审后的所有后续曲线统一把保留侧相对Touch加紧15°（左63°或右117°），另一侧完全打开并沿0.30 m镜像曲线退出；普通`RELEASE_LEFT/RIGHT`单侧释放独立使用25°强保持。复审为空则双爪全开回SEARCH；无侧DISPERSE只执行12°观察。
    首件绿色若在至少2件物资中无法通过曲线取得，上位机可发送`DISPERSE_PILE + FIRST_GREEN_BUMP(bit5)`；F407每轮最多接受一次，执行后退0.10 m→Touch闭爪→前进0.20 m→后退0.10 m→双开并回SEARCH。第一件正式投送完成后，本地审核认定合法的1～3件普通/核心物资会拒绝继续DISPERSE，必须直接GRAB运输。
 4. `FIND_OBJECT`：每次先把舵机3移到120°并以200 mm/s旋转360°，再切到90°稳定300 ms后旋转360°；两圈均无合法目标则保持`mode=3`停车等待上位机发送RETURN_CENTER H/D，随后进入mode17返回场地中心，D=0后重新从120°搜索。任一扫描阶段都可由普通或聚集APPROACH接管。
-5. `GRAB_OBJECT`：SEARCH收到1帧合法单目标便锁定类别并进入APPROACH，同类新SEQ才更新X/Y。正常靠近和中距离速度均为350 mm/s，近距有效距离≤250 mm时为125 mm/s。相机到125°立即停止平移，只原地对正到横向误差≤24 px；随后相机到140°并稳定500 ms，不再要求原目标重新入镜，直接进入WATCH并开放夹爪ROI审核。底盘按锁存航向以180 mm/s慢爬；两个不同`audit_id`且内容一致的非空`CARGO_AUDIT`到达后立即停车并开放GRAB许可，单帧STABLE不能绕过两帧门槛。累计最多500 mm仍未确认则进入APPROACH_RECOVER并最终回SEARCH。NormalRun不再按250 ms帧龄自行停车，控制改变由上位机明确命令负责。
+5. `GRAB_OBJECT`：相机140°后进入mode21审核并以180 mm/s最多慢爬500 mm。3个不同audit_id语义一致且合法后置AUDIT_VALID并接受GRAB；含核心/mixed先前进50 mm再合爪。合爪完成进入mode23，保持140°、GRIPPER_CLOSED和CLAW_VISIBLE，清除旧审核后重新累计3帧；合法置AUDIT_VALID并进入mode22，mode22才接受NAV。抓后空爪回SEARCH，抓后非法允许释放或分离并继续复审。
 6. `RETURN_SAFE`：夹紧目标后接收带`STAGE_ONLY(bit6)`的NAV，按实时H/D到上位机设定的安全区预备点（当前距入口600 mm）；D=0停车、把相机抬到120°并上报`mode=10 + DISTANCE_DONE`。随后第一次ALIGN按红90°/蓝270°用IMU对正，第二次ALIGN把上位机冻结框的水平像素误差换算成一次相对角度修正；第一次ALIGN至少给相机300 ms稳定时间，两次分别以新鲜`mode=11 + ACK`完成。视觉5秒失败时跳过第二次修正并保持第一次航向。
 7. `DELIVER`：ENTER要求`DRIVE_STRAIGHT=1、DISTANCE_VALID=0、P2..P5=0`，视觉ALIGN成功时置bit6且P6/P7=0，定位降级时置`USE_FINAL_HEADING`并发送红9000/蓝27000。F407保持ALIGN锁存航向，在第一次有效LocationPose只锁存一次编码器起点；重复ENTER只ACK。前400 mm按400→200 mm/s接近，随后以300 mm/s补推200 mm，编码器总目标600 mm，最终补推仍保留1200 ms接触保护。随后停车、双爪全开、相机120°稳定300 ms并进入mode15。收到`TASK_COMPLETE`后执行mode16后退0.30 m，再进入mode17返中。
 8. `STOPPED`：上位机明确`STOP/ABORT`、IMU/位姿等运动前提失效、出发或远程动作超时、或非法内部状态后保持停车。只有`REMOTE_STOP/fault1`允许由操作员重新发送一组连续合法赛前配置清除，并重新执行安全收爪和自主出发；MOTOR、POSE_TIMEOUT、INVALID_STATE、IMU及其他真实硬件故障仍要求人工复位。NormalRun不再根据单轮编码器方向、单轮零速或定距短时无进展自动锁存`TASK_FAULT_MOTOR`，这些运行进展由上位机融合定位监控。

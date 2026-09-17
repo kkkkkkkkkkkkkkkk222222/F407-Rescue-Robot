@@ -619,6 +619,7 @@ static const char *task_state_name(TaskState state)
     case TASK_EXIT_SAFE_ZONE:    return "EXITSAFE";
     case TASK_FACE_FIELD_CENTER: return "CENTER";
     case TASK_APPROACH_RECOVER:  return "REACQ";
+    case TASK_POST_GRAB_AUDIT:   return "POSTAUD";
     case TASK_REMOTE_ACTION:     return "ACTION";
     case TASK_DISPERSE_READY:    return "DSPRDY";
     default:                     return "STOP";
@@ -762,6 +763,7 @@ static void draw_task(const LCDDashboard *dashboard)
   dashboard_write(0U, 12U, 128U, text);
 
   if ((task.state == TASK_CLOSE_CLAW) ||
+      (task.state == TASK_POST_GRAB_AUDIT) ||
       (task.state == TASK_WAIT_NAVIGATION)) {
     (void)snprintf(text, sizeof(text), "GRIP:%s A:%03u",
                    task.gripper_closed ? "OK" : "WAIT",
@@ -817,6 +819,7 @@ static void draw_task(const LCDDashboard *dashboard)
   } else if ((task.audit_total_count > 0U) &&
              (((task.state >= TASK_GRAB_OBSERVE) &&
                (task.state <= TASK_WAIT_NAVIGATION)) ||
+              (task.state == TASK_POST_GRAB_AUDIT) ||
               (task.state == TASK_REMOTE_ACTION))) {
     (void)snprintf(text, sizeof(text), "AUD:%s L%u R%u N%u",
                    task.audit_ready ?

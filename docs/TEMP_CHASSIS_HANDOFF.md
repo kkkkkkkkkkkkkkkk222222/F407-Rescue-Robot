@@ -619,3 +619,14 @@ RUN         停车并复位MCU，重新进入正常模式
 - SEARCH顺序改为120°整圈→90°整圈。两圈无目标后进入`SEARCH_WAIT_RETURN`，保持mode3和停车；上位机发送完整RETURN_CENTER H/D后F407进入mode17返中心，D=0再从120°开始。任意一圈中合法APPROACH仍可立即接管。
 - 两帧合法GRAB的一致性改为左右无序比较：左右类别和对应数量整体交换仍视为同一物资集合，避免单个绿色在x=640附近抖动导致计数永远归零；每帧仍保存最新左右分配供SIDE_VALID曲线使用，危险/未知/混装标志或实际类别数量变化仍会重新计数。
 - F407同步实现合法候选迟滞：第一张合法审核后收到一张瞬时非法审核时，不覆盖合法比较基线、不增加audit_id计数，也不开放DISPERSE；下一张合法审核仍可累计为第二张。只有连续第二张非法审核才替换基线并允许分离，防止上位机的“容忍一帧”仍通过UART把下位机计数清零。
+
+## 78. 2026-09-17 抓前抓后三帧审核与mode23
+
+- 对齐上位机`codex/gamepad-teleop@666758f`：状态flags bit4新增`AUDIT_VALID`；mode23显式表示Touch合爪完成、保持140°和`GRIPPER_CLOSED|CLAW_VISIBLE`、正在进行抓后复审；mode22只表示抓后审核合法并允许NAV。
+- 所有审核统一要求3个不同audit_id语义一致，STABLE不跳过计数，任意不一致立即以当前帧重新计数。initial_stash归一化为非空；首件为单绿色；后续合法物资归一化为`MATERIAL_LEGAL+total`；单伤员归一化为`INJURY_SINGLE`；非法审核保留总数、类别和非法标志，但忽略左右整体交换。
+- 合法条件严格匹配审核目的地位：单伤员必须置DESTINATION_INJURY，普通/核心/mixed必须清除；不再使用APPROACH前类别覆盖实际审核。抓前合法后才接受GRAB，状态置AUDIT_VALID。
+- 抓前审核包含CORE或MIXED时，首次GRAB锁存编码器和航向，以180 mm/s前进50 mm后再Touch；重复GRAB只ACK且不重置基线。不含核心直接Touch。
+- Touch完成后清除抓前审核进入mode23。抓后三帧合法进入mode22并保持AUDIT_VALID；三帧空爪双开回SEARCH；三帧非法保持mode23，允许现有RELEASE或DISPERSE，完成后继续YIELD与140°复审。
+- mode23有限恢复参数：140°每次审核窗口3500 ms；第一次失败短暂命令138°保持400 ms后回140°并清空计数，第二次失败命令142°保持400 ms后回140°并再次清空；最终窗口仍失败则双开回SEARCH。若已形成稳定非法审核，等待上位机RELEASE/DISPERSE最多4000 ms，超时双开回SEARCH。所有恢复均禁止直接进入mode22。
+- 同一合法三帧序列增加`audit_core_seen_in_streak`锁存：任意一帧报告CORE或MIXED即保持为真，审核语义变化或清空审核时复位；GRAB前50 mm依据该锁存而不是只看第三帧，防止最后一帧分类抖成绿色而漏掉核心前移。
+- 非法三帧签名改为`total_count + semantic_flags`，不再比较左右类别表达；mixed与左右拆分、绿色/核心的具体组合变化只要总数和危险/未知/伤员混装等非法语义不变，就与上位机使用同一连续计数。

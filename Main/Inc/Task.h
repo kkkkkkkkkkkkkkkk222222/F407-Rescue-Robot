@@ -27,7 +27,9 @@ typedef enum {
   /* Turn to the remote H direction, then drive forward using remote D. */
   TASK_FACE_FIELD_CENTER = 17,
   TASK_STOPPED = 18,
-  /* Values 19..23 belonged to the removed blind start-scatter sequence. */
+  /* Values 19..22 belonged to removed states; 23 is the explicit post-grab
+   * visual audit and must not shift any existing wire mode. */
+  TASK_POST_GRAB_AUDIT = 23,
   TASK_APPROACH_RECOVER = 24,
   TASK_REMOTE_ACTION = 25,
   TASK_DISPERSE_READY = 26

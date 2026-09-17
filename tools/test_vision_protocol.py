@@ -249,7 +249,7 @@ class VisionProtocolTests(unittest.TestCase):
                 200, 0, 9000,
             )
 
-    def test_two_frame_normal_audit_and_unknown_side_audit(self) -> None:
+    def test_three_frame_normal_audit_and_unknown_side_audit(self) -> None:
         first = protocol.cargo_audit_frame(
             0x50,
             protocol.CARGO_GREEN,
@@ -260,18 +260,27 @@ class VisionProtocolTests(unittest.TestCase):
             0x51,
             protocol.CARGO_GREEN,
             protocol.CARGO_NONE,
-            1, 0, protocol.AUDIT_STABLE, 11, 1,
+            1, 0, 0, 11, 1,
+        )
+        third = protocol.cargo_audit_frame(
+            0x52,
+            protocol.CARGO_GREEN,
+            protocol.CARGO_NONE,
+            1, 0, protocol.AUDIT_STABLE, 12, 1,
         )
         first_payload = protocol.parse_frame(first)[2]
         second_payload = protocol.parse_frame(second)[2]
+        third_payload = protocol.parse_frame(third)[2]
         self.assertEqual(first_payload[6], 10)
         self.assertEqual(second_payload[6], 11)
+        self.assertEqual(third_payload[6], 12)
         self.assertFalse(first_payload[5] & protocol.AUDIT_STABLE)
-        self.assertTrue(second_payload[5] & protocol.AUDIT_STABLE)
+        self.assertFalse(second_payload[5] & protocol.AUDIT_STABLE)
+        self.assertTrue(third_payload[5] & protocol.AUDIT_STABLE)
         self.assertEqual(first_payload[2:5], second_payload[2:5])
 
         unassigned = protocol.cargo_audit_frame(
-            0x52,
+            0x53,
             protocol.CARGO_GREEN,
             protocol.CARGO_NONE,
             1, 0, protocol.AUDIT_UNKNOWN_PRESENT, 12, 2,
@@ -297,6 +306,13 @@ class VisionProtocolTests(unittest.TestCase):
         self.assertTrue(status["claw_visible"])
         self.assertTrue(status["auto_approach"])
         self.assertTrue(status["distance_done"])
+        audit_status = protocol.parse_stm_status(
+            protocol.stm_status_frame(
+                10, protocol.STM_AUDIT_VALID, 23, 14000, 9, 0,
+            )
+        )
+        self.assertTrue(audit_status["audit_valid"])
+        self.assertEqual(audit_status["mode"], 23)
         self.assertEqual(status["camera_pitch_cdeg"], 7350)
         self.assertEqual(status["acknowledged_sequence"], 8)
 
