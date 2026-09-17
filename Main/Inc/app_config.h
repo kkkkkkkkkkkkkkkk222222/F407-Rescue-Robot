@@ -246,6 +246,7 @@
 #define APP_VISION_MAX_X                1279U
 #define APP_VISION_MAX_Y                1023U
 #define APP_SEARCH_ROTATE_SPEED_MM_S     200.0f
+#define APP_SEARCH_WAIT_RETURN_SPEED_MM_S 150.0f
 #define APP_APPROACH_SPEED_MM_S          350.0f
 #define APP_GRAB_MID_SPEED_MM_S          350.0f
 #define APP_GRAB_SLOW_SPEED_MM_S         125.0f
@@ -342,11 +343,12 @@
 #define APP_NAV_FINAL_REALIGN_DEG          3.0f
 #define APP_NAV_FINAL_REALIGN_HOLD_MS      150U
 #define APP_NAV_TURN_SETTLE_MS            100U
-/* Updated safe-zone flow: stop at the 0.40 m staging point, align once from
+/* Updated safe-zone flow: stop at the 0.60 m staging point, align once from
  * pose and once from a frozen image, then approach the fence while holding
  * the latched heading. The upper computer sends signed pixel error; the
  * equivalent focal length and sign are kept here for field calibration. */
 #define APP_SAFE_ALIGN_TOLERANCE_DEG        1.5f
+#define APP_SAFE_ALIGN_HOLD_TOLERANCE_DEG   4.0f
 #define APP_SAFE_ALIGN_CAMERA_ANGLE           120U
 #define APP_SAFE_ALIGN_CAMERA_SETTLE_MS       300U
 #define APP_SAFE_VISUAL_FOCAL_LENGTH_PX   640.0f
@@ -360,6 +362,20 @@
 #define APP_SAFE_FINAL_PUSH_DISTANCE_MM    200U
 #define APP_SAFE_FINAL_PUSH_SPEED_MM_S     300.0f
 #define APP_SAFE_FINAL_PUSH_TIMEOUT_MS     1200U
+/* CLEAR_SAFE_ZONE is only accepted after safe-zone alignment. The upper
+ * computer supplies the obstacle pickup distance and uses +150 mm to park a
+ * material load on the right, or -150 mm to park an injury load on the left. */
+#define APP_SAFE_SWEEP_LATERAL_MM            150
+#define APP_SAFE_SWEEP_MIN_FORWARD_MM          80
+#define APP_SAFE_SWEEP_MAX_FORWARD_MM         600
+#define APP_SAFE_SWEEP_LATERAL_SPEED_MM_S   350.0f
+#define APP_SAFE_SWEEP_FORWARD_SPEED_MM_S   300.0f
+#define APP_SAFE_SWEEP_RETURN_SPEED_MM_S    350.0f
+/* Normal autonomous motion turns back at 30 cm from the 3 m x 3 m map edge.
+ * The deliberate final safe-zone push is allowed to approach within 5 cm. */
+#define APP_FIELD_EDGE_ABORT_MARGIN_MM       300.0f
+#define APP_SAFE_PUSH_EDGE_MARGIN_MM          50.0f
+#define APP_BOUNDARY_TURN_TOLERANCE_DEG        5.0f
 #define APP_POSE_WAIT_TIMEOUT_MS          1500U
 #define APP_LIFT_START_ANGLE              55U
 #define APP_LIFT_TRAVEL_ANGLE             85U

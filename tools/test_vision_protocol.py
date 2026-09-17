@@ -249,6 +249,53 @@ class VisionProtocolTests(unittest.TestCase):
                 200, 0, 9000,
             )
 
+    def test_safe_zone_sweep_command_and_modes(self) -> None:
+        material = protocol.mission_frame(
+            0x47, protocol.CMD_CLEAR_SAFE_ZONE,
+            protocol.CMD_VALID | protocol.CMD_RED_SIDE,
+            260, 150, 0,
+        )
+        injury = protocol.mission_frame(
+            0x48, protocol.CMD_CLEAR_SAFE_ZONE,
+            protocol.CMD_VALID,
+            220, -150, 0,
+        )
+        self.assertEqual(protocol.parse_frame(material)[2][0], 0x13)
+        self.assertEqual(
+            int.from_bytes(protocol.parse_frame(material)[2][2:4], "big"),
+            260,
+        )
+        self.assertEqual(
+            int.from_bytes(
+                protocol.parse_frame(injury)[2][4:6], "big", signed=True,
+            ),
+            -150,
+        )
+        for bad_forward, bad_side in ((79, 150), (601, 150), (200, 100)):
+            with self.assertRaises(ValueError):
+                protocol.mission_frame(
+                    0x49, protocol.CMD_CLEAR_SAFE_ZONE,
+                    protocol.CMD_VALID, bad_forward, bad_side, 0,
+                )
+        self.assertEqual(
+            protocol.parse_stm_status(
+                protocol.stm_status_frame(1, 0x06, 39, 12000, 0x47, 0)
+            )["mode"],
+            39,
+        )
+        self.assertEqual(
+            protocol.parse_stm_status(
+                protocol.stm_status_frame(2, 0x12, 40, 14000, 0x52, 0)
+            )["mode"],
+            40,
+        )
+        self.assertEqual(
+            protocol.parse_stm_status(
+                protocol.stm_status_frame(3, 0x04, 41, 12000, 0x47, 0)
+            )["mode"],
+            41,
+        )
+
     def test_three_frame_normal_audit_and_unknown_side_audit(self) -> None:
         first = protocol.cargo_audit_frame(
             0x50,

@@ -55,6 +55,7 @@ CMD_RELEASE_BOTH = 0x0F
 CMD_DISPERSE_PILE = 0x10
 CMD_CHANGE_LANE = 0x11
 CMD_CARGO_AUDIT = 0x12
+CMD_CLEAR_SAFE_ZONE = 0x13
 
 CMD_VALID = 0x01
 CMD_DRIVE_STRAIGHT = 0x02
@@ -255,7 +256,7 @@ def mission_frame(
     heading_cdeg: int = 0,
 ) -> bytes:
     if (command not in (CMD_STOP, CMD_PAUSE) and
-            not CMD_GRAB_CONFIRMED <= command <= CMD_CARGO_AUDIT):
+            not CMD_GRAB_CONFIRMED <= command <= CMD_CLEAR_SAFE_ZONE):
         raise ValueError("invalid mission command")
     allowed_flags = 0x1F
     if command == CMD_APPROACH_TARGET:
@@ -306,6 +307,12 @@ def mission_frame(
         elif (not flags & CMD_USE_FINAL_HEADING or
               heading_cdeg != fallback_heading):
             raise ValueError("fallback ENTER requires the side heading")
+    if command == CMD_CLEAR_SAFE_ZONE:
+        lateral_abs = abs(target_y_mm)
+        if (flags & ~(CMD_VALID | CMD_RED_SIDE) or
+                not 80 <= target_x_mm <= 600 or
+                lateral_abs != 150 or heading_cdeg != 0):
+            raise ValueError("invalid CLEAR_SAFE_ZONE payload")
     payload = (
         bytes((command, flags))
         + target_x_mm.to_bytes(2, "big", signed=True)

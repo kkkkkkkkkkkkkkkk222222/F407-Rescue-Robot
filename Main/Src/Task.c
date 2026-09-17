@@ -98,6 +98,21 @@ typedef enum {
   POST_AUDIT_RELEASE
 } PostGrabAuditPhase;
 
+typedef enum {
+  SAFE_SWEEP_PARK_LOAD = 0,
+  SAFE_SWEEP_RELEASE_LOAD,
+  SAFE_SWEEP_RETURN_CENTER_OPEN,
+  SAFE_SWEEP_APPROACH_OBSTACLE,
+  SAFE_SWEEP_GRAB_OBSTACLE,
+  SAFE_SWEEP_MOVE_OBSTACLE_ASIDE,
+  SAFE_SWEEP_RELEASE_OBSTACLE,
+  SAFE_SWEEP_RETURN_CENTER_AFTER_RELEASE,
+  SAFE_SWEEP_REVERSE_TO_STAGE,
+  SAFE_SWEEP_MOVE_TO_LOAD,
+  SAFE_SWEEP_REGRAB_LOAD,
+  SAFE_SWEEP_RECENTER_LOAD
+} SafeSweepPhase;
+
 static volatile TaskStatus task_status;
 static Pid_t steering_pid;
 static Pid_t camera_pid;
@@ -200,6 +215,15 @@ static PostGrabAuditPhase post_grab_audit_phase;
 static uint32_t post_grab_audit_phase_started_ms;
 static uint32_t post_grab_invalid_started_ms;
 static bool post_grab_invalid_waiting;
+static SafeSweepPhase safe_sweep_phase;
+static int16_t safe_sweep_forward_mm;
+static int16_t safe_sweep_lateral_mm;
+static uint32_t safe_sweep_phase_path_mm;
+static bool safe_sweep_phase_path_valid;
+static float safe_sweep_heading_deg;
+static bool safe_sweep_recheck_pending;
+static float boundary_recovery_heading_deg;
+static bool boundary_claw_opened;
 static uint8_t remote_target_sequence;
 static uint32_t remote_target_generation;
 static bool remote_target_sequence_valid;
@@ -210,6 +234,8 @@ static void task_enter(TaskState next, uint32_t now_ms);
 static bool distance_failed(MotorDistanceStatus result);
 static bool delivery_enter_command_ok(const VisionMissionCommand *command);
 static float nav_yaw(float heading_error_deg);
+static bool task_safe_sweep_command_valid(
+    const VisionMissionCommand *command);
 
 static void nav_reset_progress(uint32_t now_ms)
 {
@@ -357,7 +383,10 @@ static bool task_escape_allowed(void)
 
 static bool task_lane_allowed(void)
 {
-  return (state == TASK_APPROACH) || (state == TASK_NAVIGATE);
+  /* Legacy danger avoidance is intentionally disabled. SEARCH/APPROACH and
+   * the route to the 0.60 m staging point ignore claw-external objects; only
+   * CLEAR_SAFE_ZONE may move cargo/obstacles after final visual ALIGN. */
+  return false;
 }
 
 static void task_reset_turn_tracker(void)
@@ -857,6 +886,7 @@ static void task_enter(TaskState next, uint32_t now_ms)
     stash_backoff_pending = false;
     cluster_target_active = false;
     cluster_claws_ready = false;
+    safe_sweep_recheck_pending = false;
     audit_consistent_count = 0U;
     audit_last_left_class = 0U;
     audit_last_right_class = 0U;
@@ -894,6 +924,17 @@ static void task_enter(TaskState next, uint32_t now_ms)
     post_grab_audit_phase_started_ms = now_ms;
     post_grab_invalid_started_ms = now_ms;
     post_grab_invalid_waiting = false;
+  } else if (next == TASK_SAFE_SWEEP) {
+    safe_sweep_phase = SAFE_SWEEP_PARK_LOAD;
+    safe_sweep_phase_path_mm = 0U;
+    safe_sweep_phase_path_valid = false;
+  } else if (next == TASK_SAFE_SWEEP_DONE) {
+    task_status.gripper_closed = true;
+    task_status.nav_heading_locked = true;
+    task_status.nav_locked_heading_deg =
+        (uint16_t)(safe_sweep_heading_deg + 0.5f) % 360U;
+  } else if (next == TASK_BOUNDARY_RECOVER) {
+    boundary_claw_opened = false;
   } else if (next == TASK_GRAB_ROTATE) {
     task_reset_turn_tracker();
   } else if ((next == TASK_NAVIGATE) ||
@@ -1019,6 +1060,15 @@ static void task_initialize(uint32_t now_ms)
   post_grab_audit_phase_started_ms = now_ms;
   post_grab_invalid_started_ms = now_ms;
   post_grab_invalid_waiting = false;
+  safe_sweep_phase = SAFE_SWEEP_PARK_LOAD;
+  safe_sweep_forward_mm = 0;
+  safe_sweep_lateral_mm = 0;
+  safe_sweep_phase_path_mm = 0U;
+  safe_sweep_phase_path_valid = false;
+  safe_sweep_heading_deg = 0.0f;
+  safe_sweep_recheck_pending = false;
+  boundary_recovery_heading_deg = 0.0f;
+  boundary_claw_opened = false;
   remote_target_sequence = 0U;
   remote_target_generation = 0U;
   remote_target_sequence_valid = false;
@@ -1365,9 +1415,10 @@ static void task_process_search(const VisionData *vision, uint32_t now_ms)
       if (task_full_turn_reached()) {
         Motor_Stop();
         task_status.motors_active = false;
-        /* Two complete 120/90-degree sweeps found nothing. Hold mode3 so the
-         * upper computer can send a fresh RETURN_CENTER H/D to the field
-         * centre; do not begin a third local circle. */
+        /* Two complete 120/90-degree sweeps found nothing. The upper computer
+         * owns the RETURN command, but its T265 yaw accumulator may have
+         * missed a few samples. Continue a slow scan instead of stopping at
+         * 719.x degrees and creating a permanent two-controller wait. */
         search_phase = SEARCH_WAIT_RETURN;
         task_reset_turn_tracker();
         step_started_ms = now_ms;
@@ -1378,8 +1429,8 @@ static void task_process_search(const VisionData *vision, uint32_t now_ms)
       return;
 
     case SEARCH_WAIT_RETURN:
-      Motor_Stop();
-      task_status.motors_active = false;
+      Motor_Move(0.0f, 0.0f, APP_SEARCH_WAIT_RETURN_SPEED_MM_S);
+      task_status.motors_active = true;
       return;
 
     default:
@@ -1944,6 +1995,24 @@ static bool task_align_command_valid(const VisionMissionCommand *command,
          (command->heading_cdeg < 36000U);
 }
 
+static bool task_safe_sweep_command_valid(
+    const VisionMissionCommand *command)
+{
+  if (!task_mission_valid(command) ||
+      (command->command != VISION_CMD_CLEAR_SAFE_ZONE) ||
+      !task_side_flag_valid(command->flags)) {
+    return false;
+  }
+  const uint8_t allowed = VISION_CMD_VALID | VISION_CMD_RED_SIDE;
+  const int32_t lateral_abs = (command->target_y_mm < 0) ?
+      -(int32_t)command->target_y_mm : command->target_y_mm;
+  return ((command->flags & (uint8_t)~allowed) == 0U) &&
+         (command->target_x_mm >= APP_SAFE_SWEEP_MIN_FORWARD_MM) &&
+         (command->target_x_mm <= APP_SAFE_SWEEP_MAX_FORWARD_MM) &&
+         (lateral_abs == APP_SAFE_SWEEP_LATERAL_MM) &&
+         (command->heading_cdeg == 0U);
+}
+
 static float task_visual_heading_correction(int16_t pixel_error)
 {
   float correction_deg = APP_SAFE_VISUAL_YAW_SIGN *
@@ -2445,8 +2514,12 @@ static void task_process_safe_align(uint32_t now_ms)
   const float error_deg = task_wrap_angle(
       safe_align_target_deg - current_heading_deg);
 
+  /* Enter the aligned window at 1.5 degrees, but use a wider hold window
+   * during the 300 ms camera/IMU settling period. Without this hysteresis a
+   * small IMU oscillation repeatedly restarted ALIGN and left both computers
+   * waiting at the staging point. */
   if (nav_ready &&
-      (task_abs(error_deg) > APP_SAFE_ALIGN_TOLERANCE_DEG)) {
+      (task_abs(error_deg) > APP_SAFE_ALIGN_HOLD_TOLERANCE_DEG)) {
     nav_ready = false;
   }
   if (!nav_ready) {
@@ -2921,6 +2994,155 @@ static bool task_remote_turn(float angle_deg, uint32_t now_ms)
   return false;
 }
 
+static void task_safe_sweep_advance(uint32_t now_ms)
+{
+  Motor_Stop();
+  task_status.motors_active = false;
+  safe_sweep_phase = (SafeSweepPhase)((uint8_t)safe_sweep_phase + 1U);
+  safe_sweep_phase_path_mm = 0U;
+  safe_sweep_phase_path_valid = false;
+  step_started_ms = now_ms;
+}
+
+static bool task_safe_sweep_move(float forward_mm_s, float lateral_mm_s,
+                                 uint32_t distance_mm, uint32_t now_ms)
+{
+  LocationPose pose;
+  if (!task_get_location_pose(&pose, now_ms)) {
+    Motor_Stop();
+    task_status.motors_active = false;
+    return false;
+  }
+  if (!safe_sweep_phase_path_valid) {
+    safe_sweep_phase_path_mm = pose.path_mm;
+    safe_sweep_phase_path_valid = true;
+  }
+  const uint32_t travelled_mm =
+      (pose.path_mm >= safe_sweep_phase_path_mm) ?
+          pose.path_mm - safe_sweep_phase_path_mm : 0U;
+  if (travelled_mm >= distance_mm) {
+    task_safe_sweep_advance(now_ms);
+    return true;
+  }
+  const float current_heading_deg = (float)pose.heading_mdeg * 0.001f;
+  const float heading_error = task_wrap_angle(
+      safe_sweep_heading_deg - current_heading_deg);
+  Motor_Move(forward_mm_s, lateral_mm_s, nav_yaw(heading_error));
+  task_status.motors_active = true;
+  return false;
+}
+
+static void task_begin_safe_sweep(const VisionMissionCommand *command,
+                                  uint32_t now_ms)
+{
+  const float locked_heading = safe_align_target_deg;
+  task_enter(TASK_SAFE_SWEEP, now_ms);
+  safe_sweep_forward_mm = command->target_x_mm;
+  safe_sweep_lateral_mm = command->target_y_mm;
+  safe_sweep_heading_deg = task_heading_360(locked_heading);
+  safe_sweep_recheck_pending = true;
+  task_status.gripper_closed = true;
+  task_status.nav_heading_locked = true;
+  task_status.nav_locked_heading_deg =
+      (uint16_t)(safe_sweep_heading_deg + 0.5f) % 360U;
+}
+
+static void task_process_safe_sweep(uint32_t now_ms)
+{
+  const float side_sign = (safe_sweep_lateral_mm >= 0) ? 1.0f : -1.0f;
+  const float lateral_speed = side_sign *
+      APP_SAFE_SWEEP_LATERAL_SPEED_MM_S;
+  switch (safe_sweep_phase) {
+    case SAFE_SWEEP_PARK_LOAD:
+      (void)task_safe_sweep_move(
+          0.0f, lateral_speed, APP_SAFE_SWEEP_LATERAL_MM, now_ms);
+      return;
+
+    case SAFE_SWEEP_RELEASE_LOAD:
+      Motor_Stop();
+      task_status.motors_active = false;
+      if (Claw_Open(now_ms)) {
+        task_status.gripper_closed = false;
+        task_safe_sweep_advance(now_ms);
+      }
+      return;
+
+    case SAFE_SWEEP_RETURN_CENTER_OPEN:
+      (void)task_safe_sweep_move(
+          0.0f, -lateral_speed, APP_SAFE_SWEEP_LATERAL_MM, now_ms);
+      return;
+
+    case SAFE_SWEEP_APPROACH_OBSTACLE:
+      (void)task_safe_sweep_move(
+          APP_SAFE_SWEEP_FORWARD_SPEED_MM_S, 0.0f,
+          (uint32_t)safe_sweep_forward_mm, now_ms);
+      return;
+
+    case SAFE_SWEEP_GRAB_OBSTACLE:
+      Motor_Stop();
+      task_status.motors_active = false;
+      if (Claw_Touch(now_ms)) {
+        task_status.gripper_closed = true;
+        task_safe_sweep_advance(now_ms);
+      }
+      return;
+
+    case SAFE_SWEEP_MOVE_OBSTACLE_ASIDE:
+      (void)task_safe_sweep_move(
+          0.0f, -lateral_speed, APP_SAFE_SWEEP_LATERAL_MM, now_ms);
+      return;
+
+    case SAFE_SWEEP_RELEASE_OBSTACLE:
+      Motor_Stop();
+      task_status.motors_active = false;
+      if (Claw_Open(now_ms)) {
+        task_status.gripper_closed = false;
+        task_safe_sweep_advance(now_ms);
+      }
+      return;
+
+    case SAFE_SWEEP_RETURN_CENTER_AFTER_RELEASE:
+      (void)task_safe_sweep_move(
+          0.0f, lateral_speed, APP_SAFE_SWEEP_LATERAL_MM, now_ms);
+      return;
+
+    case SAFE_SWEEP_REVERSE_TO_STAGE:
+      (void)task_safe_sweep_move(
+          -APP_SAFE_SWEEP_RETURN_SPEED_MM_S, 0.0f,
+          (uint32_t)safe_sweep_forward_mm, now_ms);
+      return;
+
+    case SAFE_SWEEP_MOVE_TO_LOAD:
+      (void)task_safe_sweep_move(
+          0.0f, lateral_speed, APP_SAFE_SWEEP_LATERAL_MM, now_ms);
+      return;
+
+    case SAFE_SWEEP_REGRAB_LOAD:
+      Motor_Stop();
+      task_status.motors_active = false;
+      if (Claw_Touch(now_ms)) {
+        task_status.gripper_closed = true;
+        task_safe_sweep_advance(now_ms);
+      }
+      return;
+
+    case SAFE_SWEEP_RECENTER_LOAD:
+      if (task_safe_sweep_move(
+              0.0f, -lateral_speed, APP_SAFE_SWEEP_LATERAL_MM, now_ms)) {
+        Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
+        camera_angle = (float)APP_GRAB_VIEW_ANGLE;
+        task_clear_audit_result();
+        task_enter(TASK_POST_GRAB_AUDIT, now_ms);
+        task_status.gripper_closed = true;
+      }
+      return;
+
+    default:
+      task_stop(TASK_FAULT_INVALID_STATE, now_ms);
+      return;
+  }
+}
+
 static void task_process_remote_action(const VisionMissionCommand *command,
                                        uint32_t now_ms)
 {
@@ -3204,11 +3426,13 @@ static void task_accept_mission(const VisionMissionCommand *command,
     task_latch_audit(command);
     if ((state == TASK_POST_GRAB_AUDIT) && audit_received) {
       if (task_audit_is_empty(command)) {
+        safe_sweep_recheck_pending = false;
         task_status.gripper_closed = false;
         task_clear_audit_result();
         task_enter(TASK_OPEN_CLAW, now_ms);
       } else if (audit_valid) {
-        task_enter(TASK_WAIT_NAVIGATION, now_ms);
+        task_enter(safe_sweep_recheck_pending ?
+                   TASK_SAFE_SWEEP_DONE : TASK_WAIT_NAVIGATION, now_ms);
       }
     } else if (cargo_recheck_pending && audit_received &&
         task_audit_is_empty(command)) {
@@ -3365,6 +3589,41 @@ static void task_accept_mission(const VisionMissionCommand *command,
     /* Repeated visual ALIGN frames are idempotent: never add the same frozen
      * pixel correction more than once. */
     task_status.acknowledged_sequence = command->sequence;
+  } else if ((command->command == VISION_CMD_ALIGN_SAFE_ZONE) &&
+             (state == TASK_SAFE_SWEEP_DONE) &&
+             task_status.gripper_closed &&
+             task_align_command_valid(command, false)) {
+    /* Sweeping returns the recovered cargo to the original staging centre.
+     * Re-run pose and visual ALIGN before ENTER; never reuse the heading from
+     * a long lateral/forward obstacle-clearing motion. */
+    task_status.acknowledged_sequence = command->sequence;
+    safe_sweep_recheck_pending = false;
+    task_enter(TASK_ALIGN_SAFE_ZONE, now_ms);
+    Camera_SetAngle(APP_SAFE_ALIGN_CAMERA_ANGLE);
+    camera_angle = (float)APP_SAFE_ALIGN_CAMERA_ANGLE;
+    safe_align_target_deg = task_heading_360(
+        (float)command->heading_cdeg * 0.01f);
+    safe_align_done = false;
+    safe_align_visual_started = false;
+    nav_ready = false;
+    task_status.nav_locked_heading_deg =
+        (uint16_t)(safe_align_target_deg + 0.5f) % 360U;
+  } else if ((command->command == VISION_CMD_CLEAR_SAFE_ZONE) &&
+             (state == TASK_ALIGN_SAFE_ZONE) && safe_align_done &&
+             safe_align_visual_started &&
+             task_status.gripper_closed &&
+             task_safe_sweep_command_valid(command)) {
+    /* The upper computer may request this only after its final visual ALIGN
+     * has identified an obstacle outside the safe-zone polygon. */
+    task_status.acknowledged_sequence = command->sequence;
+    task_begin_safe_sweep(command, now_ms);
+  } else if ((command->command == VISION_CMD_CLEAR_SAFE_ZONE) &&
+             ((state == TASK_SAFE_SWEEP) ||
+              (state == TASK_SAFE_SWEEP_DONE)) &&
+             task_safe_sweep_command_valid(command)) {
+    /* Repeated frames are ACKed but cannot restart either the physical sweep
+     * or its completed hand-off state. */
+    task_status.acknowledged_sequence = command->sequence;
   } else if ((command->command == VISION_CMD_ENTER_SAFE_ZONE) &&
              task_status.gripper_closed &&
              (state == TASK_ALIGN_SAFE_ZONE) && safe_align_done &&
@@ -3497,15 +3756,11 @@ static void task_accept_mission(const VisionMissionCommand *command,
             REMOTE_ACTION_RELEASE_LEFT :
         (command->command == VISION_CMD_RELEASE_RIGHT) ?
             REMOTE_ACTION_RELEASE_RIGHT : REMOTE_ACTION_RELEASE_BOTH;
-    const bool split_unknown_side =
-        (action == REMOTE_ACTION_RELEASE_BOTH) &&
-        !audit_initial_stash && !cargo_recheck_pending;
-    task_start_remote_action(
-        split_unknown_side ? REMOTE_ACTION_DISPERSE : action,
-        command, now_ms);
-    /* A legacy ambiguous RELEASE_BOTH request now uses the same harmless
-     * observation turn as no-side DISPERSE. Real dual release is unchanged. */
-    remote_action.arg_b = split_unknown_side ? 1 : 0;
+    /* RELEASE_BOTH now has one unambiguous meaning: physically open both
+     * claws and finish as mode34. A 12-degree observation turn must use an
+     * explicit DISPERSE_PILE without SIDE_VALID and finishes as mode35. */
+    task_start_remote_action(action, command, now_ms);
+    remote_action.arg_b = 0;
   }
 
   /* A PAUSE remains latched even if that frame later becomes stale. Only a
@@ -3515,6 +3770,71 @@ static void task_accept_mission(const VisionMissionCommand *command,
   if ((command->command != VISION_CMD_PAUSE) &&
       (task_status.acknowledged_sequence != previous_ack)) {
     mission_paused = false;
+  }
+}
+
+static bool task_boundary_guard_exempt(void)
+{
+  return (state == TASK_WAIT_CONFIG) || (state == TASK_START) ||
+         (state == TASK_OPEN_CLAW) || (state == TASK_STOPPED) ||
+         (state == TASK_BOUNDARY_RECOVER) ||
+         (state == TASK_OPEN_FOR_RAM) || (state == TASK_RAM_VERIFY) ||
+         (state == TASK_EXIT_SAFE_ZONE) ||
+         (state == TASK_FACE_FIELD_CENTER);
+}
+
+static void task_check_boundary_guard(uint32_t now_ms)
+{
+  if (task_boundary_guard_exempt()) {
+    return;
+  }
+  const LocationPose pose = Location_GetPose();
+  if (!pose.valid) {
+    return;
+  }
+  const float x_abs = task_abs((float)pose.x_mm);
+  const float y_abs = task_abs((float)pose.y_mm);
+  const float edge_distance_mm = APP_LOCATION_FIELD_HALF_MM -
+      ((x_abs > y_abs) ? x_abs : y_abs);
+  const float margin_mm =
+      ((state == TASK_NAVIGATE) && delivery_enter_active) ?
+          APP_SAFE_PUSH_EDGE_MARGIN_MM : APP_FIELD_EDGE_ABORT_MARGIN_MM;
+  if (edge_distance_mm > margin_mm) {
+    return;
+  }
+
+  const float heading_to_center = atan2f(-(float)pose.y_mm,
+                                         -(float)pose.x_mm) *
+      (180.0f / 3.14159265358979323846f);
+  task_enter(TASK_BOUNDARY_RECOVER, now_ms);
+  boundary_recovery_heading_deg = task_heading_360(heading_to_center);
+  mission_paused = false;
+  task_status.nav_heading_locked = true;
+  task_status.nav_locked_heading_deg =
+      (uint16_t)(boundary_recovery_heading_deg + 0.5f) % 360U;
+}
+
+static void task_process_boundary_recover(uint32_t now_ms)
+{
+  if (!boundary_claw_opened && Claw_Open(now_ms)) {
+    boundary_claw_opened = true;
+    task_status.gripper_closed = false;
+  }
+  const LocationPose pose = Location_GetPose();
+  if (!pose.valid) {
+    Motor_Stop();
+    task_status.motors_active = false;
+    return;
+  }
+  const float heading_deg = (float)pose.heading_mdeg * 0.001f;
+  if (!turn_to(boundary_recovery_heading_deg, heading_deg,
+               APP_BOUNDARY_TURN_TOLERANCE_DEG, now_ms)) {
+    task_stop(TASK_FAULT_MOTOR, now_ms);
+    return;
+  }
+  if (nav_ready && boundary_claw_opened) {
+    task_clear_audit_result();
+    task_enter(TASK_SEARCH, now_ms);
   }
 }
 
@@ -3538,6 +3858,7 @@ void Task_Process(uint32_t now_ms)
   task_status.camera_angle = Camera_GetAngle();
   task_accept_mission(&vision.mission, now_ms);
   task_apply_complete_target(&vision);
+  task_check_boundary_guard(now_ms);
   if (mission_paused &&
       (state != TASK_WAIT_CONFIG) && (state != TASK_START) &&
       (state != TASK_OPEN_CLAW)) {
@@ -3553,7 +3874,9 @@ void Task_Process(uint32_t now_ms)
       task_mission_valid(&vision.mission) &&
       (vision.mission.command == VISION_CMD_HOLD) &&
       (state != TASK_WAIT_CONFIG) && (state != TASK_START) &&
-      (state != TASK_OPEN_CLAW) && (state != TASK_SEARCH)) {
+      (state != TASK_OPEN_CLAW) && (state != TASK_SEARCH) &&
+      (state != TASK_SAFE_SWEEP) &&
+      (state != TASK_BOUNDARY_RECOVER)) {
     if ((state == TASK_REMOTE_ACTION) && !remote_action.done) {
       task_pause_action(now_ms, true);
     } else {
@@ -3673,6 +3996,20 @@ void Task_Process(uint32_t now_ms)
 
     case TASK_ALIGN_SAFE_ZONE:
       task_process_safe_align(now_ms);
+      break;
+
+    case TASK_SAFE_SWEEP:
+      task_process_safe_sweep(now_ms);
+      break;
+
+    case TASK_SAFE_SWEEP_DONE:
+      Motor_Stop();
+      task_status.motors_active = false;
+      task_status.gripper_closed = true;
+      break;
+
+    case TASK_BOUNDARY_RECOVER:
+      task_process_boundary_recover(now_ms);
       break;
 
     case TASK_OPEN_FOR_RAM:

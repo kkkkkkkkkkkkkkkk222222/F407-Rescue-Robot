@@ -622,6 +622,9 @@ static const char *task_state_name(TaskState state)
     case TASK_POST_GRAB_AUDIT:   return "POSTAUD";
     case TASK_REMOTE_ACTION:     return "ACTION";
     case TASK_DISPERSE_READY:    return "DSPRDY";
+    case TASK_SAFE_SWEEP:        return "SWEEP";
+    case TASK_SAFE_SWEEP_DONE:   return "SWPDONE";
+    case TASK_BOUNDARY_RECOVER:  return "EDGE";
     default:                     return "STOP";
   }
 }
@@ -662,6 +665,7 @@ static const char *task_command_name(uint8_t command, bool received)
     case VISION_CMD_DISPERSE_PILE:      return "DISPER";
     case VISION_CMD_CHANGE_LANE:        return "LANE";
     case VISION_CMD_CARGO_AUDIT:        return "AUDIT";
+    case VISION_CMD_CLEAR_SAFE_ZONE:     return "SWEEP";
     default:                           return "INVALID";
   }
 }

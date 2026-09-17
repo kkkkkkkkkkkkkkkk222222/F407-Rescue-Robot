@@ -135,7 +135,10 @@ typedef enum {
   VISION_CMD_RELEASE_BOTH = 15,
   VISION_CMD_DISPERSE_PILE = 16,
   VISION_CMD_CHANGE_LANE = 17,
-  VISION_CMD_CARGO_AUDIT = 18
+  VISION_CMD_CARGO_AUDIT = 18,
+  /* Safe-zone-only obstacle clearing. P2/P3 is the forward pickup distance,
+   * P4/P5 is the signed cargo parking offset (+right, -left), P6/P7 is zero. */
+  VISION_CMD_CLEAR_SAFE_ZONE = 19
 } VisionMissionCode;
 
 #define VISION_AUDIT_INITIAL_STASH      0x01U

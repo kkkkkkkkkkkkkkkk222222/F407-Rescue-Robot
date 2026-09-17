@@ -32,7 +32,12 @@ typedef enum {
   TASK_POST_GRAB_AUDIT = 23,
   TASK_APPROACH_RECOVER = 24,
   TASK_REMOTE_ACTION = 25,
-  TASK_DISPERSE_READY = 26
+  TASK_DISPERSE_READY = 26,
+  /* Values 27..38 are existing public action modes. Keep new wire modes
+   * explicit so none of those established values can shift. */
+  TASK_SAFE_SWEEP = 39,
+  TASK_SAFE_SWEEP_DONE = 40,
+  TASK_BOUNDARY_RECOVER = 41
 } TaskState;
 
 typedef enum {
