@@ -39,7 +39,7 @@
 
 - 普通`RELEASE_LEFT/RIGHT → YIELD_BACKOFF`单侧释放使用25°强保持：保留左侧为左53°/右72°，保留右侧为左108°/右127°。`DISPERSE_PILE + SIDE_VALID`属于另一条聚集曲线，不论第一次还是mode35复审后的后续动作都使用15°保持：保留左63°或保留右117°。两条语义不得混用。
 - 当左右两侧都是当前任务允许的物资但仍需拆成单侧时，先选保留侧：恰好一侧含绿色则保留绿色侧；两侧都含绿色时保留数量较少侧；均不含绿色时也保留数量较少的非空侧；仍相同再按锁定目标数、轨迹稳定度和距离择优。`RELEASE_LEFT/RIGHT`编码的是“打开哪侧”，而`DISPERSE_PILE + SIDE_VALID`中的`TARGET_RIGHT`编码的是“保留哪侧”，两者不能写反。
-- 上位机判定无法可靠指定保留侧时，不再发送会导致双开的`RELEASE_BOTH`，而是发送不带`SIDE_VALID/TARGET_RIGHT`的`DISPERSE_PILE`。F407原地转12°、保持相机140°稳定后报告新鲜`mode=35`；上位机必须清除旧审核帧并重新生成夹爪ROI审核。分侧成功后再发送带`SIDE_VALID`的DISPERSE执行0.30 m曲线剥离。观察转向最多允许两次，仍无法分侧时回到聚集目标重新对正，不能无限旋转或恢复正面撞堆。
+- 上位机判定无法可靠指定保留侧时，不再发送会导致双开的`RELEASE_BOTH`，而是发送不带`SIDE_VALID/TARGET_RIGHT`的`DISPERSE_PILE`。F407原地转20°、保持相机140°稳定后报告新鲜`mode=35`；上位机必须清除旧审核帧并重新生成夹爪ROI审核。分侧成功后再发送带`SIDE_VALID`的DISPERSE执行0.30 m曲线剥离。观察转向最多允许两次，仍无法分侧时回到聚集目标重新对正，不能无限旋转或恢复正面撞堆。
 - 单侧释放完成后发送`YIELD_BACKOFF(-300 mm)`；该距离现在是曲线路径长度，不是直线倒车距离。等待新鲜`mode=30`后重新进入`CAPTURE_AUDIT`，不得直接SEARCH。
 - 复审合法时把`selected_batch`替换为实际保留的单件，再发送`GRAB_CONFIRMED`直到F407上报`GRIPPER_CLOSED=1`。被释放物资不计入本次投送，留待后续重新搜索。
 - `mode=35`后的复审同时适用于观察转向和选择性曲线分离：观察转向后必须重新选侧，曲线分离后则判断保留物资是否合法；合法时持续发送GRAB，空爪回SEARCH，仍混装则按最新左右审核再决策。
@@ -67,10 +67,10 @@ F407会校验释放侧计数：`RELEASE_LEFT/RIGHT`对应侧必须非空；复�
 
 ## 6. 退让与脱困
 
-- `YIELD_BACKOFF`只能在上位机已经看到对应释放命令ACK变化和新鲜`mode=32/33`后发送，并持续发送到新鲜`mode=30`；F407现在拒绝APPROACH、NAV、RETURN以及其他动作后直接到来的YIELD。`RELEASE_BOTH`始终是真实双开并结束于mode34；左右不明的12°观察必须发送无侧DISPERSE并等待mode35。普通脱困改用`ESCAPE_MANEUVER`，不能复用YIELD。
+- `YIELD_BACKOFF`只能在上位机已经看到对应释放命令ACK变化和新鲜`mode=32/33`后发送，并持续发送到新鲜`mode=30`；F407现在拒绝APPROACH、NAV、RETURN以及其他动作后直接到来的YIELD。`RELEASE_BOTH`始终是真实双开并结束于mode34；左右不明的20°观察必须发送无侧DISPERSE并等待mode35。普通脱困改用`ESCAPE_MANEUVER`，不能复用YIELD。
 - `ESCAPE_MANEUVER`持续发送到新鲜`mode=31`。F407会先把大舵机恢复85°行驶位置，再执行旋转和横移。
 - 远程动作暂时丢帧、但仍允许F407执行既有恢复策略时可发HOLD；若要求动作原地冻结且恢复后从当前阶段继续，应发PAUSE。两者都不能把未完成动作直接标记完成，恢复时继续重复原命令并递增SEQ。
-- 聚集目标不能在SEARCH中直接发送`DISPERSE_PILE`。先用`CLUSTER_TARGET`靠近到mode38并完成140°审核，再在mode37发送带侧DISPERSE。第一次以及mode35复审后的所有带侧曲线统一使用15°保持（保留左63°或保留右117°），不升级为25°。25°仅属于普通RELEASE/YIELD单侧释放。稳定空爪回SEARCH，无法分侧才使用无侧12°观察。
+- 聚集目标不能在SEARCH中直接发送`DISPERSE_PILE`。先用`CLUSTER_TARGET`靠近到mode38并完成140°审核，再在mode37发送带侧DISPERSE。第一次以及mode35复审后的所有带侧曲线统一使用15°保持（保留左63°或保留右117°），不升级为25°。25°仅属于普通RELEASE/YIELD单侧释放。稳定空爪回SEARCH，无法分侧才使用无侧20°观察。
 - 对齐上位机`db76b00`：普通mode21及聚集/分离复审后最终允许GRAB，都必须取得2个不同`frame_sequence`、内容一致的合法审核；每个新视觉帧使用新的`audit_id`，同帧重复保持不变。无效审核的分侧判断继续只需frame floor后的1张新帧，不应因两帧GRAB门槛拖慢曲线动作。F407本地也对`GRAB_CONFIRMED`强制检查`audit_consistent_count>=2`。
 
 ## ACTION/WATCH卡死的必须修复项
@@ -85,7 +85,7 @@ F407会校验释放侧计数：`RELEASE_LEFT/RIGHT`对应侧必须非空；复�
 2. 90°/120°扫描任一阶段，上位机都能用普通/聚集APPROACH或藏点NAV接管；聚集目标必须先到mode38完成稳定非空夹内审核，DISPERSE只能在随后mode37发送。
 3. initial_stash总数大于0时，即使数量超过3、左右计数饱和或类别混合也能完成暂存；总数为0时不得GRAB。
 4. 左绿右核心、左核心右绿分别释放正确一侧，YIELD后重新审核。
-5. 左右归属不明时发送无bit6/bit7的DISPERSE触发12°观察转向；mode35后丢弃旧审核并重新发送CARGO_AUDIT，分侧成功后再发送带SIDE_VALID的DISPERSE。
+5. 左右归属不明时发送无bit6/bit7的DISPERSE触发20°观察转向；mode35后丢弃旧审核并重新发送CARGO_AUDIT，分侧成功后再发送带SIDE_VALID的DISPERSE。
 6. 释放命令与审核侧不一致时F407不动作，上位机能够重新审核恢复。
 7. 正式投送NAV携带STAGE_ONLY，在600 mm预备点D=0只得到mode10+DISTANCE_DONE，不能出现张爪或本地长距离补推；分别用蓝方`0x51`、红方`0x59`精简flags验证WAITNAV能够立即ACK并进入mode10。
 8. 每次投送第一次ALIGN均完成红90°/蓝270°定位对正，第二次只应用一次冻结框像素修正，不再添加首趟±10°。
@@ -107,17 +107,20 @@ F407会校验释放侧计数：`RELEASE_LEFT/RIGHT`对应侧必须非空；复�
 - RETURN完成握手不能只在最后比较`acknowledged_sequence != return_initial_ack`：任务SEQ只有8位，100 Hz发送约2.56 s就会回绕。进入RETURN时清零`return_command_accepted`；本阶段确认已发送RETURN且观察到一次对应ACK后永久锁存为真。之后收到新鲜`mode=3`且该锁存为真即可进入上位机SEARCH。F407目前会在返中完成后的1500 ms内继续ACK重复RETURN作为旧版本兼容，但正确性不能依赖这个窗口。
 - 正式投送必须采用STAGE NAV→定位ALIGN→可选视觉ALIGN→ENTER，不能再沿用D≤50 mm本地法向锁存或在预备点直接发送ENTER。第二次ALIGN的P2/P3保持发送有符号像素误差；不要擅自改成0.01°角度，除非同步修改F407协议和标定。
 - initial_stash只要求稳定且`total_count>0`；正式投送继续执行危险、未知、伤员混装和总数检查，首件绿色完成后接受普通、核心及`mixed_material`批次。单侧分离后必须YIELD、重新审核，合法后再GRAB，不能直接回SEARCH。
-- 摄像头3到140°后，只有140°专用overall/left/right夹爪ROI内的物体组成当前待分离物资堆；全局画面只负责SEARCH和APPROACH，不能参与夹内数量或分侧。保留侧采用确定性暴力策略：仅一侧有绿色则保留该侧；两侧都有绿色则保留绿色数量较少侧，平局保留左侧；两侧都无绿色则保留左侧，左侧为空才保留右侧。随后发送`DISPERSE_PILE + SIDE_VALID`。mode35后F407置`CLAW_VISIBLE`，上位机设置新frame floor并只用动作后的140°ROI帧重新构建物资堆；合法则GRAB，仍不合法继续带侧曲线，空爪才回SEARCH。无侧12°观察只作为完全没有可强制归侧候选的异常兜底。
+- 摄像头3到140°后，只有140°专用overall/left/right夹爪ROI内的物体组成当前待分离物资堆；全局画面只负责SEARCH和APPROACH，不能参与夹内数量或分侧。保留侧采用确定性暴力策略：仅一侧有绿色则保留该侧；两侧都有绿色则保留绿色数量较少侧，平局保留左侧；两侧都无绿色则保留左侧，左侧为空才保留右侧。随后发送`DISPERSE_PILE + SIDE_VALID`。mode35后F407置`CLAW_VISIBLE`，上位机设置新frame floor并只用动作后的140°ROI帧重新构建物资堆；合法则GRAB，仍不合法继续带侧曲线，空爪才回SEARCH。无侧20°观察只作为完全没有可强制归侧候选的异常兜底。
 
 ## 9. 2026-09-17 最终走廊扫障与边界交接
 
 - 删除SEARCH、APPROACH以及抓取完成到600 mm预备点之间因`danger_ahead`触发`CHANGE_LANE`的分支。F407已拒绝旧CHANGE_LANE；爪外物资不能中断搜索、抓取和STAGE NAV。
 - STAGE完成条件不要在最终时刻只比较当前8位ACK与阶段初始ACK。看到新鲜`mode=10 + DISTANCE_DONE + GRIPPER_CLOSED`即可锁存F407已完成预备点动作；匹配STAGE D=0经relay发送与ACK证据用于诊断，不能成为永久阻塞ALIGN的单点条件。随后持续发送第一次定位ALIGN。F407允许从STAGE NAV直接接受该ALIGN，并使用1.5°进入/4°保持迟滞完成mode11。
 - 第二次视觉ALIGN完成后建立“最终推进走廊ROI”，只统计安全区多边形外、位于当前车头到对应安全半区入口之间的物体。首件正式绿色投送时，任意类别物体进入该走廊都触发扫障；首件完成后的普通、核心或伤员投送，仅`danger_cyan`或`injured_orange`触发。安全区内部物体必须排除。
+- 走廊候选还必须排除当前正在运送的物资：把本轮`delivery_items`/carried track ID传入走廊函数并直接跳过；再用夹爪近场ROI过滤track重建后仍位于夹内的当前货物。否则首件绿色和伤员会把自己识别成障碍，连续触发两次扫障后进入PAUSE。
 - 新增命令`CLEAR_SAFE_ZONE=0x13`，仍使用TYPE 0x18和原CRC：P1仅`CMD_VALID|RED_SIDE`；P2/P3为障碍进入夹爪所需的前进距离80～600 mm；P4/P5为有符号货物暂放横移，普通/核心发`+150`表示右侧，伤员发`-150`表示左侧；P6/P7=0。只有第二次视觉ALIGN已完成时发送，持续到ACK和mode39，不能在SEARCH/APPROACH/STAGE途中发送。
+- P2/P3不能直接使用`relative_xy_m[1]*1000`；应减去相机/定位参考点到夹爪入口的实测机械偏移和希望物体进入爪内的余量，再裁剪到80～600 mm。该标定值应放在上位机配置中，不能散落成魔法数字。
 - mode39期间停止发送NAV、ALIGN、ENTER、CHANGE_LANE和目标命令，持续发送同一语义的CLEAR新SEQ。F407会侧放原货物、回中抓障碍、把障碍放到相反侧、退回预备点、重新夹回原货物并回中。随后F407进入mode23；上位机清除旧审核和frame floor，按既有抓后规则发送3个不同audit_id。空爪回SEARCH，非法按既有释放/分离处理，合法后F407进入mode40。
+- F407完成物理扫障后会保持mode39至少500 ms再进入mode23。上位机应把“CLEAR已ACK且看到mode23+GRIPPER_CLOSED+CLAW_VISIBLE”作为充分条件直接开始复审；`safe_sweep_execution_seen`只用于诊断，不能成为硬门槛，以免状态链路恢复时已经错过mode39而永久重发CLEAR。
 - mode40表示“原货物已重新夹回并通过审核，底盘回到预备点中心”，不是ENTER许可。上位机必须重新执行第一次定位ALIGN和第二次视觉ALIGN，确认走廊后才发送ENTER。建议同一投送最多扫障2次；两次后走廊仍被危险物或伤员占据时保持停车并提示人工处理，不能无限搬运，也不能直接ENTER。
-- F407 mode41表示本地30 cm场地边界保护已触发：当前动作已取消，夹爪将打开并把车头转向场地中心，随后进入mode3。上位机看到mode41应立即清除selected_batch、track、审核、NAV/ALIGN/ENTER和扫障上下文，只发送HOLD；看到新鲜mode3及动作后的新视觉帧后重新SEARCH。不得把mode41当作电机故障或继续重发旧命令。
+- F407 mode41表示本地30 cm场地边界保护已触发：当前动作已取消，夹爪打开、车头转向场地中心，并继续向场内行驶到距边至少40 cm后才进入mode3。上位机看到mode41应立即清除selected_batch、track、审核、NAV/ALIGN/ENTER和扫障上下文，只发送HOLD；看到新鲜mode3及动作后的新视觉帧后重新SEARCH。不得把mode41当作电机故障或继续重发旧命令。
 - ENTER本地600 mm推进期间F407把边界阈值放宽到50 mm，其余主动动作使用300 mm。上位机自身边界判断应采用同样的阶段差异，不能在合法最终推进中提前ABORT，也不能在普通阶段覆盖mode41继续运动。
 - mode23非法且无法分侧时，不要把`RELEASE_BOTH`当观察转向。无侧观察必须发送无SIDE_VALID的`DISPERSE_PILE`并等待mode35；真正最终双开才发送RELEASE_BOTH并等待mode34。
 - 审核达到上位机3帧后若F407尚未置AUDIT_VALID，不要永久重复同一个audit_id；继续等待下一张新视觉帧并生成新audit_id，直到下位机也实际累计到3个不同ID。

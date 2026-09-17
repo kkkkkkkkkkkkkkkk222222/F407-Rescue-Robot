@@ -110,7 +110,8 @@ typedef enum {
   SAFE_SWEEP_REVERSE_TO_STAGE,
   SAFE_SWEEP_MOVE_TO_LOAD,
   SAFE_SWEEP_REGRAB_LOAD,
-  SAFE_SWEEP_RECENTER_LOAD
+  SAFE_SWEEP_RECENTER_LOAD,
+  SAFE_SWEEP_MODE39_HOLD
 } SafeSweepPhase;
 
 static volatile TaskStatus task_status;
@@ -224,6 +225,7 @@ static float safe_sweep_heading_deg;
 static bool safe_sweep_recheck_pending;
 static float boundary_recovery_heading_deg;
 static bool boundary_claw_opened;
+static bool boundary_turn_done;
 static uint8_t remote_target_sequence;
 static uint32_t remote_target_generation;
 static bool remote_target_sequence_valid;
@@ -935,6 +937,7 @@ static void task_enter(TaskState next, uint32_t now_ms)
         (uint16_t)(safe_sweep_heading_deg + 0.5f) % 360U;
   } else if (next == TASK_BOUNDARY_RECOVER) {
     boundary_claw_opened = false;
+    boundary_turn_done = false;
   } else if (next == TASK_GRAB_ROTATE) {
     task_reset_turn_tracker();
   } else if ((next == TASK_NAVIGATE) ||
@@ -1069,6 +1072,7 @@ static void task_initialize(uint32_t now_ms)
   safe_sweep_recheck_pending = false;
   boundary_recovery_heading_deg = 0.0f;
   boundary_claw_opened = false;
+  boundary_turn_done = false;
   remote_target_sequence = 0U;
   remote_target_generation = 0U;
   remote_target_sequence_valid = false;
@@ -3127,8 +3131,16 @@ static void task_process_safe_sweep(uint32_t now_ms)
       return;
 
     case SAFE_SWEEP_RECENTER_LOAD:
-      if (task_safe_sweep_move(
-              0.0f, -lateral_speed, APP_SAFE_SWEEP_LATERAL_MM, now_ms)) {
+      (void)task_safe_sweep_move(
+          0.0f, -lateral_speed, APP_SAFE_SWEEP_LATERAL_MM, now_ms);
+      return;
+
+    case SAFE_SWEEP_MODE39_HOLD:
+      Motor_Stop();
+      task_status.motors_active = false;
+      task_status.gripper_closed = true;
+      if ((uint32_t)(now_ms - step_started_ms) >=
+          APP_SAFE_SWEEP_MODE39_HOLD_MS) {
         Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
         camera_angle = (float)APP_GRAB_VIEW_ANGLE;
         task_clear_audit_result();
@@ -3816,6 +3828,7 @@ static void task_check_boundary_guard(uint32_t now_ms)
 
 static void task_process_boundary_recover(uint32_t now_ms)
 {
+  Lift_SetTravelPosition();
   if (!boundary_claw_opened && Claw_Open(now_ms)) {
     boundary_claw_opened = true;
     task_status.gripper_closed = false;
@@ -3827,15 +3840,36 @@ static void task_process_boundary_recover(uint32_t now_ms)
     return;
   }
   const float heading_deg = (float)pose.heading_mdeg * 0.001f;
-  if (!turn_to(boundary_recovery_heading_deg, heading_deg,
-               APP_BOUNDARY_TURN_TOLERANCE_DEG, now_ms)) {
-    task_stop(TASK_FAULT_MOTOR, now_ms);
+  if (!boundary_turn_done) {
+    if (!turn_to(boundary_recovery_heading_deg, heading_deg,
+                 APP_BOUNDARY_TURN_TOLERANCE_DEG, now_ms)) {
+      task_stop(TASK_FAULT_MOTOR, now_ms);
+      return;
+    }
+    if (nav_ready) {
+      boundary_turn_done = true;
+      nav_ready = false;
+    }
     return;
   }
-  if (nav_ready && boundary_claw_opened) {
+
+  const float x_abs = task_abs((float)pose.x_mm);
+  const float y_abs = task_abs((float)pose.y_mm);
+  const float edge_distance_mm = APP_LOCATION_FIELD_HALF_MM -
+      ((x_abs > y_abs) ? x_abs : y_abs);
+  if ((edge_distance_mm >= APP_FIELD_EDGE_REARM_MARGIN_MM) &&
+      boundary_claw_opened) {
+    Motor_Stop();
+    task_status.motors_active = false;
     task_clear_audit_result();
     task_enter(TASK_SEARCH, now_ms);
+    return;
   }
+  const float heading_error = task_wrap_angle(
+      boundary_recovery_heading_deg - heading_deg);
+  Motor_Move(APP_BOUNDARY_RECOVERY_SPEED_MM_S, 0.0f,
+             nav_yaw(heading_error));
+  task_status.motors_active = true;
 }
 
 void Task_Process(uint32_t now_ms)

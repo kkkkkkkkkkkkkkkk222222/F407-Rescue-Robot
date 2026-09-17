@@ -371,11 +371,14 @@
 #define APP_SAFE_SWEEP_LATERAL_SPEED_MM_S   350.0f
 #define APP_SAFE_SWEEP_FORWARD_SPEED_MM_S   300.0f
 #define APP_SAFE_SWEEP_RETURN_SPEED_MM_S    350.0f
+#define APP_SAFE_SWEEP_MODE39_HOLD_MS         500U
 /* Normal autonomous motion turns back at 30 cm from the 3 m x 3 m map edge.
  * The deliberate final safe-zone push is allowed to approach within 5 cm. */
 #define APP_FIELD_EDGE_ABORT_MARGIN_MM       300.0f
+#define APP_FIELD_EDGE_REARM_MARGIN_MM       400.0f
 #define APP_SAFE_PUSH_EDGE_MARGIN_MM          50.0f
 #define APP_BOUNDARY_TURN_TOLERANCE_DEG        5.0f
+#define APP_BOUNDARY_RECOVERY_SPEED_MM_S     300.0f
 #define APP_POSE_WAIT_TIMEOUT_MS          1500U
 #define APP_LIFT_START_ANGLE              55U
 #define APP_LIFT_TRAVEL_ANGLE             85U
@@ -410,7 +413,7 @@
 #define APP_REMOTE_LANE_SPEED_MM_S           850.0f
 #define APP_REMOTE_DISPERSE_TIMEOUT_MS          18000U
 #define APP_REMOTE_DISPERSE_HOLD_CANCEL_MS       1000U
-#define APP_DISPERSE_OBSERVE_TURN_DEG              12.0f
+#define APP_DISPERSE_OBSERVE_TURN_DEG              20.0f
 #define APP_FIRST_GREEN_BUMP_BACKOFF_M              0.10f
 #define APP_FIRST_GREEN_BUMP_FORWARD_M              0.20f
 #define APP_FIRST_GREEN_BUMP_SPEED_MM_S           500.0f
