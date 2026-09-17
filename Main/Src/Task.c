@@ -173,6 +173,8 @@ static uint8_t audit_last_counts;
 static uint8_t audit_last_flags;
 static uint8_t audit_last_total_count;
 static uint8_t audit_last_id;
+static bool audit_legal_candidate_pending;
+static uint8_t audit_invalid_after_legal_count;
 static uint8_t remote_target_sequence;
 static uint32_t remote_target_generation;
 static bool remote_target_sequence_valid;
@@ -564,13 +566,40 @@ static void task_latch_audit(const VisionMissionCommand *command)
 {
   const uint8_t semantic_flags = command->audit_flags &
       (uint8_t)~VISION_AUDIT_STABLE;
-  const bool same =
+  const uint8_t left_count = command->audit_counts & 0x03U;
+  const uint8_t right_count = (command->audit_counts >> 2) & 0x03U;
+  const uint8_t last_left_count = audit_last_counts & 0x03U;
+  const uint8_t last_right_count = (audit_last_counts >> 2) & 0x03U;
+  const bool same_sides =
       (command->audit_left_class == audit_last_left_class) &&
       (command->audit_right_class == audit_last_right_class) &&
-      (command->audit_counts == audit_last_counts) &&
+      (left_count == last_left_count) &&
+      (right_count == last_right_count);
+  const bool swapped_sides =
+      (command->audit_left_class == audit_last_right_class) &&
+      (command->audit_right_class == audit_last_left_class) &&
+      (left_count == last_right_count) &&
+      (right_count == last_left_count);
+  const bool same =
+      (same_sides || swapped_sides) &&
       (semantic_flags == audit_last_flags) &&
       (command->audit_total_count == audit_last_total_count);
-  if (same) {
+  audit_initial_stash =
+      (command->audit_flags & VISION_AUDIT_INITIAL_STASH) != 0U;
+  audit_destination_injury =
+      (command->audit_flags & VISION_AUDIT_DESTINATION_INJURY) != 0U;
+  const bool current_payload_legal = task_validate_audit(command);
+  const bool tolerate_one_invalid = !current_payload_legal &&
+      audit_legal_candidate_pending &&
+      (audit_invalid_after_legal_count == 0U);
+
+  if (tolerate_one_invalid) {
+    /* Keep the first legal frame as the comparison baseline. The upper
+     * computer may transmit one transient invalid frame while applying its
+     * hysteresis; letting it overwrite the baseline would make alternating
+     * legal/invalid detections impossible to confirm. */
+    audit_invalid_after_legal_count = 1U;
+  } else if (same) {
     /* The upper computer may retransmit one camera result with many UART
      * SEQs. Count only a changed audit_id as a second visual frame. */
     if ((command->audit_id != audit_last_id) &&
@@ -578,27 +607,30 @@ static void task_latch_audit(const VisionMissionCommand *command)
       ++audit_consistent_count;
     }
   } else {
+    audit_consistent_count = 1U;
+  }
+  if (!tolerate_one_invalid) {
+    /* Retain the newest accepted left/right assignment for SIDE_VALID while
+     * treating a complete left/right swap as the same transport payload. */
     audit_last_left_class = command->audit_left_class;
     audit_last_right_class = command->audit_right_class;
     audit_last_counts = command->audit_counts;
     audit_last_flags = semantic_flags;
     audit_last_total_count = command->audit_total_count;
-    audit_consistent_count = 1U;
+    audit_last_id = command->audit_id;
+    audit_legal_candidate_pending = current_payload_legal;
+    audit_invalid_after_legal_count = 0U;
   }
-  audit_last_id = command->audit_id;
-  audit_initial_stash =
-      (command->audit_flags & VISION_AUDIT_INITIAL_STASH) != 0U;
-  audit_destination_injury =
-      (command->audit_flags & VISION_AUDIT_DESTINATION_INJURY) != 0U;
   task_status.audit_left_class = command->audit_left_class;
   task_status.audit_right_class = command->audit_right_class;
   task_status.audit_total_count = command->audit_total_count;
   /* bdcf0f2 switches to GRAB on its third matching camera frame, so only the
    * first two non-STABLE audit frames reach the UART. Accept those two equal
    * payloads; a future explicit STABLE frame is accepted immediately. */
-  audit_received = (audit_consistent_count >= 2U) ||
-      ((command->audit_flags & VISION_AUDIT_STABLE) != 0U);
-  audit_valid = audit_received && task_validate_audit(command);
+  audit_received = !tolerate_one_invalid &&
+      ((audit_consistent_count >= 2U) ||
+       ((command->audit_flags & VISION_AUDIT_STABLE) != 0U));
+  audit_valid = audit_received && current_payload_legal;
   task_status.audit_ready = audit_received;
   task_status.audit_valid = audit_valid;
 }
@@ -614,6 +646,8 @@ static void task_clear_audit_result(void)
   audit_last_flags = 0U;
   audit_last_total_count = 0U;
   audit_last_id = 0U;
+  audit_legal_candidate_pending = false;
+  audit_invalid_after_legal_count = 0U;
   task_status.audit_left_class = 0U;
   task_status.audit_right_class = 0U;
   task_status.audit_total_count = 0U;
@@ -779,6 +813,8 @@ static void task_enter(TaskState next, uint32_t now_ms)
     audit_last_flags = 0U;
     audit_last_total_count = 0U;
     audit_last_id = 0U;
+    audit_legal_candidate_pending = false;
+    audit_invalid_after_legal_count = 0U;
     task_status.audit_left_class = 0U;
     task_status.audit_right_class = 0U;
     task_status.audit_total_count = 0U;
@@ -917,6 +953,8 @@ static void task_initialize(uint32_t now_ms)
   audit_last_flags = 0U;
   audit_last_total_count = 0U;
   audit_last_id = 0U;
+  audit_legal_candidate_pending = false;
+  audit_invalid_after_legal_count = 0U;
   remote_target_sequence = 0U;
   remote_target_generation = 0U;
   remote_target_sequence_valid = false;
