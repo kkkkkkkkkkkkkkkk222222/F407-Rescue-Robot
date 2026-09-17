@@ -20,7 +20,7 @@
 
 ### HOLD、PAUSE、STOP、ABORT语义
 
-- `HOLD=10`：正常流程心跳。SEARCH继续扫描；APPROACH常规跟踪/125°对正、NAV、RETURN和远程动作安全停车。F407进入125→140°稳定阶段后，HOLD不打断已经触发的相机动作；需要真正冻结必须发送PAUSE。mode16若曾被PAUSE冻结，恢复后发送合法RETURN即可解除锁存并继续剩余本地后退。
+- `HOLD=10`：正常流程心跳。SEARCH继续扫描；APPROACH常规跟踪/125°对正、NAV、RETURN和远程动作安全停车。常规APPROACH持续HOLD 500 ms后F407进入mode24，再静止500 ms回mode3；任意新APP命令会取消该恢复。F407进入相机到140°、140°稳定或聚集夹内审核阶段后，HOLD不打断已经触发的本地动作；需要真正冻结必须发送PAUSE。mode16若曾被PAUSE冻结，恢复后发送合法RETURN即可解除锁存并继续剩余本地后退。
 - `PAUSE=1`：操作员暂停、定位短时不可用但希望保留当前阶段、或上位机内部重建状态时使用。F407 ACK后锁存停车并保持Task状态；帧过期也不会自行恢复，且不会触发DISPERSE的HOLD取消。
 - 解除PAUSE必须发送一条当前状态可接受、SEQ递增的非PAUSE命令：SEARCH发HOLD，APPROACH发APPROACH_TARGET，NAV发NAVIGATE_WAYPOINT，RETURN发RETURN_CENTER，远程动作重发原动作命令。无效或阶段不匹配的命令不会解除暂停。
 - `STOP=0`不是普通暂停；除NAV兼容入口外会形成远程停止故障。`ABORT=7`进入`REMOTE_STOP/fault1`；操作员下一次明确发送新的连续合法赛前配置可以重启一轮任务，其他故障不能自动清除。
@@ -124,3 +124,10 @@ F407会校验释放侧计数：`RELEASE_LEFT/RIGHT`对应侧必须非空；复�
 - ENTER本地600 mm推进期间F407把边界阈值放宽到50 mm，其余主动动作使用300 mm。上位机自身边界判断应采用同样的阶段差异，不能在合法最终推进中提前ABORT，也不能在普通阶段覆盖mode41继续运动。
 - mode23非法且无法分侧时，不要把`RELEASE_BOTH`当观察转向。无侧观察必须发送无SIDE_VALID的`DISPERSE_PILE`并等待mode35；真正最终双开才发送RELEASE_BOTH并等待mode34。
 - 审核达到上位机3帧后若F407尚未置AUDIT_VALID，不要永久重复同一个audit_id；继续等待下一张新视觉帧并生成新audit_id，直到下位机也实际累计到3个不同ID。
+
+## 10. 对齐上位机16d6a56后的剩余两项
+
+- 上位机已经完成夹内货物排除、150 mm可配置抓取偏移、mode39非硬门槛、审核新audit_id续帧和20°文案同步。保留这些修改，不再回退。
+- `make_vision_snapshot()`目前仍使用`mission.locked_safe_bbox or safe_bbox`构建最终推进走廊。`locked_safe_bbox`是在视觉修正转向前冻结的框，只能用于计算修正角；进入SAFE_ZONE_CORRIDOR_CHECK后必须使用frame floor之后的新鲜`safe_bbox`。如果新框尚未到达就继续等待，不能退回旧框。
+- `safe_zone_push_corridor()`新增的底部20%近场排除不能无条件过滤所有类别，否则真正已经靠近夹爪的危险物或伤员也会被忽略并直接ENTER。近场兜底只能在候选与carried manifest类别/数量相符，或与最近一次确认的携带物框有高重叠时用于排除；不同类别的近场目标仍必须作为障碍。track ID排除仍是第一优先级。
+- APPROACH目标超过动态窗口后可继续发送HOLD；F407现在会在持续HOLD 500 ms后进入mode24，再回mode3。上位机看到mode24/mode3必须清除selected_batch、旧track、最后APP坐标和审核上下文，并从新视觉帧重新SEARCH；目标在500 ms内恢复时继续发送新APP即可取消恢复。

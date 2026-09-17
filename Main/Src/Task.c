@@ -215,7 +215,9 @@ static float grab_core_advance_heading_deg;
 static PostGrabAuditPhase post_grab_audit_phase;
 static uint32_t post_grab_audit_phase_started_ms;
 static uint32_t post_grab_invalid_started_ms;
+static uint32_t approach_hold_started_ms;
 static bool post_grab_invalid_waiting;
+static bool approach_hold_pending;
 static SafeSweepPhase safe_sweep_phase;
 static int16_t safe_sweep_forward_mm;
 static int16_t safe_sweep_lateral_mm;
@@ -863,6 +865,9 @@ static void task_enter(TaskState next, uint32_t now_ms)
   nav_realign_pending = false;
   return_search_ack_started_ms =
       return_just_completed ? now_ms : 0U;
+  if (next != TASK_APPROACH) {
+    approach_hold_pending = false;
+  }
 
   if (next == TASK_START) {
     const LocationPose pose = Location_GetPose();
@@ -913,6 +918,8 @@ static void task_enter(TaskState next, uint32_t now_ms)
     cluster_claws_ready = false;
     approach_locked_heading_deg = 0.0f;
     approach_report_generation_valid = false;
+    approach_hold_started_ms = now_ms;
+    approach_hold_pending = false;
     task_reset_tracking();
   } else if (next == TASK_APPROACH_RECOVER) {
     const VisionData vision = Vision_GetSnapshot();
@@ -1062,7 +1069,9 @@ static void task_initialize(uint32_t now_ms)
   post_grab_audit_phase = POST_AUDIT_WAIT_PRIMARY;
   post_grab_audit_phase_started_ms = now_ms;
   post_grab_invalid_started_ms = now_ms;
+  approach_hold_started_ms = now_ms;
   post_grab_invalid_waiting = false;
+  approach_hold_pending = false;
   safe_sweep_phase = SAFE_SWEEP_PARK_LOAD;
   safe_sweep_forward_mm = 0;
   safe_sweep_lateral_mm = 0;
@@ -1124,6 +1133,18 @@ static bool task_search_accepts_remote_target(void)
    * over RETURN. Only the post-return camera preparation suppresses it. */
   return (search_phase != SEARCH_RETURN_CAMERA_TO_120) &&
          (search_phase != SEARCH_RETURN_HOLD_120);
+}
+
+static bool task_approach_runs_without_target(void)
+{
+  if (state != TASK_APPROACH) {
+    return false;
+  }
+  return (approach_phase == APPROACH_CLUSTER_CAMERA_TO_140) ||
+         (approach_phase == APPROACH_CLUSTER_SETTLE_140) ||
+         (approach_phase == APPROACH_CLUSTER_CAPTURE) ||
+         (approach_phase == APPROACH_CAMERA_TO_140) ||
+         (approach_phase == APPROACH_SETTLE_140);
 }
 
 static bool task_scan_locked_target_found(const VisionData *vision)
@@ -3392,6 +3413,12 @@ static void task_accept_mission(const VisionMissionCommand *command,
     }
   } else if (command->command == VISION_CMD_HOLD) {
     task_status.acknowledged_sequence = command->sequence;
+    if ((state == TASK_APPROACH) &&
+        !task_approach_runs_without_target() &&
+        !approach_hold_pending) {
+      approach_hold_pending = true;
+      approach_hold_started_ms = now_ms;
+    }
     if ((state == TASK_NAVIGATE) && route_to_stash &&
                !task_status.gripper_closed && nav_progress.valid &&
                (distance_command_done ||
@@ -3472,6 +3499,7 @@ static void task_accept_mission(const VisionMissionCommand *command,
   } else if ((command->command == VISION_CMD_APPROACH_TARGET) &&
              (state == TASK_APPROACH)) {
     task_status.acknowledged_sequence = command->sequence;
+    approach_hold_pending = false;
     const bool cluster =
         (command->flags & VISION_CMD_CLUSTER_TARGET) != 0U;
     if (cluster != cluster_target_active) {
@@ -3900,15 +3928,14 @@ void Task_Process(uint32_t now_ms)
     task_publish_status(now_ms);
     return;
   }
-  const bool local_approach_reacquire =
-      (state == TASK_APPROACH) &&
-      ((approach_phase == APPROACH_CAMERA_TO_140) ||
-       (approach_phase == APPROACH_SETTLE_140));
-  if (complete_flow_active && !local_approach_reacquire &&
+  const bool local_approach_autonomous =
+      task_approach_runs_without_target();
+  if (complete_flow_active && !local_approach_autonomous &&
       task_mission_valid(&vision.mission) &&
       (vision.mission.command == VISION_CMD_HOLD) &&
       (state != TASK_WAIT_CONFIG) && (state != TASK_START) &&
       (state != TASK_OPEN_CLAW) && (state != TASK_SEARCH) &&
+      (state != TASK_APPROACH_RECOVER) &&
       (state != TASK_SAFE_SWEEP) &&
       (state != TASK_BOUNDARY_RECOVER)) {
     if ((state == TASK_REMOTE_ACTION) && !remote_action.done) {
@@ -3919,12 +3946,19 @@ void Task_Process(uint32_t now_ms)
     }
     if (state == TASK_APPROACH) {
       /* Normal tracking/alignment HOLD is a stationary upper-level decision.
-       * The already-triggered local reacquire phases bypass this branch. */
+       * After 500 ms without a new APP frame, leave mode20 through the
+       * existing mode24 recovery instead of waiting forever. Camera-to-140
+       * and claw-audit phases bypass this branch because they no longer need
+       * target coordinates. */
       task_status.auto_approach = true;
       task_status.found = false;
-    } else if (state == TASK_APPROACH_RECOVER) {
-      task_status.auto_approach = true;
-      task_status.found = false;
+      if (approach_hold_pending &&
+          ((uint32_t)(now_ms - approach_hold_started_ms) >=
+           APP_APPROACH_LOSS_HOLD_MS)) {
+        task_enter(TASK_APPROACH_RECOVER, now_ms);
+        task_status.auto_approach = true;
+        task_status.found = false;
+      }
     }
     task_publish_status(now_ms);
     return;
