@@ -115,9 +115,9 @@ F407会校验释放侧计数：`RELEASE_LEFT/RIGHT`对应侧必须非空；复�
 - STAGE完成条件不要在最终时刻只比较当前8位ACK与阶段初始ACK。看到新鲜`mode=10 + DISTANCE_DONE + GRIPPER_CLOSED`即可锁存F407已完成预备点动作；匹配STAGE D=0经relay发送与ACK证据用于诊断，不能成为永久阻塞ALIGN的单点条件。随后持续发送第一次定位ALIGN。F407允许从STAGE NAV直接接受该ALIGN，并使用1.5°进入/4°保持迟滞完成mode11。
 - 第二次视觉ALIGN完成后建立“最终推进走廊ROI”，只统计安全区多边形外、位于当前车头到对应安全半区入口之间的物体。首件正式绿色投送时，任意类别物体进入该走廊都触发扫障；首件完成后的普通、核心或伤员投送，仅`danger_cyan`或`injured_orange`触发。安全区内部物体必须排除。
 - 走廊候选还必须排除当前正在运送的物资：把本轮`delivery_items`/carried track ID传入走廊函数并直接跳过；再用夹爪近场ROI过滤track重建后仍位于夹内的当前货物。否则首件绿色和伤员会把自己识别成障碍，连续触发两次扫障后进入PAUSE。
-- 新增命令`CLEAR_SAFE_ZONE=0x13`，仍使用TYPE 0x18和原CRC：P1仅`CMD_VALID|RED_SIDE`；P2/P3为障碍进入夹爪所需的前进距离80～600 mm；P4/P5为有符号货物暂放横移，普通/核心发`+150`表示右侧，伤员发`-150`表示左侧；P6/P7=0。只有第二次视觉ALIGN已完成时发送，持续到ACK和mode39，不能在SEARCH/APPROACH/STAGE途中发送。
-- P2/P3不能直接使用`relative_xy_m[1]*1000`；应减去相机/定位参考点到夹爪入口的实测机械偏移和希望物体进入爪内的余量，再裁剪到80～600 mm。该标定值应放在上位机配置中，不能散落成魔法数字。
-- mode39期间停止发送NAV、ALIGN、ENTER、CHANGE_LANE和目标命令，持续发送同一语义的CLEAR新SEQ。F407会侧放原货物、回中抓障碍、把障碍放到相反侧、退回预备点、重新夹回原货物并回中。随后F407进入mode23；上位机清除旧审核和frame floor，按既有抓后规则发送3个不同audit_id。空爪回SEARCH，非法按既有释放/分离处理，合法后F407进入mode40。
+- `CLEAR_SAFE_ZONE=0x13`新流程使用P2/P3=0表示视觉引导取障，P4/P5仍为暂放原货物的±150 mm，P6/P7=0；旧80～600 mm距离形式仅保留兼容。无障碍时不发0x13。
+- F407侧放原货物并回走廊中心后上报mode42。上位机在mode42发送0x09障碍中心像素；HOLD只触发扫障内部搜索，不得回普通SEARCH。相机140°后mode43只接收带P5 bit6 `AUDIT_SWEEP_PICKUP`的审核，3个不同audit_id非空即合法，危险/伤员/未知均可抓取。
+- 扫障GRAB后F407回mode39，使用CLEAR时保存的二维位置和航向返回走廊中心，再移障、回中心并取回原货物；不使用累计path推导直线返回距离。之后进入mode23正常复审，合法mode40后重新两次ALIGN。
 - F407完成物理扫障后会保持mode39至少500 ms再进入mode23。上位机应把“CLEAR已ACK且看到mode23+GRIPPER_CLOSED+CLAW_VISIBLE”作为充分条件直接开始复审；`safe_sweep_execution_seen`只用于诊断，不能成为硬门槛，以免状态链路恢复时已经错过mode39而永久重发CLEAR。
 - mode40表示“原货物已重新夹回并通过审核，底盘回到预备点中心”，不是ENTER许可。上位机必须重新执行第一次定位ALIGN和第二次视觉ALIGN，确认走廊后才发送ENTER。建议同一投送最多扫障2次；两次后走廊仍被危险物或伤员占据时保持停车并提示人工处理，不能无限搬运，也不能直接ENTER。
 - F407 mode41表示本地30 cm场地边界保护已触发：当前动作已取消，夹爪打开、车头转向场地中心，并继续向场内行驶到距边至少40 cm后才进入mode3。上位机看到mode41应立即清除selected_batch、track、审核、NAV/ALIGN/ENTER和扫障上下文，只发送HOLD；看到新鲜mode3及动作后的新视觉帧后重新SEARCH。不得把mode41当作电机故障或继续重发旧命令。

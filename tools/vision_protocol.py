@@ -75,6 +75,7 @@ AUDIT_UNKNOWN_PRESENT = 0x04
 AUDIT_INJURY_MIXED = 0x08
 AUDIT_STABLE = 0x10
 AUDIT_DESTINATION_INJURY = 0x20
+AUDIT_SWEEP_PICKUP = 0x40
 
 CARGO_NONE = 0
 CARGO_GREEN = 1
@@ -310,7 +311,7 @@ def mission_frame(
     if command == CMD_CLEAR_SAFE_ZONE:
         lateral_abs = abs(target_y_mm)
         if (flags & ~(CMD_VALID | CMD_RED_SIDE) or
-                not 80 <= target_x_mm <= 600 or
+                (target_x_mm != 0 and not 80 <= target_x_mm <= 600) or
                 lateral_abs != 150 or heading_cdeg != 0):
             raise ValueError("invalid CLEAR_SAFE_ZONE payload")
     payload = (
@@ -338,7 +339,7 @@ def cargo_audit_frame(
         raise ValueError("invalid right cargo class")
     if left_count not in range(4) or right_count not in range(4):
         raise ValueError("per-side cargo count must be 0..3")
-    if audit_flags & ~0x3F:
+    if audit_flags & ~0x7F:
         raise ValueError("invalid cargo audit flags")
     if not 0 <= audit_id <= 0xFF or not 0 <= total_count <= 0xFF:
         raise ValueError("invalid audit id or total count")

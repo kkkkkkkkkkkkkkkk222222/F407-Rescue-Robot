@@ -136,8 +136,9 @@ typedef enum {
   VISION_CMD_DISPERSE_PILE = 16,
   VISION_CMD_CHANGE_LANE = 17,
   VISION_CMD_CARGO_AUDIT = 18,
-  /* Safe-zone-only obstacle clearing. P2/P3 is the forward pickup distance,
-   * P4/P5 is the signed cargo parking offset (+right, -left), P6/P7 is zero. */
+  /* Safe-zone-only obstacle clearing. P2/P3=0 selects pixel-guided pickup;
+   * legacy 80..600 keeps fixed-distance pickup. P4/P5 is the signed cargo
+   * parking offset (+right, -left), P6/P7 is zero. */
   VISION_CMD_CLEAR_SAFE_ZONE = 19
 } VisionMissionCode;
 
@@ -147,6 +148,7 @@ typedef enum {
 #define VISION_AUDIT_INJURY_MIXED       0x08U
 #define VISION_AUDIT_STABLE             0x10U
 #define VISION_AUDIT_DESTINATION_INJURY 0x20U
+#define VISION_AUDIT_SWEEP_PICKUP       0x40U
 /* UNKNOWN_PRESENT may describe cargo inside the overall claw ROI whose side
  * cannot be assigned. total_count may therefore exceed left_count+right_count;
  * the audit is retained for no-side DISPERSE but is invalid for direct GRAB. */

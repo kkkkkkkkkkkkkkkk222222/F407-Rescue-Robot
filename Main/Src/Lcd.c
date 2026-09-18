@@ -625,6 +625,8 @@ static const char *task_state_name(TaskState state)
     case TASK_SAFE_SWEEP:        return "SWEEP";
     case TASK_SAFE_SWEEP_DONE:   return "SWPDONE";
     case TASK_BOUNDARY_RECOVER:  return "EDGE";
+    case TASK_SAFE_SWEEP_APPROACH:return "SWPAPP";
+    case TASK_SAFE_SWEEP_AUDIT:  return "SWPAUD";
     default:                     return "STOP";
   }
 }

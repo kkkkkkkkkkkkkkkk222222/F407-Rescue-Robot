@@ -648,3 +648,18 @@ RUN         停车并复位MCU，重新进入正常模式
 - 现在常规跟踪、聚集水平对正和普通125°对正阶段第一次收到HOLD即记录本地时间并停车；500 ms内没有新的APPROACH_TARGET则进入mode24，mode24静止500 ms后进入mode3 SEARCH。任何新APP帧都会清除HOLD计时并继续原目标。
 - 已经进入普通/聚集相机到140°、140°稳定或聚集夹内审核的阶段后，底盘不再依赖目标坐标，继续执行本地收尾动作；HOLD不再把这些阶段冻结成永久等待。
 - 上位机看到新鲜mode24或mode3后必须清除旧selected_batch、锁定track和APP命令，等待动作后的新帧重新SEARCH；不能继续用旧APP坐标把F407拉回已丢失目标。
+
+## 81. 2026-09-18 开局藏堆恢复与1秒投送等待
+
+- 对齐上位机`codex/gamepad-teleop@833e468`。F407原有`STASH_NONEMPTY`实现保持不变：INITIAL_STASH审核只要求非空且3个不同audit_id，类别/数量/左右表达变化不清零；抓前和mode23抓后使用同一规则。
+- mode23合法进入mode22时保留`audit_initial_stash`；随后NAV进入`route_to_stash`，到藏点`RELEASE_BOTH`即使audit_valid仍允许，完成上报mode34并由上位机发送RETURN。藏堆不设置`first_delivery_done`。
+- 开局靠近、空爪或审核失败回mode3时，上位机现在回INITIAL_OBSERVE重新尝试，不再误入正式SEARCH。F407无需放宽SEARCH状态下旧RELEASE/DISPERSE。
+- 上位机投送视觉只观察1秒；F407的`APP_DELIVERY_VERIFY_WAIT_MS`同步由1200 ms改为1000 ms，之后收到TASK_COMPLETE即可进入mode16。
+
+## 82. 2026-09-18 无测距视觉扫障
+
+- 对齐上位机`codex/gamepad-teleop@cec923c`。CLEAR_SAFE_ZONE允许P2/P3=0进入视觉取障；旧80～600 mm固定距离分支继续兼容。P4/P5仍是原物资暂放横移±150 mm。
+- mode39侧放原物资并回走廊中心后，视觉分支进入mode42。mode42只接收0x09障碍像素坐标，复用正常相机/水平PID；HOLD只让扫障内部回到搜索，不进入普通SEARCH，也不清除原物资清单和目的地。
+- 相机到140°稳定后进入mode43并置CLAW_VISIBLE。P5 bit6新增`AUDIT_SWEEP_PICKUP`，只有mode43接受；3个不同audit_id非空即置AUDIT_VALID，危险、伤员、未知和跨中线均允许，空审核清零。收到GRAB后Touch合爪并回mode39。
+- F407保存CLEAR接受时的走廊中心x/y和锁存航向。视觉靠近允许转向，抓障后按二维坐标转向并返回中心，再恢复原航向；不得用累计path直接当直线倒车距离。随后侧移放障碍、回中心、取回原物资，mode23正常复审后mode40。
+- mode41或普通SEARCH会清除扫障临时上下文；mode23前清除特殊审核计数，正式危险拒抓、initial stash、20°观察、STAGE/ALIGN/ENTER保持原语义。

@@ -372,6 +372,11 @@
 #define APP_SAFE_SWEEP_FORWARD_SPEED_MM_S   300.0f
 #define APP_SAFE_SWEEP_RETURN_SPEED_MM_S    350.0f
 #define APP_SAFE_SWEEP_MODE39_HOLD_MS         500U
+#define APP_SAFE_SWEEP_SEARCH_SPEED_MM_S      160.0f
+#define APP_SAFE_SWEEP_APPROACH_SPEED_MM_S    250.0f
+#define APP_SAFE_SWEEP_RETURN_TOLERANCE_MM     30.0f
+#define APP_SAFE_SWEEP_RETURN_REALIGN_DEG       8.0f
+#define APP_SAFE_SWEEP_AUDIT_TIMEOUT_MS       3500U
 /* Normal autonomous motion turns back at 30 cm from the 3 m x 3 m map edge.
  * The deliberate final safe-zone push is allowed to approach within 5 cm. */
 #define APP_FIELD_EDGE_ABORT_MARGIN_MM       300.0f
@@ -384,7 +389,7 @@
 #define APP_LIFT_TRAVEL_ANGLE             85U
 #define APP_DELIVERY_CAMERA_ANGLE         120U
 #define APP_DELIVERY_CAMERA_SETTLE_MS     300U
-#define APP_DELIVERY_VERIFY_WAIT_MS       1200U
+#define APP_DELIVERY_VERIFY_WAIT_MS       1000U
 #define APP_DELIVERY_EXIT_DISTANCE_M       0.30f
 #define APP_DELIVERY_EXIT_SPEED_MM_S      400.0f
 #define APP_RETURN_CENTER_SPEED_MM_S       800.0f

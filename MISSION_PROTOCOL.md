@@ -1,6 +1,6 @@
 # 连续物资抓取与分区投送流程
 
-本固件以`danmo-teng/shijue_fangan`的`codex/gamepad-teleop@e5fb078`为对齐基线，并扩展最终走廊扫障、边界回头和STAGE对正迟滞。运行模式为`APP_ENABLE_TASK=1`，RDK X5与F407使用USART3（PD8 TX、PD9 RX）、115200 8N1、3.3 V TTL和公共15字节帧。
+本固件以`danmo-teng/shijue_fangan`的`codex/gamepad-teleop@cec923c`为对齐基线，并扩展无测距视觉扫障、边界回头和STAGE对正迟滞。运行模式为`APP_ENABLE_TASK=1`，RDK X5与F407使用USART3（PD8 TX、PD9 RX）、115200 8N1、3.3 V TTL和公共15字节帧。
 
 ## 整体流程
 
@@ -15,10 +15,11 @@
 8. mode21累计慢爬500 mm仍未得到两张一致非空审核时，F407停车进入`APPROACH_RECOVER`，随后回到SEARCH重新选择目标；不会再执行140→90°抬头后重新低头继续推物块的循环。
 9. 抓前3帧合法后F407置`AUDIT_VALID`，上位机才发送GRAB。审核含核心或mixed时，F407先以180 mm/s编码器前进50 mm，再Touch合爪；重复GRAB只ACK。合爪完成不直接进入mode22，而是清除旧审核并进入mode23，保持140°、CLAW_VISIBLE和GRIPPER_CLOSED。抓后重新取得3帧：合法置AUDIT_VALID并进入mode22，空爪双开回SEARCH，非法保持mode23并允许释放/分离。mode22才接受NAV。
    mode23不会无限等待：140°主窗口3.5 s→138°短暂偏视后回140°重审3.5 s→142°短暂偏视后回140°最终重审3.5 s；仍无法形成3帧则双开回SEARCH。稳定非法审核等待上位机动作4 s，超时也双开回SEARCH，不会伪造合法。同一合法序列中任意一帧含core或mixed，都锁存核心证据用于50 mm前移。
+   开局临时藏堆是独立语义：CARGO_AUDIT置`INITIAL_STASH`时，只要`total_count>0`就按`STASH_NONEMPTY`累计3个不同audit_id，忽略类别、数量变化、危险/未知/伤员混装、左右饱和及分配不明；该规则同时适用于合爪前和mode23抓后复审。mode22接收NAV后锁存`route_to_stash`，到藏点允许`RELEASE_BOTH`，且藏堆不会置`first_delivery_done`。
 10. 抓取闭合后，上位机先用带`STAGE_ONLY(bit6)`的`NAVIGATE_WAYPOINT`引导到安全区预备点（上位机`5b6164f`当前配置为入口前600 mm）。F407继续使用H/D导航，但到`D=0`只停车、把摄像头抬到120°、置`DISTANCE_DONE=1`并保持`mode=10`，严禁启动旧安全区补推。藏堆和返中命令不使用该标志，原流程不变。
 11. 上位机随后发送第一次`ALIGN_SAFE_ZONE`：P6/P7为红方90°或蓝方270°，F407用IMU原地对正，并确保摄像头120°命令后至少稳定300 ms。首次进入1.5°，稳定期使用4°迟滞窗口，避免IMU小幅波动反复重启ALIGN；完成后上报`mode=11`。上位机连续3帧冻结安全区框后发送第二次带`VISUAL_CORRECTION_VALID(bit6)`的ALIGN；P2/P3为有符号水平像素误差而不是角度。F407按可标定焦距把像素误差转换为一次相对转角，最大限制±15°，完成后再次上报新鲜`mode=11`并锁存最终航向。视觉5秒失败时，上位机跳过第二次ALIGN，直接沿第一次90°/270°结果推进。
-12. 第二次视觉ALIGN完成后，上位机才检查最终推进走廊。冻结框只用于计算视觉修正量；车头转动完成后必须设置新frame floor，并用转向后的新鲜`safe_bbox`构造走廊，不能继续优先使用转向前的`locked_safe_bbox`。首件正式绿色若走廊内存在任意非安全区物体，后续投送若存在危险物或伤员，可发送`CLEAR_SAFE_ZONE=0x13`：P2/P3为80～600 mm、已经扣除相机/定位参考点到夹爪入口机械偏移后的实际底盘前进距离；P4/P5为当前货物临时停放方向，普通/核心填`+150`（车体右侧），伤员填`-150`（车体左侧）；P6/P7为0。走廊候选必须排除当前正在夹爪内运送的物资，但不能无条件排除画面底部近场的所有目标；与carried类别/框不一致的近场危险物或伤员仍是障碍。F407以mode39执行“侧放当前货物→回中→前进抓障碍→向相反侧放障碍→回预备点→重新夹回原货物→回中”，完成后额外保持mode39 500 ms，再进入mode23重新做三帧夹内审核；合法后上报mode40，要求上位机重新执行两次ALIGN，不能直接ENTER。
-13. `ENTER_SAFE_ZONE`必须置`DRIVE_STRAIGHT`、清除`DISTANCE_VALID`且P2～P5为0；视觉ALIGN成功时bit6=1、清除`USE_FINAL_HEADING`且P6/P7=0，定位降级时bit6=0、置`USE_FINAL_HEADING`并发送红9000/蓝27000。F407本地编码器总目标为600 mm：前400 mm使用既有接近减速，随后以300 mm/s最终补推200 mm并保留1200 ms接触保护；该主动推进阶段把地图边界保护放宽到距边5 cm。停车、双爪全开且相机120°稳定300 ms后才上报mode15。
+12. 第二次视觉ALIGN完成后，上位机才检查最终推进走廊。无障碍时不发送0x13，直接沿原ENTER流程。发现障碍时发送`CLEAR_SAFE_ZONE=0x13`：P2/P3为0表示视觉引导取障，P4/P5为当前货物临时停放方向（普通/核心`+150`、伤员`-150`），P6/P7为0。F407先以mode39侧放原物资并回走廊中心，进入mode42接收障碍像素APPROACH；相机140°后进入mode43，只接受P5 bit6=`AUDIT_SWEEP_PICKUP`的专用审核，3个不同audit_id非空即置AUDIT_VALID，危险、伤员、未知和左右不明均允许。GRAB后回mode39，依据保存的二维位姿返回走廊中心、移走障碍并取回原物资；随后mode23正常复审，合法上报mode40并重新执行两次ALIGN。旧80～600 mm固定距离CLEAR仍兼容，但新流程不依赖homography。
+13. `ENTER_SAFE_ZONE`必须置`DRIVE_STRAIGHT`、清除`DISTANCE_VALID`且P2～P5为0；视觉ALIGN成功时bit6=1、清除`USE_FINAL_HEADING`且P6/P7=0，定位降级时bit6=0、置`USE_FINAL_HEADING`并发送红9000/蓝27000。F407本地编码器总目标为600 mm：前400 mm使用既有接近减速，随后以300 mm/s最终补推200 mm并保留1200 ms接触保护；该主动推进阶段把地图边界保护放宽到距边5 cm。停车、双爪全开且相机120°稳定300 ms后上报mode15；收到TASK_COMPLETE后至少完成1000 ms本地投送观察等待，再进入mode16退出。
 14. 除主动安全区推进和既有退出/返中外，定位到3 m×3 m地图任一边≤300 mm时，F407立即取消当前动作、张开夹爪、原地转向场地中心并上报mode41；随后以300 mm/s向场内移动到距边≥400 mm，才进入mode3重新SEARCH，避免在300 mm阈值处反复触发EDGE→SEARCH→EDGE。上位机看到mode41必须清除锁定批次和动作上下文，不能继续重发旧NAV/APPROACH。
 15. 收到`TASK_COMPLETE`进入mode16，以400 mm/s后退0.30 m。上位机看到mode16或17后持续发送RETURN H/D；mode16可校验、缓存并ACK RETURN以解除PAUSE，但必须继续完成剩余本地后退，不提前切换或重置距离。随后mode17直接使用最新RETURN返中，D=0后进入mode3 SEARCH。
 
@@ -89,10 +90,11 @@ A3 B3 12 10 02 80 02 00 00 00 01 09 DD FD C3
 - `APPROACH_TARGET`的P2/P3和P4/P5分别为原生图像X/Y；完整流程激活后它是靠近控制的唯一坐标源。F407不再按250 ms帧龄自动减速；上位机明确发送HOLD后立即停车，常规APPROACH持续HOLD 500 ms会转mode24并回SEARCH，避免永久停在mode20。PAUSE仍是真正冻结，不参与该恢复。
 - 普通目标在140°稳定500 ms后进入mode21并以180 mm/s最多慢爬500 mm。所有审核统一要求3个不同audit_id语义一致，第三帧后合法才置AUDIT_VALID。mode23表示合爪后复审，mode22表示抓后审核合法并允许NAV。
 - `CARGO_AUDIT`按字节编码左右类别、数量、审核标志、audit_id和总数量；相同audit_id的重复传输不增加普通抓取计数。`UNKNOWN_PRESENT=1`时允许`total_count > left_count + right_count`，表示物体在大ROI内但无法分侧；F407接收并锁存该审核，但禁止直接GRAB，只允许无SIDE_VALID的DISPERSE执行20°观察。带SIDE_VALID的DISPERSE仍要求保留侧count>0。`AUDIT_DESTINATION_INJURY`继续作为本地伤员合法性复核，不自行改变上位机确认的目的地。
+- `AUDIT_SWEEP_PICKUP=P5 bit6(0x40)`仅允许mode43扫障夹内审核使用；其他状态收到该特殊审核拒绝。mode43只按非空和不同audit_id累计，不套用正式物资合法性，空审核立即清零连续计数；退出mode43后清除此特殊审核上下文。
 - 非法组合只根据摄像头3为140°时的专用夹爪ROI分离。普通Touch为左78°/右102°；第一次带侧曲线和mode35后的后续带侧曲线均使用15°保持（保留左63°或保留右117°）。普通`RELEASE_LEFT/RIGHT`单侧释放独立使用25°强保持（保留左53°或保留右127°）。上位机选侧遵循绿色优先的确定性策略；mode35完成且相机稳定后F407置`CLAW_VISIBLE`并等待新frame floor后的ROI审核。
 - 首件绿色若在140°ROI中与其他物资挤在中心且曲线无法取出，上位机可发送`DISPERSE_PILE + FIRST_GREEN_BUMP(bit5)`，不得同时置SIDE_VALID/TARGET_RIGHT。F407仅在首件尚未完成、审核至少2件且含绿色时接受，并且每轮任务最多一次：后退0.10 m→Touch闭爪→前进0.20 m→后退0.10 m→双爪全开→直接回SEARCH。该动作不改变无侧DISPERSE的20°观察语义。
 - 临时藏堆NAV不使用`STAGE_ONLY`，也不执行任何安全区补推；到点后`RELEASE_BOTH`。释放完成后至返中完成期间，F407拒绝`APPROACH_TARGET`和`DISPERSE_PILE`，避免残留找物命令抢占藏堆回程。第一条`RETURN_CENTER`先触发F407保持释放航向直退0.35 m，编码器累计距离且IMU修正航向；退到安全距离后才使用上位机持续更新的H原地调头并按D返中。该退让只对临时藏堆生效，正式安全区投送仍使用既有mode16后退0.30 m，不会重复后退。
 - `YIELD_BACKOFF`只在F407已确认完成普通单侧释放且`cargo_recheck_pending=1`时接受，该路径保持25°。聚集APPROACH保持双爪Open，mode38审核后进入mode37；所有带侧DISPERSE曲线都使用15°保持。不带SIDE_VALID只执行20°观察并以mode35请求新审核。
 - `RELEASE_BOTH`只表示真实双爪全开并以mode34完成；20°观察必须使用无`SIDE_VALID`的`DISPERSE_PILE`并以mode35完成，两种动作不再隐式互换。
-- 对外mode映射为`3 SEARCH、15 DELIVERY_VERIFY、16 EXIT_SAFE_ZONE、17 FACE_FIELD_CENTER、18 STOPPED、20 APPROACH_TARGET、21 CAPTURE_AUDIT、22 CAPTURE_DONE、23 POST_GRAB_AUDIT、30 YIELD_DONE、31 ESCAPE_DONE、32/33/34 RELEASE_DONE、35 DISPERSE_DONE、36 LANE_DONE、37 DISPERSE_READY、38 CLUSTER_CAPTURE_AUDIT、39 SAFE_SWEEP、40 SAFE_SWEEP_DONE、41 BOUNDARY_RECOVER`。
+- 对外mode映射为`3 SEARCH、15 DELIVERY_VERIFY、16 EXIT_SAFE_ZONE、17 FACE_FIELD_CENTER、18 STOPPED、20 APPROACH_TARGET、21 CAPTURE_AUDIT、22 CAPTURE_DONE、23 POST_GRAB_AUDIT、30 YIELD_DONE、31 ESCAPE_DONE、32/33/34 RELEASE_DONE、35 DISPERSE_DONE、36 LANE_DONE、37 DISPERSE_READY、38 CLUSTER_CAPTURE_AUDIT、39 SAFE_SWEEP、40 SAFE_SWEEP_DONE、41 BOUNDARY_RECOVER、42 SAFE_SWEEP_APPROACH、43 SAFE_SWEEP_AUDIT`。
 - TASK_COMPLETE后的顺序为mode16本地后退、mode17执行RETURN H/D、D=0后mode3。普通SEARCH完成120°和90°两圈仍无目标时，同样允许上位机在mode3发送RETURN_CENTER，使空爪底盘进入mode17回中心。mode3后的1500 ms交接窗口仍会确认重复RETURN帧SEQ。

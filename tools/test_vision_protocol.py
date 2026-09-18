@@ -260,6 +260,11 @@ class VisionProtocolTests(unittest.TestCase):
             protocol.CMD_VALID,
             220, -150, 0,
         )
+        visual_pickup = protocol.mission_frame(
+            0x49, protocol.CMD_CLEAR_SAFE_ZONE,
+            protocol.CMD_VALID | protocol.CMD_RED_SIDE,
+            0, 150, 0,
+        )
         self.assertEqual(protocol.parse_frame(material)[2][0], 0x13)
         self.assertEqual(
             int.from_bytes(protocol.parse_frame(material)[2][2:4], "big"),
@@ -270,6 +275,10 @@ class VisionProtocolTests(unittest.TestCase):
                 protocol.parse_frame(injury)[2][4:6], "big", signed=True,
             ),
             -150,
+        )
+        self.assertEqual(
+            int.from_bytes(protocol.parse_frame(visual_pickup)[2][2:4], "big"),
+            0,
         )
         for bad_forward, bad_side in ((79, 150), (601, 150), (200, 100)):
             with self.assertRaises(ValueError):
@@ -295,6 +304,36 @@ class VisionProtocolTests(unittest.TestCase):
             )["mode"],
             41,
         )
+        self.assertEqual(
+            protocol.parse_stm_status(
+                protocol.stm_status_frame(4, 0x0C, 42, 12000, 0x49, 0)
+            )["mode"],
+            42,
+        )
+        self.assertEqual(
+            protocol.parse_stm_status(
+                protocol.stm_status_frame(5, 0x11, 43, 14000, 0x4A, 0)
+            )["mode"],
+            43,
+        )
+
+    def test_sweep_pickup_audit_flag(self) -> None:
+        frame = protocol.cargo_audit_frame(
+            0x4A,
+            protocol.CARGO_DANGER,
+            protocol.CARGO_UNKNOWN,
+            1, 1,
+            protocol.AUDIT_SWEEP_PICKUP | protocol.AUDIT_DANGER_PRESENT |
+            protocol.AUDIT_UNKNOWN_PRESENT,
+            0x31,
+            2,
+        )
+        payload = protocol.parse_frame(frame)[2]
+        self.assertTrue(payload[5] & protocol.AUDIT_SWEEP_PICKUP)
+        self.assertTrue(payload[5] & protocol.AUDIT_DANGER_PRESENT)
+        self.assertTrue(payload[5] & protocol.AUDIT_UNKNOWN_PRESENT)
+        self.assertEqual(payload[6], 0x31)
+        self.assertEqual(payload[7], 2)
 
     def test_three_frame_normal_audit_and_unknown_side_audit(self) -> None:
         first = protocol.cargo_audit_frame(
@@ -325,6 +364,47 @@ class VisionProtocolTests(unittest.TestCase):
         self.assertFalse(second_payload[5] & protocol.AUDIT_STABLE)
         self.assertTrue(third_payload[5] & protocol.AUDIT_STABLE)
         self.assertEqual(first_payload[2:5], second_payload[2:5])
+
+    def test_initial_stash_accepts_nonempty_mixed_audit_frames(self) -> None:
+        """Opening-stash frames retain their permissive wire semantics.
+
+        Side counts are saturated diagnostics and may not add up to the raw
+        total; danger/unknown flags remain visible but do not change the
+        INITIAL_STASH marker consumed by the F407 STASH_NONEMPTY gate.
+        """
+        frames = [
+            protocol.cargo_audit_frame(
+                0x60 + index,
+                left_class,
+                right_class,
+                left_count,
+                right_count,
+                protocol.AUDIT_INITIAL_STASH | extra_flags |
+                (protocol.AUDIT_STABLE if index == 2 else 0),
+                0x70 + index,
+                total_count,
+            )
+            for index, (
+                left_class, right_class, left_count, right_count,
+                extra_flags, total_count,
+            ) in enumerate((
+                (protocol.CARGO_GREEN, protocol.CARGO_CORE, 1, 1, 0, 2),
+                (protocol.CARGO_DANGER, protocol.CARGO_UNKNOWN, 3, 3,
+                 protocol.AUDIT_DANGER_PRESENT |
+                 protocol.AUDIT_UNKNOWN_PRESENT, 7),
+                (protocol.CARGO_INJURED, protocol.CARGO_MIXED_MATERIAL, 1, 3,
+                 protocol.AUDIT_INJURY_MIXED, 5),
+            ))
+        ]
+        payloads = [protocol.parse_frame(frame)[2] for frame in frames]
+        self.assertEqual([payload[6] for payload in payloads], [0x70, 0x71, 0x72])
+        self.assertEqual([payload[7] for payload in payloads], [2, 7, 5])
+        self.assertTrue(all(
+            payload[5] & protocol.AUDIT_INITIAL_STASH for payload in payloads
+        ))
+        self.assertTrue(payloads[1][5] & protocol.AUDIT_DANGER_PRESENT)
+        self.assertTrue(payloads[1][5] & protocol.AUDIT_UNKNOWN_PRESENT)
+        self.assertTrue(payloads[2][5] & protocol.AUDIT_INJURY_MIXED)
 
         unassigned = protocol.cargo_audit_frame(
             0x53,

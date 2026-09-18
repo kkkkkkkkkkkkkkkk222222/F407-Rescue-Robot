@@ -298,15 +298,16 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
   if ((code == VISION_CMD_CARGO_AUDIT) &&
       ((payload[2] > VISION_CARGO_MIXED_MATERIAL) ||
        (payload[3] > VISION_CARGO_MIXED_MATERIAL) ||
-       ((payload[4] & 0xF0U) != 0U) || ((payload[5] & 0xC0U) != 0U))) {
+       ((payload[4] & 0xF0U) != 0U) || ((payload[5] & 0x80U) != 0U))) {
     return;
   }
   if (code == VISION_CMD_CLEAR_SAFE_ZONE) {
     const uint8_t clear_allowed = VISION_CMD_VALID | VISION_CMD_RED_SIDE;
     const int32_t lateral_abs = (arg_b < 0) ? -(int32_t)arg_b : arg_b;
     if (((flags & (uint8_t)~clear_allowed) != 0U) ||
-        (arg_a < APP_SAFE_SWEEP_MIN_FORWARD_MM) ||
-        (arg_a > APP_SAFE_SWEEP_MAX_FORWARD_MM) ||
+        ((arg_a != 0) &&
+         ((arg_a < APP_SAFE_SWEEP_MIN_FORWARD_MM) ||
+          (arg_a > APP_SAFE_SWEEP_MAX_FORWARD_MM))) ||
         (lateral_abs != APP_SAFE_SWEEP_LATERAL_MM) ||
         (heading != 0U)) {
       return;

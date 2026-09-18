@@ -104,6 +104,8 @@ typedef enum {
   SAFE_SWEEP_RETURN_CENTER_OPEN,
   SAFE_SWEEP_APPROACH_OBSTACLE,
   SAFE_SWEEP_GRAB_OBSTACLE,
+  SAFE_SWEEP_RETURN_PICKUP_CENTER,
+  SAFE_SWEEP_RESTORE_PICKUP_HEADING,
   SAFE_SWEEP_MOVE_OBSTACLE_ASIDE,
   SAFE_SWEEP_RELEASE_OBSTACLE,
   SAFE_SWEEP_RETURN_CENTER_AFTER_RELEASE,
@@ -113,6 +115,14 @@ typedef enum {
   SAFE_SWEEP_RECENTER_LOAD,
   SAFE_SWEEP_MODE39_HOLD
 } SafeSweepPhase;
+
+typedef enum {
+  SWEEP_PICKUP_SEARCH = 0,
+  SWEEP_PICKUP_TRACK,
+  SWEEP_PICKUP_ALIGN_125,
+  SWEEP_PICKUP_CAMERA_TO_140,
+  SWEEP_PICKUP_SETTLE_140
+} SweepPickupPhase;
 
 static volatile TaskStatus task_status;
 static Pid_t steering_pid;
@@ -225,6 +235,17 @@ static uint32_t safe_sweep_phase_path_mm;
 static bool safe_sweep_phase_path_valid;
 static float safe_sweep_heading_deg;
 static bool safe_sweep_recheck_pending;
+static bool safe_sweep_visual_pickup;
+static int32_t safe_sweep_center_x_mm;
+static int32_t safe_sweep_center_y_mm;
+static bool safe_sweep_return_aligned;
+static SweepPickupPhase sweep_pickup_phase;
+static bool sweep_pickup_target_active;
+static uint8_t sweep_audit_consistent_count;
+static uint8_t sweep_audit_last_id;
+static bool sweep_audit_last_id_valid;
+static bool sweep_audit_valid;
+static uint32_t sweep_audit_started_ms;
 static float boundary_recovery_heading_deg;
 static bool boundary_claw_opened;
 static bool boundary_turn_done;
@@ -240,6 +261,7 @@ static bool delivery_enter_command_ok(const VisionMissionCommand *command);
 static float nav_yaw(float heading_error_deg);
 static bool task_safe_sweep_command_valid(
     const VisionMissionCommand *command);
+static void task_reset_sweep_audit(uint32_t now_ms);
 
 static void nav_reset_progress(uint32_t now_ms)
 {
@@ -796,7 +818,9 @@ static void task_publish_status(uint32_t now_ms)
   flags |= task_status.gripper_closed ? VISION_STM_GRIPPER_CLOSED : 0U;
   flags |= task_status.motors_active ? VISION_STM_MOTORS_ACTIVE : 0U;
   flags |= task_status.auto_approach ? VISION_STM_AUTO_APPROACH : 0U;
-  flags |= (audit_received && audit_valid) ?
+  flags |= (((state == TASK_SAFE_SWEEP_AUDIT) && sweep_audit_valid) ||
+            ((state != TASK_SAFE_SWEEP_AUDIT) &&
+             audit_received && audit_valid)) ?
       VISION_STM_AUDIT_VALID : 0U;
   flags |= ((state == TASK_NAVIGATE) && distance_command_done) ?
       VISION_STM_DISTANCE_DONE : 0U;
@@ -837,7 +861,8 @@ static void task_enter(TaskState next, uint32_t now_ms)
   task_status.nav_locked_heading_deg = 0U;
   task_status.claw_visible =
       (((next >= TASK_GRAB_OBSERVE) && (next <= TASK_CLOSE_CLAW)) ||
-       (next == TASK_POST_GRAB_AUDIT));
+       (next == TASK_POST_GRAB_AUDIT) ||
+       (next == TASK_SAFE_SWEEP_AUDIT));
   state_started_ms = now_ms;
   step_started_ms = now_ms;
   pose_invalid_pending = false;
@@ -894,6 +919,11 @@ static void task_enter(TaskState next, uint32_t now_ms)
     cluster_target_active = false;
     cluster_claws_ready = false;
     safe_sweep_recheck_pending = false;
+    safe_sweep_visual_pickup = false;
+    sweep_pickup_target_active = false;
+    sweep_audit_consistent_count = 0U;
+    sweep_audit_last_id_valid = false;
+    sweep_audit_valid = false;
     audit_consistent_count = 0U;
     audit_last_left_class = 0U;
     audit_last_right_class = 0U;
@@ -942,6 +972,21 @@ static void task_enter(TaskState next, uint32_t now_ms)
     task_status.nav_heading_locked = true;
     task_status.nav_locked_heading_deg =
         (uint16_t)(safe_sweep_heading_deg + 0.5f) % 360U;
+  } else if (next == TASK_SAFE_SWEEP_APPROACH) {
+    sweep_pickup_phase = SWEEP_PICKUP_SEARCH;
+    sweep_pickup_target_active = false;
+    approach_report_generation_valid = false;
+    task_reset_tracking();
+    Camera_SetAngle(APP_SEARCH_HIGH_CAMERA_ANGLE);
+    camera_angle = (float)APP_SEARCH_HIGH_CAMERA_ANGLE;
+  } else if (next == TASK_SAFE_SWEEP_AUDIT) {
+    sweep_audit_consistent_count = 0U;
+    sweep_audit_last_id_valid = false;
+    sweep_audit_valid = false;
+    sweep_audit_started_ms = now_ms;
+    task_status.audit_ready = false;
+    task_status.audit_valid = false;
+    task_status.claw_visible = true;
   } else if (next == TASK_BOUNDARY_RECOVER) {
     boundary_claw_opened = false;
     boundary_turn_done = false;
@@ -1079,6 +1124,17 @@ static void task_initialize(uint32_t now_ms)
   safe_sweep_phase_path_valid = false;
   safe_sweep_heading_deg = 0.0f;
   safe_sweep_recheck_pending = false;
+  safe_sweep_visual_pickup = false;
+  safe_sweep_center_x_mm = 0;
+  safe_sweep_center_y_mm = 0;
+  safe_sweep_return_aligned = false;
+  sweep_pickup_phase = SWEEP_PICKUP_SEARCH;
+  sweep_pickup_target_active = false;
+  sweep_audit_consistent_count = 0U;
+  sweep_audit_last_id = 0U;
+  sweep_audit_last_id_valid = false;
+  sweep_audit_valid = false;
+  sweep_audit_started_ms = now_ms;
   boundary_recovery_heading_deg = 0.0f;
   boundary_claw_opened = false;
   boundary_turn_done = false;
@@ -2032,8 +2088,9 @@ static bool task_safe_sweep_command_valid(
   const int32_t lateral_abs = (command->target_y_mm < 0) ?
       -(int32_t)command->target_y_mm : command->target_y_mm;
   return ((command->flags & (uint8_t)~allowed) == 0U) &&
-         (command->target_x_mm >= APP_SAFE_SWEEP_MIN_FORWARD_MM) &&
-         (command->target_x_mm <= APP_SAFE_SWEEP_MAX_FORWARD_MM) &&
+         ((command->target_x_mm == 0) ||
+          ((command->target_x_mm >= APP_SAFE_SWEEP_MIN_FORWARD_MM) &&
+           (command->target_x_mm <= APP_SAFE_SWEEP_MAX_FORWARD_MM))) &&
          (lateral_abs == APP_SAFE_SWEEP_LATERAL_MM) &&
          (command->heading_cdeg == 0U);
 }
@@ -3061,15 +3118,98 @@ static void task_begin_safe_sweep(const VisionMissionCommand *command,
                                   uint32_t now_ms)
 {
   const float locked_heading = safe_align_target_deg;
+  const LocationPose pose = Location_GetPose();
   task_enter(TASK_SAFE_SWEEP, now_ms);
   safe_sweep_forward_mm = command->target_x_mm;
   safe_sweep_lateral_mm = command->target_y_mm;
   safe_sweep_heading_deg = task_heading_360(locked_heading);
+  safe_sweep_visual_pickup = command->target_x_mm == 0;
+  safe_sweep_center_x_mm = pose.x_mm;
+  safe_sweep_center_y_mm = pose.y_mm;
+  safe_sweep_return_aligned = false;
   safe_sweep_recheck_pending = true;
+  task_clear_audit_result();
   task_status.gripper_closed = true;
   task_status.nav_heading_locked = true;
   task_status.nav_locked_heading_deg =
       (uint16_t)(safe_sweep_heading_deg + 0.5f) % 360U;
+}
+
+static bool task_safe_sweep_return_to_center(uint32_t now_ms)
+{
+  LocationPose pose;
+  if (!task_get_location_pose(&pose, now_ms)) {
+    return false;
+  }
+  const float dx = (float)(safe_sweep_center_x_mm - pose.x_mm);
+  const float dy = (float)(safe_sweep_center_y_mm - pose.y_mm);
+  const float distance_mm = sqrtf(dx * dx + dy * dy);
+  if (distance_mm <= APP_SAFE_SWEEP_RETURN_TOLERANCE_MM) {
+    Motor_Stop();
+    task_status.motors_active = false;
+    safe_sweep_phase = SAFE_SWEEP_RESTORE_PICKUP_HEADING;
+    safe_sweep_return_aligned = false;
+    nav_ready = false;
+    step_started_ms = now_ms;
+    return true;
+  }
+
+  float target_heading_deg = atan2f(dy, dx) *
+      (180.0f / 3.14159265358979323846f);
+  target_heading_deg = task_heading_360(target_heading_deg);
+  const float current_heading_deg = (float)pose.heading_mdeg * 0.001f;
+  const float heading_error = task_wrap_angle(
+      target_heading_deg - current_heading_deg);
+  if (!safe_sweep_return_aligned) {
+    const MotorTurnStatus result = Motor_TurnAngle(heading_error);
+    task_status.motors_active = result == MOTOR_TURN_RUNNING;
+    if (result == MOTOR_TURN_DONE) {
+      Motor_Stop();
+      task_status.motors_active = false;
+      safe_sweep_return_aligned = true;
+    } else if ((result == MOTOR_TURN_FAULT) ||
+               (result == MOTOR_TURN_INVALID)) {
+      task_stop(TASK_FAULT_MOTOR, now_ms);
+    }
+    return false;
+  }
+  if (task_abs(heading_error) > APP_SAFE_SWEEP_RETURN_REALIGN_DEG) {
+    Motor_Stop();
+    task_status.motors_active = false;
+    safe_sweep_return_aligned = false;
+    return false;
+  }
+  Motor_Move(APP_SAFE_SWEEP_RETURN_SPEED_MM_S, 0.0f,
+             nav_yaw(heading_error));
+  task_status.motors_active = true;
+  return false;
+}
+
+static bool task_safe_sweep_restore_heading(uint32_t now_ms)
+{
+  const LocationPose pose = Location_GetPose();
+  if (!pose.valid) {
+    Motor_Stop();
+    task_status.motors_active = false;
+    return false;
+  }
+  const float current_heading_deg = (float)pose.heading_mdeg * 0.001f;
+  const float error_deg = task_wrap_angle(
+      safe_sweep_heading_deg - current_heading_deg);
+  const MotorTurnStatus result = Motor_TurnAngle(error_deg);
+  task_status.motors_active = result == MOTOR_TURN_RUNNING;
+  if (result == MOTOR_TURN_DONE) {
+    Motor_Stop();
+    task_status.motors_active = false;
+    safe_sweep_phase = SAFE_SWEEP_MOVE_OBSTACLE_ASIDE;
+    safe_sweep_phase_path_valid = false;
+    step_started_ms = now_ms;
+    return true;
+  }
+  if ((result == MOTOR_TURN_FAULT) || (result == MOTOR_TURN_INVALID)) {
+    task_stop(TASK_FAULT_MOTOR, now_ms);
+  }
+  return false;
 }
 
 static void task_process_safe_sweep(uint32_t now_ms)
@@ -3093,8 +3233,12 @@ static void task_process_safe_sweep(uint32_t now_ms)
       return;
 
     case SAFE_SWEEP_RETURN_CENTER_OPEN:
-      (void)task_safe_sweep_move(
-          0.0f, -lateral_speed, APP_SAFE_SWEEP_LATERAL_MM, now_ms);
+      if (task_safe_sweep_move(
+              0.0f, -lateral_speed, APP_SAFE_SWEEP_LATERAL_MM, now_ms) &&
+          safe_sweep_visual_pickup) {
+        task_enter(TASK_SAFE_SWEEP_APPROACH, now_ms);
+        task_status.gripper_closed = false;
+      }
       return;
 
     case SAFE_SWEEP_APPROACH_OBSTACLE:
@@ -3108,8 +3252,25 @@ static void task_process_safe_sweep(uint32_t now_ms)
       task_status.motors_active = false;
       if (Claw_Touch(now_ms)) {
         task_status.gripper_closed = true;
-        task_safe_sweep_advance(now_ms);
+        if (safe_sweep_visual_pickup) {
+          safe_sweep_phase = SAFE_SWEEP_RETURN_PICKUP_CENTER;
+          safe_sweep_return_aligned = false;
+          nav_ready = false;
+          step_started_ms = now_ms;
+        } else {
+          safe_sweep_phase = SAFE_SWEEP_MOVE_OBSTACLE_ASIDE;
+          safe_sweep_phase_path_valid = false;
+          step_started_ms = now_ms;
+        }
       }
+      return;
+
+    case SAFE_SWEEP_RETURN_PICKUP_CENTER:
+      (void)task_safe_sweep_return_to_center(now_ms);
+      return;
+
+    case SAFE_SWEEP_RESTORE_PICKUP_HEADING:
+      (void)task_safe_sweep_restore_heading(now_ms);
       return;
 
     case SAFE_SWEEP_MOVE_OBSTACLE_ASIDE:
@@ -3127,8 +3288,13 @@ static void task_process_safe_sweep(uint32_t now_ms)
       return;
 
     case SAFE_SWEEP_RETURN_CENTER_AFTER_RELEASE:
-      (void)task_safe_sweep_move(
-          0.0f, lateral_speed, APP_SAFE_SWEEP_LATERAL_MM, now_ms);
+      if (task_safe_sweep_move(
+              0.0f, lateral_speed, APP_SAFE_SWEEP_LATERAL_MM, now_ms) &&
+          safe_sweep_visual_pickup) {
+        safe_sweep_phase = SAFE_SWEEP_MOVE_TO_LOAD;
+        safe_sweep_phase_path_valid = false;
+        step_started_ms = now_ms;
+      }
       return;
 
     case SAFE_SWEEP_REVERSE_TO_STAGE:
@@ -3164,6 +3330,7 @@ static void task_process_safe_sweep(uint32_t now_ms)
           APP_SAFE_SWEEP_MODE39_HOLD_MS) {
         Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
         camera_angle = (float)APP_GRAB_VIEW_ANGLE;
+        task_reset_sweep_audit(now_ms);
         task_clear_audit_result();
         task_enter(TASK_POST_GRAB_AUDIT, now_ms);
         task_status.gripper_closed = true;
@@ -3174,6 +3341,192 @@ static void task_process_safe_sweep(uint32_t now_ms)
       task_stop(TASK_FAULT_INVALID_STATE, now_ms);
       return;
   }
+}
+
+static void task_reset_sweep_audit(uint32_t now_ms)
+{
+  sweep_audit_consistent_count = 0U;
+  sweep_audit_last_id = 0U;
+  sweep_audit_last_id_valid = false;
+  sweep_audit_valid = false;
+  sweep_audit_started_ms = now_ms;
+  task_status.audit_ready = false;
+  task_status.audit_valid = false;
+  task_status.audit_left_class = VISION_CARGO_NONE;
+  task_status.audit_right_class = VISION_CARGO_NONE;
+  task_status.audit_total_count = 0U;
+}
+
+static void task_latch_sweep_audit(const VisionMissionCommand *command,
+                                   uint32_t now_ms)
+{
+  (void)now_ms;
+  if ((command->audit_flags & VISION_AUDIT_SWEEP_PICKUP) == 0U) {
+    return;
+  }
+  if (command->audit_total_count == 0U) {
+    sweep_audit_consistent_count = 0U;
+    sweep_audit_last_id_valid = false;
+    sweep_audit_valid = false;
+    task_status.audit_ready = false;
+    task_status.audit_valid = false;
+    task_status.audit_left_class = VISION_CARGO_NONE;
+    task_status.audit_right_class = VISION_CARGO_NONE;
+    task_status.audit_total_count = 0U;
+    return;
+  }
+  if (!sweep_audit_last_id_valid ||
+      (command->audit_id != sweep_audit_last_id)) {
+    if (sweep_audit_consistent_count < 255U) {
+      ++sweep_audit_consistent_count;
+    }
+    sweep_audit_last_id = command->audit_id;
+    sweep_audit_last_id_valid = true;
+  }
+  sweep_audit_valid = sweep_audit_consistent_count >= 3U;
+  task_status.audit_ready = sweep_audit_valid;
+  task_status.audit_valid = sweep_audit_valid;
+  task_status.audit_left_class = command->audit_left_class;
+  task_status.audit_right_class = command->audit_right_class;
+  task_status.audit_total_count = command->audit_total_count;
+}
+
+static void task_process_safe_sweep_approach(const VisionData *vision,
+                                             uint32_t now_ms)
+{
+  task_status.auto_approach = true;
+  const bool new_report = !approach_report_generation_valid ||
+      (vision->report_generation != approach_report_generation);
+  const bool target_visible = sweep_pickup_target_active &&
+      task_report_valid(vision);
+  if (new_report) {
+    approach_report_generation = vision->report_generation;
+    approach_report_generation_valid = true;
+  }
+
+  if (!sweep_pickup_target_active &&
+      (sweep_pickup_phase != SWEEP_PICKUP_CAMERA_TO_140) &&
+      (sweep_pickup_phase != SWEEP_PICKUP_SETTLE_140)) {
+    sweep_pickup_phase = SWEEP_PICKUP_SEARCH;
+  }
+
+  switch (sweep_pickup_phase) {
+    case SWEEP_PICKUP_SEARCH:
+      task_status.found = false;
+      if (target_visible && new_report) {
+        task_reset_tracking();
+        approach_speed_mm_s = APP_SAFE_SWEEP_APPROACH_SPEED_MM_S;
+        sweep_pickup_phase = SWEEP_PICKUP_TRACK;
+        (void)task_track_target(vision, true);
+        return;
+      }
+      Camera_SetAngle(APP_SEARCH_HIGH_CAMERA_ANGLE);
+      camera_angle = (float)APP_SEARCH_HIGH_CAMERA_ANGLE;
+      Motor_Move(0.0f, 0.0f, APP_SAFE_SWEEP_SEARCH_SPEED_MM_S);
+      task_status.motors_active = true;
+      return;
+
+    case SWEEP_PICKUP_TRACK:
+      if (!target_visible) {
+        sweep_pickup_phase = SWEEP_PICKUP_SEARCH;
+        task_reset_tracking();
+        return;
+      }
+      if (new_report) {
+        task_status.found = true;
+        approach_speed_mm_s = task_approach_speed(vision);
+        (void)task_track_target(vision, true);
+      }
+      if (Camera_GetAngle() >= APP_GRAB_ALIGN_CAMERA_ANGLE) {
+        Camera_SetAngle(APP_GRAB_ALIGN_CAMERA_ANGLE);
+        camera_angle = (float)APP_GRAB_ALIGN_CAMERA_ANGLE;
+        sweep_pickup_phase = SWEEP_PICKUP_ALIGN_125;
+        Motor_Stop();
+        task_status.motors_active = false;
+        return;
+      }
+      Motor_Move(task_approach_aligned_speed(approach_speed_mm_s),
+                 0.0f, task_approach_steering());
+      task_status.motors_active = true;
+      return;
+
+    case SWEEP_PICKUP_ALIGN_125:
+      Camera_SetAngle(APP_GRAB_ALIGN_CAMERA_ANGLE);
+      camera_angle = (float)APP_GRAB_ALIGN_CAMERA_ANGLE;
+      if (!target_visible) {
+        sweep_pickup_phase = SWEEP_PICKUP_SEARCH;
+        task_reset_tracking();
+        return;
+      }
+      if (new_report) {
+        task_status.found = true;
+        (void)task_track_target(vision, false);
+      }
+      if (tracking_filter_valid &&
+          (task_abs(filtered_target_x - (float)APP_VISION_TARGET_X) <=
+           APP_GRAB_ALIGN_X_ERROR_PX)) {
+        Motor_Stop();
+        task_status.motors_active = false;
+        sweep_pickup_phase = SWEEP_PICKUP_CAMERA_TO_140;
+        step_started_ms = now_ms;
+        return;
+      }
+      Motor_Move(0.0f, 0.0f, task_approach_steering());
+      task_status.motors_active = task_abs(steering_mm_s) > 0.5f;
+      return;
+
+    case SWEEP_PICKUP_CAMERA_TO_140:
+      Motor_Stop();
+      task_status.motors_active = false;
+      if (task_scan_camera_to(APP_GRAB_VIEW_ANGLE, now_ms)) {
+        sweep_pickup_phase = SWEEP_PICKUP_SETTLE_140;
+        step_started_ms = now_ms;
+      }
+      return;
+
+    case SWEEP_PICKUP_SETTLE_140:
+      Motor_Stop();
+      task_status.motors_active = false;
+      Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
+      camera_angle = (float)APP_GRAB_VIEW_ANGLE;
+      if ((uint32_t)(now_ms - step_started_ms) >=
+          APP_GRAB_CAMERA_SETTLE_MS) {
+        task_enter(TASK_SAFE_SWEEP_AUDIT, now_ms);
+        task_reset_sweep_audit(now_ms);
+      }
+      return;
+
+    default:
+      task_stop(TASK_FAULT_INVALID_STATE, now_ms);
+      return;
+  }
+}
+
+static void task_process_safe_sweep_audit(uint32_t now_ms)
+{
+  Motor_Stop();
+  task_status.motors_active = false;
+  task_status.auto_approach = true;
+  task_status.claw_visible = true;
+  Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
+  camera_angle = (float)APP_GRAB_VIEW_ANGLE;
+  if (!sweep_audit_valid &&
+      ((uint32_t)(now_ms - sweep_audit_started_ms) >=
+       APP_SAFE_SWEEP_AUDIT_TIMEOUT_MS)) {
+    task_enter(TASK_SAFE_SWEEP_APPROACH, now_ms);
+    sweep_pickup_phase = SWEEP_PICKUP_SEARCH;
+    sweep_pickup_target_active = false;
+  }
+}
+
+static void task_begin_sweep_obstacle_grab(uint32_t now_ms)
+{
+  task_enter(TASK_SAFE_SWEEP, now_ms);
+  safe_sweep_phase = SAFE_SWEEP_GRAB_OBSTACLE;
+  safe_sweep_phase_path_valid = false;
+  safe_sweep_return_aligned = false;
+  task_status.gripper_closed = false;
+  task_status.claw_visible = false;
 }
 
 static void task_process_remote_action(const VisionMissionCommand *command,
@@ -3419,7 +3772,11 @@ static void task_accept_mission(const VisionMissionCommand *command,
       approach_hold_pending = true;
       approach_hold_started_ms = now_ms;
     }
-    if ((state == TASK_NAVIGATE) && route_to_stash &&
+    if (state == TASK_SAFE_SWEEP_APPROACH) {
+      sweep_pickup_target_active = false;
+      sweep_pickup_phase = SWEEP_PICKUP_SEARCH;
+      task_reset_tracking();
+    } else if ((state == TASK_NAVIGATE) && route_to_stash &&
                !task_status.gripper_closed && nav_progress.valid &&
                (distance_command_done ||
                 (nav_progress.remaining_mm <=
@@ -3450,6 +3807,18 @@ static void task_accept_mission(const VisionMissionCommand *command,
         nav_forward_active = false;
       }
     }
+  } else if ((command->command == VISION_CMD_CARGO_AUDIT) &&
+             (state == TASK_SAFE_SWEEP_AUDIT) &&
+             ((command->audit_flags &
+               VISION_AUDIT_SWEEP_PICKUP) != 0U)) {
+    task_status.acknowledged_sequence = command->sequence;
+    task_latch_sweep_audit(command, now_ms);
+  } else if ((command->command == VISION_CMD_CARGO_AUDIT) &&
+             ((command->audit_flags &
+               VISION_AUDIT_SWEEP_PICKUP) != 0U)) {
+    /* The special permissive audit is valid only inside mode43. Never let it
+     * bypass ordinary cargo, initial-stash or post-grab legality rules. */
+    task_status.command_reject_reason = TASK_COMMAND_REJECT_STATE;
   } else if ((command->command == VISION_CMD_CARGO_AUDIT) &&
               (((state >= TASK_GRAB_OBSERVE) &&
                 (state <= TASK_GRAB_ROTATE)) ||
@@ -3483,6 +3852,14 @@ static void task_accept_mission(const VisionMissionCommand *command,
       cargo_recheck_pending = false;
       task_status.gripper_closed = false;
       task_enter(TASK_OPEN_CLAW, now_ms);
+    }
+  } else if ((command->command == VISION_CMD_APPROACH_TARGET) &&
+             (state == TASK_SAFE_SWEEP_APPROACH)) {
+    task_status.acknowledged_sequence = command->sequence;
+    sweep_pickup_target_active = true;
+    if (sweep_pickup_phase == SWEEP_PICKUP_SEARCH) {
+      sweep_pickup_phase = SWEEP_PICKUP_TRACK;
+      task_reset_tracking();
     }
   } else if ((command->command == VISION_CMD_APPROACH_TARGET) &&
               !stash_backoff_pending &&
@@ -3526,6 +3903,18 @@ static void task_accept_mission(const VisionMissionCommand *command,
     task_stop(TASK_FAULT_REMOTE_STOP, now_ms);
   } else if (state == TASK_STOPPED) {
     return;
+  } else if ((command->command == VISION_CMD_GRAB_CONFIRMED) &&
+             (state == TASK_SAFE_SWEEP_AUDIT) &&
+             sweep_audit_valid) {
+    task_status.acknowledged_sequence = command->sequence;
+    task_begin_sweep_obstacle_grab(now_ms);
+  } else if ((command->command == VISION_CMD_GRAB_CONFIRMED) &&
+             (state == TASK_SAFE_SWEEP) &&
+             safe_sweep_visual_pickup &&
+             (safe_sweep_phase >= SAFE_SWEEP_GRAB_OBSTACLE)) {
+    /* The upper computer repeats GRAB until it sees mode39. ACK without
+     * restarting the close, pose-return or obstacle-placement sequence. */
+    task_status.acknowledged_sequence = command->sequence;
   } else if ((command->command == VISION_CMD_GRAB_CONFIRMED) &&
              (state == TASK_DISPERSE_READY) &&
              audit_received && audit_valid &&
@@ -3937,6 +4326,7 @@ void Task_Process(uint32_t now_ms)
       (state != TASK_OPEN_CLAW) && (state != TASK_SEARCH) &&
       (state != TASK_APPROACH_RECOVER) &&
       (state != TASK_SAFE_SWEEP) &&
+      (state != TASK_SAFE_SWEEP_APPROACH) &&
       (state != TASK_BOUNDARY_RECOVER)) {
     if ((state == TASK_REMOTE_ACTION) && !remote_action.done) {
       task_pause_action(now_ms, true);
@@ -4068,6 +4458,14 @@ void Task_Process(uint32_t now_ms)
 
     case TASK_SAFE_SWEEP:
       task_process_safe_sweep(now_ms);
+      break;
+
+    case TASK_SAFE_SWEEP_APPROACH:
+      task_process_safe_sweep_approach(&vision, now_ms);
+      break;
+
+    case TASK_SAFE_SWEEP_AUDIT:
+      task_process_safe_sweep_audit(now_ms);
       break;
 
     case TASK_SAFE_SWEEP_DONE:

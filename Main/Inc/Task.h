@@ -37,7 +37,9 @@ typedef enum {
    * explicit so none of those established values can shift. */
   TASK_SAFE_SWEEP = 39,
   TASK_SAFE_SWEEP_DONE = 40,
-  TASK_BOUNDARY_RECOVER = 41
+  TASK_BOUNDARY_RECOVER = 41,
+  TASK_SAFE_SWEEP_APPROACH = 42,
+  TASK_SAFE_SWEEP_AUDIT = 43
 } TaskState;
 
 typedef enum {
