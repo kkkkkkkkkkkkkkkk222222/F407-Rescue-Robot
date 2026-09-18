@@ -1,6 +1,8 @@
 # 300 mm限推、三次分离、抬爪退出：下位机修改与上位机建议
 
 基线F407 4699cb8；本次fetch后上位机最新仍为 `codex/gamepad-teleop@b0f954f`。
+
+后续定向修订：**仅第三次复审已收齐且仍非法**改为先张爪、再退300 mm，随后mode47等RETURN返中，mode17到中心后mode3；不再转90°原地搜索。其他本文件描述的退出流程不变。最新上位机请求见`UPPER_THIRD_SEPARATION_RETURN_REQUEST.md`。
 本次仅修改F407，未改上位机仓库；不新增UART字段/命令或LCD，不增加/运行测试，不烧录。
 
 ## 固件已修改

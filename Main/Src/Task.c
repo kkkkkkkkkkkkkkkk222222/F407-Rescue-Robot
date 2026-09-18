@@ -226,6 +226,7 @@ static uint32_t delivery_exit_start_path_mm;
 static uint8_t delivery_exit_phase;
 static uint32_t delivery_exit_phase_started_ms;
 static bool capture_budget_active, capture_wait_active, capture_escape_active;
+static bool capture_escape_return_center;
 static uint32_t capture_forward_used_mm, capture_wait_started_ms;
 static LocationPose capture_budget_pose;
 static uint8_t capture_escape_phase, separation_attempts;
@@ -964,7 +965,8 @@ static void task_enter(TaskState next, uint32_t now_ms)
   if (accepted_context.valid &&
       (((next == TASK_APPROACH_RECOVER) && cluster_target_active &&
          approach_phase == APPROACH_CLUSTER_ALIGN) || (next == TASK_BOUNDARY_RECOVER) ||
-       (next == TASK_SAFE_SWEEP_RETRIEVE_FAILED) || (next == TASK_SEARCH) ||
+       (next == TASK_SAFE_SWEEP_RETRIEVE_FAILED) || (next == TASK_CAPTURE_RETURN_WAIT) ||
+       (next == TASK_SEARCH) ||
        (next == TASK_STOPPED))) {
     accepted_context.cancelled = true;
   }
@@ -1210,6 +1212,7 @@ static void task_initialize(uint32_t now_ms)
   status_sent_ms = now_ms - APP_TASK_STATUS_PERIOD_MS;
   delivery_exit_phase = 0U;
   capture_budget_active = capture_wait_active = capture_escape_active = false;
+  capture_escape_return_center = false;
   separation_attempts = 0U;
   progressive_keep_side = 0;
   Claw_SetSeparationRelax(0U, false);
@@ -1820,7 +1823,12 @@ static bool task_capture_has_eligible(void)
 
 static void task_begin_capture_escape(uint32_t now_ms)
 {
+  /* Only a completed THIRD illegal re-audit selects return-to-centre.
+   * Other abandonment reasons retain their existing 90-degree SEARCH path. */
+  const bool third_illegal = audit_received && !audit_valid &&
+      separation_attempts >= APP_SEPARATION_MAX_ATTEMPTS;
   task_enter(TASK_APPROACH_RECOVER, now_ms);
+  capture_escape_return_center = third_illegal;
   capture_escape_active = true;
   capture_escape_phase = 0U;
   capture_budget_active = false;
@@ -1873,6 +1881,16 @@ static void task_process_capture_escape(uint32_t now_ms)
       return;
     }
     case 2U: {
+      if (capture_escape_return_center) {
+        Motor_Stop();
+        task_status.motors_active = false;
+        stash_backoff_pending = false;
+        if (accepted_context.opcode == VISION_CMD_RELEASE_BOTH) {
+          accepted_context.completed = true;
+        }
+        task_enter(TASK_CAPTURE_RETURN_WAIT, now_ms);
+        return;
+      }
       LocationPose pose;
       if (!task_get_location_pose(&pose, now_ms)) return;
       const MotorTurnStatus result = Motor_TurnAngle(task_wrap_angle(
@@ -1925,6 +1943,12 @@ static bool task_capture_observe(uint32_t now_ms)
 
 static bool task_prepare_separation(int8_t keep_side, bool cluster_base, uint32_t now_ms)
 {
+  /* A fourth request cannot evade the third-failure decision by changing side. */
+  if (audit_received && !audit_valid &&
+      separation_attempts >= APP_SEPARATION_MAX_ATTEMPTS) {
+    task_begin_capture_escape(now_ms);
+    return false;
+  }
   if (progressive_keep_side != keep_side) {
     progressive_keep_side = keep_side;
     separation_attempts = 0U;
@@ -4536,7 +4560,8 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
         (state == TASK_SAFE_SWEEP) ||
         (state == TASK_SAFE_SWEEP_AUDIT) ||
         (state == TASK_SAFE_SWEEP_RETRIEVE_AUDIT) ||
-        (state == TASK_SAFE_SWEEP_RETRIEVE_FAILED)) {
+        (state == TASK_SAFE_SWEEP_RETRIEVE_FAILED) ||
+        (state == TASK_CAPTURE_RETURN_WAIT)) {
       /* ACK/heartbeat only. Keep the common PAUSE-resume epilogue below. */
     } else if ((state == TASK_SAFE_SWEEP_APPROACH) ||
                (state == TASK_SAFE_SWEEP_RETRIEVE)) {
@@ -4929,6 +4954,13 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
              (state == TASK_RAM_VERIFY)) {
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
+  } else if ((command->command == VISION_CMD_RETURN_CENTER) &&
+             (state == TASK_CAPTURE_RETURN_WAIT) &&
+             task_distance_command_valid(command, VISION_CMD_RETURN_CENTER)) {
+    task_status.acknowledged_sequence = command->sequence;
+    command_accepted = true;
+    stash_backoff_pending = false;
+    task_enter(TASK_FACE_FIELD_CENTER, now_ms);
   } else if ((command->command == VISION_CMD_RETURN_CENTER) &&
              (state == TASK_SAFE_SWEEP_RETRIEVE_FAILED) &&
              task_distance_command_valid(command, VISION_CMD_RETURN_CENTER)) {
@@ -5354,6 +5386,7 @@ static bool task_boundary_guard_exempt(void)
          (state == TASK_WAIT_CONFIG) || (state == TASK_START) ||
          (state == TASK_OPEN_CLAW) || (state == TASK_STOPPED) ||
          (state == TASK_BOUNDARY_RECOVER) ||
+         (state == TASK_CAPTURE_RETURN_WAIT) ||
          (state == TASK_OPEN_FOR_RAM) || (state == TASK_RAM_VERIFY) ||
          (state == TASK_EXIT_SAFE_ZONE) ||
          (state == TASK_FACE_FIELD_CENTER);
@@ -5497,6 +5530,7 @@ void Task_Process(uint32_t now_ms)
       (state != TASK_SAFE_SWEEP_RETRIEVE) &&
       (state != TASK_SAFE_SWEEP_RETRIEVE_AUDIT) &&
       (state != TASK_SAFE_SWEEP_RETRIEVE_FAILED) &&
+      (state != TASK_CAPTURE_RETURN_WAIT) &&
       (state != TASK_BOUNDARY_RECOVER)) {
     if ((state == TASK_REMOTE_ACTION) && !remote_action.done) {
       task_pause_action(now_ms, true);
@@ -5648,6 +5682,7 @@ void Task_Process(uint32_t now_ms)
       break;
 
     case TASK_SAFE_SWEEP_RETRIEVE_FAILED:
+    case TASK_CAPTURE_RETURN_WAIT:
       Motor_Stop();
       task_status.motors_active = false;
       task_status.gripper_closed = false;

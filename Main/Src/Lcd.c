@@ -630,6 +630,7 @@ static const char *task_state_name(TaskState state)
     case TASK_SAFE_SWEEP_RETRIEVE: return "GETLOAD";
     case TASK_SAFE_SWEEP_RETRIEVE_AUDIT: return "LOADAUD";
     case TASK_SAFE_SWEEP_RETRIEVE_FAILED: return "LOADFAIL";
+    case TASK_CAPTURE_RETURN_WAIT: return "CAPRET";
     default:                     return "STOP";
   }
 }
