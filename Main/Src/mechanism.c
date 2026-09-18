@@ -20,6 +20,33 @@ static ClawAction claw_action;
 static uint8_t claw_step;
 static uint32_t claw_step_ms;
 static bool claw_done;
+static uint8_t separation_relax_deg;
+static bool separation_cluster_base;
+
+void Claw_SetSeparationRelax(uint8_t degrees, bool cluster_base)
+{
+  if (degrees > 20U) degrees = 20U;
+  if (degrees != separation_relax_deg || cluster_base != separation_cluster_base) {
+    separation_relax_deg = degrees;
+    separation_cluster_base = cluster_base;
+    claw_action = CLAW_ACTION_NONE;
+  }
+}
+
+static uint8_t claw_relaxed_left(void)
+{
+  const uint8_t angle = separation_cluster_base ? APP_CLAW_LEFT_CLUSTER_HOLD_ANGLE :
+                                                 APP_CLAW_LEFT_SEPARATE_HOLD_ANGLE;
+  const uint16_t relaxed = (uint16_t)angle + separation_relax_deg;
+  return relaxed > 108U ? 108U : (uint8_t)relaxed;
+}
+
+static uint8_t claw_relaxed_right(void)
+{
+  const uint8_t angle = separation_cluster_base ? APP_CLAW_RIGHT_CLUSTER_HOLD_ANGLE :
+                                                 APP_CLAW_RIGHT_SEPARATE_HOLD_ANGLE;
+  return angle < 72U + separation_relax_deg ? 72U : angle - separation_relax_deg;
+}
 
 static bool claw_move_sequential(ClawAction action, uint32_t now_ms,
                                  uint8_t first_servo, uint8_t first_angle,
@@ -73,6 +100,8 @@ static bool claw_move_together(ClawAction action, uint32_t now_ms,
 
 void Mechanism_Init(void)
 {
+  separation_relax_deg = 0U;
+  separation_cluster_base = false;
   claw_action = CLAW_ACTION_NONE;
   claw_step = 0U;
   claw_step_ms = 0U;
@@ -116,32 +145,30 @@ bool Claw_Open(uint32_t now_ms)
 
 bool Claw_OpenLeft(uint32_t now_ms)
 {
-  /* Release the left cargo and hold the retained right-hand cargo 25 degrees
-   * tighter than Touch while the chassis follows the separation curve. */
+  /* Release left and use the task's latched baseline/attempt relaxation. */
   return claw_move_together(CLAW_ACTION_OPEN_LEFT, now_ms,
-                            108U, APP_CLAW_RIGHT_SEPARATE_HOLD_ANGLE, 600U);
+                            108U, claw_relaxed_right(), 600U);
 }
 
 bool Claw_OpenRight(uint32_t now_ms)
 {
   /* Mirror of Claw_OpenLeft: a smaller left-servo angle closes it farther. */
   return claw_move_together(CLAW_ACTION_OPEN_RIGHT, now_ms,
-                            APP_CLAW_LEFT_SEPARATE_HOLD_ANGLE, 72U, 600U);
+                            claw_relaxed_left(), 72U, 600U);
 }
 
 bool Claw_ClusterOpenLeft(uint32_t now_ms)
 {
-  /* Curve separation: release the left side and retain the right side only
-   * 15 degrees beyond Touch so adjacent pieces do not jam. */
+  /* Curve separation uses the same retained-side profile across retries. */
   return claw_move_together(CLAW_ACTION_CLUSTER_OPEN_LEFT, now_ms,
-                            108U, APP_CLAW_RIGHT_CLUSTER_HOLD_ANGLE, 600U);
+                            108U, claw_relaxed_right(), 600U);
 }
 
 bool Claw_ClusterOpenRight(uint32_t now_ms)
 {
   /* Mirror of Claw_ClusterOpenLeft for a retained left-side target. */
   return claw_move_together(CLAW_ACTION_CLUSTER_OPEN_RIGHT, now_ms,
-                            APP_CLAW_LEFT_CLUSTER_HOLD_ANGLE, 72U, 600U);
+                            claw_relaxed_left(), 72U, 600U);
 }
 
 bool Claw_Retract(uint32_t now_ms)
