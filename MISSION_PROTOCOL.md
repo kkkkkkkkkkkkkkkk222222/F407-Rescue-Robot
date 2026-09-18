@@ -1,6 +1,6 @@
 # 连续物资抓取与分区投送流程
 
-本固件以`danmo-teng/shijue_fangan`的`codex/gamepad-teleop@4115aea`为对齐基线。正式运输首件恰好1件GREEN，之后普通/核心合计1～2件、伤员单独1件；INITIAL_STASH仍优先按任意非空处理。运行模式为`APP_ENABLE_TASK=1`，RDK X5与F407使用USART3（PD8 TX、PD9 RX）、115200 8N1、3.3 V TTL和公共15字节帧。扫障新握手及剩余协作风险见`docs/UPPER_4115AEA_ALIGNMENT.md`。
+本固件以`danmo-teng/shijue_fangan`的`codex/gamepad-teleop@2b4e2ef`为对齐基线。正式运输首件恰好1件GREEN，之后普通/核心合计1～2件、伤员单独1件；INITIAL_STASH仍优先按任意非空处理。运行模式为`APP_ENABLE_TASK=1`，RDK X5与F407使用USART3（PD8 TX、PD9 RX）、115200 8N1、3.3 V TTL和公共15字节帧。扫障新握手及剩余协作风险见`docs/UPPER_4115AEA_ALIGNMENT.md`。
 
 ## 整体流程
 
@@ -91,10 +91,10 @@ A3 B3 12 10 02 80 02 00 00 00 01 09 DD FD C3
 - 普通目标在140°稳定500 ms后进入mode21并以180 mm/s最多慢爬500 mm。所有审核统一要求3个不同audit_id语义一致，第三帧后合法才置AUDIT_VALID。mode23表示合爪后复审，mode22表示抓后审核合法并允许NAV。
 - `CARGO_AUDIT`按字节编码左右类别、数量、审核标志、audit_id和总数量；相同audit_id的重复传输不增加普通抓取计数。`UNKNOWN_PRESENT=1`时允许`total_count > left_count + right_count`，表示物体在大ROI内但无法分侧；F407接收并锁存该审核，但禁止直接GRAB，只允许无SIDE_VALID的DISPERSE执行20°观察。带SIDE_VALID的DISPERSE仍要求保留侧count>0。`AUDIT_DESTINATION_INJURY`继续作为本地伤员合法性复核，不自行改变上位机确认的目的地。
 - `AUDIT_SWEEP_PICKUP=P5 bit6(0x40)`仅允许mode43扫障夹内审核使用；其他状态收到该特殊审核拒绝。mode43只按非空和不同audit_id累计，不套用正式物资合法性，空审核立即清零连续计数；退出mode43后清除此特殊审核上下文。
-- 非法组合只根据摄像头3为140°时的专用夹爪ROI分离。普通Touch为左78°/右102°；第一次带侧曲线和mode35后的后续带侧曲线均使用15°保持（保留左63°或保留右117°）。普通`RELEASE_LEFT/RIGHT`单侧释放独立使用25°强保持（保留左53°或保留右127°）。上位机选侧遵循绿色优先的确定性策略；mode35完成且相机稳定后F407置`CLAW_VISIBLE`并等待新frame floor后的ROI审核。
+- 非法组合只根据摄像头3为140°时的专用夹爪ROI分离。普通Touch为左76°/右104°；第一次带侧曲线和mode35后的后续带侧曲线均使用15°保持（保留左61°或保留右119°）。普通`RELEASE_LEFT/RIGHT`单侧释放独立使用25°强保持（保留左51°或保留右129°）。上位机选侧遵循绿色优先的确定性策略；mode35完成且相机稳定后F407置`CLAW_VISIBLE`并等待新frame floor后的ROI审核。
 - 首件绿色若在140°ROI中与其他物资挤在中心且曲线无法取出，上位机可发送`DISPERSE_PILE + FIRST_GREEN_BUMP(bit5)`，不得同时置SIDE_VALID/TARGET_RIGHT。F407仅在首件尚未完成、审核至少2件且含绿色时接受，并且每轮任务最多一次：后退0.10 m→Touch闭爪→前进0.20 m→后退0.10 m→双爪全开→直接回SEARCH。该动作不改变无侧DISPERSE的20°观察语义。
 - 临时藏堆NAV不使用`STAGE_ONLY`，也不执行任何安全区补推；到点后`RELEASE_BOTH`。释放完成后至返中完成期间，F407拒绝`APPROACH_TARGET`和`DISPERSE_PILE`，避免残留找物命令抢占藏堆回程。第一条`RETURN_CENTER`先触发F407保持释放航向直退0.35 m，编码器累计距离且IMU修正航向；退到安全距离后才使用上位机持续更新的H原地调头并按D返中。该退让只对临时藏堆生效，正式安全区投送仍使用既有mode16后退0.30 m，不会重复后退。
 - `YIELD_BACKOFF`只在F407已确认完成普通单侧释放且`cargo_recheck_pending=1`时接受，该路径保持25°。聚集APPROACH保持双爪Open，mode38审核后进入mode37；所有带侧DISPERSE曲线都使用15°保持。不带SIDE_VALID只执行20°观察并以mode35请求新审核。
 - `RELEASE_BOTH`只表示真实双爪全开并以mode34完成；20°观察必须使用无`SIDE_VALID`的`DISPERSE_PILE`并以mode35完成，两种动作不再隐式互换。
 - 对外mode映射为`3 SEARCH、15 DELIVERY_VERIFY、16 EXIT_SAFE_ZONE、17 FACE_FIELD_CENTER、18 STOPPED、20 APPROACH_TARGET、21 CAPTURE_AUDIT、22 CAPTURE_DONE、23 POST_GRAB_AUDIT、30 YIELD_DONE、31 ESCAPE_DONE、32/33/34 RELEASE_DONE、35 DISPERSE_DONE、36 LANE_DONE、37 DISPERSE_READY、38 CLUSTER_CAPTURE_AUDIT、39 SAFE_SWEEP、40 SAFE_SWEEP_DONE、41 BOUNDARY_RECOVER、42 SAFE_SWEEP_APPROACH、43 SAFE_SWEEP_AUDIT、44 SAFE_SWEEP_RETRIEVE、45 SAFE_SWEEP_RETRIEVE_AUDIT、46 SAFE_SWEEP_RETRIEVE_FAILED`。
-- TASK_COMPLETE后的顺序为mode16本地后退、mode17执行RETURN H/D、D=0后mode3。普通SEARCH完成120°和90°两圈仍无目标时，同样允许上位机在mode3发送RETURN_CENTER，使空爪底盘进入mode17回中心。mode3后的1500 ms交接窗口仍会确认重复RETURN帧SEQ。
+- TASK_COMPLETE后的顺序为mode16本地后退、mode17执行RETURN H/D、D=0后mode3。普通SEARCH完成120°和90°两圈仍无目标时，同样允许上位机在mode3发送RETURN_CENTER，使空爪底盘进入mode17回中心。mode3后的1500 ms交接窗口仍会确认重复RETURN帧SEQ。 正式mode16开始时S3抬到90°，1秒后恢复120°，可跨16→17，不额外等待；详见`docs/UPPER_2B4E2EF_STASH_CLAW_CAMERA.md`。

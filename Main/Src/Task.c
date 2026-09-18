@@ -205,6 +205,8 @@ static uint32_t safe_enter_start_path_mm;
 static uint32_t nav_stage_start_path_mm;
 static uint32_t nav_stage_limit_mm;
 static uint32_t delivery_exit_start_path_mm;
+static uint32_t delivery_exit_camera_started_ms;
+static bool delivery_exit_camera_raised;
 static uint8_t locked_cargo_counts;
 static uint8_t configured_color;
 static bool initialized;
@@ -896,6 +898,9 @@ static void task_enter(TaskState next, uint32_t now_ms)
       (state == TASK_FACE_FIELD_CENTER) && (next == TASK_SEARCH);
   Motor_Stop();
   state = next;
+  if ((next != TASK_EXIT_SAFE_ZONE) && (next != TASK_FACE_FIELD_CENTER)) {
+    delivery_exit_camera_raised = false;
+  }
   if (next == TASK_STOPPED) {
     sweep_trace_recording = false;
     sweep_forward_commanded = false;
@@ -1054,14 +1059,25 @@ static void task_enter(TaskState next, uint32_t now_ms)
     boundary_turn_done = false;
   } else if (next == TASK_GRAB_ROTATE) {
     task_reset_turn_tracker();
+  } else if (next == TASK_EXIT_SAFE_ZONE) {
+    /* Only formal delivery exit, never opening stash/ordinary backoff.
+     * RETURN/TASK_COMPLETE retries do not re-enter this state. */
+    delivery_exit_camera_started_ms = now_ms;
+    delivery_exit_camera_raised = true;
+    Camera_SetAngle(APP_DELIVERY_EXIT_CAMERA_UP_ANGLE);
+    camera_angle = (float)APP_DELIVERY_EXIT_CAMERA_UP_ANGLE;
   } else if ((next == TASK_NAVIGATE) ||
              (next == TASK_FACE_FIELD_CENTER)) {
     if (next == TASK_FACE_FIELD_CENTER) {
       /* Keep a medium-height view throughout every return route.  Once the
        * centre is reached SEARCH will explicitly visit 120 deg, then 90 deg,
        * before accepting a new target frame. */
-      Camera_SetAngle(APP_SEARCH_HIGH_CAMERA_ANGLE);
-      camera_angle = (float)APP_SEARCH_HIGH_CAMERA_ANGLE;
+      /* The 300 mm exit can finish before one second. Preserve the camera
+       * pulse across 16->17; the periodic updater lowers it without waiting. */
+      if (!delivery_exit_camera_raised) {
+        Camera_SetAngle(APP_SEARCH_HIGH_CAMERA_ANGLE);
+        camera_angle = (float)APP_SEARCH_HIGH_CAMERA_ANGLE;
+      }
     }
     nav_ready = false;
     distance_command_done = false;
@@ -1096,6 +1112,8 @@ static void task_initialize(uint32_t now_ms)
   state_started_ms = now_ms;
   step_started_ms = now_ms;
   status_sent_ms = now_ms - APP_TASK_STATUS_PERIOD_MS;
+  delivery_exit_camera_raised = false;
+  delivery_exit_camera_started_ms = now_ms;
   pose_invalid_started_ms = now_ms;
   nav_terminal_candidate_ms = now_ms;
   nav_terminal_latched_ms = now_ms;
@@ -2928,8 +2946,6 @@ static void task_process_delivery_verify(
   }
   if (command->command == VISION_CMD_TASK_COMPLETE) {
     first_delivery_done = true;
-    Camera_SetAngle(APP_DELIVERY_CAMERA_ANGLE);
-    camera_angle = (float)APP_DELIVERY_CAMERA_ANGLE;
     task_enter(TASK_EXIT_SAFE_ZONE, now_ms);
   }
 }
@@ -4787,6 +4803,15 @@ void Task_Process(uint32_t now_ms)
     task_pause_runtime(now_ms);
     task_publish_status(now_ms);
     return;
+  }
+  /* Nonblocking camera pulse. Explicit PAUSE above freezes actuator updates;
+   * resume lowers immediately if the one-second wall-clock interval expired. */
+  if (delivery_exit_camera_raised &&
+      ((uint32_t)(now_ms - delivery_exit_camera_started_ms) >=
+       APP_DELIVERY_EXIT_CAMERA_HOLD_MS)) {
+    Camera_SetAngle(APP_DELIVERY_EXIT_CAMERA_DOWN_ANGLE);
+    camera_angle = (float)APP_DELIVERY_EXIT_CAMERA_DOWN_ANGLE;
+    delivery_exit_camera_raised = false;
   }
   const bool local_approach_autonomous =
       task_approach_runs_without_target();
