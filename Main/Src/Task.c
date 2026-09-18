@@ -4,6 +4,7 @@
 
 #include "app_config.h"
 #include "encoder.h"
+#include "imu.h"
 #include "Location.h"
 #include "main.h"
 #include "mechanism.h"
@@ -271,6 +272,14 @@ static uint32_t post_grab_invalid_started_ms;
 static uint32_t approach_hold_started_ms;
 static bool post_grab_invalid_waiting;
 static bool approach_hold_pending;
+/* Dedicated cluster-align epoch; SEARCH/sweep turn trackers are unrelated. */
+static int64_t cluster_align_last_yaw_mdeg;
+static uint32_t cluster_align_sample_count;
+static uint32_t cluster_align_turn_mdeg;
+static bool cluster_align_sample_valid;
+static bool cluster_recovery_latched;
+static bool cluster_recovery_hold_seen;
+static bool cluster_recovery_wait_app;
 static SafeSweepPhase safe_sweep_phase;
 static int16_t safe_sweep_forward_mm;
 static int16_t safe_sweep_lateral_mm;
@@ -807,6 +816,12 @@ static void task_clear_audit_result(void)
 
 static void task_apply_complete_target(VisionData *vision)
 {
+  if (cluster_recovery_latched || cluster_recovery_wait_app) {
+    /* A rejected cached APP must not select a target through the legacy
+     * visual-report path, even immediately after mode24 changes to mode3. */
+    vision->found = false;
+    return;
+  }
   if (!complete_flow_active) {
     return;
   }
@@ -894,6 +909,19 @@ static void task_update_match_time(uint32_t now_ms)
 
 static void task_enter(TaskState next, uint32_t now_ms)
 {
+  if ((next == TASK_APPROACH_RECOVER) && (state == TASK_APPROACH) &&
+      cluster_target_active && (approach_phase == APPROACH_CLUSTER_ALIGN)) {
+    cluster_recovery_latched = true;
+    cluster_recovery_hold_seen = false;
+    cluster_recovery_wait_app = true;
+    task_status.found = false;
+    task_clear_audit_result();
+    approach_report_generation_valid = false;
+    task_reset_turn_tracker();
+  }
+  /* Every task-state transition leaves this alignment epoch. */
+  cluster_align_turn_mdeg = 0U;
+  cluster_align_sample_valid = false;
   const bool return_just_completed =
       (state == TASK_FACE_FIELD_CENTER) && (next == TASK_SEARCH);
   Motor_Stop();
@@ -956,6 +984,8 @@ static void task_enter(TaskState next, uint32_t now_ms)
         (float)pose.heading_mdeg * 0.001f + APP_START_TURN_DEG);
     start_clearance_done = false;
   } else if (next == TASK_SEARCH) {
+    cluster_recovery_latched = false;
+    cluster_recovery_hold_seen = false;
     sweep_trace_recording = false;
     sweep_retrieving = false;
     sweep_forward_commanded = false;
@@ -999,6 +1029,7 @@ static void task_enter(TaskState next, uint32_t now_ms)
     task_reset_tracking();
     task_reset_turn_tracker();
   } else if (next == TASK_APPROACH) {
+    cluster_recovery_wait_app = false;
     camera_angle = (float)Camera_GetAngle();
     approach_speed_mm_s = APP_APPROACH_SPEED_MM_S;
     approach_phase = APPROACH_TRACK;
@@ -1090,6 +1121,11 @@ static void task_enter(TaskState next, uint32_t now_ms)
 
 static void task_initialize(uint32_t now_ms)
 {
+  cluster_align_sample_valid = false;
+  cluster_align_turn_mdeg = 0U;
+  cluster_recovery_latched = false;
+  cluster_recovery_hold_seen = false;
+  cluster_recovery_wait_app = false;
   Pid_Init(&steering_pid,
            APP_STEERING_KP_MM_S, 0.0f, APP_STEERING_KD_MM,
            -APP_STEERING_LIMIT_MM_S, APP_STEERING_LIMIT_MM_S,
@@ -1644,6 +1680,39 @@ static float task_approach_steering(void)
   return steering_mm_s;
 }
 
+static void task_cluster_align_begin(void)
+{
+  const IMUData imu = IMU_GetData();
+  cluster_align_last_yaw_mdeg = imu.yaw_mdeg;
+  cluster_align_sample_count = imu.sample_count;
+  cluster_align_sample_valid = imu.ready;
+  cluster_align_turn_mdeg = 0U;
+}
+
+static void task_cluster_align_sample(void)
+{
+  const IMUData imu = IMU_GetData();
+  if (!imu.ready || (cluster_align_sample_valid &&
+                    imu.sample_count == cluster_align_sample_count)) {
+    return;
+  }
+  if (cluster_align_sample_valid) {
+    int64_t delta = (imu.yaw_mdeg - cluster_align_last_yaw_mdeg) % 360000LL;
+    if (delta >= 180000LL) delta -= 360000LL;
+    if (delta < -180000LL) delta += 360000LL;
+    const uint32_t magnitude = (uint32_t)(delta < 0 ? -delta : delta);
+    /* Saturate at the decision threshold, never overflow on repeated turns. */
+    if (magnitude >= 360000U - cluster_align_turn_mdeg) {
+      cluster_align_turn_mdeg = 360000U;
+    } else {
+      cluster_align_turn_mdeg += magnitude;
+    }
+  }
+  cluster_align_last_yaw_mdeg = imu.yaw_mdeg;
+  cluster_align_sample_count = imu.sample_count;
+  cluster_align_sample_valid = true;
+}
+
 static void task_process_approach(const VisionData *vision, uint32_t now_ms)
 {
   task_status.auto_approach = true;
@@ -1680,6 +1749,7 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
           Camera_SetAngle(APP_DISPERSE_APPROACH_ANGLE);
           camera_angle = (float)APP_DISPERSE_APPROACH_ANGLE;
           approach_phase = APPROACH_CLUSTER_ALIGN;
+          task_cluster_align_begin();
           Motor_Stop();
           task_status.motors_active = false;
           return;
@@ -1706,6 +1776,7 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
       return;
 
     case APPROACH_CLUSTER_ALIGN:
+      task_cluster_align_sample();
       Camera_SetAngle(APP_DISPERSE_APPROACH_ANGLE);
       camera_angle = (float)APP_DISPERSE_APPROACH_ANGLE;
       if (new_locked_target) {
@@ -1719,7 +1790,17 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
         task_status.motors_active = false;
         task_clear_audit_result();
         approach_phase = APPROACH_CLUSTER_CAMERA_TO_140;
+        cluster_align_sample_valid = false;
+        cluster_align_turn_mdeg = 0U;
         step_started_ms = now_ms;
+        return;
+      }
+      if (cluster_align_turn_mdeg >= 360000U) {
+        /* task_enter latches the cluster-only refresh and clears tracking.
+         * A normal alignment above always wins over the full-turn guard. */
+        task_enter(TASK_APPROACH_RECOVER, now_ms);
+        task_status.auto_approach = true;
+        task_status.found = false;
         return;
       }
       Motor_Move(0.0f, 0.0f, task_approach_steering());
@@ -1867,6 +1948,16 @@ static void task_process_approach_recover(const VisionData *vision,
                                           uint32_t now_ms)
 {
   task_status.auto_approach = true;
+  if (cluster_recovery_latched) {
+    Motor_Stop();
+    task_status.motors_active = false;
+    task_status.found = false;
+    if (cluster_recovery_hold_seen &&
+        ((uint32_t)(now_ms - state_started_ms) >= APP_APPROACH_LOSS_HOLD_MS)) {
+      task_enter(TASK_SEARCH, now_ms);
+    }
+    return;
+  }
   task_status.found = task_scan_locked_target_found(vision);
   if (task_status.found &&
       ((uint32_t)(now_ms - state_started_ms) >=
@@ -4191,6 +4282,9 @@ static void task_accept_mission(const VisionMissionCommand *command,
     }
   } else if (command->command == VISION_CMD_HOLD) {
     task_status.acknowledged_sequence = command->sequence;
+    if ((state == TASK_APPROACH_RECOVER) && cluster_recovery_latched) {
+      cluster_recovery_hold_seen = true;
+    }
     if ((state == TASK_APPROACH) &&
         !task_approach_runs_without_target() &&
         !approach_hold_pending) {
@@ -4324,6 +4418,7 @@ static void task_accept_mission(const VisionMissionCommand *command,
   } else if ((command->command == VISION_CMD_APPROACH_TARGET) &&
               !stash_backoff_pending &&
               !cargo_recheck_pending &&
+              !cluster_recovery_latched &&
               (((state == TASK_SEARCH) &&
                 task_search_accepts_remote_target()) ||
                (state == TASK_APPROACH_RECOVER) ||
