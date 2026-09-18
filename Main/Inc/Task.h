@@ -107,6 +107,24 @@ typedef struct {
   uint8_t sweep_original_left_class;
   uint8_t sweep_original_right_class;
   uint8_t sweep_original_total_count;
+  /* Local diagnostics only; do not overload the existing UART status frame. */
+  uint8_t sweep_phase;
+  uint8_t sweep_reverse_phase;
+  uint8_t sweep_turn_status;
+  uint16_t sweep_trace_remaining;
+  uint16_t sweep_trace_initial;
+  float sweep_segment_length_mm;
+  float sweep_segment_remaining_mm;
+  float sweep_segment_cross_mm;
+  float sweep_segment_heading_deg;
+  float sweep_heading_error_deg;
+  int32_t sweep_target_x_mm;
+  int32_t sweep_target_y_mm;
+  int32_t sweep_current_x_mm;
+  int32_t sweep_current_y_mm;
+  int32_t sweep_current_yaw_mdeg;
+  float sweep_reverse_forward_mm_s;
+  float sweep_reverse_yaw_mm_s;
 } TaskStatus;
 
 void Task_Process(uint32_t now_ms);

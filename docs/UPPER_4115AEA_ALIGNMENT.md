@@ -41,7 +41,7 @@ mode45合法仍留在45等待GRAB，不能进22；合爪→39倒退→23复审�
    触发快照保留在TaskStatus：boundary_x_mm/y_mm/yaw_mdeg/edge_mm/heading_deg/turn_done；LCD在41交替显示坐标、边距、目标航向和完成标志，另显示触发/当前yaw。
 2. **mode45上位机不发分离。** `state_machine.py:3360`附近的 `_safe_sweep_pickup_output` 只发布APP/HOLD、审核或GRAB。非法审核不能等待普通释放握手；本固件用有限观察、预算及总超时走46。若额外收到释放/分离命令，找回流程按放弃处理，不进入可能越过预算的普通分离运动。
 3. **同类不等于同一件。** 上位机 `safe_sweep_target` 用original_classes筛选、original_ids优先；track重建后仍可能抓到另一件同类物资。F407保存原审核清单并核对正式规则和目的地，但协议没有逐件身份，不能证明取回的是原件。
-4. **状态新鲜度风险。** 4115aea在CLEAR分支判断42～46时没有像后面的23交接那样显式加 `stm.fresh`。这是代码层面的风险，是否实际误动作取决于外围过期状态处理；建议上位机统一要求新鲜状态后再切角色/执行失败返中。
+4. **更正：上位机已统一检查状态新鲜度。** 完整检查7120d25的 `step()` 发现，在CLEAR等状态分支之前已有 `if not stm.fresh` 返回PAUSE。此前仅看局部分支提出的遗漏风险撤回，详见 `UPPER_7120D25_REVERSE_AND_COMMS.md`。
 5. **传感器/运动故障不是46。** 没有可靠位姿时不能声称已回S；位姿或电机故障保留STOPPED/FAULT安全路径。上位机不能把FAULT当作已完成找回失败倒退。
 
 无障碍直接ENTER、无homography依赖、普通危险释放、20°观察、普通mode24恢复及1000 ms投送确认保持。

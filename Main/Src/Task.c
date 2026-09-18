@@ -132,6 +132,21 @@ typedef enum {
   VS_FAILED_OPEN, VS_FAILED_BACK, VS_FAILED_H, VS_POST_AUDIT
 } VisualSweepPhase;
 typedef struct { int32_t x, y; float heading; } SweepTracePoint;
+typedef enum {
+  SWEEP_REVERSE_SELECT = 0, SWEEP_REVERSE_ALIGN, SWEEP_REVERSE_DRIVE,
+  SWEEP_REVERSE_DONE, SWEEP_REVERSE_FINISHED
+} SweepReversePhase;
+typedef struct {
+  SweepReversePhase phase;
+  SweepTracePoint cursor;
+  SweepTracePoint origin;
+  SweepTracePoint target;
+  uint16_t consume_to;
+  uint16_t initial_count;
+  float ux, uy, length, heading;
+  bool rotation_only;
+} SweepReverse;
+static SweepReverse sweep_reverse;
 static VisualSweepPhase visual_sweep_phase;
 static SweepTracePoint sweep_trace[APP_SAFE_SWEEP_TRACE_CAPACITY];
 static uint16_t sweep_trace_count;
@@ -264,7 +279,6 @@ static bool safe_sweep_recheck_pending;
 static bool safe_sweep_visual_pickup;
 static int32_t safe_sweep_center_x_mm;
 static int32_t safe_sweep_center_y_mm;
-static bool safe_sweep_return_aligned;
 static SweepPickupPhase sweep_pickup_phase;
 static bool sweep_pickup_target_active;
 static uint8_t sweep_audit_consistent_count;
@@ -1175,7 +1189,6 @@ static void task_initialize(uint32_t now_ms)
   safe_sweep_visual_pickup = false;
   safe_sweep_center_x_mm = 0;
   safe_sweep_center_y_mm = 0;
-  safe_sweep_return_aligned = false;
   sweep_pickup_phase = SWEEP_PICKUP_SEARCH;
   sweep_pickup_target_active = false;
   sweep_audit_consistent_count = 0U;
@@ -3182,7 +3195,6 @@ static void task_begin_safe_sweep(const VisionMissionCommand *command,
   safe_sweep_visual_pickup = command->target_x_mm == 0;
   safe_sweep_center_x_mm = pose.x_mm;
   safe_sweep_center_y_mm = pose.y_mm;
-  safe_sweep_return_aligned = false;
   safe_sweep_recheck_pending = true;
   visual_sweep_phase = VS_TURN_PARK;
   sweep_trace_recording = false;
@@ -3208,6 +3220,17 @@ static void task_sweep_next(VisualSweepPhase next, uint32_t now_ms)
   task_status.motors_active = false;
   sweep_forward_commanded = false;
   visual_sweep_phase = next;
+  if ((next == VS_BACK_OBSTACLE) || (next == VS_BACK_LOAD) ||
+      (next == VS_FAILED_BACK)) {
+    const LocationPose pose = Location_GetPose();
+    /* Freeze once at the physical backoff entry, never on CLEAR/HOLD. */
+    sweep_trace_recording = false;
+    sweep_reverse = (SweepReverse){
+      .phase = SWEEP_REVERSE_SELECT,
+      .cursor = {pose.x_mm, pose.y_mm, pose.heading_mdeg * 0.001f},
+      .initial_count = sweep_trace_count
+    };
+  }
   safe_sweep_phase_path_valid = false;
   step_started_ms = now_ms;
 }
@@ -3218,6 +3241,7 @@ static bool task_sweep_turn(float heading, uint32_t now_ms)
   if (!task_get_location_pose(&pose, now_ms)) { return false; }
   const MotorTurnStatus result = Motor_TurnAngle(task_wrap_angle(
       heading - (float)pose.heading_mdeg * 0.001f));
+  task_status.sweep_turn_status = (uint8_t)result;
   task_status.motors_active = result == MOTOR_TURN_RUNNING;
   if (result == MOTOR_TURN_DONE) {
     Motor_Stop();
@@ -3311,36 +3335,154 @@ static void task_sweep_sample(uint32_t now_ms)
   }
 }
 
+/* Select/merge from the frozen route. The cursor is the last CONSUMED
+ * endpoint, not the robot's jittering position. Count changes only in DONE. */
+static void task_sweep_select_segment(const LocationPose *pose)
+{
+  uint16_t end = sweep_trace_count - 1U;
+  const SweepTracePoint origin = sweep_reverse.cursor;
+  SweepTracePoint target = sweep_trace[end];
+  float dx = origin.x - target.x, dy = origin.y - target.y;
+  float length = sqrtf(dx * dx + dy * dy);
+  const bool rotation = length <= APP_SAFE_SWEEP_SEGMENT_MERGE_MM;
+  if (rotation) {
+    /* Coalesce one genuine in-place turn, but not a reversal of turn sense. */
+    float sense = task_wrap_angle(target.heading - origin.heading);
+    while (end > 0U) {
+      const SweepTracePoint candidate = sweep_trace[end - 1U];
+      dx = origin.x - candidate.x;
+      dy = origin.y - candidate.y;
+      const float delta = task_wrap_angle(candidate.heading - target.heading);
+      if ((dx * dx + dy * dy > APP_SAFE_SWEEP_SEGMENT_MERGE_MM *
+                                    APP_SAFE_SWEEP_SEGMENT_MERGE_MM) ||
+          ((sense * delta < 0.0f) && task_abs(delta) > 0.5f)) {
+        break;
+      }
+      if (task_abs(sense) < 0.5f) { sense = delta; }
+      target = candidate;
+      --end;
+    }
+  } else {
+    const float ux = dx / length, uy = dy / length;
+    while (end > 0U) {
+      const SweepTracePoint candidate = sweep_trace[end - 1U];
+      const float ex = target.x - candidate.x, ey = target.y - candidate.y;
+      const float cx = origin.x - candidate.x, cy = origin.y - candidate.y;
+      /* Keep corners, in-place rotations and reversed translation separate.
+       * Every skipped point must remain near the SAME locked line/yaw. */
+      if ((ex * ux + ey * uy <= 0.0f) ||
+          task_abs(cx * uy - cy * ux) > APP_SAFE_SWEEP_SEGMENT_MERGE_MM ||
+          task_abs(task_wrap_angle(candidate.heading - origin.heading)) >
+              APP_SAFE_SWEEP_SEGMENT_MERGE_DEG ||
+          task_abs(task_wrap_angle(candidate.heading - target.heading)) >
+              APP_SAFE_SWEEP_SEGMENT_MERGE_DEG) {
+        break;
+      }
+      target = candidate;
+      --end;
+    }
+    dx = origin.x - target.x;
+    dy = origin.y - target.y;
+    length = sqrtf(dx * dx + dy * dy);
+  }
+  sweep_reverse.origin = origin;
+  sweep_reverse.target = target;
+  sweep_reverse.consume_to = end;
+  sweep_reverse.rotation_only = rotation;
+  sweep_reverse.length = rotation ? 0.0f : length;
+  sweep_reverse.ux = rotation ? 0.0f : dx / length;
+  sweep_reverse.uy = rotation ? 0.0f : dy / length;
+  /* atan2 is evaluated ONCE per nonzero segment, never near its endpoint. */
+  sweep_reverse.heading = rotation ? target.heading :
+      task_heading_360(atan2f(dy, dx) * (180.0f / 3.14159265358979323846f));
+  const float error = task_wrap_angle(sweep_reverse.heading -
+                                      pose->heading_mdeg * 0.001f);
+  sweep_reverse.phase = task_abs(error) > APP_SAFE_SWEEP_SEGMENT_ALIGN_DEG ?
+      SWEEP_REVERSE_ALIGN : rotation ? SWEEP_REVERSE_DONE : SWEEP_REVERSE_DRIVE;
+}
+
 static bool task_sweep_reverse_trace(uint32_t now_ms)
 {
+  if (sweep_reverse.phase == SWEEP_REVERSE_FINISHED) { return true; }
   LocationPose pose;
   if (!task_get_location_pose(&pose, now_ms)) { return false; }
-  if (sweep_trace_count == 0U) { return true; }
-  const SweepTracePoint target = sweep_trace[sweep_trace_count - 1U];
-  const float dx = (float)(pose.x_mm - target.x);
-  const float dy = (float)(pose.y_mm - target.y);
-  const float distance = sqrtf(dx * dx + dy * dy);
-  if (distance <= APP_SAFE_SWEEP_TRACE_TOLERANCE_MM) {
-    if (task_sweep_turn(target.heading, now_ms)) {
-      --sweep_trace_count;
-      safe_sweep_return_aligned = false;
+  task_status.sweep_current_x_mm = pose.x_mm;
+  task_status.sweep_current_y_mm = pose.y_mm;
+  task_status.sweep_current_yaw_mdeg = pose.heading_mdeg;
+  task_status.sweep_heading_error_deg = task_wrap_angle(sweep_reverse.heading -
+                                                       pose.heading_mdeg * 0.001f);
+  switch (sweep_reverse.phase) {
+    case SWEEP_REVERSE_SELECT:
+      if (sweep_trace_count == 0U) {
+        sweep_reverse.phase = SWEEP_REVERSE_FINISHED;
+        return true;
+      }
+      task_sweep_select_segment(&pose);
+      task_status.sweep_target_x_mm = sweep_reverse.target.x;
+      task_status.sweep_target_y_mm = sweep_reverse.target.y;
+      task_status.sweep_segment_length_mm = sweep_reverse.length;
+      task_status.sweep_segment_heading_deg = sweep_reverse.heading;
+      task_status.sweep_segment_remaining_mm = sweep_reverse.length;
+      task_status.sweep_reverse_forward_mm_s = 0.0f;
+      task_status.sweep_reverse_yaw_mm_s = 0.0f;
+      return false;
+
+    case SWEEP_REVERSE_ALIGN:
+      /* No Motor_Move or distance branch may interrupt this latched turn. */
+      if (task_sweep_turn(sweep_reverse.heading, now_ms)) {
+        sweep_reverse.phase = sweep_reverse.rotation_only ?
+            SWEEP_REVERSE_DONE : SWEEP_REVERSE_DRIVE;
+      }
+      return false;
+
+    case SWEEP_REVERSE_DRIVE: {
+      const float dx = pose.x_mm - sweep_reverse.origin.x;
+      const float dy = pose.y_mm - sweep_reverse.origin.y;
+      const float progress = -(dx * sweep_reverse.ux + dy * sweep_reverse.uy);
+      const float cross = -dx * sweep_reverse.uy + dy * sweep_reverse.ux;
+      const float remaining = sweep_reverse.length - progress;
+      task_status.sweep_segment_remaining_mm = remaining;
+      task_status.sweep_segment_cross_mm = cross;
+      const float end_tolerance = sweep_reverse.consume_to == 0U ?
+          APP_SAFE_SWEEP_RETURN_TOLERANCE_MM : APP_SAFE_SWEEP_SEGMENT_END_MM;
+      const float cross_tolerance = sweep_reverse.consume_to == 0U ?
+          APP_SAFE_SWEEP_RETURN_TOLERANCE_MM : APP_SAFE_SWEEP_SEGMENT_CROSS_MM;
+      /* Reaching or crossing the endpoint plane is permanent. Cross-track
+       * error gates completion, but never flips the target heading by 180. */
+      if (((remaining <= end_tolerance) || (progress >= sweep_reverse.length)) &&
+          (task_abs(cross) <= cross_tolerance)) {
+        Motor_Stop();
+        task_status.motors_active = false;
+        task_status.sweep_reverse_forward_mm_s = 0.0f;
+        task_status.sweep_reverse_yaw_mm_s = 0.0f;
+        sweep_reverse.phase = SWEEP_REVERSE_DONE;
+        return false;
+      }
+      float correction = atanf(cross / APP_SAFE_SWEEP_SEGMENT_LOOKAHEAD_MM) *
+                         (180.0f / 3.14159265358979323846f);
+      correction = fmaxf(-15.0f, fminf(15.0f, correction));
+      const float error = task_wrap_angle(sweep_reverse.heading + correction -
+                                          pose.heading_mdeg * 0.001f);
+      /* Positive cross requires a positive body yaw when travelling BACK. */
+      task_status.sweep_reverse_forward_mm_s =
+          -fminf(120.0f, fmaxf(20.0f, remaining * 4.0f));
+      task_status.sweep_reverse_yaw_mm_s = nav_yaw(error);
+      Motor_Move(task_status.sweep_reverse_forward_mm_s, 0.0f,
+                 task_status.sweep_reverse_yaw_mm_s);
+      task_status.motors_active = true;
+      return false;
     }
-    return false;
+
+    case SWEEP_REVERSE_DONE:
+      /* Consume once. Position noise can never reactivate this segment. */
+      sweep_trace_count = sweep_reverse.consume_to;
+      sweep_reverse.cursor = sweep_reverse.target;
+      sweep_reverse.phase = SWEEP_REVERSE_SELECT;
+      return false;
+
+    case SWEEP_REVERSE_FINISHED:
+      return true;
   }
-  /* Face AWAY from the saved point and drive backwards. Use position for
-   * curved segments and saved yaw for rotations; never drive forward home. */
-  const float heading = task_heading_360(atan2f(dy, dx) *
-                                          (180.0f / 3.14159265358979323846f));
-  if (!safe_sweep_return_aligned) {
-    if (task_sweep_turn(heading, now_ms)) {
-      safe_sweep_return_aligned = true;
-    }
-    return false;
-  }
-  const float error = task_wrap_angle(heading - pose.heading_mdeg * 0.001f);
-  Motor_Move(-fminf(120.0f, fmaxf(20.0f, distance * 4.0f)),
-             0.0f, nav_yaw(error));
-  task_status.motors_active = true;
   return false;
 }
 
@@ -3351,7 +3493,6 @@ static void task_sweep_fail(uint32_t now_ms)
   task_clear_audit_result();
   task_enter(TASK_SAFE_SWEEP, now_ms);
   task_sweep_next(VS_FAILED_OPEN, now_ms);
-  safe_sweep_return_aligned = false;
 }
 
 static void task_process_visual_sweep(uint32_t now_ms)
@@ -3388,7 +3529,6 @@ static void task_process_visual_sweep(uint32_t now_ms)
       if (Claw_Touch(now_ms)) {
         task_status.gripper_closed = true;
         sweep_trace_recording = false;
-        safe_sweep_return_aligned = false;
         task_sweep_next(visual_sweep_phase == VS_GRAB_LOAD ? VS_BACK_LOAD : VS_BACK_OBSTACLE, now_ms);
       }
       break;
@@ -3793,7 +3933,6 @@ static void task_begin_sweep_obstacle_grab(uint32_t now_ms)
   sweep_forward_commanded = false;
   safe_sweep_phase = SAFE_SWEEP_GRAB_OBSTACLE;
   safe_sweep_phase_path_valid = false;
-  safe_sweep_return_aligned = false;
   task_status.gripper_closed = false;
   task_status.claw_visible = false;
 }
@@ -4910,6 +5049,10 @@ TaskStatus Task_GetStatus(void)
   const uint32_t primask = __get_PRIMASK();
   __disable_irq();
   snapshot = task_status;
+  snapshot.sweep_phase = (uint8_t)visual_sweep_phase;
+  snapshot.sweep_reverse_phase = (uint8_t)sweep_reverse.phase;
+  snapshot.sweep_trace_remaining = sweep_trace_count;
+  snapshot.sweep_trace_initial = sweep_reverse.initial_count;
   snapshot.audit_recheck_pending = cargo_recheck_pending;
   snapshot.action_command = remote_action.command;
   snapshot.action_phase = remote_action.phase;

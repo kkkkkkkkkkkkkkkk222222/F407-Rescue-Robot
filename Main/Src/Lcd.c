@@ -777,6 +777,12 @@ static void draw_task(const LCDDashboard *dashboard)
     (void)snprintf(text, sizeof(text), "GRIP:%s A:%03u",
                    task.gripper_closed ? "OK" : "WAIT",
                    task.acknowledged_sequence);
+  } else if (task.state == TASK_SAFE_SWEEP) {
+    const char *phase = task.sweep_phase == 6U ? "BACK_OBS" :
+                        task.sweep_phase == 14U ? "BACK_LOAD" :
+                        task.sweep_phase == 17U ? "FAIL_BACK" : "ACTION";
+    (void)snprintf(text, sizeof(text), "SWP:%s P%u",
+                   phase, task.sweep_reverse_phase);
   } else if (task.state == TASK_BOUNDARY_RECOVER) {
     if ((dashboard->now_ms / 2000U) % 2U == 0U) {
       (void)snprintf(text, sizeof(text), "X%ld Y%ld",
@@ -875,6 +881,16 @@ static void draw_task(const LCDDashboard *dashboard)
                    dashboard->debug_servo_id,
                    dashboard->debug_servo_angle,
                    Camera_GetAngle());
+  } else if (task.state == TASK_SAFE_SWEEP) {
+    if ((dashboard->now_ms / 2000U) % 2U == 0U) {
+      (void)snprintf(text, sizeof(text), "SEG:%u/%u D:%d",
+                     task.sweep_trace_remaining, task.sweep_trace_initial,
+                     (int)task.sweep_segment_remaining_mm);
+    } else {
+      (void)snprintf(text, sizeof(text), "E:%d X:%d T:%u",
+                     (int)task.sweep_heading_error_deg,
+                     (int)task.sweep_segment_cross_mm, task.sweep_turn_status);
+    }
   } else if (task.state == TASK_BOUNDARY_RECOVER) {
     const LocationPose pose = Location_GetPose();
     (void)snprintf(text, sizeof(text), "YAW:%ld>%ld",
