@@ -308,7 +308,8 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
         ((arg_a != 0) &&
          ((arg_a < APP_SAFE_SWEEP_MIN_FORWARD_MM) ||
           (arg_a > APP_SAFE_SWEEP_MAX_FORWARD_MM))) ||
-        (lateral_abs != APP_SAFE_SWEEP_LATERAL_MM) ||
+        (lateral_abs != ((arg_a == 0) ? APP_SAFE_SWEEP_PLACEMENT_MM :
+                                                   APP_SAFE_SWEEP_LATERAL_MM)) ||
         (heading != 0U)) {
       return;
     }

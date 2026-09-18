@@ -137,8 +137,8 @@ typedef enum {
   VISION_CMD_CHANGE_LANE = 17,
   VISION_CMD_CARGO_AUDIT = 18,
   /* Safe-zone-only obstacle clearing. P2/P3=0 selects pixel-guided pickup;
-   * legacy 80..600 keeps fixed-distance pickup. P4/P5 is the signed cargo
-   * parking offset (+right, -left), P6/P7 is zero. */
+   * P4/P5=+/-200 selects right/left 90-deg turn then a 200 mm forward stroke.
+   * Legacy P2/P3=80..600 retains P4/P5=+/-150 lateral parking. P6/P7=0. */
   VISION_CMD_CLEAR_SAFE_ZONE = 19
 } VisionMissionCode;
 

@@ -312,7 +312,8 @@ def mission_frame(
         lateral_abs = abs(target_y_mm)
         if (flags & ~(CMD_VALID | CMD_RED_SIDE) or
                 (target_x_mm != 0 and not 80 <= target_x_mm <= 600) or
-                lateral_abs != 150 or heading_cdeg != 0):
+                lateral_abs != (200 if target_x_mm == 0 else 150) or
+                heading_cdeg != 0):
             raise ValueError("invalid CLEAR_SAFE_ZONE payload")
     payload = (
         bytes((command, flags))

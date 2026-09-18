@@ -627,6 +627,9 @@ static const char *task_state_name(TaskState state)
     case TASK_BOUNDARY_RECOVER:  return "EDGE";
     case TASK_SAFE_SWEEP_APPROACH:return "SWPAPP";
     case TASK_SAFE_SWEEP_AUDIT:  return "SWPAUD";
+    case TASK_SAFE_SWEEP_RETRIEVE: return "GETLOAD";
+    case TASK_SAFE_SWEEP_RETRIEVE_AUDIT: return "LOADAUD";
+    case TASK_SAFE_SWEEP_RETRIEVE_FAILED: return "LOADFAIL";
     default:                     return "STOP";
   }
 }
@@ -774,6 +777,19 @@ static void draw_task(const LCDDashboard *dashboard)
     (void)snprintf(text, sizeof(text), "GRIP:%s A:%03u",
                    task.gripper_closed ? "OK" : "WAIT",
                    task.acknowledged_sequence);
+  } else if (task.state == TASK_BOUNDARY_RECOVER) {
+    if ((dashboard->now_ms / 2000U) % 2U == 0U) {
+      (void)snprintf(text, sizeof(text), "X%ld Y%ld",
+                     (long)task.boundary_x_mm, (long)task.boundary_y_mm);
+    } else {
+      (void)snprintf(text, sizeof(text), "E%ld H%u T%u",
+                     (long)task.boundary_edge_mm, task.boundary_heading_deg,
+                     task.boundary_turn_done ? 1U : 0U);
+    }
+  } else if ((task.state == TASK_SAFE_SWEEP_RETRIEVE) ||
+             (task.state == TASK_SAFE_SWEEP_RETRIEVE_AUDIT)) {
+    (void)snprintf(text, sizeof(text), "GET:%u/200 A:%u",
+                   task.sweep_forward_used_mm, task.audit_valid ? 1U : 0U);
   } else if (task.state == TASK_ALIGN_SAFE_ZONE) {
     const LocationPose pose = Location_GetPose();
     if (pose.valid) {
@@ -859,6 +875,11 @@ static void draw_task(const LCDDashboard *dashboard)
                    dashboard->debug_servo_id,
                    dashboard->debug_servo_angle,
                    Camera_GetAngle());
+  } else if (task.state == TASK_BOUNDARY_RECOVER) {
+    const LocationPose pose = Location_GetPose();
+    (void)snprintf(text, sizeof(text), "YAW:%ld>%ld",
+                   (long)(task.boundary_yaw_mdeg / 1000),
+                   (long)(pose.heading_mdeg / 1000));
   } else {
     (void)snprintf(text, sizeof(text), "Angle:%03u", task.camera_angle);
   }

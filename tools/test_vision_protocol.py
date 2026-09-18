@@ -263,7 +263,7 @@ class VisionProtocolTests(unittest.TestCase):
         visual_pickup = protocol.mission_frame(
             0x49, protocol.CMD_CLEAR_SAFE_ZONE,
             protocol.CMD_VALID | protocol.CMD_RED_SIDE,
-            0, 150, 0,
+            0, 200, 0,
         )
         self.assertEqual(protocol.parse_frame(material)[2][0], 0x13)
         self.assertEqual(
@@ -280,7 +280,8 @@ class VisionProtocolTests(unittest.TestCase):
             int.from_bytes(protocol.parse_frame(visual_pickup)[2][2:4], "big"),
             0,
         )
-        for bad_forward, bad_side in ((79, 150), (601, 150), (200, 100)):
+        for bad_forward, bad_side in ((79, 150), (601, 150), (200, 100),
+                                      (0, 150), (0, -150), (220, 200)):
             with self.assertRaises(ValueError):
                 protocol.mission_frame(
                     0x49, protocol.CMD_CLEAR_SAFE_ZONE,

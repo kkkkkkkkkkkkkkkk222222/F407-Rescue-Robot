@@ -39,7 +39,10 @@ typedef enum {
   TASK_SAFE_SWEEP_DONE = 40,
   TASK_BOUNDARY_RECOVER = 41,
   TASK_SAFE_SWEEP_APPROACH = 42,
-  TASK_SAFE_SWEEP_AUDIT = 43
+  TASK_SAFE_SWEEP_AUDIT = 43,
+  TASK_SAFE_SWEEP_RETRIEVE = 44,
+  TASK_SAFE_SWEEP_RETRIEVE_AUDIT = 45,
+  TASK_SAFE_SWEEP_RETRIEVE_FAILED = 46
 } TaskState;
 
 typedef enum {
@@ -93,6 +96,17 @@ typedef struct {
   bool nav_done;
   bool nav_final_push;
   bool nav_heading_locked;
+  /* Latched boundary trigger; retained after recovery for debugger/LCD QA. */
+  int32_t boundary_x_mm;
+  int32_t boundary_y_mm;
+  int32_t boundary_yaw_mdeg;
+  int32_t boundary_edge_mm;
+  uint16_t boundary_heading_deg;
+  bool boundary_turn_done;
+  uint16_t sweep_forward_used_mm;
+  uint8_t sweep_original_left_class;
+  uint8_t sweep_original_right_class;
+  uint8_t sweep_original_total_count;
 } TaskStatus;
 
 void Task_Process(uint32_t now_ms);

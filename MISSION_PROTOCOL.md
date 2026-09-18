@@ -1,6 +1,6 @@
 # 连续物资抓取与分区投送流程
 
-本固件以`danmo-teng/shijue_fangan`的`codex/gamepad-teleop@cec923c`为对齐基线，并扩展无测距视觉扫障、边界回头和STAGE对正迟滞。运行模式为`APP_ENABLE_TASK=1`，RDK X5与F407使用USART3（PD8 TX、PD9 RX）、115200 8N1、3.3 V TTL和公共15字节帧。
+本固件以`danmo-teng/shijue_fangan`的`codex/gamepad-teleop@4115aea`为对齐基线。正式运输首件恰好1件GREEN，之后普通/核心合计1～2件、伤员单独1件；INITIAL_STASH仍优先按任意非空处理。运行模式为`APP_ENABLE_TASK=1`，RDK X5与F407使用USART3（PD8 TX、PD9 RX）、115200 8N1、3.3 V TTL和公共15字节帧。扫障新握手及剩余协作风险见`docs/UPPER_4115AEA_ALIGNMENT.md`。
 
 ## 整体流程
 
@@ -18,7 +18,7 @@
    开局临时藏堆是独立语义：CARGO_AUDIT置`INITIAL_STASH`时，只要`total_count>0`就按`STASH_NONEMPTY`累计3个不同audit_id，忽略类别、数量变化、危险/未知/伤员混装、左右饱和及分配不明；该规则同时适用于合爪前和mode23抓后复审。mode22接收NAV后锁存`route_to_stash`，到藏点允许`RELEASE_BOTH`，且藏堆不会置`first_delivery_done`。
 10. 抓取闭合后，上位机先用带`STAGE_ONLY(bit6)`的`NAVIGATE_WAYPOINT`引导到安全区预备点（上位机`5b6164f`当前配置为入口前600 mm）。F407继续使用H/D导航，但到`D=0`只停车、把摄像头抬到120°、置`DISTANCE_DONE=1`并保持`mode=10`，严禁启动旧安全区补推。藏堆和返中命令不使用该标志，原流程不变。
 11. 上位机随后发送第一次`ALIGN_SAFE_ZONE`：P6/P7为红方90°或蓝方270°，F407用IMU原地对正，并确保摄像头120°命令后至少稳定300 ms。首次进入1.5°，稳定期使用4°迟滞窗口，避免IMU小幅波动反复重启ALIGN；完成后上报`mode=11`。上位机连续3帧冻结安全区框后发送第二次带`VISUAL_CORRECTION_VALID(bit6)`的ALIGN；P2/P3为有符号水平像素误差而不是角度。F407按可标定焦距把像素误差转换为一次相对转角，最大限制±15°，完成后再次上报新鲜`mode=11`并锁存最终航向。视觉5秒失败时，上位机跳过第二次ALIGN，直接沿第一次90°/270°结果推进。
-12. 第二次视觉ALIGN完成后，上位机才检查最终推进走廊。无障碍时不发送0x13，直接沿原ENTER流程。发现障碍时发送`CLEAR_SAFE_ZONE=0x13`：P2/P3为0表示视觉引导取障，P4/P5为当前货物临时停放方向（普通/核心`+150`、伤员`-150`），P6/P7为0。F407先以mode39侧放原物资并回走廊中心，进入mode42接收障碍像素APPROACH；相机140°后进入mode43，只接受P5 bit6=`AUDIT_SWEEP_PICKUP`的专用审核，3个不同audit_id非空即置AUDIT_VALID，危险、伤员、未知和左右不明均允许。GRAB后回mode39，依据保存的二维位姿返回走廊中心、移走障碍并取回原物资；随后mode23正常复审，合法上报mode40并重新执行两次ALIGN。旧80～600 mm固定距离CLEAR仍兼容，但新流程不依赖homography。
+12. 第二次视觉ALIGN完成后，上位机检查最终推进走廊。无障碍直接ENTER；有障碍发送`CLEAR_SAFE_ZONE=0x13`，P2/P3=0、P4/P5普通/核心`+200`或伤员`-200`、P6/P7=0。200表示向对应侧转90°后的前进距离，不是横移。mode39暂放原物资，张爪完成后倒退200 mm回S并恢复H；mode42/43视觉抓障，43只接受bit6=`AUDIT_SWEEP_PICKUP`的三帧非空审核。抓障后mode39逆序倒退沿采样轨迹回S，向相反侧转90°前进200 mm放障、张爪完成后倒退回S，再转180°朝向原物资。mode44找回、mode45普通正式审核：合计前进预算200 mm不因APP/HOLD/44↔45重置。合法后等待GRAB，mode39合爪并沿轨迹倒退回S恢复H，mode23复审→mode40→两次ALIGN→走廊检查。找回失败先张爪、倒退回S、恢复H才上报mode46，接受RETURN_CENTER进mode17再mode3；不计投送。旧P2/P3=80～600、P4/P5=±150仅用于固定距离兼容，新视觉请求±150拒绝。
 13. `ENTER_SAFE_ZONE`必须置`DRIVE_STRAIGHT`、清除`DISTANCE_VALID`且P2～P5为0；视觉ALIGN成功时bit6=1、清除`USE_FINAL_HEADING`且P6/P7=0，定位降级时bit6=0、置`USE_FINAL_HEADING`并发送红9000/蓝27000。F407本地编码器总目标为600 mm：前400 mm使用既有接近减速，随后以300 mm/s最终补推200 mm并保留1200 ms接触保护；该主动推进阶段把地图边界保护放宽到距边5 cm。停车、双爪全开且相机120°稳定300 ms后上报mode15；收到TASK_COMPLETE后至少完成1000 ms本地投送观察等待，再进入mode16退出。
 14. 除主动安全区推进和既有退出/返中外，定位到3 m×3 m地图任一边≤300 mm时，F407立即取消当前动作、张开夹爪、原地转向场地中心并上报mode41；随后以300 mm/s向场内移动到距边≥400 mm，才进入mode3重新SEARCH，避免在300 mm阈值处反复触发EDGE→SEARCH→EDGE。上位机看到mode41必须清除锁定批次和动作上下文，不能继续重发旧NAV/APPROACH。
 15. 收到`TASK_COMPLETE`进入mode16，以400 mm/s后退0.30 m。上位机看到mode16或17后持续发送RETURN H/D；mode16可校验、缓存并ACK RETURN以解除PAUSE，但必须继续完成剩余本地后退，不提前切换或重置距离。随后mode17直接使用最新RETURN返中，D=0后进入mode3 SEARCH。
@@ -96,5 +96,5 @@ A3 B3 12 10 02 80 02 00 00 00 01 09 DD FD C3
 - 临时藏堆NAV不使用`STAGE_ONLY`，也不执行任何安全区补推；到点后`RELEASE_BOTH`。释放完成后至返中完成期间，F407拒绝`APPROACH_TARGET`和`DISPERSE_PILE`，避免残留找物命令抢占藏堆回程。第一条`RETURN_CENTER`先触发F407保持释放航向直退0.35 m，编码器累计距离且IMU修正航向；退到安全距离后才使用上位机持续更新的H原地调头并按D返中。该退让只对临时藏堆生效，正式安全区投送仍使用既有mode16后退0.30 m，不会重复后退。
 - `YIELD_BACKOFF`只在F407已确认完成普通单侧释放且`cargo_recheck_pending=1`时接受，该路径保持25°。聚集APPROACH保持双爪Open，mode38审核后进入mode37；所有带侧DISPERSE曲线都使用15°保持。不带SIDE_VALID只执行20°观察并以mode35请求新审核。
 - `RELEASE_BOTH`只表示真实双爪全开并以mode34完成；20°观察必须使用无`SIDE_VALID`的`DISPERSE_PILE`并以mode35完成，两种动作不再隐式互换。
-- 对外mode映射为`3 SEARCH、15 DELIVERY_VERIFY、16 EXIT_SAFE_ZONE、17 FACE_FIELD_CENTER、18 STOPPED、20 APPROACH_TARGET、21 CAPTURE_AUDIT、22 CAPTURE_DONE、23 POST_GRAB_AUDIT、30 YIELD_DONE、31 ESCAPE_DONE、32/33/34 RELEASE_DONE、35 DISPERSE_DONE、36 LANE_DONE、37 DISPERSE_READY、38 CLUSTER_CAPTURE_AUDIT、39 SAFE_SWEEP、40 SAFE_SWEEP_DONE、41 BOUNDARY_RECOVER、42 SAFE_SWEEP_APPROACH、43 SAFE_SWEEP_AUDIT`。
+- 对外mode映射为`3 SEARCH、15 DELIVERY_VERIFY、16 EXIT_SAFE_ZONE、17 FACE_FIELD_CENTER、18 STOPPED、20 APPROACH_TARGET、21 CAPTURE_AUDIT、22 CAPTURE_DONE、23 POST_GRAB_AUDIT、30 YIELD_DONE、31 ESCAPE_DONE、32/33/34 RELEASE_DONE、35 DISPERSE_DONE、36 LANE_DONE、37 DISPERSE_READY、38 CLUSTER_CAPTURE_AUDIT、39 SAFE_SWEEP、40 SAFE_SWEEP_DONE、41 BOUNDARY_RECOVER、42 SAFE_SWEEP_APPROACH、43 SAFE_SWEEP_AUDIT、44 SAFE_SWEEP_RETRIEVE、45 SAFE_SWEEP_RETRIEVE_AUDIT、46 SAFE_SWEEP_RETRIEVE_FAILED`。
 - TASK_COMPLETE后的顺序为mode16本地后退、mode17执行RETURN H/D、D=0后mode3。普通SEARCH完成120°和90°两圈仍无目标时，同样允许上位机在mode3发送RETURN_CENTER，使空爪底盘进入mode17回中心。mode3后的1500 ms交接窗口仍会确认重复RETURN帧SEQ。

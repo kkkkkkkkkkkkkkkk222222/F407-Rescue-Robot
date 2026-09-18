@@ -362,10 +362,17 @@
 #define APP_SAFE_FINAL_PUSH_DISTANCE_MM    200U
 #define APP_SAFE_FINAL_PUSH_SPEED_MM_S     300.0f
 #define APP_SAFE_FINAL_PUSH_TIMEOUT_MS     1200U
-/* CLEAR_SAFE_ZONE is only accepted after safe-zone alignment. The upper
- * computer supplies the obstacle pickup distance and uses +150 mm to park a
- * material load on the right, or -150 mm to park an injury load on the left. */
+/* Visual CLEAR: P2/P3=0, +/-200 means a 90-deg turn and forward placement.
+ * Only legacy fixed-distance CLEAR retains the +/-150 lateral stroke. */
 #define APP_SAFE_SWEEP_LATERAL_MM            150
+#define APP_SAFE_SWEEP_PLACEMENT_MM          200
+#define APP_SAFE_SWEEP_RETRIEVE_BUDGET_MM     200U
+#define APP_SAFE_SWEEP_RETRIEVE_SEARCH_MM_S    80.0f
+#define APP_SAFE_SWEEP_RETRIEVE_TIMEOUT_MS  15000U
+#define APP_SAFE_SWEEP_OBSERVE_TIMEOUT_MS    3500U
+#define APP_SAFE_SWEEP_TRACE_CAPACITY         256U
+#define APP_SAFE_SWEEP_TRACE_STEP_MM          10.0f
+#define APP_SAFE_SWEEP_TRACE_TOLERANCE_MM       4.0f
 #define APP_SAFE_SWEEP_MIN_FORWARD_MM          80
 #define APP_SAFE_SWEEP_MAX_FORWARD_MM         600
 #define APP_SAFE_SWEEP_LATERAL_SPEED_MM_S   350.0f
