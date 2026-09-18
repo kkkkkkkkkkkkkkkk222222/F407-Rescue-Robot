@@ -18,6 +18,8 @@ MSG_STM_STATUS = 0x17
 MSG_MOTION_COMMAND = 0x1B
 MSG_MOTION_STATUS = 0x1C
 MSG_MISSION = 0x18
+MSG_COMMAND_CONTEXT = 0x1D
+MSG_STATUS_CONTEXT = 0x1E
 CONFIG_ACK = bytes((0xA3, 0xB3, 0x01, 0xC3))
 
 IMAGE_WIDTH = 1280
@@ -34,6 +36,7 @@ STM_MOTORS_ACTIVE = 0x04
 STM_AUTO_APPROACH = 0x08
 STM_AUDIT_VALID = 0x10
 STM_DISTANCE_DONE = 0x20
+STM_AUDIT_READY = 0x40
 STM_FAULT = 0x80
 
 CMD_STOP = 0x00
@@ -210,6 +213,37 @@ def parse_fused_pose(frame: bytes) -> dict[str, int]:
     }
 
 
+def command_context_frame(sequence: int, task_id: int, action_id: int,
+                          vision_frame: int = 0) -> bytes:
+    payload = (task_id.to_bytes(2, "big") + action_id.to_bytes(2, "big") +
+               vision_frame.to_bytes(4, "big"))
+    return build_frame(MSG_COMMAND_CONTEXT, sequence, payload)
+
+
+def pair_mission_frame(frame: bytes, task_id: int, action_id: int,
+                       vision_frame: int = 0) -> bytes:
+    """Prefix a raw 0x18 builder result; rescue firmware rejects bare non-ABORT."""
+    kind, sequence, _ = parse_frame(frame)
+    if kind != MSG_MISSION:
+        raise ValueError("expected a mission frame")
+    return command_context_frame(sequence, task_id, action_id, vision_frame) + frame
+
+
+def parse_stm_status_pair(data: bytes) -> dict[str, int | bool]:
+    if len(data) != 2 * FRAME_SIZE:
+        raise ValueError("expected adjacent 0x1E/0x17 pair")
+    kind, sequence, context = parse_frame(data[:FRAME_SIZE])
+    status = parse_stm_status(data[FRAME_SIZE:])
+    if (kind != MSG_STATUS_CONTEXT or sequence != status["sequence"] or
+            context[5] & ~3 or context[6:] != bytes(2)):
+        raise ValueError("invalid status context pair")
+    status.update(task_id=int.from_bytes(context[:2], "big"),
+                  action_id=int.from_bytes(context[2:4], "big"),
+                  accepted_opcode=context[4], action_status=context[5],
+                  context_valid=True)
+    return status
+
+
 def stm_status_frame(
     sequence: int,
     flags: int,
@@ -243,6 +277,7 @@ def parse_stm_status(frame: bytes) -> dict[str, int | bool]:
         "motors_active": bool(flags & STM_MOTORS_ACTIVE),
         "auto_approach": bool(flags & STM_AUTO_APPROACH),
         "audit_valid": bool(flags & STM_AUDIT_VALID),
+        "audit_ready": bool(flags & STM_AUDIT_READY),
         "distance_done": bool(flags & STM_DISTANCE_DONE),
         "fault": bool(flags & STM_FAULT),
     }

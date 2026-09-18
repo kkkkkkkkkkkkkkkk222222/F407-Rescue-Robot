@@ -218,6 +218,8 @@
 #define APP_IMU_UPDATE_PERIOD_MS         1U
 #define APP_MOTOR_CONTROL_PERIOD_MS      10U
 #define APP_TASK_PERIOD_MS               20U
+#define APP_COMMAND_RX_TIMEOUT_MS         500U
+#define APP_VISUAL_UPDATE_TIMEOUT_MS      500U
 #define APP_TASK_STATUS_PERIOD_MS        50U
 #define APP_MATCH_TIME_S                 180U
 #define APP_MATCH_TIME_MS                (APP_MATCH_TIME_S * 1000U)

@@ -1,6 +1,6 @@
 # 连续物资抓取与分区投送流程
 
-本固件以`danmo-teng/shijue_fangan`的`codex/gamepad-teleop@2fd9f75`为对齐基线。正式运输首件恰好1件GREEN，之后普通/核心合计1～2件、伤员单独1件；INITIAL_STASH仍优先按任意非空处理。运行模式为`APP_ENABLE_TASK=1`，RDK X5与F407使用USART3（PD8 TX、PD9 RX）、115200 8N1、3.3 V TTL和公共15字节帧。扫障新握手及剩余协作风险见`docs/UPPER_4115AEA_ALIGNMENT.md`。 聚集130°对正累计360°刷新及mode24/HOLD握手见`docs/UPPER_2FD9F75_CLUSTER_RECOVERY.md`。
+本固件以`danmo-teng/shijue_fangan`的`codex/gamepad-teleop@b0f954f`为对齐基线。正式运输首件恰好1件GREEN，之后普通/核心合计1～2件、伤员单独1件；INITIAL_STASH仍优先按任意非空处理。运行模式为`APP_ENABLE_TASK=1`，RDK X5与F407使用USART3（PD8 TX、PD9 RX）、115200 8N1、3.3 V TTL和公共15字节帧。扫障新握手及剩余协作风险见`docs/UPPER_4115AEA_ALIGNMENT.md`。 聚集130°对正累计360°刷新及mode24/HOLD握手见`docs/UPPER_2FD9F75_CLUSTER_RECOVERY.md`。 当前必须使用1D/18与1E/17同SEQ帧对，详见`docs/UPPER_B0F954F_CONTEXT_READY.md`；旧裸18除ABORT外不再接受。
 
 ## 整体流程
 
@@ -60,7 +60,7 @@ A3 B3 12 10 02 80 02 00 00 00 01 09 DD FD C3
 
 | 字段 | 内容 |
 | --- | --- |
-| `P0` | bit0爪子入镜、bit1夹爪闭合、bit2电机运动、bit3自动靠近、bit4审核合法、bit5导航定距完成、bit7故障 |
+| `P0` | bit0爪子入镜、bit1夹爪闭合、bit2电机运动、bit3自动靠近、bit4审核合法、bit5导航定距完成、bit6审核就绪AUDIT_READY、bit7故障 |
 | `P1` | 当前`TaskState`编号 |
 | `P2/P3` | 摄像头角度，0.01°，大端 |
 | `P4` | 最近真正接受的`TYPE=0x18`命令SEQ |

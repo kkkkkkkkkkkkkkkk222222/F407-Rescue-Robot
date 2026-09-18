@@ -54,6 +54,10 @@ static bool uart_data_is_odom(const uint8_t *data, uint16_t size)
 
 static bool uart_data_is_status(const uint8_t *data, uint16_t size)
 {
+  if (size == 2U * VISION_FRAME_SIZE) {
+    return data[2] == VISION_MSG_STATUS_CONTEXT &&
+           data[VISION_FRAME_SIZE + 2U] == VISION_MSG_STM_STATUS;
+  }
   return (size == VISION_FRAME_SIZE) &&
          (data[0] == VISION_FRAME_HEAD_1) &&
          (data[1] == VISION_FRAME_HEAD_2) &&

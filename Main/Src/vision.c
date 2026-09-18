@@ -26,8 +26,14 @@ static uint8_t motion_status_sequence;
 static uint8_t motion_status_frame[VISION_FRAME_SIZE];
 static uint8_t status_sequence;
 static uint8_t odom_sequence;
-static uint8_t tx_frame[VISION_FRAME_SIZE];
-static uint8_t status_frame[VISION_FRAME_SIZE];
+static uint8_t tx_frame[2U * VISION_FRAME_SIZE];
+static uint8_t status_frame[2U * VISION_FRAME_SIZE];
+static bool context_pending;
+static uint8_t context_sequence;
+static uint16_t context_task, context_action;
+static uint32_t context_vision, mission_generation;
+static volatile bool abort_pending;
+static VisionMissionCommand abort_command;
 static uint8_t odom_frame[VISION_FRAME_SIZE];
 static const uint8_t config_ack[4] = {
   VISION_FRAME_HEAD_1, VISION_FRAME_HEAD_2, 0x01U, VISION_FRAME_TAIL
@@ -122,6 +128,11 @@ static void vision_save_config(const uint8_t *payload, uint8_t sequence)
   latest_data.config_sequence = sequence;
   config_sequence_valid = true;
   latest_data.config_ready = config_streak >= APP_CONFIG_CONFIRM_FRAMES;
+  if (latest_data.config_ready) {
+    ++latest_data.session_generation;
+    latest_data.mission = (VisionMissionCommand){0};
+    context_pending = false;
+  }
 }
 
 static void vision_save_report(const uint8_t *payload, uint8_t sequence,
@@ -196,12 +207,11 @@ static bool vision_mission_code_valid(uint8_t command)
 }
 
 static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
-                                uint32_t tick_ms)
+                                uint32_t tick_ms, bool paired)
 {
-  volatile VisionMissionCommand *command = &latest_data.mission;
-  if (command->received && (command->sequence == sequence)) {
-    return;
-  }
+  VisionMissionCommand candidate = {0};
+  VisionMissionCommand *command = &candidate;
+  if (!paired && payload[0] != VISION_CMD_ABORT) { return; }
 
   const uint8_t code = payload[0];
   const uint8_t flags = payload[1];
@@ -329,6 +339,16 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
   command->sequence = sequence;
   command->tick_ms = tick_ms;
   command->received = true;
+  command->context_valid = paired;
+  command->task_id = paired ? context_task : 0U;
+  command->action_id = paired ? context_action : 0U;
+  command->vision_frame = paired ? context_vision : 0U;
+  command->generation = ++mission_generation;
+  latest_data.mission = candidate;
+  if (code == VISION_CMD_ABORT) {
+    abort_command = candidate;
+    abort_pending = true;
+  }
 }
 
 #if APP_ENABLE_MOTION_DEBUG_TASK || APP_ENABLE_GAMEPAD_TASK
@@ -436,6 +456,9 @@ static void vision_save_frame(uint32_t tick_ms)
   }
   latest_data.last_frame_tick_ms = tick_ms;
   latest_data.frame_received = true;
+  const bool paired = context_pending &&
+      (type == VISION_MSG_MISSION) && (sequence == context_sequence);
+  context_pending = false;
 
 #if APP_ENABLE_MOTION_DEBUG_TASK || APP_ENABLE_GAMEPAD_TASK
   if (type == VISION_MSG_MOTION_COMMAND) {
@@ -448,8 +471,15 @@ static void vision_save_frame(uint32_t tick_ms)
     vision_save_report(payload, sequence, tick_ms);
   } else if (type == VISION_MSG_FUSED_POSE) {
     vision_save_fused_pose(payload, sequence, tick_ms);
+  } else if (type == VISION_MSG_COMMAND_CONTEXT) {
+    context_task = vision_u16_be(payload);
+    context_action = vision_u16_be(payload + 2);
+    context_vision = ((uint32_t)vision_u16_be(payload + 4) << 16) |
+                     vision_u16_be(payload + 6);
+    context_sequence = sequence;
+    context_pending = true;
   } else if (type == VISION_MSG_MISSION) {
-    vision_save_mission(payload, sequence, tick_ms);
+    vision_save_mission(payload, sequence, tick_ms, paired);
   }
 
   if (primask == 0U) {
@@ -466,7 +496,7 @@ static bool vision_frame_valid(void)
   return (frame[FRAME_TAIL_INDEX] == VISION_FRAME_TAIL) &&
          ((type == VISION_MSG_CONFIG) || (type == VISION_MSG_REPORT) ||
           (type == VISION_MSG_FUSED_POSE) ||
-          (type == VISION_MSG_MISSION)
+          (type == VISION_MSG_MISSION) || (type == VISION_MSG_COMMAND_CONTEXT)
 #if APP_ENABLE_MOTION_DEBUG_TASK || APP_ENABLE_GAMEPAD_TASK
           || (type == VISION_MSG_MOTION_COMMAND)
 #endif
@@ -502,14 +532,17 @@ static void vision_parse_byte(uint8_t value, uint32_t tick_ms)
   if (frame_index == 0U) {
     if (value == VISION_FRAME_HEAD_1) {
       frame[frame_index++] = value;
+    } else {
+      context_pending = false;
     }
     return;
   }
   if (frame_index == 1U) {
     if (value == VISION_FRAME_HEAD_2) {
       frame[frame_index++] = value;
-    } else if (value != VISION_FRAME_HEAD_1) {
-      frame_index = 0U;
+    } else {
+      context_pending = false;
+      if (value != VISION_FRAME_HEAD_1) { frame_index = 0U; }
     }
     return;
   }
@@ -520,6 +553,7 @@ static void vision_parse_byte(uint8_t value, uint32_t tick_ms)
       vision_save_frame(tick_ms);
       frame_index = 0U;
     } else {
+      context_pending = false;
       vision_resync_frame();
     }
   }
@@ -528,6 +562,8 @@ static void vision_parse_byte(uint8_t value, uint32_t tick_ms)
 void Vision_Init(void)
 {
   latest_data = (VisionData){0};
+  abort_pending = false;
+  mission_generation = 0U;
   config_streak = 0U;
   config_last_sequence = 0U;
   config_sequence_valid = false;
@@ -544,6 +580,15 @@ void Vision_Init(void)
 void Vision_ResetParser(void)
 {
   frame_index = 0U;
+  context_pending = false;
+}
+
+void Vision_ClearAbort(void)
+{
+  const uint32_t primask = __get_PRIMASK();
+  __disable_irq();
+  abort_pending = false;
+  if (primask == 0U) { __enable_irq(); }
 }
 
 void Vision_RearmConfig(void)
@@ -575,6 +620,7 @@ VisionData Vision_GetSnapshot(void)
   const uint32_t primask = __get_PRIMASK();
   __disable_irq();
   snapshot = latest_data;
+  if (abort_pending) { snapshot.mission = abort_command; }
   if (primask == 0U) {
     __enable_irq();
   }
@@ -630,13 +676,19 @@ void Vision_QueueStmStatus(const VisionStmStatus *status)
     0U,
     0U
   };
-  uint8_t pending[VISION_FRAME_SIZE];
-  vision_build_frame(pending, VISION_MSG_STM_STATUS,
-                     vision_next_sequence(&status_sequence), payload);
+  const uint8_t context_payload[VISION_PAYLOAD_SIZE] = {
+    (uint8_t)(status->task_id >> 8), (uint8_t)status->task_id,
+    (uint8_t)(status->action_id >> 8), (uint8_t)status->action_id,
+    status->accepted_opcode, status->action_status, 0U, 0U
+  };
+  uint8_t pending[2U * VISION_FRAME_SIZE];
+  const uint8_t seq = vision_next_sequence(&status_sequence);
+  vision_build_frame(pending, VISION_MSG_STATUS_CONTEXT, seq, context_payload);
+  vision_build_frame(pending + VISION_FRAME_SIZE, VISION_MSG_STM_STATUS, seq, payload);
 
   const uint32_t primask = __get_PRIMASK();
   __disable_irq();
-  for (uint8_t i = 0U; i < VISION_FRAME_SIZE; ++i) {
+  for (uint8_t i = 0U; i < 2U * VISION_FRAME_SIZE; ++i) {
     status_frame[i] = pending[i];
   }
   status_pending = true;
@@ -704,18 +756,18 @@ void Vision_QueueMotionStatus(const VisionMotionStatus *status)
 }
 
 static void vision_send_pending(volatile bool *pending,
-                                const uint8_t *source)
+                                const uint8_t *source, uint16_t size)
 {
   const uint32_t primask = __get_PRIMASK();
   __disable_irq();
-  for (uint8_t i = 0U; i < VISION_FRAME_SIZE; ++i) {
+  for (uint16_t i = 0U; i < size; ++i) {
     tx_frame[i] = source[i];
   }
   *pending = false;
   if (primask == 0U) {
     __enable_irq();
   }
-  if (!Uart_Send(tx_frame, sizeof(tx_frame))) {
+  if (!Uart_Send(tx_frame, size)) {
     *pending = true;
   }
 }
@@ -727,10 +779,10 @@ void Vision_Process(void)
       --ack_remaining;
     }
   } else if (status_pending) {
-    vision_send_pending(&status_pending, status_frame);
+    vision_send_pending(&status_pending, status_frame, 2U * VISION_FRAME_SIZE);
   } else if (motion_status_pending) {
-    vision_send_pending(&motion_status_pending, motion_status_frame);
+    vision_send_pending(&motion_status_pending, motion_status_frame, VISION_FRAME_SIZE);
   } else if (odom_pending) {
-    vision_send_pending(&odom_pending, odom_frame);
+    vision_send_pending(&odom_pending, odom_frame, VISION_FRAME_SIZE);
   }
 }

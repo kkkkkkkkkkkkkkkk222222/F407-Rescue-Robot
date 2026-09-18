@@ -61,6 +61,8 @@
 #define VISION_MSG_FUSED_POSE     0x16U
 #define VISION_MSG_STM_STATUS     0x17U
 #define VISION_MSG_MISSION        0x18U
+#define VISION_MSG_COMMAND_CONTEXT 0x1DU
+#define VISION_MSG_STATUS_CONTEXT  0x1EU
 
 #define VISION_COLOR_RED          0x11U
 #define VISION_COLOR_BLUE         0x12U
@@ -93,6 +95,7 @@
 #define VISION_STM_AUTO_APPROACH   0x08U
 #define VISION_STM_AUDIT_VALID     0x10U
 #define VISION_STM_DISTANCE_DONE   0x20U
+#define VISION_STM_AUDIT_READY     0x40U
 #define VISION_STM_FAULT           0x80U
 
 #define VISION_CMD_VALID             0x01U
@@ -189,6 +192,11 @@ typedef struct {
   uint8_t audit_id;
   uint8_t audit_total_count;
   bool received;
+  bool context_valid;
+  uint16_t task_id;
+  uint16_t action_id;
+  uint32_t vision_frame;
+  uint32_t generation;
 } VisionMissionCommand;
 
 typedef struct {
@@ -221,6 +229,7 @@ typedef struct {
   int8_t teleop_forward, teleop_left, teleop_yaw, teleop_camera;
   uint8_t teleop_buttons, teleop_speed_percent;
   bool motion_valid;
+  uint32_t session_generation;
 } VisionData;
 
 typedef struct {
@@ -229,6 +238,10 @@ typedef struct {
   uint8_t mode;
   uint8_t acknowledged_sequence;
   uint8_t fault_code;
+  uint16_t task_id;
+  uint16_t action_id;
+  uint8_t accepted_opcode;
+  uint8_t action_status;
 } VisionStmStatus;
 
 typedef struct {
@@ -251,6 +264,7 @@ void Vision_QueueMotionStatus(const VisionMotionStatus *status);
 void Vision_Init(void);
 void Vision_ResetParser(void);
 void Vision_RearmConfig(void);
+void Vision_ClearAbort(void);
 void Vision_ParseBytes(const uint8_t *data, size_t size, uint32_t tick_ms);
 VisionData Vision_GetSnapshot(void);
 bool Vision_IsFresh(const VisionData *data, uint32_t now_ms,
