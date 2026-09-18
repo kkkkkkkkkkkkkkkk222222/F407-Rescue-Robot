@@ -397,7 +397,7 @@
 #define APP_SAFE_SWEEP_AUDIT_TIMEOUT_MS       3500U
 /* Normal autonomous motion turns back at 30 cm from the 3 m x 3 m map edge.
  * Accepted fixed-distance ENTER alone is exempt from map-edge recovery. */
-#define APP_FIELD_EDGE_ABORT_MARGIN_MM       300.0f
+#define APP_FIELD_EDGE_ABORT_MARGIN_MM        50.0f
 #define APP_FIELD_EDGE_REARM_MARGIN_MM       400.0f
 #define APP_BOUNDARY_TURN_TOLERANCE_DEG        5.0f
 #define APP_BOUNDARY_RECOVERY_SPEED_MM_S     300.0f
