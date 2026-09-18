@@ -2755,8 +2755,8 @@ static RemoteRouteStatus safe_enter_follow(
     nav_final_push_started_ms = now_ms;
     nav_final_push_start_path_mm = pose.path_mm;
     task_status.nav_final_push = true;
-    /* From here onward localization is deliberately ignored. The encoder
-     * push absorbs the final fence-distance error without repeated stops. */
+    /* Local odometry/IMU remains required. Map-edge recovery is exempted
+     * only for this deliberate fixed-distance ENTER action. */
   }
 
   if (nav_final_push_active) {
@@ -2764,10 +2764,9 @@ static RemoteRouteStatus safe_enter_follow(
       nav_final_push_started_ms += now_ms - nav_final_push_paused_ms;
       nav_final_push_paused = false;
     }
-    const uint32_t elapsed_ms = now_ms - nav_final_push_started_ms;
-    const uint32_t travelled_mm = pose.path_mm - nav_final_push_start_path_mm;
-    if ((travelled_mm >= APP_SAFE_FINAL_PUSH_DISTANCE_MM) ||
-        (elapsed_ms >= APP_SAFE_FINAL_PUSH_TIMEOUT_MS)) {
+    /* One origin for the whole ENTER stroke, including any sampled overshoot
+     * at the 400 mm speed transition. Time alone must never report success. */
+    if (enter_travelled_mm >= APP_SAFE_ENTER_TOTAL_DISTANCE_MM) {
       Motor_Stop();
       task_status.motors_active = false;
       nav_final_push_active = false;
@@ -4666,7 +4665,9 @@ static void task_accept_mission(const VisionMissionCommand *command,
 
 static bool task_boundary_guard_exempt(void)
 {
-  return (state == TASK_WAIT_CONFIG) || (state == TASK_START) ||
+  /* Only accepted ENTER gets this exemption, not STAGE NAV or sweeping. */
+  return ((state == TASK_NAVIGATE) && delivery_enter_active) ||
+         (state == TASK_WAIT_CONFIG) || (state == TASK_START) ||
          (state == TASK_OPEN_CLAW) || (state == TASK_STOPPED) ||
          (state == TASK_BOUNDARY_RECOVER) ||
          (state == TASK_OPEN_FOR_RAM) || (state == TASK_RAM_VERIFY) ||
@@ -4687,10 +4688,7 @@ static void task_check_boundary_guard(uint32_t now_ms)
   const float y_abs = task_abs((float)pose.y_mm);
   const float edge_distance_mm = APP_LOCATION_FIELD_HALF_MM -
       ((x_abs > y_abs) ? x_abs : y_abs);
-  const float margin_mm =
-      ((state == TASK_NAVIGATE) && delivery_enter_active) ?
-          APP_SAFE_PUSH_EDGE_MARGIN_MM : APP_FIELD_EDGE_ABORT_MARGIN_MM;
-  if (edge_distance_mm > margin_mm) {
+  if (edge_distance_mm > APP_FIELD_EDGE_ABORT_MARGIN_MM) {
     return;
   }
 

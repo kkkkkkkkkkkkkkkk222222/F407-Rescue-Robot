@@ -361,7 +361,6 @@
 #define APP_SAFE_ENTER_CONTACT_DISTANCE_MM 113U
 #define APP_SAFE_FINAL_PUSH_DISTANCE_MM    250U
 #define APP_SAFE_FINAL_PUSH_SPEED_MM_S     330.0f
-#define APP_SAFE_FINAL_PUSH_TIMEOUT_MS     1200U
 /* Visual CLEAR: P2/P3=0, +/-200 means a 90-deg turn and forward placement.
  * Only legacy fixed-distance CLEAR retains the +/-150 lateral stroke. */
 #define APP_SAFE_SWEEP_LATERAL_MM            150
@@ -390,10 +389,9 @@
 #define APP_SAFE_SWEEP_RETURN_REALIGN_DEG       8.0f
 #define APP_SAFE_SWEEP_AUDIT_TIMEOUT_MS       3500U
 /* Normal autonomous motion turns back at 30 cm from the 3 m x 3 m map edge.
- * The deliberate final safe-zone push is allowed to approach within 5 cm. */
+ * Accepted fixed-distance ENTER alone is exempt from map-edge recovery. */
 #define APP_FIELD_EDGE_ABORT_MARGIN_MM       300.0f
 #define APP_FIELD_EDGE_REARM_MARGIN_MM       400.0f
-#define APP_SAFE_PUSH_EDGE_MARGIN_MM          50.0f
 #define APP_BOUNDARY_TURN_TOLERANCE_DEG        5.0f
 #define APP_BOUNDARY_RECOVERY_SPEED_MM_S     300.0f
 #define APP_POSE_WAIT_TIMEOUT_MS          1500U
