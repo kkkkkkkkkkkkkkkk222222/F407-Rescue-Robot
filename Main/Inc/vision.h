@@ -193,6 +193,7 @@ typedef struct {
   uint8_t audit_total_count;
   bool received;
   bool context_valid;
+  bool payload_valid;
   uint16_t task_id;
   uint16_t action_id;
   uint32_t vision_frame;
@@ -242,6 +243,7 @@ typedef struct {
   uint16_t action_id;
   uint8_t accepted_opcode;
   uint8_t action_status;
+  uint16_t rejected_action_id;
 } VisionStmStatus;
 
 typedef struct {

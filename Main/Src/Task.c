@@ -167,6 +167,8 @@ typedef struct {
   uint8_t opcode, flags;
   uint32_t last_command_rx_ms, last_visual_update_ms, vision_frame;
   bool valid, visual_valid, completed, cancelled;
+  bool rejection_valid;
+  uint16_t rejected_action_id;
 } TaskContext;
 static TaskContext accepted_context;
 static VisionMissionCommand active_mission;
@@ -231,7 +233,8 @@ static bool transport_audit_camera_ready;
 static bool transport_stage_injury;
 static uint32_t capture_forward_used_mm, capture_wait_started_ms;
 static LocationPose capture_budget_pose;
-static uint8_t capture_escape_phase, separation_attempts;
+static uint8_t capture_escape_phase, separation_total_attempts;
+static uint8_t separation_side_attempts;
 static int8_t progressive_keep_side;
 static bool progressive_cluster_base;
 static uint32_t capture_escape_path_mm;
@@ -613,8 +616,12 @@ static AuditSemantic task_audit_semantic(
         AUDIT_SEMANTIC_STASH_NONEMPTY : AUDIT_SEMANTIC_INVALID;
   }
 
-  if ((total == 0U) || (total > 2U) ||
+  if ((total != 1U) ||
       ((uint8_t)(left_count + right_count) != total) ||
+      ((left_count == 0U) != (left == VISION_CARGO_NONE)) ||
+      ((right_count == 0U) != (right == VISION_CARGO_NONE)) ||
+      (left == VISION_CARGO_MIXED_MATERIAL) ||
+      (right == VISION_CARGO_MIXED_MATERIAL) ||
       dangerous || unknown || injury_mixed) {
     return AUDIT_SEMANTIC_INVALID;
   }
@@ -630,20 +637,16 @@ static AuditSemantic task_audit_semantic(
     return (destination_injury && (total == 1U)) ?
         AUDIT_SEMANTIC_INJURY_SINGLE : AUDIT_SEMANTIC_INVALID;
   }
-  /* Match the upper computer's post-first-delivery policy: one to two
-   * ordinary/core supplies may be transported together, including a side
-   * reported as MIXED_MATERIAL. Danger, unknown and injury mixtures were
-   * rejected above. */
+  /* Formal transport is exactly one GREEN or CORE, never MIXED_MATERIAL.
+   * Selection priority belongs to the host; a legal held CORE remains legal. */
   const bool material =
          !destination_injury &&
          ((left == VISION_CARGO_NONE) ||
           (left == VISION_CARGO_GREEN) ||
-          (left == VISION_CARGO_CORE) ||
-          (left == VISION_CARGO_MIXED_MATERIAL)) &&
+          (left == VISION_CARGO_CORE)) &&
          ((right == VISION_CARGO_NONE) ||
           (right == VISION_CARGO_GREEN) ||
-          (right == VISION_CARGO_CORE) ||
-          (right == VISION_CARGO_MIXED_MATERIAL));
+          (right == VISION_CARGO_CORE));
   return material ? AUDIT_SEMANTIC_MATERIAL_LEGAL :
                     AUDIT_SEMANTIC_INVALID;
 }
@@ -949,7 +952,9 @@ static void task_publish_status(uint32_t now_ms)
     .action_id = accepted_context.action_id,
     .accepted_opcode = accepted_context.opcode,
     .action_status = accepted_context.valid ?
-        (uint8_t)(1U | ((accepted_context.completed || task_context_complete()) ? 2U : 0U)) : 0U
+        (uint8_t)(1U | ((accepted_context.completed || task_context_complete()) ? 2U : 0U) |
+                  (accepted_context.rejection_valid ? 4U : 0U)) : 0U,
+    .rejected_action_id = accepted_context.rejection_valid ? accepted_context.rejected_action_id : 0U
   };
   Vision_QueueStmStatus(&status);
   status_sent_ms = now_ms;
@@ -1238,7 +1243,8 @@ static void task_initialize(uint32_t now_ms)
   capture_escape_return_center = false;
   transport_audit_camera_ready = false;
   transport_stage_injury = false;
-  separation_attempts = 0U;
+  separation_total_attempts = 0U;
+  separation_side_attempts = 0U;
   progressive_keep_side = 0;
   Claw_SetSeparationRelax(0U, false);
   pose_invalid_started_ms = now_ms;
@@ -1851,7 +1857,7 @@ static void task_begin_capture_escape(uint32_t now_ms)
   /* Only a completed THIRD illegal re-audit selects return-to-centre.
    * Other abandonment reasons retain their existing 90-degree SEARCH path. */
   const bool third_illegal = audit_received && !audit_valid &&
-      separation_attempts >= APP_SEPARATION_MAX_ATTEMPTS;
+      separation_total_attempts >= APP_SEPARATION_MAX_ATTEMPTS;
   task_enter(TASK_APPROACH_RECOVER, now_ms);
   capture_escape_return_center = third_illegal;
   capture_escape_active = true;
@@ -1956,8 +1962,12 @@ static bool task_capture_observe(uint32_t now_ms)
     capture_wait_active = false;
     return !(state == TASK_APPROACH && approach_phase == APPROACH_CLUSTER_CAPTURE);
   }
+  if (!audit_received && separation_total_attempts >= APP_SEPARATION_MAX_ATTEMPTS) {
+    /* Three physical attempts are not three completed visual audits. */
+    return true;
+  }
   if ((audit_received && (!task_capture_has_eligible() ||
-                           separation_attempts >= APP_SEPARATION_MAX_ATTEMPTS)) ||
+                           separation_total_attempts >= APP_SEPARATION_MAX_ATTEMPTS)) ||
       (uint32_t)(now_ms - capture_wait_started_ms) >= APP_CAPTURE_DECISION_WAIT_MS) {
     task_begin_capture_escape(now_ms);
     return true;
@@ -1970,21 +1980,22 @@ static bool task_prepare_separation(int8_t keep_side, bool cluster_base, uint32_
 {
   /* A fourth request cannot evade the third-failure decision by changing side. */
   if (audit_received && !audit_valid &&
-      separation_attempts >= APP_SEPARATION_MAX_ATTEMPTS) {
+      separation_total_attempts >= APP_SEPARATION_MAX_ATTEMPTS) {
     task_begin_capture_escape(now_ms);
     return false;
   }
   if (progressive_keep_side != keep_side) {
     progressive_keep_side = keep_side;
-    separation_attempts = 0U;
+    separation_side_attempts = 0U;
   }
-  if (separation_attempts >= APP_SEPARATION_MAX_ATTEMPTS) {
+  if (separation_total_attempts >= APP_SEPARATION_MAX_ATTEMPTS) {
     task_begin_capture_escape(now_ms);
     return false;
   }
-  if (separation_attempts == 0U) progressive_cluster_base = cluster_base;
-  ++separation_attempts;
-  Claw_SetSeparationRelax((uint8_t)((separation_attempts - 1U) *
+  if (separation_side_attempts == 0U) progressive_cluster_base = cluster_base;
+  ++separation_total_attempts;
+  ++separation_side_attempts;
+  Claw_SetSeparationRelax((uint8_t)((separation_side_attempts - 1U) *
                                    APP_SEPARATION_RELAX_STEP_DEG), progressive_cluster_base);
   capture_wait_active = false;
   return true;
@@ -5252,6 +5263,7 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     return;
   }
   command_generation_seen = incoming.generation;
+  if (!incoming.payload_valid) goto rejected;
   const bool abort = incoming.command == VISION_CMD_ABORT;
   const bool overlay = incoming.command == VISION_CMD_HOLD ||
                        incoming.command == VISION_CMD_PAUSE;
@@ -5272,7 +5284,10 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     command_accepted = false;
     task_accept_mission_legacy(&incoming, now_ms);
     accepted_context.cancelled = true;
-    if (abort_owned) accepted_context.completed = true;
+    if (abort_owned) {
+      accepted_context.completed = true;
+      accepted_context.rejection_valid = false;
+    }
     active_mission = incoming;
     Vision_ClearAbort();
     vision->mission = active_mission;
@@ -5290,6 +5305,7 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
       accepted_context.action_id == UINT16_MAX && incoming.action_id == 0U;
   const bool new_target = new_task && !task_rollover;
   const bool new_action = new_task || incoming.action_id != accepted_context.action_id;
+  if (overlay && accepted_context.valid && new_action) goto rejected;
   if (incoming.command == VISION_CMD_CARGO_AUDIT && state == TASK_NAVIGATE &&
       (new_target || !new_action)) goto rejected;
   if (accepted_context.valid) {
@@ -5368,7 +5384,8 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
 
   if (new_target) {
     capture_budget_active = capture_wait_active = false;
-    separation_attempts = 0U;
+    separation_total_attempts = 0U;
+    separation_side_attempts = 0U;
     progressive_keep_side = 0;
     Claw_SetSeparationRelax(0U, false);
     accepted_context = (TaskContext){0};
@@ -5389,6 +5406,13 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     if (incoming.command == VISION_CMD_APPROACH_TARGET) app_visual_valid = false;
   }
   accepted_context.valid = true;
+  /* Old accepted-action heartbeats cannot erase a newer rejection. Control
+   * overlays never acknowledge consumption of an outstanding reject receipt. */
+  if (!overlay && (new_task || !accepted_context.rejection_valid ||
+      incoming.action_id == accepted_context.rejected_action_id ||
+      task_serial16_newer(incoming.action_id, accepted_context.rejected_action_id))) {
+    accepted_context.rejection_valid = false;
+  }
   accepted_context.last_command_rx_ms = incoming.tick_ms;
   if (incoming.command == VISION_CMD_GRAB_CONFIRMED) capture_budget_active = false;
   if (command_visual_new) {
@@ -5414,6 +5438,11 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
   return;
 
 rejected:
+  if (incoming.context_valid && accepted_context.valid &&
+      incoming.task_id == accepted_context.task_id) {
+    accepted_context.rejection_valid = true;
+    accepted_context.rejected_action_id = incoming.action_id;
+  }
   vision->mission = active_mission;
 }
 
@@ -5573,7 +5602,7 @@ void Task_Process(uint32_t now_ms)
     (void)task_capture_observe(now_ms);
   }
   if (state == TASK_REMOTE_ACTION && remote_action.done && cargo_recheck_pending &&
-      (capture_budget_active || separation_attempts > 0U)) {
+      (capture_budget_active || separation_total_attempts > 0U)) {
     (void)task_capture_observe(now_ms);
   }
   const bool local_approach_autonomous =

@@ -235,11 +235,13 @@ def parse_stm_status_pair(data: bytes) -> dict[str, int | bool]:
     kind, sequence, context = parse_frame(data[:FRAME_SIZE])
     status = parse_stm_status(data[FRAME_SIZE:])
     if (kind != MSG_STATUS_CONTEXT or sequence != status["sequence"] or
-            context[5] & ~3 or context[6:] != bytes(2)):
+            context[5] & ~7 or (not context[5] & 4 and context[6:] != bytes(2))):
         raise ValueError("invalid status context pair")
     status.update(task_id=int.from_bytes(context[:2], "big"),
                   action_id=int.from_bytes(context[2:4], "big"),
                   accepted_opcode=context[4], action_status=context[5],
+                  request_rejected=bool(context[5] & 4),
+                  rejected_action_id=int.from_bytes(context[6:8], "big"),
                   context_valid=True)
     return status
 

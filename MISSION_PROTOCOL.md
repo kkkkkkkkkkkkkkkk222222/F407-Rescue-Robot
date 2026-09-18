@@ -1,6 +1,6 @@
 # 连续物资抓取与分区投送流程
 
-本固件以`danmo-teng/shijue_fangan`的`codex/gamepad-teleop@8113694`为对齐基线。正式运输首件恰好1件GREEN，之后普通/核心合计1～2件、伤员单独1件；INITIAL_STASH仍优先按任意非空处理。运行模式为`APP_ENABLE_TASK=1`，RDK X5与F407使用USART3（PD8 TX、PD9 RX）、115200 8N1、3.3 V TTL和公共15字节帧。扫障新握手及剩余协作风险见`docs/UPPER_4115AEA_ALIGNMENT.md`。 聚集130°对正累计360°刷新及mode24/HOLD握手见`docs/UPPER_2FD9F75_CLUSTER_RECOVERY.md`。 当前必须使用1D/18与1E/17同SEQ帧对，详见`docs/UPPER_B0F954F_CONTEXT_READY.md`；旧裸18除ABORT外不再接受。 限推300 mm、失败退让、三次松爪和S1抬爪退出的最新行为见`docs/CAPTURE_300MM_SEPARATION_EXIT_HANDOFF.md`，上位机需要同步适配。 第三次分离复审已收齐但仍非法时，单独走张爪→退300 mm→mode47等待RETURN→mode17返中→mode3，详见`docs/UPPER_THIRD_SEPARATION_RETURN_REQUEST.md`；其他既有放弃流程不变。 自动地图边界恢复入口已关闭；正式STAGE必须经mode48复审后ALIGN或改道，详见`docs/UPPER_8113694_TRANSPORT_AUDIT.md`。
+本固件以`danmo-teng/shijue_fangan`的`codex/gamepad-teleop@d616eba`为对齐基线。正式运输首件恰好1件GREEN，之后单件普通或单件核心、伤员单独1件；INITIAL_STASH仍优先按任意非空处理。运行模式为`APP_ENABLE_TASK=1`，RDK X5与F407使用USART3（PD8 TX、PD9 RX）、115200 8N1、3.3 V TTL和公共15字节帧。扫障新握手及剩余协作风险见`docs/UPPER_4115AEA_ALIGNMENT.md`。 聚集130°对正累计360°刷新及mode24/HOLD握手见`docs/UPPER_2FD9F75_CLUSTER_RECOVERY.md`。 当前必须使用1D/18与1E/17同SEQ帧对，详见`docs/UPPER_B0F954F_CONTEXT_READY.md`；旧裸18除ABORT外不再接受。 限推300 mm、失败退让、三次松爪和S1抬爪退出的最新行为见`docs/CAPTURE_300MM_SEPARATION_EXIT_HANDOFF.md`，上位机需要同步适配。 第三次分离复审已收齐但仍非法时，单独走张爪→退300 mm→mode47等待RETURN→mode17返中→mode3，详见`docs/UPPER_THIRD_SEPARATION_RETURN_REQUEST.md`；其他既有放弃流程不变。 自动地图边界恢复入口已关闭；正式STAGE必须经mode48复审后ALIGN或改道，详见`docs/UPPER_8113694_TRANSPORT_AUDIT.md`。 最新单件规则、分离总次数和拒绝回执见`docs/UPPER_D616EBA_SINGLE_CARGO_REJECTION.md`。
 
 ## 整体流程
 

@@ -232,7 +232,7 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
   if (!vision_mission_code_valid(code) ||
       ((flags & VISION_CMD_VALID) == 0U) ||
       ((flags & (uint8_t)~allowed_flags) != 0U)) {
-    return;
+    goto rejected_payload;
   }
 
   const int16_t arg_a = (int16_t)vision_u16_be(&payload[2]);
@@ -240,7 +240,7 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
   if ((code == VISION_CMD_APPROACH_TARGET) &&
       ((arg_a < 0) || (arg_a > (int16_t)APP_VISION_MAX_X) ||
        (arg_b < 0) || (arg_b > (int16_t)APP_VISION_MAX_Y))) {
-    return;
+    goto rejected_payload;
   }
   if ((code == VISION_CMD_NAVIGATE_WAYPOINT) ||
       (code == VISION_CMD_RETURN_CENTER)) {
@@ -261,7 +261,7 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
         (stage_nav && (direction != 0U) &&
          (direction != direction_flags)) ||
         (arg_a < 0) || (arg_b != 0) || (heading >= 36000U)) {
-      return;
+      goto rejected_payload;
     }
   }
   if (code == VISION_CMD_ALIGN_SAFE_ZONE) {
@@ -272,11 +272,11 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
           (arg_a < -(int16_t)APP_VISION_MAX_X) ||
           (arg_a > (int16_t)APP_VISION_MAX_X) ||
           (arg_b != 0) || (heading != 0U)) {
-        return;
+        goto rejected_payload;
       }
     } else if (((flags & VISION_CMD_USE_FINAL_HEADING) == 0U) ||
                (arg_a != 0) || (arg_b != 0) || (heading >= 36000U)) {
-      return;
+      goto rejected_payload;
     }
   }
   if (code == VISION_CMD_ENTER_SAFE_ZONE) {
@@ -291,25 +291,25 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
                    (heading != 0U)) :
                   (((flags & VISION_CMD_USE_FINAL_HEADING) == 0U) ||
                    (heading != fallback_heading)))) {
-      return;
+      goto rejected_payload;
     }
   }
   if ((code == VISION_CMD_DISPERSE_PILE) &&
       ((flags & VISION_CMD_TARGET_RIGHT) != 0U) &&
       ((flags & VISION_CMD_SIDE_VALID) == 0U)) {
-    return;
+    goto rejected_payload;
   }
   if ((code == VISION_CMD_DISPERSE_PILE) &&
       ((flags & VISION_CMD_FIRST_GREEN_BUMP) != 0U) &&
       ((flags & (VISION_CMD_SIDE_VALID |
                  VISION_CMD_TARGET_RIGHT)) != 0U)) {
-    return;
+    goto rejected_payload;
   }
   if ((code == VISION_CMD_CARGO_AUDIT) &&
       ((payload[2] > VISION_CARGO_MIXED_MATERIAL) ||
        (payload[3] > VISION_CARGO_MIXED_MATERIAL) ||
        ((payload[4] & 0xF0U) != 0U) || ((payload[5] & 0x80U) != 0U))) {
-    return;
+    goto rejected_payload;
   }
   if (code == VISION_CMD_CLEAR_SAFE_ZONE) {
     const uint8_t clear_allowed = VISION_CMD_VALID | VISION_CMD_RED_SIDE;
@@ -321,10 +321,11 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
         (lateral_abs != ((arg_a == 0) ? APP_SAFE_SWEEP_PLACEMENT_MM :
                                                    APP_SAFE_SWEEP_LATERAL_MM)) ||
         (heading != 0U)) {
-      return;
+      goto rejected_payload;
     }
   }
 
+  command->payload_valid = true;
   command->command = code;
   command->flags = flags;
   command->target_x_mm = arg_a;
@@ -349,6 +350,20 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
     abort_command = candidate;
     abort_pending = true;
   }
+  return;
+
+rejected_payload:
+  /* Bad CRC/missing context never reaches here. A complete valid-CRC pair
+   * with illegal action fields must be surfaced for an explicit rejection. */
+  if (!paired) return;
+  candidate = (VisionMissionCommand){
+    .received = true, .context_valid = true, .payload_valid = false,
+    .command = payload[0], .flags = payload[1], .sequence = sequence,
+    .tick_ms = tick_ms, .task_id = context_task, .action_id = context_action,
+    .vision_frame = context_vision, .generation = ++mission_generation
+  };
+  latest_data.mission = candidate;
+
 }
 
 #if APP_ENABLE_MOTION_DEBUG_TASK || APP_ENABLE_GAMEPAD_TASK
@@ -679,7 +694,8 @@ void Vision_QueueStmStatus(const VisionStmStatus *status)
   const uint8_t context_payload[VISION_PAYLOAD_SIZE] = {
     (uint8_t)(status->task_id >> 8), (uint8_t)status->task_id,
     (uint8_t)(status->action_id >> 8), (uint8_t)status->action_id,
-    status->accepted_opcode, status->action_status, 0U, 0U
+    status->accepted_opcode, status->action_status,
+    (uint8_t)(status->rejected_action_id >> 8), (uint8_t)status->rejected_action_id
   };
   uint8_t pending[2U * VISION_FRAME_SIZE];
   const uint8_t seq = vision_next_sequence(&status_sequence);
