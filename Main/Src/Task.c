@@ -2764,9 +2764,11 @@ static RemoteRouteStatus safe_enter_follow(
       nav_final_push_started_ms += now_ms - nav_final_push_paused_ms;
       nav_final_push_paused = false;
     }
-    /* One origin for the whole ENTER stroke, including any sampled overshoot
-     * at the 400 mm speed transition. Time alone must never report success. */
-    if (enter_travelled_mm >= APP_SAFE_ENTER_TOTAL_DISTANCE_MM) {
+    /* Keep one encoder origin for the entire ENTER stroke. The contact
+     * protection timer starts at the final push and excludes PAUSE time. */
+    const uint32_t elapsed_ms = now_ms - nav_final_push_started_ms;
+    if ((enter_travelled_mm >= APP_SAFE_ENTER_TOTAL_DISTANCE_MM) ||
+        (elapsed_ms >= APP_SAFE_FINAL_PUSH_TIMEOUT_MS)) {
       Motor_Stop();
       task_status.motors_active = false;
       nav_final_push_active = false;

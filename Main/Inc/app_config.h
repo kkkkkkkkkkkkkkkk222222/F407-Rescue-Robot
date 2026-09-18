@@ -361,6 +361,7 @@
 #define APP_SAFE_ENTER_CONTACT_DISTANCE_MM 113U
 #define APP_SAFE_FINAL_PUSH_DISTANCE_MM    250U
 #define APP_SAFE_FINAL_PUSH_SPEED_MM_S     330.0f
+#define APP_SAFE_FINAL_PUSH_TIMEOUT_MS     1500U
 /* Visual CLEAR: P2/P3=0, +/-200 means a 90-deg turn and forward placement.
  * Only legacy fixed-distance CLEAR retains the +/-150 lateral stroke. */
 #define APP_SAFE_SWEEP_LATERAL_MM            150
