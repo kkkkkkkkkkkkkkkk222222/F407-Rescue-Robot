@@ -59,9 +59,8 @@
 #define APP_ENABLE_SERVO_SWEEP_TEST      0
 #define APP_ENABLE_TASK (APP_ACTIVE_MODE == APP_MODE_RESCUE_TASK)
 #define APP_ENABLE_CENTERING_TASK (APP_ACTIVE_MODE == APP_MODE_CENTERING_TASK)
-/* NormalRun relies on the upper computer's fused-pose progress monitor.
- * Standalone debug/gamepad firmware keeps the local encoder fault guard. */
-#define APP_ENABLE_LOCAL_MOTOR_FAULT_STOP (!APP_ENABLE_TASK)
+/* Local stall/direction/no-progress interlocks are disabled by user request. */
+#define APP_ENABLE_LOCAL_MOTOR_FAULT_STOP 0
 /* USART1 (PCB serial port 2) text console. It can suspend TASK and position
  * one servo at a time without changing the USART3 RDK protocol. */
 #define APP_ENABLE_RUNTIME_SERVO_DEBUG \
@@ -82,12 +81,27 @@
 #define APP_MOTION_TEST_REPEAT_COUNT     2U
 #define APP_MOTION_TEST_TRANSITION_TIMEOUT_MS 2000U
 #define APP_WHEEL_DIAMETER_MM            70U
-#define APP_MOTOR_GEAR_RATIO             34U
+#define APP_MOTOR_GEAR_RATIO             20.409f
 #define APP_ENCODER_LINES_PER_MOTOR_REV  13U
 #define APP_ENCODER_QUADRATURE_FACTOR    4U
 #define APP_ENCODER_COUNTS_PER_WHEEL_REV (APP_MOTOR_GEAR_RATIO * \
                                           APP_ENCODER_LINES_PER_MOTOR_REV * \
                                           APP_ENCODER_QUADRATURE_FACTOR)
+/* Confirmed hardware: MG310 Hall, 70 mm wheels, regulated 12 V motor rail. */
+#define APP_MOTOR_RATED_VOLTAGE_MV        7400U
+#define APP_MOTOR_SUPPLY_VOLTAGE_MV      12000U
+#define APP_MOTOR_NO_LOAD_RPM             500.0f
+#define APP_MOTOR_MAX_WHEEL_RPM           300.0f
+#define APP_MOTOR_PWM_MAX_PERMILLE        550
+#define APP_MOTOR_VOLTAGE_PWM_LIMIT \
+  (APP_MOTOR_RATED_VOLTAGE_MV * 1000U / APP_MOTOR_SUPPLY_VOLTAGE_MV)
+#if APP_MOTOR_SUPPLY_VOLTAGE_MV == 0U || APP_MOTOR_PWM_MAX_PERMILLE <= 0 || \
+    APP_MOTOR_PWM_MAX_PERMILLE > 1000
+#error "Invalid motor supply or PWM limit"
+#endif
+#if APP_MOTOR_PWM_MAX_PERMILLE > APP_MOTOR_VOLTAGE_PWM_LIMIT
+#error "Motor PWM limit exceeds the configured rated/supply voltage ratio"
+#endif
 #define APP_MOTOR_SPEED_TEST_TARGET_MM_S 110.0f
 
 /* Fixed-floor-direction translation plus simultaneous high-speed rotation. */
@@ -103,13 +117,10 @@
 #define APP_MOVE_SPIN_YAW_ACCEL_MM_S2    1950.0f
 #define APP_MOVE_SPIN_WHEEL_MARGIN_MM_S    10.0f
 #define APP_MOVE_SPIN_MAX_UPDATE_MS         50U
-/* A spinning chassis changes all three wheel targets rapidly. Use a target-
- * proportional feed-forward instead of the normal fixed 450-PWM floor, then
- * phase-lead the field transform to cover the geared motor response delay. */
-#define APP_MOVE_SPIN_FF_STATIC_PWM         220.0f
-#define APP_MOVE_SPIN_FF_MAX_PWM            900.0f
-#define APP_MOVE_SPIN_PID_BOOST                1.8f
-#define APP_MOVE_SPIN_OUTPUT_LIMIT_PWM      1000
+/* Both paths use voltage-scaled feed-forward and the same hard PWM cap. */
+#define APP_MOVE_SPIN_FF_STATIC_PWM          80.0f
+#define APP_MOVE_SPIN_PID_BOOST               1.8f
+#define APP_MOVE_SPIN_OUTPUT_LIMIT_PWM APP_MOTOR_PWM_MAX_PERMILLE
 #define APP_MOVE_SPIN_HEADING_LEAD_MS         55.0f
 
 #if (APP_ENABLE_MOTION_TEST + APP_ENABLE_LOCATION_DEMO + \
@@ -166,8 +177,11 @@
 #define APP_OMNI_M3_ENCODER_SIGN        -1
 
 /* Three-motor speed loop, updated every 10 ms. */
-#define APP_MOTOR_MAX_COUNT_10MS         60
-#define APP_MOTOR_BASE_PWM               450
+#define APP_MOTOR_MAX_COUNT_10MS \
+  (APP_ENCODER_COUNTS_PER_WHEEL_REV * APP_MOTOR_MAX_WHEEL_RPM / 60.0f * \
+   APP_MOTOR_CONTROL_PERIOD_MS / 1000.0f)
+/* Static friction compensation, not a fixed PWM floor at every speed. */
+#define APP_MOTOR_BASE_PWM               100
 #define APP_MOTOR_SPEED_KP               6.0f
 #define APP_MOTOR_SPEED_KI               0.15f
 #define APP_MOTOR_SPEED_KD               0.0f
@@ -270,6 +284,13 @@
 #define APP_POST_GRAB_CAMERA_NUDGE_MS      400U
 #define APP_POST_GRAB_DECISION_WAIT_MS    4000U
 #define APP_POST_GRAB_CAMERA_NUDGE_DEG        2U
+#define APP_INJURY_CLAW_RELAX_DEG             5U
+#define APP_INJURY_CLAW_SETTLE_MS           600U
+#define APP_INJURY_BACKOFF_TIME_MS         2000U
+#define APP_INJURY_BACKOFF_SPEED_MM_S      150.0f
+#define APP_AUDIT_SAMPLE_INTERVAL_MS       100U
+#define APP_AUDIT_EVIDENCE_MAX_GAP_MS       500U
+#define APP_AUDIT_STATE_TIMEOUT_MS       15000U
 #define APP_DISPERSE_APPROACH_ANGLE       130U
 #define APP_DISPERSE_APPROACH_SPEED_MM_S 300.0f
 #define APP_DISPERSE_ALIGN_X_ERROR_PX      40.0f

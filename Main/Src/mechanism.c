@@ -13,7 +13,8 @@ typedef enum {
   CLAW_ACTION_CLUSTER_OPEN_LEFT,
   CLAW_ACTION_CLUSTER_OPEN_RIGHT,
   CLAW_ACTION_RETRACT,
-  CLAW_ACTION_TOUCH
+  CLAW_ACTION_TOUCH,
+  CLAW_ACTION_HALF_TOUCH
 } ClawAction;
 
 static ClawAction claw_action;
@@ -185,4 +186,12 @@ bool Claw_Touch(uint32_t now_ms)
   return claw_move_together(CLAW_ACTION_TOUCH, now_ms,
                             APP_CLAW_LEFT_TOUCH_ANGLE,
                             APP_CLAW_RIGHT_TOUCH_ANGLE, 2000U);
+}
+
+bool Claw_HalfTouch(uint32_t now_ms)
+{
+  return claw_move_together(CLAW_ACTION_HALF_TOUCH, now_ms,
+                            APP_CLAW_LEFT_TOUCH_ANGLE + APP_INJURY_CLAW_RELAX_DEG,
+                            APP_CLAW_RIGHT_TOUCH_ANGLE - APP_INJURY_CLAW_RELAX_DEG,
+                            APP_INJURY_CLAW_SETTLE_MS);
 }

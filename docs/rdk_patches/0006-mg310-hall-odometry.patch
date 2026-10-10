@@ -1,0 +1,39 @@
+diff --git a/localization/config/localization.example.conf b/localization/config/localization.example.conf
+index eca67a9..a882a6a 100644
+--- a/localization/config/localization.example.conf
++++ b/localization/config/localization.example.conf
+@@ -5,7 +5,7 @@ start_center_m = 1.350
+ 
+ # Values copied from F407-Rescue-Robot/Main/Inc/app_config.h.
+ wheel_diameter_m = 0.070
+-counts_per_wheel_revolution = 1768
++counts_per_wheel_revolution = 1061.268
+ encoder_sign_m1 = -1
+ encoder_sign_m2 = -1
+ encoder_sign_m3 = -1
+diff --git a/localization/include/config.hpp b/localization/include/config.hpp
+index 17d798d..28bd1ef 100644
+--- a/localization/include/config.hpp
++++ b/localization/include/config.hpp
+@@ -11,7 +11,7 @@ struct LocalizationConfig {
+     double start_center_m = 1.35;
+ 
+     double wheel_diameter_m = 0.070;
+-    double counts_per_wheel_revolution = 1768.0;
++    double counts_per_wheel_revolution = 1061.268;
+     int encoder_sign[3] = {-1, -1, -1};
+     double encoder_to_robot_yaw_deg = 0.0;
+     double encoder_fusion_weight = 0.25;
+diff --git a/t265_map/src/t265_map_builder.cpp b/t265_map/src/t265_map_builder.cpp
+index 1fbbc7d..5aea2d7 100644
+--- a/t265_map/src/t265_map_builder.cpp
++++ b/t265_map/src/t265_map_builder.cpp
+@@ -498,7 +498,7 @@ public:
+         }
+ 
+         constexpr double wheel_diameter_m = 0.070;
+-        constexpr double counts_per_revolution = 1768.0;
++        constexpr double counts_per_revolution = 1061.268;
+         constexpr double distance_per_count = kPi * wheel_diameter_m / counts_per_revolution;
+         constexpr double sqrt3 = 1.73205080756887729353;
+         // F407 convention: M1=right, M2=left, M3=rear. All three raw

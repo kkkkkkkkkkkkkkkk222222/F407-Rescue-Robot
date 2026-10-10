@@ -462,7 +462,7 @@ class VisionProtocolTests(unittest.TestCase):
             {"m1_delta": -10, "m2_delta": 0,
              "m3_delta": 10, "dt_ms": 20}
         )
-        metres_per_count = math.pi * 0.070 / 1768
+        metres_per_count = math.pi * 0.070 / 1061.268
         self.assertAlmostEqual(
             forward, 20 * metres_per_count / math.sqrt(3) / 0.020
         )

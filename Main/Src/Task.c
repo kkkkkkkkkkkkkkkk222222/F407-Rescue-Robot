@@ -231,6 +231,11 @@ static bool capture_budget_active, capture_wait_active, capture_escape_active;
 static bool capture_escape_return_center;
 static bool transport_audit_camera_ready;
 static bool transport_stage_injury;
+static uint8_t transport_audit_phase, transport_audit_attempt;
+static bool injury_recheck_pending;
+static uint8_t injury_backoff_phase;
+static uint32_t injury_backoff_last_ms, injury_backoff_elapsed_ms;
+static float injury_backoff_heading_deg;
 static uint32_t capture_forward_used_mm, capture_wait_started_ms;
 static LocationPose capture_budget_pose;
 static uint8_t capture_escape_phase, separation_total_attempts;
@@ -291,6 +296,11 @@ static bool cluster_claws_ready;
 static int8_t separation_keep_side;
 static uint8_t audit_consistent_count;
 static uint8_t audit_seen_ids[3];
+static uint32_t audit_sample_ms, audit_evidence_ms;
+static uint32_t sweep_audit_sample_ms, sweep_audit_evidence_ms;
+static bool audit_watch_active;
+static TaskState audit_watch_state;
+static uint32_t audit_watch_started_ms;
 static uint8_t audit_last_left_class;
 static uint8_t audit_last_right_class;
 static uint8_t audit_last_counts;
@@ -717,6 +727,7 @@ static bool task_audit_has_green(void)
 
 static void task_begin_close_claw(uint32_t now_ms)
 {
+  injury_recheck_pending = false;
   const bool advance_for_core = complete_flow_active &&
       audit_core_seen_in_streak;
   task_enter(TASK_CLOSE_CLAW, now_ms);
@@ -759,9 +770,10 @@ static TaskCommandReject task_disperse_reject_reason(
   return TASK_COMMAND_REJECT_NONE;
 }
 
-static void task_latch_audit(const VisionMissionCommand *command)
+static void task_latch_audit(const VisionMissionCommand *command, uint32_t now_ms)
 {
   if (!command_visual_new || Camera_GetAngle() != APP_GRAB_VIEW_ANGLE) { return; }
+  if (!task_status.claw_visible) { return; }
   if (state == TASK_TRANSPORT_AUDIT && !transport_audit_camera_ready) { return; }
   if (accepted_context.opcode == VISION_CMD_CARGO_AUDIT) {
     accepted_context.completed = false;
@@ -777,11 +789,11 @@ static void task_latch_audit(const VisionMissionCommand *command)
   bool same = false;
   if ((semantic != AUDIT_SEMANTIC_INVALID) &&
       (semantic == audit_last_semantic)) {
-    /* Legal cargo is normalized by task meaning, not claw side or exact
-     * ordinary/core distribution. Material batches only need the same total;
-     * stash merely needs to remain non-empty. */
+    /* Ignore claw-side jitter, but keep GREEN and CORE evidence distinct.
+     * The special opening stash still only needs to remain non-empty. */
     same = (semantic == AUDIT_SEMANTIC_STASH_NONEMPTY) ||
-           (command->audit_total_count == audit_last_total_count);
+           ((command->audit_total_count == audit_last_total_count) &&
+            (current_has_core == audit_core_seen_in_streak));
   } else if ((semantic == AUDIT_SEMANTIC_INVALID) &&
              (audit_last_semantic == AUDIT_SEMANTIC_INVALID)) {
     /* Invalid decisions are normalized to total count and illegal semantic
@@ -794,6 +806,10 @@ static void task_latch_audit(const VisionMissionCommand *command)
       (command->audit_flags & VISION_AUDIT_INITIAL_STASH) != 0U;
   audit_destination_injury =
       (command->audit_flags & VISION_AUDIT_DESTINATION_INJURY) != 0U;
+  if (audit_consistent_count > 0U &&
+      now_ms - audit_evidence_ms > APP_AUDIT_EVIDENCE_MAX_GAP_MS) {
+    same = false;
+  }
   if (same) {
     /* The upper computer may retransmit one camera result with many UART
      * SEQs. Count only a changed audit_id as another visual frame. */
@@ -801,12 +817,18 @@ static void task_latch_audit(const VisionMissionCommand *command)
     for (uint8_t i = 0U; i < audit_consistent_count && i < 3U; ++i) {
       seen = seen || (audit_seen_ids[i] == command->audit_id);
     }
-    if (!seen && (audit_consistent_count < 3U)) {
-      audit_seen_ids[audit_consistent_count++] = command->audit_id;
+    if (!seen) {
+      audit_evidence_ms = now_ms;
+      if (audit_consistent_count < 3U &&
+          now_ms - audit_sample_ms >= APP_AUDIT_SAMPLE_INTERVAL_MS) {
+        audit_seen_ids[audit_consistent_count++] = command->audit_id;
+        audit_sample_ms = now_ms;
+      }
     }
   } else {
     audit_consistent_count = 1U;
     audit_seen_ids[0] = command->audit_id;
+    audit_sample_ms = audit_evidence_ms = now_ms;
   }
   if (same) {
     audit_core_seen_in_streak =
@@ -846,6 +868,7 @@ static void task_clear_audit_result(void)
   audit_received = false;
   audit_valid = false;
   audit_consistent_count = 0U;
+  audit_sample_ms = audit_evidence_ms = 0U;
   audit_last_left_class = 0U;
   audit_last_right_class = 0U;
   audit_last_counts = 0U;
@@ -1078,6 +1101,7 @@ static void task_enter(TaskState next, uint32_t now_ms)
     cargo_recheck_pending = false;
     route_to_stash = false;
     stash_backoff_pending = false;
+    injury_recheck_pending = false;
     cluster_target_active = false;
     cluster_claws_ready = false;
     safe_sweep_recheck_pending = false;
@@ -1126,11 +1150,23 @@ static void task_enter(TaskState next, uint32_t now_ms)
     post_grab_audit_phase_started_ms = now_ms;
     post_grab_invalid_started_ms = now_ms;
     post_grab_invalid_waiting = false;
+  } else if (next == TASK_INJURY_BACKOFF) {
+    injury_recheck_pending = true;
+    injury_backoff_phase = 0U;
+    injury_backoff_elapsed_ms = 0U;
+    injury_backoff_last_ms = now_ms;
+    task_status.gripper_closed = false;
+    task_clear_audit_result();
+    Camera_SetAngle(APP_SEARCH_HIGH_CAMERA_ANGLE);
+    camera_angle = (float)APP_SEARCH_HIGH_CAMERA_ANGLE;
+  } else if (next == TASK_INJURY_RECLOSE) {
+    task_status.gripper_closed = false;
   } else if (next == TASK_TRANSPORT_AUDIT) {
     Motor_Stop();
     nav_ready = false;
     nav_forward_active = false;
     transport_audit_camera_ready = false;
+    transport_audit_phase = transport_audit_attempt = 0U;
     capture_budget_active = false;
     capture_wait_active = false;
     task_clear_audit_result();
@@ -1243,6 +1279,8 @@ static void task_initialize(uint32_t now_ms)
   capture_escape_return_center = false;
   transport_audit_camera_ready = false;
   transport_stage_injury = false;
+  injury_recheck_pending = false;
+  audit_watch_active = false;
   separation_total_attempts = 0U;
   separation_side_attempts = 0U;
   progressive_keep_side = 0;
@@ -2362,8 +2400,14 @@ static void task_process_post_grab_audit(uint32_t now_ms)
 {
   Motor_Stop();
   task_status.motors_active = false;
-  task_status.gripper_closed = true;
+  task_status.gripper_closed = !injury_recheck_pending;
   task_status.claw_visible = true;
+  if ((post_grab_audit_phase == POST_AUDIT_WAIT_LOW ||
+       post_grab_audit_phase == POST_AUDIT_WAIT_HIGH) &&
+      now_ms - post_grab_audit_phase_started_ms < APP_GRAB_CAMERA_SETTLE_MS) {
+    task_status.claw_visible = false;
+    return;
+  }
 
   if (audit_received && !audit_valid) {
     if (!post_grab_invalid_waiting) {
@@ -2452,6 +2496,67 @@ static void task_process_post_grab_audit(uint32_t now_ms)
       break;
   }
   camera_angle = (float)Camera_GetAngle();
+  task_status.claw_visible = state == TASK_POST_GRAB_AUDIT &&
+      post_grab_audit_phase != POST_AUDIT_RELEASE &&
+      Camera_GetAngle() == APP_GRAB_VIEW_ANGLE &&
+      !((post_grab_audit_phase == POST_AUDIT_WAIT_LOW ||
+         post_grab_audit_phase == POST_AUDIT_WAIT_HIGH) &&
+        now_ms - post_grab_audit_phase_started_ms < APP_GRAB_CAMERA_SETTLE_MS);
+}
+
+static void task_process_injury_backoff(uint32_t now_ms)
+{
+  task_status.gripper_closed = false;
+  task_status.claw_visible = false;
+  if (injury_backoff_phase == 0U) {
+    Motor_Stop();
+    task_status.motors_active = false;
+    if (!Claw_HalfTouch(now_ms)) { return; }
+    LocationPose pose;
+    if (!task_get_location_pose(&pose, now_ms)) { return; }
+    injury_backoff_heading_deg = (float)pose.heading_mdeg * 0.001f;
+    injury_backoff_last_ms = now_ms;
+    injury_backoff_phase = 1U;
+  }
+  if (injury_backoff_phase == 1U) {
+    const uint32_t elapsed = now_ms - injury_backoff_last_ms;
+    injury_backoff_last_ms = now_ms;
+    /* Count only intervals with a reverse output; PAUSE/pose loss add no time. */
+    if (task_status.motors_active) {
+      injury_backoff_elapsed_ms += elapsed;
+    }
+    if (injury_backoff_elapsed_ms >= APP_INJURY_BACKOFF_TIME_MS) {
+      Motor_Stop();
+      task_status.motors_active = false;
+      Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
+      camera_angle = (float)APP_GRAB_VIEW_ANGLE;
+      task_clear_audit_result();
+      injury_backoff_phase = 2U;
+      step_started_ms = now_ms;
+    } else {
+      if (!accepted_context.valid ||
+          (uint32_t)(now_ms - accepted_context.last_command_rx_ms) >
+              APP_COMMAND_RX_TIMEOUT_MS) {
+        Motor_Stop();
+        task_status.motors_active = false;
+        return;
+      }
+      LocationPose pose;
+      if (!task_get_location_pose(&pose, now_ms)) { return; }
+      Motor_Move(-APP_INJURY_BACKOFF_SPEED_MM_S, 0.0f,
+                 nav_yaw(task_wrap_angle(injury_backoff_heading_deg -
+                     (float)pose.heading_mdeg * 0.001f)));
+      task_status.motors_active = true;
+      return;
+    }
+  }
+  Motor_Stop();
+  task_status.motors_active = false;
+  Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
+  if ((uint32_t)(now_ms - step_started_ms) >= APP_GRAB_CAMERA_SETTLE_MS) {
+    task_clear_audit_result();
+    task_enter(TASK_POST_GRAB_AUDIT, now_ms);
+  }
 }
 
 static bool turn_to(float desired_deg, float current_deg,
@@ -3434,6 +3539,9 @@ static void task_pause_action(uint32_t now_ms, bool cancel_disperse)
 
 static void task_pause_runtime(uint32_t now_ms)
 {
+  if (state == TASK_INJURY_BACKOFF) {
+    injury_backoff_last_ms = now_ms;
+  }
   if ((state == TASK_REMOTE_ACTION) && !remote_action.done) {
     /* PAUSE is recoverable and must never start the HOLD cancellation timer. */
     task_pause_action(now_ms, false);
@@ -4105,6 +4213,7 @@ static void task_reset_sweep_audit(uint32_t now_ms)
   audit_frame_floor = accepted_context.vision_frame;
   audit_frame_floor_valid = accepted_context.visual_valid;
   sweep_audit_consistent_count = 0U;
+  sweep_audit_sample_ms = sweep_audit_evidence_ms = 0U;
   sweep_audit_last_id = 0U;
   sweep_audit_last_id_valid = false;
   sweep_audit_valid = false;
@@ -4119,7 +4228,6 @@ static void task_reset_sweep_audit(uint32_t now_ms)
 static void task_latch_sweep_audit(const VisionMissionCommand *command,
                                    uint32_t now_ms)
 {
-  (void)now_ms;
   if (!command_visual_new || Camera_GetAngle() != APP_GRAB_VIEW_ANGLE) { return; }
   if (accepted_context.opcode == VISION_CMD_CARGO_AUDIT) {
     accepted_context.completed = false;
@@ -4128,7 +4236,9 @@ static void task_latch_sweep_audit(const VisionMissionCommand *command,
     return;
   }
   const bool nonempty = command->audit_total_count > 0U;
-  if (nonempty != sweep_audit_nonempty) {
+  if (nonempty != sweep_audit_nonempty ||
+      (sweep_audit_consistent_count > 0U &&
+       now_ms - sweep_audit_evidence_ms > APP_AUDIT_EVIDENCE_MAX_GAP_MS)) {
     sweep_audit_consistent_count = 0U;
     sweep_audit_last_id_valid = false;
     sweep_audit_valid = false;
@@ -4144,8 +4254,14 @@ static void task_latch_sweep_audit(const VisionMissionCommand *command,
   for (uint8_t i = 0U; i < sweep_audit_consistent_count && i < 3U; ++i) {
     seen = seen || (sweep_seen_ids[i] == command->audit_id);
   }
-  if (!seen && (sweep_audit_consistent_count < 3U)) {
-    sweep_seen_ids[sweep_audit_consistent_count++] = command->audit_id;
+  if (!seen) {
+    sweep_audit_evidence_ms = now_ms;
+    if (sweep_audit_consistent_count < 3U &&
+        (sweep_audit_consistent_count == 0U ||
+         now_ms - sweep_audit_sample_ms >= APP_AUDIT_SAMPLE_INTERVAL_MS)) {
+      sweep_seen_ids[sweep_audit_consistent_count++] = command->audit_id;
+      sweep_audit_sample_ms = now_ms;
+    }
     sweep_audit_last_id = command->audit_id;
     sweep_audit_last_id_valid = true;
   }
@@ -4598,7 +4714,9 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
         (state == TASK_SAFE_SWEEP_RETRIEVE_AUDIT) ||
         (state == TASK_SAFE_SWEEP_RETRIEVE_FAILED) ||
         (state == TASK_CAPTURE_RETURN_WAIT) ||
-        (state == TASK_TRANSPORT_AUDIT)) {
+        (state == TASK_TRANSPORT_AUDIT) ||
+        (state == TASK_INJURY_BACKOFF) ||
+        (state == TASK_INJURY_RECLOSE)) {
       /* ACK/heartbeat only. Keep the common PAUSE-resume epilogue below. */
     } else if ((state == TASK_SAFE_SWEEP_APPROACH) ||
                (state == TASK_SAFE_SWEEP_RETRIEVE)) {
@@ -4640,6 +4758,11 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
       }
     }
   } else if ((command->command == VISION_CMD_CARGO_AUDIT) &&
+             ((state == TASK_INJURY_BACKOFF) || (state == TASK_INJURY_RECLOSE))) {
+    /* Camera placeholders/retransmissions are heartbeats, not new evidence. */
+    task_status.acknowledged_sequence = command->sequence;
+    command_accepted = true;
+  } else if ((command->command == VISION_CMD_CARGO_AUDIT) &&
              (state == TASK_NAVIGATE) && delivery_stage_only &&
              !route_to_stash && distance_command_done && task_status.gripper_closed &&
              command->vision_frame == 0U && command->audit_left_class == VISION_CARGO_NONE &&
@@ -4658,7 +4781,7 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
                                       VISION_AUDIT_SWEEP_PICKUP)) == 0U) {
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
-    task_latch_audit(command);
+    task_latch_audit(command, now_ms);
     /* Both legal and illegal results stay in mode48 for the host decision. */
   } else if ((command->command == VISION_CMD_CARGO_AUDIT) &&
              ((state == TASK_SAFE_SWEEP_RETRIEVE_AUDIT) ||
@@ -4674,7 +4797,7 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
              (state == TASK_SAFE_SWEEP_RETRIEVE_AUDIT)) {
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
-    task_latch_audit(command);
+    task_latch_audit(command, now_ms);
     /* Remain in mode45 even when legal; only a fresh GRAB closes the claw. */
   } else if ((state == TASK_SAFE_SWEEP_RETRIEVE_AUDIT) &&
              ((command->command == VISION_CMD_RELEASE_LEFT) ||
@@ -4712,7 +4835,7 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
     if (state == TASK_REMOTE_ACTION) {
       task_enter(TASK_GRAB_OBSERVE, now_ms);
     }
-    task_latch_audit(command);
+    task_latch_audit(command, now_ms);
     if ((state == TASK_POST_GRAB_AUDIT) && audit_received) {
       if (task_audit_is_empty(command)) {
         safe_sweep_recheck_pending = false;
@@ -4720,8 +4843,15 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
         task_clear_audit_result();
         task_enter(TASK_OPEN_CLAW, now_ms);
       } else if (audit_valid) {
-        task_enter(safe_sweep_recheck_pending ?
-                   TASK_SAFE_SWEEP_DONE : TASK_WAIT_NAVIGATION, now_ms);
+        if (injury_recheck_pending) {
+          task_enter(TASK_INJURY_RECLOSE, now_ms);
+        } else if (!safe_sweep_recheck_pending && !audit_initial_stash &&
+                   audit_last_semantic == AUDIT_SEMANTIC_INJURY_SINGLE) {
+          task_enter(TASK_INJURY_BACKOFF, now_ms);
+        } else {
+          task_enter(safe_sweep_recheck_pending ?
+                     TASK_SAFE_SWEEP_DONE : TASK_WAIT_NAVIGATION, now_ms);
+        }
       }
     } else if (cargo_recheck_pending && audit_received &&
         task_audit_is_empty(command)) {
@@ -4840,7 +4970,9 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
     task_begin_close_claw(now_ms);
   } else if ((command->command == VISION_CMD_GRAB_CONFIRMED) &&
              ((state == TASK_CLOSE_CLAW) ||
-              (state == TASK_WAIT_NAVIGATION))) {
+              (state == TASK_WAIT_NAVIGATION) ||
+              (state == TASK_INJURY_BACKOFF) ||
+              (state == TASK_INJURY_RECLOSE))) {
     /* GRAB_CONFIRMED is now repeated until GRIPPER_CLOSED is reported.  ACK
      * every new sequence, but never restart an in-progress/completed motion. */
     task_status.acknowledged_sequence = command->sequence;
@@ -5566,6 +5698,67 @@ static void task_process_boundary_recover(uint32_t now_ms)
   task_status.motors_active = true;
 }
 
+static void task_audit_watchdog(uint32_t now_ms)
+{
+  const bool waiting = state == TASK_GRAB_OBSERVE ||
+      state == TASK_DISPERSE_READY || state == TASK_POST_GRAB_AUDIT ||
+      state == TASK_TRANSPORT_AUDIT ||
+      (state == TASK_APPROACH && approach_phase == APPROACH_CLUSTER_CAPTURE) ||
+      (state == TASK_REMOTE_ACTION && remote_action.done && cargo_recheck_pending);
+  if (!waiting) { audit_watch_active = false; return; }
+  if (!audit_watch_active || audit_watch_state != state) {
+    audit_watch_active = true;
+    audit_watch_state = state;
+    audit_watch_started_ms = now_ms;
+  }
+  if (now_ms - audit_watch_started_ms >= APP_AUDIT_STATE_TIMEOUT_MS) {
+    const bool return_to_center = state == TASK_TRANSPORT_AUDIT ||
+        safe_sweep_recheck_pending ||
+        separation_total_attempts >= APP_SEPARATION_MAX_ATTEMPTS;
+    task_begin_capture_escape(now_ms);
+    capture_escape_return_center = return_to_center;
+    audit_watch_active = false;
+  }
+}
+
+static void task_process_transport_audit(uint32_t now_ms)
+{
+  Motor_Stop();
+  task_status.motors_active = false;
+  task_status.gripper_closed = true;
+  if (transport_audit_phase == 2U) {
+    task_status.claw_visible = false;
+    if (now_ms - step_started_ms >= APP_POST_GRAB_CAMERA_NUDGE_MS) {
+      Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
+      task_clear_audit_result();
+      transport_audit_phase = 0U;
+      step_started_ms = now_ms;
+    }
+  } else if (transport_audit_phase == 0U) {
+    task_status.claw_visible = false;
+    Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
+    if (now_ms - step_started_ms >= APP_GRAB_CAMERA_SETTLE_MS) {
+      task_clear_audit_result();
+      transport_audit_camera_ready = true;
+      task_status.claw_visible = true;
+      transport_audit_phase = 1U;
+      step_started_ms = now_ms;
+    }
+  } else if (transport_audit_attempt < 2U &&
+             now_ms - step_started_ms >= APP_POST_GRAB_AUDIT_WINDOW_MS) {
+    transport_audit_camera_ready = false;
+    task_status.claw_visible = false;
+    task_clear_audit_result();
+    Camera_SetAngle(transport_audit_attempt == 0U ?
+        APP_GRAB_VIEW_ANGLE - APP_POST_GRAB_CAMERA_NUDGE_DEG :
+        APP_GRAB_VIEW_ANGLE + APP_POST_GRAB_CAMERA_NUDGE_DEG);
+    ++transport_audit_attempt;
+    transport_audit_phase = 2U;
+    step_started_ms = now_ms;
+  }
+  camera_angle = (float)Camera_GetAngle();
+}
+
 void Task_Process(uint32_t now_ms)
 {
   if (!initialized) {
@@ -5586,6 +5779,14 @@ void Task_Process(uint32_t now_ms)
   task_sweep_sample(now_ms);
   task_update_match_time(now_ms);
   task_status.camera_angle = Camera_GetAngle();
+  if (task_audit_state() && audit_consistent_count > 0U &&
+      now_ms - audit_evidence_ms > APP_AUDIT_EVIDENCE_MAX_GAP_MS) {
+    task_clear_audit_result();
+  }
+  if (state == TASK_SAFE_SWEEP_AUDIT && sweep_audit_consistent_count > 0U &&
+      now_ms - sweep_audit_evidence_ms > APP_AUDIT_EVIDENCE_MAX_GAP_MS) {
+    task_reset_sweep_audit(now_ms);
+  }
   task_accept_mission(&vision, now_ms);
   task_apply_complete_target(&vision);
   /* Automatic map-edge recovery is intentionally disabled. Keep the helper
@@ -5598,6 +5799,7 @@ void Task_Process(uint32_t now_ms)
     task_publish_status(now_ms);
     return;
   }
+  task_audit_watchdog(now_ms);
   if (state == TASK_GRAB_OBSERVE || state == TASK_DISPERSE_READY) {
     (void)task_capture_observe(now_ms);
   }
@@ -5626,6 +5828,8 @@ void Task_Process(uint32_t now_ms)
       (state != TASK_SAFE_SWEEP_RETRIEVE_FAILED) &&
       (state != TASK_CAPTURE_RETURN_WAIT) &&
       (state != TASK_TRANSPORT_AUDIT) &&
+      (state != TASK_INJURY_BACKOFF) &&
+      (state != TASK_INJURY_RECLOSE) &&
       (state != TASK_BOUNDARY_RECOVER)) {
     if ((state == TASK_REMOTE_ACTION) && !remote_action.done) {
       task_pause_action(now_ms, true);
@@ -5744,24 +5948,23 @@ void Task_Process(uint32_t now_ms)
       task_process_post_grab_audit(now_ms);
       break;
 
-    case TASK_TRANSPORT_AUDIT:
+    case TASK_INJURY_BACKOFF:
+      task_process_injury_backoff(now_ms);
+      break;
+
+    case TASK_INJURY_RECLOSE:
       Motor_Stop();
       task_status.motors_active = false;
-      task_status.gripper_closed = true;
-      if (Camera_GetAngle() != APP_GRAB_VIEW_ANGLE) {
-        transport_audit_camera_ready = false;
-        task_status.claw_visible = false;
-        step_started_ms = now_ms;
-        task_clear_audit_result();
+      task_status.gripper_closed = false;
+      if (Claw_Touch(now_ms)) {
+        injury_recheck_pending = false;
+        task_status.gripper_closed = true;
+        task_enter(TASK_WAIT_NAVIGATION, now_ms);
       }
-      Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
-      camera_angle = (float)APP_GRAB_VIEW_ANGLE;
-      if (!transport_audit_camera_ready &&
-          (uint32_t)(now_ms - step_started_ms) >= APP_GRAB_CAMERA_SETTLE_MS) {
-        task_clear_audit_result();
-        transport_audit_camera_ready = true;
-        task_status.claw_visible = true;
-      }
+      break;
+
+    case TASK_TRANSPORT_AUDIT:
+      task_process_transport_audit(now_ms);
       break;
 
     case TASK_WAIT_NAVIGATION:

@@ -20,8 +20,7 @@ extern TIM_HandleTypeDef htim9;
 #define MOTOR_ONE_HALF 0.5f
 /* Calibrated on the real chassis: API +90 deg is physical left. */
 #define MOTOR_API_LEFT_TO_BODY_Y -1.0f
-#define MOTOR_DEFAULT_OUTPUT_LIMIT \
-  (APP_MOTOR_BASE_PWM + (int32_t)APP_MOTOR_PID_LIMIT)
+#define MOTOR_DEFAULT_OUTPUT_LIMIT APP_MOTOR_PWM_MAX_PERMILLE
 
 typedef struct {
   TIM_HandleTypeDef *in1_timer;
@@ -367,6 +366,11 @@ static void motor_apply_pwm(uint8_t id, int16_t speed)
     return;
   }
   speed = motor_limit(speed);
+  if (speed > APP_MOTOR_PWM_MAX_PERMILLE) {
+    speed = APP_MOTOR_PWM_MAX_PERMILLE;
+  } else if (speed < -APP_MOTOR_PWM_MAX_PERMILLE) {
+    speed = -APP_MOTOR_PWM_MAX_PERMILLE;
+  }
 
   const MotorPwm *motor = &motors[id - 1U];
   const uint32_t in1 = (speed > 0) ? speed_to_compare(motor->in1_timer, speed) : 0U;
@@ -956,32 +960,29 @@ void Motor_Update(void)
       continue;
     }
 
-    correction = Pid_Update(&speed_pids[index],
-                            target_counts_per_update[index],
-                            (float)measured);
-    int32_t base_pwm;
-    int32_t output_limit;
-    if (spin_move.active) {
-      /* During field-oriented spinning, each target sweeps through a wide
-       * range every revolution. A fixed base PWM makes the slow wheel much
-       * too fast and the fast wheel too slow. The reference three-wheel code
-       * maps each wheel target magnitude to PWM; retain encoder PID feedback
-       * on top of that feed-forward and allow active braking on overspeed. */
-      const float normalized = motor_abs_float((float)targets[index]) /
-                               (float)MOTOR_MAX_SPEED;
-      const float feedforward = APP_MOVE_SPIN_FF_STATIC_PWM +
-          (APP_MOVE_SPIN_FF_MAX_PWM - APP_MOVE_SPIN_FF_STATIC_PWM) *
-          normalized;
-      base_pwm = (targets[index] > 0) ? (int32_t)feedforward :
-                                       -(int32_t)feedforward;
-      correction *= APP_MOVE_SPIN_PID_BOOST;
-      output_limit = APP_MOVE_SPIN_OUTPUT_LIMIT_PWM;
-    } else {
-      base_pwm = (targets[index] > 0) ? APP_MOTOR_BASE_PWM :
-                                       -APP_MOTOR_BASE_PWM;
-      output_limit = motor_default_output_limit();
-    }
+    /* RPM gives a physical feed-forward independent of encoder resolution.
+     * The two paths share the 12 V voltage scale and final drive duty cap. */
+    const float rpm = motor_abs_float(target_counts_per_update[index]) *
+        60000.0f / (APP_ENCODER_COUNTS_PER_WHEEL_REV * APP_MOTOR_CONTROL_PERIOD_MS);
+    const float static_pwm = spin_move.active ?
+        APP_MOVE_SPIN_FF_STATIC_PWM : (float)APP_MOTOR_BASE_PWM;
+    const float feedforward = static_pwm + rpm / APP_MOTOR_NO_LOAD_RPM *
+        (float)APP_MOTOR_RATED_VOLTAGE_MV / APP_MOTOR_SUPPLY_VOLTAGE_MV * 1000.0f;
+    const int32_t output_limit = spin_move.active ?
+        APP_MOVE_SPIN_OUTPUT_LIMIT_PWM : motor_default_output_limit();
+    const int32_t magnitude = (int32_t)motor_clamp_float(feedforward, 0.0f,
+                                                       (float)output_limit);
+    const int32_t base_pwm = targets[index] > 0 ? magnitude : -magnitude;
+    const float boost = spin_move.active ? APP_MOVE_SPIN_PID_BOOST : 1.0f;
+    /* Preserve the existing PID gains, correction bounds and integrator. */
+    correction = boost * Pid_Update(&speed_pids[index],
+                                    target_counts_per_update[index],
+                                    (float)measured);
     int32_t output = base_pwm + (int32_t)correction;
+    if (!spin_move.active && ((targets[index] > 0 && output < 0) ||
+                              (targets[index] < 0 && output > 0))) {
+      output = 0;
+    }
     if (output > output_limit) {
       output = output_limit;
     } else if (output < -output_limit) {

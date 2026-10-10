@@ -411,7 +411,7 @@ def parse_odometry(frame: bytes) -> dict[str, int]:
 
 def odometry_body_velocity(
     odometry: dict[str, int], wheel_diameter_mm: float = 70.0,
-    counts_per_wheel_rev: int = 1768,
+    counts_per_wheel_rev: float = 1061.268,
 ) -> tuple[float, float]:
     dt_s = odometry["dt_ms"] * 0.001
     metres_per_count = math.pi * wheel_diameter_mm * 0.001 / counts_per_wheel_rev

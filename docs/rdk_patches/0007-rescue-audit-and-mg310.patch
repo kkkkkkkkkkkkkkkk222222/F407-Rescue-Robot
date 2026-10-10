@@ -1,0 +1,680 @@
+diff --git a/competition_rescue/audit_stability.py b/competition_rescue/audit_stability.py
+new file mode 100644
+index 0000000..6125172
+--- /dev/null
++++ b/competition_rescue/audit_stability.py
+@@ -0,0 +1,48 @@
++"""Time-separated audit samples and conservative image-quality checks."""
++from dataclasses import dataclass
++
++
++@dataclass
++class TemporalAudit:
++    interval_s: float = 0.1
++    max_gap_s: float = 0.5
++    signature: tuple | None = None
++    last_frame: int = 0
++    last_evidence_s: float | None = None
++    last_sample_s: float | None = None
++    hits: int = 0
++
++    def reset(self):
++        self.signature = None
++        self.last_frame = 0
++        self.last_evidence_s = self.last_sample_s = None
++        self.hits = 0
++
++    def observe(self, frame: int, timestamp: float, signature: tuple) -> int:
++        if frame <= self.last_frame:
++            return self.hits
++        gap = None if self.last_evidence_s is None else timestamp - self.last_evidence_s
++        if signature != self.signature or gap is None or gap < 0 or gap > self.max_gap_s:
++            self.hits = 1
++            self.signature = signature
++            self.last_sample_s = timestamp
++        elif timestamp - self.last_sample_s + 1e-6 >= self.interval_s:
++            self.hits += 1
++            self.last_sample_s = timestamp
++        self.last_frame = frame
++        self.last_evidence_s = timestamp
++        return self.hits
++
++
++def audit_quality_reason(boxes, image_size=(1280, 1024), overlap_limit=0.35):
++    width, height = image_size
++    for x, y, w, h in boxes:
++        if w <= 0 or h <= 0 or x < 2 or y < 2 or x + w > width - 2 or y + h > height - 2:
++            return "capture_frame_clipped"
++    for i, (x, y, w, h) in enumerate(boxes):
++        for bx, by, bw, bh in boxes[i + 1:]:
++            intersection = max(0, min(x + w, bx + bw) - max(x, bx)) * max(
++                0, min(y + h, by + bh) - max(y, by))
++            if intersection / min(w * h, bw * bh) > overlap_limit:
++                return "capture_occluded"
++    return ""
+diff --git a/competition_rescue/run_competition_rescue.py b/competition_rescue/run_competition_rescue.py
+index c192d65..f95ab0e 100755
+--- a/competition_rescue/run_competition_rescue.py
++++ b/competition_rescue/run_competition_rescue.py
+@@ -65,9 +65,11 @@ from protocol import (  # noqa: E402
+ from capture_roi import (  # noqa: E402
+     CaptureRois,
+     bbox_in_capture_roi,
++    bbox_capture_roi_overlap_ratio,
+     capture_side_for_bbox,
+     load_capture_rois,
+ )
++from audit_stability import audit_quality_reason
+ from state_machine import (  # noqa: E402
+     CARGO_CLASSES,
+     SAFE_CORRIDOR_BLOCKED,
+@@ -588,6 +590,7 @@ def make_vision_snapshot(
+         VISION_ROOT / "config/capture_roi.json"
+     )
+     capture_items: list[TrackedCargo] = []
++    capture_quality_problem = ""
+     capture_side_by_track: dict[int, str] = {}
+     capture_enabled = (
+         stm.fresh and
+@@ -608,6 +611,8 @@ def make_vision_snapshot(
+                 rois.overall,
+                 minimum_overlap_ratio=capture_overlap,
+             ):
++                if bbox_capture_roi_overlap_ratio(item.bbox, rois.overall) >= 0.25:
++                    capture_quality_problem = "capture_roi_incomplete"
+                 continue
+             capture_items.append(item)
+             capture_side = capture_side_for_bbox(
+@@ -619,6 +624,11 @@ def make_vision_snapshot(
+                 capture_side_by_track[item.track_id] = capture_side
+     capture = tuple(capture_items)
+     selected = mission.selected_batch
++    if not (selected is not None and selected.initial_stash) and stm.mode != 43:
++        capture_quality_problem = capture_quality_problem or audit_quality_reason(
++            [item.bbox for item in capture])
++    else:
++        capture_quality_problem = ""
+     selected_ids = set(selected.track_ids) if selected is not None else set()
+     selected_classes = set(selected.classes) if selected is not None else set()
+     audit = (
+@@ -752,6 +762,8 @@ def make_vision_snapshot(
+         danger_ahead=danger,
+         danger_side=side,
+         capture_audit=audit,
++        capture_observation_valid=capture_enabled and not capture_quality_problem,
++        capture_observation_reason=capture_quality_problem,
+         delivery_target_found=bool(delivery_items),
+         delivery_target_inside_safe_zone=delivery_inside,
+         delivery_target_outside_safe_zone=delivery_outside,
+diff --git a/competition_rescue/state_machine.py b/competition_rescue/state_machine.py
+index 9ff68f5..2200cf1 100755
+--- a/competition_rescue/state_machine.py
++++ b/competition_rescue/state_machine.py
+@@ -8,11 +8,12 @@ commands for the matching F407 firmware.
+ from __future__ import annotations
+ 
+ from collections import Counter, deque
+-from dataclasses import dataclass, replace
++from dataclasses import dataclass, field, replace
+ from enum import Enum
+ import math
+ from statistics import median
+ from typing import Iterable
++from audit_stability import TemporalAudit
+ 
+ from protocol import (
+     AUDIT_DESTINATION_INJURY,
+@@ -89,6 +90,8 @@ STM_MODE_SAFE_SWEEP_RETRIEVE_AUDIT = 45
+ STM_MODE_SAFE_SWEEP_RETRIEVE_FAILED = 46
+ STM_MODE_CAPTURE_RETURN_WAIT = 47
+ STM_MODE_TRANSPORT_AUDIT = 48
++STM_MODE_INJURY_BACKOFF = 49
++STM_MODE_INJURY_RECLOSE = 50
+ 
+ SAFE_CORRIDOR_CLEAR = "CLEAR"
+ SAFE_CORRIDOR_BLOCKED = "BLOCKED"
+@@ -327,6 +330,8 @@ class VisionSnapshot:
+     danger_ahead: bool = False
+     danger_side: str = "unknown"
+     capture_audit: CargoAudit | None = None
++    capture_observation_valid: bool = True
++    capture_observation_reason: str = ""
+     delivery_target_found: bool = False
+     delivery_target_inside_safe_zone: bool = False
+     delivery_target_outside_safe_zone: bool = False
+@@ -366,6 +371,7 @@ class SweepPickupContext:
+     audit_command: CommandRequest | None = None
+     grab_started: bool = False
+     camera_ready: bool = False
++    stability: TemporalAudit = field(default_factory=TemporalAudit)
+     last_approach: CommandRequest | None = None
+     last_seen_s: float | None = None
+ 
+@@ -478,6 +484,9 @@ class CompetitionSettings:
+     normal_grab_audit_frames: int = 3
+     cluster_grab_audit_frames: int = 3
+     post_grab_audit_frames: int = 3
++    audit_sample_interval_s: float = 0.1
++    audit_evidence_max_gap_s: float = 0.5
++    audit_handoff_timeout_s: float = 17.0
+     delivery_visual_frames: int = 5
+     batch_radius_m: float = 0.55
+     near_material_max_distance_m: float = 0.85
+@@ -528,6 +537,8 @@ class CompetitionSettings:
+             raise ValueError("start zone must be 1..4")
+         if self.max_batch_count != 1:
+             raise ValueError("formal material delivery must contain exactly one item")
++        if not (0 < self.audit_sample_interval_s < self.audit_evidence_max_gap_s < self.audit_handoff_timeout_s):
++            raise ValueError("audit timing thresholds must increase")
+         if (
+             self.audit_stable_frames <= 0 or
+             self.normal_grab_audit_frames <= 0 or
+@@ -647,6 +658,9 @@ class CompetitionMission:
+         self.audit_last_signature: tuple | None = None
+         self.audit_last_frame_sequence: int | None = None
+         self.audit_hits = 0
++        self.audit_stability = TemporalAudit(settings.audit_sample_interval_s, settings.audit_evidence_max_gap_s)
++        self.audit_watch_mode = None
++        self.audit_watch_started_s = None
+         self.audit_recheck_frame_floor: int | None = None
+         self.audit_recheck_started_s: float | None = None
+         self.audit_legal_candidate_pending = False
+@@ -676,6 +690,7 @@ class CompetitionMission:
+         self.grab_initial_ack: int | None = None
+         self.grab_complete_confirmed = False
+         self.post_grab_audit_active = False
++        self.injury_backoff_active = False
+         self.post_grab_camera_ready: bool | None = None
+         self.transport_audit_command: CommandRequest | None = None
+         self.transport_audit_camera_ready = False
+@@ -1072,6 +1087,8 @@ class CompetitionMission:
+             if self.pending_audit_release_context.startswith("post_grab_"):
+                 return (
+                     STM_MODE_POST_GRAB_AUDIT,
++                    STM_MODE_INJURY_BACKOFF,
++                    STM_MODE_INJURY_RECLOSE,
+                     STM_MODE_CAPTURE_DONE,
+                     STM_MODE_SEARCH,
+                 )
+@@ -1084,10 +1101,13 @@ class CompetitionMission:
+                 STM_MODE_SEARCH,
+             )
+         if self.state == CompetitionState.GRAB:
+-            return (STM_MODE_CAPTURE_AUDIT, STM_MODE_CLUSTER_READY, STM_MODE_POST_GRAB_AUDIT)
++            return (STM_MODE_CAPTURE_AUDIT, STM_MODE_CLUSTER_READY, STM_MODE_POST_GRAB_AUDIT,
++                    STM_MODE_INJURY_BACKOFF, STM_MODE_INJURY_RECLOSE)
+         if self.state == CompetitionState.POST_GRAB_AUDIT:
+             return (
+                 STM_MODE_POST_GRAB_AUDIT,
++                STM_MODE_INJURY_BACKOFF,
++                STM_MODE_INJURY_RECLOSE,
+                 STM_MODE_CAPTURE_DONE,
+                 STM_MODE_SAFE_SWEEP_DONE,
+                 STM_MODE_SEARCH,
+@@ -1253,6 +1273,7 @@ class CompetitionMission:
+ 
+     def _clear_selected_batch(self) -> None:
+         self.transport_audit_handoff_active = False
++        self.injury_backoff_active = False
+         self.selected_batch = None
+         self.confirmed_delivery_destination = None
+         self.post_grab_audit_active = False
+@@ -1382,7 +1403,7 @@ class CompetitionMission:
+             if audit.total_count == 1 and manifest == ("injured_orange",):
+                 return ("INJURY_SINGLE",)
+             if manifest and set(manifest).issubset(MATERIAL_CLASSES):
+-                return ("MATERIAL_LEGAL", audit.total_count)
++                return ("MATERIAL_LEGAL", audit.total_count, tuple(sorted(Counter(manifest).items())))
+         # Match F407's task-semantic normalization.  An invalid observation
+         # remains the same decision when green/core/mixed classification or
+         # claw side jitters, as long as its count, blocking flags and encoded
+@@ -1803,7 +1824,7 @@ class CompetitionMission:
+             stm.mode == STM_MODE_POST_GRAB_AUDIT
+         ):
+             return False
+-        ready = stm.camera_pitch_cdeg == 14000
++        ready = stm.claw_visible and stm.camera_pitch_cdeg == 14000
+         previous = self.post_grab_camera_ready
+         self.post_grab_camera_ready = ready
+         if previous is None:
+@@ -1954,6 +1975,11 @@ class CompetitionMission:
+             CMD_VALID,
+             audit=self.pending_audit_payload,
+         )
++        if stm.mode in {21, 23, 35, 37, 38, 45, 48} and (
++            not self._vision_fresh(vision, now) or not vision.capture_observation_valid
++        ):
++            self._invalidate_audit_samples()
++            return self._audit_output(vision, stm, now)
+         if (
+             stm.fresh and
+             stm.mode in {STM_MODE_APPROACH_RECOVER, STM_MODE_SEARCH} and
+@@ -1976,7 +2002,7 @@ class CompetitionMission:
+             camera_edge = self._observe_post_grab_camera_edge(
+                 vision, stm, now
+             )
+-            if camera_edge or stm.camera_pitch_cdeg != 14000:
++            if camera_edge or not stm.claw_visible or stm.camera_pitch_cdeg != 14000:
+                 return self._audit_output(vision, stm, now)
+         if (
+             (
+@@ -2201,6 +2227,7 @@ class CompetitionMission:
+                 reason="post_grab_audit_pending",
+                 expected_stm_modes=(
+                     STM_MODE_POST_GRAB_AUDIT,
++                    STM_MODE_INJURY_RECLOSE,
+                     STM_MODE_CAPTURE_DONE,
+                     STM_MODE_SAFE_SWEEP_DONE,
+                 ),
+@@ -2796,6 +2823,24 @@ class CompetitionMission:
+                 return "left"
+         return "both"
+ 
++    def _record_audit_observation(self, vision: VisionSnapshot, audit: CargoAudit, now: float) -> None:
++        if self.audit_hits == 0:
++            self.audit_stability.reset()
++        signature = self._audit_signature_for_state(audit, self._audit_valid(audit))
++        timestamp = vision.observed_monotonic_s if vision.observed_monotonic_s is not None else now
++        self.audit_hits = self.audit_stability.observe(vision.frame_sequence, timestamp, signature)
++        self.audit_last_signature = signature
++        self.audit_last_frame_sequence = vision.frame_sequence
++        self.audit_id = (self.audit_id + 1) & 0xFF
++
++    def _invalidate_audit_samples(self) -> None:
++        self.audit_hits = 0
++        self.audit_last_signature = self.audit_last_frame_sequence = None
++        self.audit_stability.reset()
++        self._clear_pending_audit()
++        if self.state == CompetitionState.AUDIT_CONFIRM:
++            self.state = CompetitionState.POST_GRAB_AUDIT if self.post_grab_audit_active else CompetitionState.CAPTURE_AUDIT
++
+     def _audit_output(
+         self, vision: VisionSnapshot, stm: StmSnapshot, now: float
+     ) -> CompetitionOutput:
+@@ -2837,7 +2882,8 @@ class CompetitionMission:
+                     STM_MODE_SEARCH,
+                 ),
+             )
+-        if not self._vision_fresh(vision, now):
++        if not self._vision_fresh(vision, now) or not vision.capture_observation_valid:
++            self._invalidate_audit_samples()
+             assert self.selected_batch is not None
+             empty_payload = self._audit_payload(CargoAudit())
+             return CompetitionOutput(
+@@ -2908,16 +2954,7 @@ class CompetitionMission:
+                     vision.frame_sequence != self.audit_last_frame_sequence
+                 )
+                 if empty_new_frame:
+-                    self.audit_last_frame_sequence = vision.frame_sequence
+-                    self.audit_id = (self.audit_id + 1) & 0xFF
+-                    empty_signature = self._audit_signature_for_state(
+-                        empty_audit, False
+-                    )
+-                    if empty_signature == self.audit_last_signature:
+-                        self.audit_hits += 1
+-                    else:
+-                        self.audit_last_signature = empty_signature
+-                        self.audit_hits = 1
++                    self._record_audit_observation(vision, empty_audit, now)
+                 stable_empty = replace(
+                     empty_audit,
+                     stable=(
+@@ -2995,16 +3032,7 @@ class CompetitionMission:
+             self._audit_valid(audit)
+         )
+         if new_frame:
+-            self.audit_last_frame_sequence = vision.frame_sequence
+-            audit_signature = self._audit_signature_for_state(
+-                audit, audit_valid
+-            )
+-            if audit_signature == self.audit_last_signature:
+-                self.audit_hits += 1
+-            else:
+-                self.audit_last_signature = audit_signature
+-                self.audit_hits = 1
+-            self.audit_id = (self.audit_id + 1) & 0xFF
++            self._record_audit_observation(vision, audit, now)
+         cluster_grab_audit = cluster_screening and audit_valid
+         required_audit_frames = (
+             self.settings.post_grab_audit_frames
+@@ -3522,6 +3550,7 @@ class CompetitionMission:
+             context.audit_hits = 0
+             context.audit_signature = None
+             context.audit_command = None
++            context.stability.reset()
+             context.grab_started = False
+             context.last_approach = None
+             context.last_seen_s = None
+@@ -3556,7 +3585,8 @@ class CompetitionMission:
+                 expected_stm_modes=(approach_mode, audit_mode),
+             )
+ 
+-        fresh_audit = self._vision_fresh(vision, now) and camera_ready
++        fresh_audit = self._vision_fresh(vision, now) and camera_ready and (
++            not context.recovering_original or vision.capture_observation_valid)
+         if fresh_audit and vision.frame_sequence > max(context.frame_floor, context.last_audit_frame):
+             context.last_audit_frame = vision.frame_sequence
+             context.audit_id = (context.audit_id + 1) & 0xFF
+@@ -3570,10 +3600,14 @@ class CompetitionMission:
+                 self._audit_signature_for_state(audit, valid)
+                 if context.recovering_original else ("SWEEP_NONEMPTY",)
+             )
+-            context.audit_hits = (
+-                context.audit_hits + 1 if valid and signature == context.audit_signature
+-                else 1 if valid else 0
+-            )
++            if valid:
++                context.audit_hits = context.stability.observe(
++                    vision.frame_sequence,
++                    vision.observed_monotonic_s if vision.observed_monotonic_s is not None else now,
++                    signature)
++            else:
++                context.stability.reset()
++                context.audit_hits = 0
+             context.audit_signature = signature
+             audit = replace(audit, stable=context.audit_hits >= self.settings.audit_stable_frames)
+             payload = replace(
+@@ -3589,6 +3623,7 @@ class CompetitionMission:
+             context.audit_command = CommandRequest(CMD_CARGO_AUDIT, CMD_VALID, audit=payload)
+         if not fresh_audit:
+             context.audit_hits = 0
++            context.stability.reset()
+             context.audit_signature = None
+             context.audit_command = None
+         command = context.audit_command or CommandRequest(
+@@ -4891,9 +4926,11 @@ class CompetitionMission:
+         empty_command = CommandRequest(
+             CMD_CARGO_AUDIT, CMD_VALID, audit=self._audit_payload(CargoAudit())
+         )
+-        if not ready or not self._vision_fresh(vision, now):
++        if not ready or not self._vision_fresh(vision, now) or not vision.capture_observation_valid:
+             self.audit_hits = 0
+             self.audit_last_signature = None
++            self.audit_last_frame_sequence = None
++            self.audit_stability.reset()
+             self.transport_audit_command = None
+             self.transport_audit_value = None
+             return CompetitionOutput(
+@@ -4907,12 +4944,7 @@ class CompetitionMission:
+         previous_signature = self.audit_last_signature
+         if vision.frame_sequence > max(self.transport_audit_frame_floor, self.audit_last_frame_sequence or 0):
+             audit = vision.capture_audit or CargoAudit()
+-            valid = self._audit_valid(audit)
+-            signature = self._audit_signature_for_state(audit, valid)
+-            self.audit_hits = self.audit_hits + 1 if signature == self.audit_last_signature else 1
+-            self.audit_last_signature = signature
+-            self.audit_last_frame_sequence = vision.frame_sequence
+-            self.audit_id = (self.audit_id + 1) & 0xFF
++            self._record_audit_observation(vision, audit, now)
+             self.transport_audit_value = replace(audit, stable=self.audit_hits >= self.settings.audit_stable_frames)
+             self.transport_audit_command = CommandRequest(
+                 CMD_CARGO_AUDIT, CMD_VALID, audit=self._audit_payload(self.transport_audit_value)
+@@ -5363,6 +5395,58 @@ class CompetitionMission:
+             )
+         self.stm_fault_waiting = False
+ 
++        audit_waiting = stm.mode in {21, 23, 37, 38, 43, 45, 48} or (
++            stm.mode == 35 and self.cargo_recheck_pending)
++        if audit_waiting:
++            if self.audit_watch_mode != stm.mode or self.audit_watch_started_s is None:
++                self.audit_watch_mode = stm.mode
++                self.audit_watch_started_s = now
++            elif now - self.audit_watch_started_s >= self.settings.audit_handoff_timeout_s:
++                self._set_state(CompetitionState.FAULT, now)
++                return CompetitionOutput(
++                    self.state, CommandRequest(CMD_ABORT, self._side_flags()),
++                    "审核超过17秒且F407未进入恢复状态，安全停车并报告审核握手超时",
++                    self.selected_batch, event="audit_handoff_timeout",
++                    reason="audit_handoff_timeout", tx_policy="fault_abort")
++        else:
++            self.audit_watch_mode = self.audit_watch_started_s = None
++
++        if stm.mode == STM_MODE_INJURY_BACKOFF and self.selected_batch is not None:
++            entering = not self.injury_backoff_active
++            if entering:
++                self._begin_post_grab_audit(vision, now)
++                self.grab_complete_confirmed = False
++                self.injury_backoff_active = True
++            self.post_grab_camera_ready = False
++            return CompetitionOutput(
++                self.state,
++                CommandRequest(CMD_CARGO_AUDIT, CMD_VALID,
++                               audit=self._audit_payload(CargoAudit())),
++                "伤员半闭爪后退中，等待低头稳定后重新复核",
++                self.selected_batch,
++                event="injury_backoff_started" if entering else "",
++                tx_policy="audit_unstable_publish",
++                reason="injury_backoff_wait",
++                expected_stm_modes=(STM_MODE_INJURY_BACKOFF, STM_MODE_POST_GRAB_AUDIT),
++            )
++        if self.injury_backoff_active and stm.mode == STM_MODE_POST_GRAB_AUDIT:
++            self.injury_backoff_active = False
++            self._begin_post_grab_audit(vision, now)
++        if stm.mode == STM_MODE_INJURY_RECLOSE and self.selected_batch is not None:
++            # Preserve the second audit while the physical reclose completes.
++            command = CommandRequest(
++                CMD_CARGO_AUDIT, CMD_VALID,
++                audit=self.pending_audit_payload or self._audit_payload(CargoAudit()),
++            )
++            return CompetitionOutput(
++                self.state, command,
++                "伤员后退复核通过，等待F407再次闭爪并上报mode22",
++                self.selected_batch, self.pending_audit,
++                tx_policy="audit_stable_publish" if command.audit.stable else "audit_unstable_publish",
++                reason="injury_reclose_wait",
++                expected_stm_modes=(STM_MODE_INJURY_RECLOSE, STM_MODE_CAPTURE_DONE),
++            )
++
+         if stm.mode == STM_MODE_SEARCH and self.state in {
+             CompetitionState.GRAB, CompetitionState.DISPERSE,
+             CompetitionState.POST_GRAB_AUDIT, CompetitionState.CAPTURE_AUDIT,
+diff --git a/competition_rescue/tests/test_audit_stability.py b/competition_rescue/tests/test_audit_stability.py
+new file mode 100644
+index 0000000..e84e03b
+--- /dev/null
++++ b/competition_rescue/tests/test_audit_stability.py
+@@ -0,0 +1,65 @@
++import sys
++import unittest
++from dataclasses import replace
++from pathlib import Path
++
++sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
++from audit_stability import TemporalAudit, audit_quality_reason
++import test_injury_backoff as injury_cases
++from state_machine import CargoAudit, CompetitionState, VisionSnapshot
++from protocol import CMD_ABORT, CMD_CARGO_AUDIT
++
++
++class AuditStabilityTests(unittest.TestCase):
++    setUp = injury_cases.InjuryBackoffTests.setUp
++    step = injury_cases.InjuryBackoffTests.step
++    second_audit = injury_cases.InjuryBackoffTests.second_audit
++    def test_fast_frames_need_time_span(self):
++        gate = TemporalAudit()
++        self.assertEqual(gate.observe(1, 0.0, ("injury",)), 1)
++        self.assertEqual(gate.observe(2, 0.01, ("injury",)), 1)
++        self.assertEqual(gate.observe(3, 0.02, ("injury",)), 1)
++        self.assertEqual(gate.observe(4, 0.1, ("injury",)), 2)
++        self.assertEqual(gate.observe(5, 0.2, ("injury",)), 3)
++        self.assertEqual(gate.observe(5, 1.0, ("injury",)), 3)
++        self.assertEqual(gate.observe(6, 1.01, ("injury",)), 1)
++
++    def test_quantity_same_but_class_changed_resets(self):
++        gate = TemporalAudit()
++        green = CargoAudit(left_class="green_supply", left_count=1, total_count=1)
++        core = replace(green, left_class="core_black")
++        a = self.mission._audit_signature_for_state(green, True)
++        b = self.mission._audit_signature_for_state(core, True)
++        self.assertNotEqual(a, b)
++        gate.observe(1, 0.0, a); gate.observe(2, 0.1, a)
++        self.assertEqual(gate.observe(3, 0.11, b), 1)
++
++    def test_quality_bad_is_not_empty_and_invalidates_pending(self):
++        self.second_audit()
++        self.assertIsNotNone(self.mission.pending_audit)
++        vision = VisionSnapshot(frame_sequence=15, capture_observation_valid=False,
++                                capture_observation_reason="capture_occluded")
++        from state_machine import StmSnapshot
++        result = self.mission.step(vision, self.pose, StmSnapshot(
++            mode=23, flags=49, age_ms=5.0, camera_pitch_cdeg=14000), 4.9)
++        self.assertIsNone(self.mission.pending_audit)
++        self.assertEqual(self.mission.audit_hits, 0)
++        self.assertEqual(result.command.opcode, CMD_CARGO_AUDIT)
++        self.assertFalse(result.command.audit.stable)
++        self.assertEqual(self.mission.state, CompetitionState.POST_GRAB_AUDIT)
++
++    def test_quality_geometry(self):
++        self.assertEqual(audit_quality_reason([(100, 300, 40, 40)]), "")
++        self.assertEqual(audit_quality_reason([(0, 300, 40, 40)]), "capture_frame_clipped")
++        self.assertEqual(audit_quality_reason([(100, 300, 40, 40), (110, 300, 40, 40)]), "capture_occluded")
++
++    def test_timeout_does_not_fake_audit_success(self):
++        self.step(1, 23, now=1.0)
++        result = self.step(2, 23, now=18.0)
++        self.assertEqual(result.command.opcode, CMD_ABORT)
++        self.assertEqual(result.state, CompetitionState.FAULT)
++        self.assertFalse(self.mission.grab_complete_confirmed)
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/competition_rescue/tests/test_injury_backoff.py b/competition_rescue/tests/test_injury_backoff.py
+new file mode 100644
+index 0000000..c3a87c2
+--- /dev/null
++++ b/competition_rescue/tests/test_injury_backoff.py
+@@ -0,0 +1,94 @@
++"""Host-side regression tests for the half-claw injury handoff."""
++import sys
++import unittest
++from pathlib import Path
++
++sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
++from state_machine import (
++    CargoAudit, CargoBatch, CompetitionMission, CompetitionSettings,
++    CompetitionState, PoseSnapshot, StmSnapshot, VisionSnapshot,
++)
++from protocol import CMD_CARGO_AUDIT
++
++
++class InjuryBackoffTests(unittest.TestCase):
++    def setUp(self):
++        self.mission = CompetitionMission(CompetitionSettings(
++            side="red", initial_stash_enabled=False))
++        self.mission.first_common_delivered = True
++        self.mission._select_batch(CargoBatch((1,), ("injured_orange",), "injury"))
++        self.mission._begin_post_grab_audit(VisionSnapshot(frame_sequence=1), 1.0)
++        self.pose = PoseSnapshot(True, 0.0, 0.0, 90.0, 5.0)
++        self.audit = CargoAudit(left_class="injured_orange", left_count=1, total_count=1)
++
++    def step(self, frame, mode, flags=1, pitch=14000, now=2.0, **kwargs):
++        return self.mission.step(
++            VisionSnapshot(frame_sequence=frame, capture_audit=self.audit),
++            self.pose, StmSnapshot(mode=mode, flags=flags, age_ms=5.0,
++                                  camera_pitch_cdeg=pitch, **kwargs), now)
++
++    def test_backoff_discards_first_audit_and_does_not_restart_epoch(self):
++        self.mission.audit_hits = 3
++        self.mission.pending_audit = self.audit
++        self.mission.grab_complete_confirmed = True
++        output = self.step(10, 49, flags=0, pitch=12000)
++        self.assertEqual(output.command.opcode, CMD_CARGO_AUDIT)
++        self.assertFalse(output.command.audit.stable)
++        self.assertIsNone(self.mission.pending_audit)
++        self.assertEqual(self.mission.audit_hits, 0)
++        self.assertFalse(self.mission.grab_complete_confirmed)
++        epoch = self.mission.audit_epoch
++        self.step(11, 49, flags=0, pitch=12000, now=2.1)
++        self.assertEqual(self.mission.audit_epoch, epoch)
++
++    def second_audit(self):
++        self.step(10, 49, flags=0, pitch=12000)
++        self.step(11, 23, flags=1, now=4.5)
++        self.assertEqual(self.mission.audit_hits, 0)
++        self.step(12, 23, now=4.6)
++        self.step(12, 23, now=4.61)
++        self.assertEqual(self.mission.audit_hits, 1)
++        self.step(13, 23, now=4.7)
++        self.step(14, 23, now=4.8)
++        self.assertEqual(self.mission.pending_audit_release_context, "post_grab_valid")
++
++    def test_second_audit_requires_new_distinct_frames(self):
++        self.second_audit()
++        self.assertFalse(self.mission.grab_complete_confirmed)
++
++    def test_reclose_preserves_audit_and_blocks_navigation_until_mode22(self):
++        self.second_audit()
++        audit = self.mission.pending_audit
++        out = self.step(15, 50, flags=48, now=4.9)
++        self.assertEqual(out.command.opcode, CMD_CARGO_AUDIT)
++        self.assertTrue(out.command.audit.stable)
++        self.assertIs(self.mission.pending_audit, audit)
++        self.assertFalse(self.mission.grab_complete_confirmed)
++        frame = out.command.to_frame(0)
++        result = self.step(
++            16, 22, flags=50, now=7.0, acknowledged_sequence=1,
++            relay_mission_tx_frames=1, relay_last_mission_command=frame[4],
++            relay_last_mission_payload=tuple(frame[4:12]))
++        self.assertEqual(result.event, "post_grab_audit_confirmed")
++        self.assertTrue(self.mission.grab_complete_confirmed)
++        self.assertEqual(self.mission.confirmed_delivery_destination, "injury")
++
++    def test_visibility_edge_clears_audit_even_at_same_camera_angle(self):
++        self.mission.post_grab_camera_ready = True
++        self.mission.audit_hits = 2
++        self.step(10, 23, flags=0)
++        self.assertEqual(self.mission.audit_hits, 0)
++        self.step(11, 23, flags=1, now=2.1)
++        self.assertEqual(self.mission.audit_hits, 0)
++
++    def test_quantity_policy_and_recovery_reset(self):
++        self.assertFalse(self.mission._audit_valid(CargoAudit(
++            left_class="injured_orange", left_count=2, total_count=2)))
++        self.assertFalse(self.mission._audit_valid(CargoAudit(
++            left_class="green_supply", left_count=2, total_count=2)))
++        self.mission._clear_selected_batch()
++        self.assertFalse(self.mission.injury_backoff_active)
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/localization/config/localization.example.conf b/localization/config/localization.example.conf
+index eca67a9..a882a6a 100644
+--- a/localization/config/localization.example.conf
++++ b/localization/config/localization.example.conf
+@@ -5,7 +5,7 @@ start_center_m = 1.350
+ 
+ # Values copied from F407-Rescue-Robot/Main/Inc/app_config.h.
+ wheel_diameter_m = 0.070
+-counts_per_wheel_revolution = 1768
++counts_per_wheel_revolution = 1061.268
+ encoder_sign_m1 = -1
+ encoder_sign_m2 = -1
+ encoder_sign_m3 = -1
+diff --git a/localization/include/config.hpp b/localization/include/config.hpp
+index 17d798d..28bd1ef 100644
+--- a/localization/include/config.hpp
++++ b/localization/include/config.hpp
+@@ -11,7 +11,7 @@ struct LocalizationConfig {
+     double start_center_m = 1.35;
+ 
+     double wheel_diameter_m = 0.070;
+-    double counts_per_wheel_revolution = 1768.0;
++    double counts_per_wheel_revolution = 1061.268;
+     int encoder_sign[3] = {-1, -1, -1};
+     double encoder_to_robot_yaw_deg = 0.0;
+     double encoder_fusion_weight = 0.25;
+diff --git a/t265_map/src/t265_map_builder.cpp b/t265_map/src/t265_map_builder.cpp
+index 1fbbc7d..5aea2d7 100644
+--- a/t265_map/src/t265_map_builder.cpp
++++ b/t265_map/src/t265_map_builder.cpp
+@@ -498,7 +498,7 @@ public:
+         }
+ 
+         constexpr double wheel_diameter_m = 0.070;
+-        constexpr double counts_per_revolution = 1768.0;
++        constexpr double counts_per_revolution = 1061.268;
+         constexpr double distance_per_count = kPi * wheel_diameter_m / counts_per_revolution;
+         constexpr double sqrt3 = 1.73205080756887729353;
+         // F407 convention: M1=right, M2=left, M3=rear. All three raw

@@ -1,0 +1,222 @@
+diff --git a/competition_rescue/state_machine.py b/competition_rescue/state_machine.py
+index 9ff68f5..bc8ff62 100755
+--- a/competition_rescue/state_machine.py
++++ b/competition_rescue/state_machine.py
+@@ -89,6 +89,8 @@ STM_MODE_SAFE_SWEEP_RETRIEVE_AUDIT = 45
+ STM_MODE_SAFE_SWEEP_RETRIEVE_FAILED = 46
+ STM_MODE_CAPTURE_RETURN_WAIT = 47
+ STM_MODE_TRANSPORT_AUDIT = 48
++STM_MODE_INJURY_BACKOFF = 49
++STM_MODE_INJURY_RECLOSE = 50
+ 
+ SAFE_CORRIDOR_CLEAR = "CLEAR"
+ SAFE_CORRIDOR_BLOCKED = "BLOCKED"
+@@ -676,6 +678,7 @@ class CompetitionMission:
+         self.grab_initial_ack: int | None = None
+         self.grab_complete_confirmed = False
+         self.post_grab_audit_active = False
++        self.injury_backoff_active = False
+         self.post_grab_camera_ready: bool | None = None
+         self.transport_audit_command: CommandRequest | None = None
+         self.transport_audit_camera_ready = False
+@@ -1072,6 +1075,8 @@ class CompetitionMission:
+             if self.pending_audit_release_context.startswith("post_grab_"):
+                 return (
+                     STM_MODE_POST_GRAB_AUDIT,
++                    STM_MODE_INJURY_BACKOFF,
++                    STM_MODE_INJURY_RECLOSE,
+                     STM_MODE_CAPTURE_DONE,
+                     STM_MODE_SEARCH,
+                 )
+@@ -1084,10 +1089,13 @@ class CompetitionMission:
+                 STM_MODE_SEARCH,
+             )
+         if self.state == CompetitionState.GRAB:
+-            return (STM_MODE_CAPTURE_AUDIT, STM_MODE_CLUSTER_READY, STM_MODE_POST_GRAB_AUDIT)
++            return (STM_MODE_CAPTURE_AUDIT, STM_MODE_CLUSTER_READY, STM_MODE_POST_GRAB_AUDIT,
++                    STM_MODE_INJURY_BACKOFF, STM_MODE_INJURY_RECLOSE)
+         if self.state == CompetitionState.POST_GRAB_AUDIT:
+             return (
+                 STM_MODE_POST_GRAB_AUDIT,
++                STM_MODE_INJURY_BACKOFF,
++                STM_MODE_INJURY_RECLOSE,
+                 STM_MODE_CAPTURE_DONE,
+                 STM_MODE_SAFE_SWEEP_DONE,
+                 STM_MODE_SEARCH,
+@@ -1253,6 +1261,7 @@ class CompetitionMission:
+ 
+     def _clear_selected_batch(self) -> None:
+         self.transport_audit_handoff_active = False
++        self.injury_backoff_active = False
+         self.selected_batch = None
+         self.confirmed_delivery_destination = None
+         self.post_grab_audit_active = False
+@@ -1803,7 +1812,7 @@ class CompetitionMission:
+             stm.mode == STM_MODE_POST_GRAB_AUDIT
+         ):
+             return False
+-        ready = stm.camera_pitch_cdeg == 14000
++        ready = stm.claw_visible and stm.camera_pitch_cdeg == 14000
+         previous = self.post_grab_camera_ready
+         self.post_grab_camera_ready = ready
+         if previous is None:
+@@ -1976,7 +1985,7 @@ class CompetitionMission:
+             camera_edge = self._observe_post_grab_camera_edge(
+                 vision, stm, now
+             )
+-            if camera_edge or stm.camera_pitch_cdeg != 14000:
++            if camera_edge or not stm.claw_visible or stm.camera_pitch_cdeg != 14000:
+                 return self._audit_output(vision, stm, now)
+         if (
+             (
+@@ -2201,6 +2210,7 @@ class CompetitionMission:
+                 reason="post_grab_audit_pending",
+                 expected_stm_modes=(
+                     STM_MODE_POST_GRAB_AUDIT,
++                    STM_MODE_INJURY_RECLOSE,
+                     STM_MODE_CAPTURE_DONE,
+                     STM_MODE_SAFE_SWEEP_DONE,
+                 ),
+@@ -5363,6 +5373,42 @@ class CompetitionMission:
+             )
+         self.stm_fault_waiting = False
+ 
++        if stm.mode == STM_MODE_INJURY_BACKOFF and self.selected_batch is not None:
++            entering = not self.injury_backoff_active
++            if entering:
++                self._begin_post_grab_audit(vision, now)
++                self.grab_complete_confirmed = False
++                self.injury_backoff_active = True
++            self.post_grab_camera_ready = False
++            return CompetitionOutput(
++                self.state,
++                CommandRequest(CMD_CARGO_AUDIT, CMD_VALID,
++                               audit=self._audit_payload(CargoAudit())),
++                "伤员半闭爪后退中，等待低头稳定后重新复核",
++                self.selected_batch,
++                event="injury_backoff_started" if entering else "",
++                tx_policy="audit_unstable_publish",
++                reason="injury_backoff_wait",
++                expected_stm_modes=(STM_MODE_INJURY_BACKOFF, STM_MODE_POST_GRAB_AUDIT),
++            )
++        if self.injury_backoff_active and stm.mode == STM_MODE_POST_GRAB_AUDIT:
++            self.injury_backoff_active = False
++            self._begin_post_grab_audit(vision, now)
++        if stm.mode == STM_MODE_INJURY_RECLOSE and self.selected_batch is not None:
++            # Preserve the second audit while the physical reclose completes.
++            command = CommandRequest(
++                CMD_CARGO_AUDIT, CMD_VALID,
++                audit=self.pending_audit_payload or self._audit_payload(CargoAudit()),
++            )
++            return CompetitionOutput(
++                self.state, command,
++                "伤员后退复核通过，等待F407再次闭爪并上报mode22",
++                self.selected_batch, self.pending_audit,
++                tx_policy="audit_stable_publish" if command.audit.stable else "audit_unstable_publish",
++                reason="injury_reclose_wait",
++                expected_stm_modes=(STM_MODE_INJURY_RECLOSE, STM_MODE_CAPTURE_DONE),
++            )
++
+         if stm.mode == STM_MODE_SEARCH and self.state in {
+             CompetitionState.GRAB, CompetitionState.DISPERSE,
+             CompetitionState.POST_GRAB_AUDIT, CompetitionState.CAPTURE_AUDIT,
+diff --git a/competition_rescue/tests/test_injury_backoff.py b/competition_rescue/tests/test_injury_backoff.py
+new file mode 100644
+index 0000000..c3a87c2
+--- /dev/null
++++ b/competition_rescue/tests/test_injury_backoff.py
+@@ -0,0 +1,94 @@
++"""Host-side regression tests for the half-claw injury handoff."""
++import sys
++import unittest
++from pathlib import Path
++
++sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
++from state_machine import (
++    CargoAudit, CargoBatch, CompetitionMission, CompetitionSettings,
++    CompetitionState, PoseSnapshot, StmSnapshot, VisionSnapshot,
++)
++from protocol import CMD_CARGO_AUDIT
++
++
++class InjuryBackoffTests(unittest.TestCase):
++    def setUp(self):
++        self.mission = CompetitionMission(CompetitionSettings(
++            side="red", initial_stash_enabled=False))
++        self.mission.first_common_delivered = True
++        self.mission._select_batch(CargoBatch((1,), ("injured_orange",), "injury"))
++        self.mission._begin_post_grab_audit(VisionSnapshot(frame_sequence=1), 1.0)
++        self.pose = PoseSnapshot(True, 0.0, 0.0, 90.0, 5.0)
++        self.audit = CargoAudit(left_class="injured_orange", left_count=1, total_count=1)
++
++    def step(self, frame, mode, flags=1, pitch=14000, now=2.0, **kwargs):
++        return self.mission.step(
++            VisionSnapshot(frame_sequence=frame, capture_audit=self.audit),
++            self.pose, StmSnapshot(mode=mode, flags=flags, age_ms=5.0,
++                                  camera_pitch_cdeg=pitch, **kwargs), now)
++
++    def test_backoff_discards_first_audit_and_does_not_restart_epoch(self):
++        self.mission.audit_hits = 3
++        self.mission.pending_audit = self.audit
++        self.mission.grab_complete_confirmed = True
++        output = self.step(10, 49, flags=0, pitch=12000)
++        self.assertEqual(output.command.opcode, CMD_CARGO_AUDIT)
++        self.assertFalse(output.command.audit.stable)
++        self.assertIsNone(self.mission.pending_audit)
++        self.assertEqual(self.mission.audit_hits, 0)
++        self.assertFalse(self.mission.grab_complete_confirmed)
++        epoch = self.mission.audit_epoch
++        self.step(11, 49, flags=0, pitch=12000, now=2.1)
++        self.assertEqual(self.mission.audit_epoch, epoch)
++
++    def second_audit(self):
++        self.step(10, 49, flags=0, pitch=12000)
++        self.step(11, 23, flags=1, now=4.5)
++        self.assertEqual(self.mission.audit_hits, 0)
++        self.step(12, 23, now=4.6)
++        self.step(12, 23, now=4.61)
++        self.assertEqual(self.mission.audit_hits, 1)
++        self.step(13, 23, now=4.7)
++        self.step(14, 23, now=4.8)
++        self.assertEqual(self.mission.pending_audit_release_context, "post_grab_valid")
++
++    def test_second_audit_requires_new_distinct_frames(self):
++        self.second_audit()
++        self.assertFalse(self.mission.grab_complete_confirmed)
++
++    def test_reclose_preserves_audit_and_blocks_navigation_until_mode22(self):
++        self.second_audit()
++        audit = self.mission.pending_audit
++        out = self.step(15, 50, flags=48, now=4.9)
++        self.assertEqual(out.command.opcode, CMD_CARGO_AUDIT)
++        self.assertTrue(out.command.audit.stable)
++        self.assertIs(self.mission.pending_audit, audit)
++        self.assertFalse(self.mission.grab_complete_confirmed)
++        frame = out.command.to_frame(0)
++        result = self.step(
++            16, 22, flags=50, now=7.0, acknowledged_sequence=1,
++            relay_mission_tx_frames=1, relay_last_mission_command=frame[4],
++            relay_last_mission_payload=tuple(frame[4:12]))
++        self.assertEqual(result.event, "post_grab_audit_confirmed")
++        self.assertTrue(self.mission.grab_complete_confirmed)
++        self.assertEqual(self.mission.confirmed_delivery_destination, "injury")
++
++    def test_visibility_edge_clears_audit_even_at_same_camera_angle(self):
++        self.mission.post_grab_camera_ready = True
++        self.mission.audit_hits = 2
++        self.step(10, 23, flags=0)
++        self.assertEqual(self.mission.audit_hits, 0)
++        self.step(11, 23, flags=1, now=2.1)
++        self.assertEqual(self.mission.audit_hits, 0)
++
++    def test_quantity_policy_and_recovery_reset(self):
++        self.assertFalse(self.mission._audit_valid(CargoAudit(
++            left_class="injured_orange", left_count=2, total_count=2)))
++        self.assertFalse(self.mission._audit_valid(CargoAudit(
++            left_class="green_supply", left_count=2, total_count=2)))
++        self.mission._clear_selected_batch()
++        self.assertFalse(self.mission.injury_backoff_active)
++
++
++if __name__ == "__main__":
++    unittest.main()
