@@ -285,6 +285,7 @@ static bool complete_flow_active;
 static bool mission_paused;
 static bool audit_received;
 static bool audit_valid;
+static bool audit_host_stable;
 static bool audit_initial_stash;
 static bool audit_destination_injury;
 static bool cargo_recheck_pending;
@@ -307,6 +308,8 @@ static uint8_t audit_last_counts;
 static uint8_t audit_last_flags;
 static uint8_t audit_last_total_count;
 static uint8_t audit_last_id;
+static uint8_t audit_last_class_counts[VISION_CARGO_MIXED_MATERIAL + 1U];
+static uint8_t audit_last_zero_classes;
 static AuditSemantic audit_last_semantic;
 static bool audit_core_seen_in_streak;
 static bool grab_core_advance_required;
@@ -344,6 +347,7 @@ static uint8_t sweep_seen_ids[3];
 static uint8_t sweep_audit_last_id;
 static bool sweep_audit_last_id_valid;
 static bool sweep_audit_valid;
+static bool sweep_audit_host_stable;
 static uint32_t sweep_audit_started_ms;
 static float boundary_recovery_heading_deg;
 static bool boundary_claw_opened;
@@ -361,6 +365,8 @@ static float nav_yaw(float heading_error_deg);
 static bool task_safe_sweep_command_valid(
     const VisionMissionCommand *command);
 static void task_reset_sweep_audit(uint32_t now_ms);
+static void task_clear_sweep_audit_evidence(void);
+static bool task_audit_state(void);
 
 static void nav_reset_progress(uint32_t now_ms)
 {
@@ -677,7 +683,7 @@ static bool task_release_command_valid(uint8_t command)
   const uint8_t left_count = audit_last_counts & 0x03U;
   const uint8_t right_count = (audit_last_counts >> 2) & 0x03U;
 
-  if (!audit_received) {
+  if (!audit_received || !audit_host_stable) {
     return false;
   }
   if (audit_last_total_count == 0U) {
@@ -737,6 +743,35 @@ static void task_begin_close_claw(uint32_t now_ms)
   grab_core_advance_heading_deg = 0.0f;
 }
 
+static bool task_audit_is_placeholder(const VisionMissionCommand *command)
+{
+  const uint8_t roles = VISION_AUDIT_INITIAL_STASH |
+      VISION_AUDIT_DESTINATION_INJURY | VISION_AUDIT_SWEEP_PICKUP;
+  return command->command == VISION_CMD_CARGO_AUDIT && command->vision_frame == 0U &&
+      command->audit_left_class == VISION_CARGO_NONE &&
+      command->audit_right_class == VISION_CARGO_NONE &&
+      command->audit_counts == 0U && command->audit_total_count == 0U &&
+      (command->audit_flags & (uint8_t)~roles) == 0U;
+}
+
+static uint8_t task_audit_class_counts(const VisionMissionCommand *command,
+                                      uint8_t counts[VISION_CARGO_MIXED_MATERIAL + 1U])
+{
+  const uint8_t classes[2] = {command->audit_left_class, command->audit_right_class};
+  const uint8_t sides[2] = {command->audit_counts & 0x03U,
+                           (command->audit_counts >> 2) & 0x03U};
+  uint8_t zero_classes = 0U;
+  for (uint8_t i = 0U; i <= VISION_CARGO_MIXED_MATERIAL; ++i) { counts[i] = 0U; }
+  for (uint8_t i = 0U; i < 2U; ++i) {
+    if (classes[i] > VISION_CARGO_MIXED_MATERIAL) { continue; }
+    counts[classes[i]] += sides[i];
+    if (sides[i] == 0U && classes[i] != VISION_CARGO_NONE) {
+      zero_classes |= (uint8_t)(1U << classes[i]);
+    }
+  }
+  return zero_classes;
+}
+
 static TaskCommandReject task_disperse_reject_reason(
     const VisionMissionCommand *command)
 {
@@ -747,7 +782,7 @@ static TaskCommandReject task_disperse_reject_reason(
         (state == TASK_POST_GRAB_AUDIT))) {
     return TASK_COMMAND_REJECT_STATE;
   }
-  if (!audit_received) {
+  if (!audit_received || !audit_host_stable) {
     return TASK_COMMAND_REJECT_AUDIT;
   }
   if (audit_last_total_count == 0U) {
@@ -772,15 +807,43 @@ static TaskCommandReject task_disperse_reject_reason(
 
 static void task_latch_audit(const VisionMissionCommand *command, uint32_t now_ms)
 {
-  if (!command_visual_new || Camera_GetAngle() != APP_GRAB_VIEW_ANGLE) { return; }
+  if (Camera_GetAngle() != APP_GRAB_VIEW_ANGLE) { return; }
   if (!task_status.claw_visible) { return; }
   if (state == TASK_TRANSPORT_AUDIT && !transport_audit_camera_ready) { return; }
+  if (!command_visual_new) {
+    /* A same-picture STABLE confirmation may acknowledge existing evidence,
+     * but cannot add a sample or renew its freshness. */
+    if (command->vision_frame != 0U && accepted_context.visual_valid &&
+        command->vision_frame == accepted_context.vision_frame &&
+        (command->audit_flags & VISION_AUDIT_STABLE) != 0U &&
+        audit_consistent_count >= 3U &&
+        now_ms - audit_evidence_ms <= APP_AUDIT_EVIDENCE_MAX_GAP_MS &&
+        command->audit_id == audit_last_id &&
+        command->audit_left_class == audit_last_left_class &&
+        command->audit_right_class == audit_last_right_class &&
+        command->audit_counts == audit_last_counts &&
+        command->audit_total_count == audit_last_total_count &&
+        (command->audit_flags & (uint8_t)~VISION_AUDIT_STABLE) == audit_last_flags) {
+      audit_host_stable = true;
+      audit_received = true;
+      audit_valid = audit_last_semantic != AUDIT_SEMANTIC_INVALID;
+      task_status.audit_ready = true;
+      task_status.audit_valid = audit_valid;
+    }
+    return;
+  }
   if (accepted_context.opcode == VISION_CMD_CARGO_AUDIT) {
     accepted_context.completed = false;
   }
   const uint8_t semantic_flags = command->audit_flags &
       (uint8_t)~VISION_AUDIT_STABLE;
   const AuditSemantic semantic = task_audit_semantic(command);
+  uint8_t class_counts[VISION_CARGO_MIXED_MATERIAL + 1U];
+  const uint8_t zero_classes = task_audit_class_counts(command, class_counts);
+  bool classes_same = zero_classes == audit_last_zero_classes;
+  for (uint8_t i = 0U; i <= VISION_CARGO_MIXED_MATERIAL; ++i) {
+    classes_same = classes_same && class_counts[i] == audit_last_class_counts[i];
+  }
   const bool current_has_core =
       (command->audit_left_class == VISION_CARGO_CORE) ||
       (command->audit_right_class == VISION_CARGO_CORE) ||
@@ -796,16 +859,16 @@ static void task_latch_audit(const VisionMissionCommand *command, uint32_t now_m
             (current_has_core == audit_core_seen_in_streak));
   } else if ((semantic == AUDIT_SEMANTIC_INVALID) &&
              (audit_last_semantic == AUDIT_SEMANTIC_INVALID)) {
-    /* Invalid decisions are normalized to total count and illegal semantic
-     * flags. mixed_material versus split green/core and left/right movement
-     * must not make the two controllers disagree on the three-frame gate. */
+    /* Compare the wire-visible class histogram, independent of claw side.
+     * MIXED stays a distinct category; its composition is not on the wire. */
     same = (semantic_flags == audit_last_flags) &&
-           (command->audit_total_count == audit_last_total_count);
+           (command->audit_total_count == audit_last_total_count) && classes_same;
   }
   audit_initial_stash =
       (command->audit_flags & VISION_AUDIT_INITIAL_STASH) != 0U;
   audit_destination_injury =
       (command->audit_flags & VISION_AUDIT_DESTINATION_INJURY) != 0U;
+  if (audit_consistent_count == 0U) { same = false; }
   if (audit_consistent_count > 0U &&
       now_ms - audit_evidence_ms > APP_AUDIT_EVIDENCE_MAX_GAP_MS) {
     same = false;
@@ -845,13 +908,18 @@ static void task_latch_audit(const VisionMissionCommand *command, uint32_t now_m
   audit_last_flags = semantic_flags;
   audit_last_total_count = command->audit_total_count;
   audit_last_id = command->audit_id;
+  audit_last_zero_classes = zero_classes;
+  for (uint8_t i = 0U; i <= VISION_CARGO_MIXED_MATERIAL; ++i) {
+    audit_last_class_counts[i] = class_counts[i];
+  }
   audit_last_semantic = semantic;
   task_status.audit_left_class = command->audit_left_class;
   task_status.audit_right_class = command->audit_right_class;
   task_status.audit_total_count = command->audit_total_count;
-  /* STABLE is descriptive only. Three distinct audit_id values are required
-   * for every pre-grab, post-grab, cluster and separation audit. */
-  audit_received = audit_consistent_count >= 3U;
+  /* Both controllers must agree: host STABLE never skips local three-frame
+   * cadence, and local receipt timing alone never authorizes transport. */
+  audit_host_stable = (command->audit_flags & VISION_AUDIT_STABLE) != 0U;
+  audit_received = audit_consistent_count >= 3U && audit_host_stable;
   audit_valid = audit_received &&
       (semantic != AUDIT_SEMANTIC_INVALID);
   task_status.audit_ready = audit_received;
@@ -867,6 +935,7 @@ static void task_clear_audit_result(void)
   audit_frame_floor_valid = accepted_context.visual_valid;
   audit_received = false;
   audit_valid = false;
+  audit_host_stable = false;
   audit_consistent_count = 0U;
   audit_sample_ms = audit_evidence_ms = 0U;
   audit_last_left_class = 0U;
@@ -875,6 +944,10 @@ static void task_clear_audit_result(void)
   audit_last_flags = 0U;
   audit_last_total_count = 0U;
   audit_last_id = 0U;
+  audit_last_zero_classes = 0U;
+  for (uint8_t i = 0U; i <= VISION_CARGO_MIXED_MATERIAL; ++i) {
+    audit_last_class_counts[i] = 0U;
+  }
   audit_last_semantic = AUDIT_SEMANTIC_INVALID;
   audit_core_seen_in_streak = false;
   grab_core_advance_required = false;
@@ -1096,6 +1169,7 @@ static void task_enter(TaskState next, uint32_t now_ms)
     scan_report_gate_open = false;
     audit_received = false;
     audit_valid = false;
+    audit_host_stable = false;
     audit_initial_stash = false;
     audit_destination_injury = false;
     cargo_recheck_pending = false;
@@ -1110,6 +1184,7 @@ static void task_enter(TaskState next, uint32_t now_ms)
     sweep_audit_consistent_count = 0U;
     sweep_audit_last_id_valid = false;
     sweep_audit_valid = false;
+    sweep_audit_host_stable = false;
     audit_consistent_count = 0U;
     audit_last_left_class = 0U;
     audit_last_right_class = 0U;
@@ -1341,6 +1416,7 @@ static void task_initialize(uint32_t now_ms)
   mission_paused = false;
   audit_received = false;
   audit_valid = false;
+  audit_host_stable = false;
   audit_initial_stash = false;
   audit_destination_injury = false;
   cargo_recheck_pending = false;
@@ -1986,7 +2062,7 @@ static bool task_capture_observe(uint32_t now_ms)
 {
   const bool limit = capture_budget_active &&
       capture_forward_used_mm >= APP_CAPTURE_FORWARD_BUDGET_MM;
-  const bool stationary = limit || audit_received || cargo_recheck_pending ||
+  const bool stationary = limit || audit_consistent_count >= 3U || cargo_recheck_pending ||
                           state == TASK_DISPERSE_READY;
   if (!stationary) return false;
   Motor_Stop();
@@ -2176,10 +2252,10 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
       Camera_SetAngle(APP_DISPERSE_CAPTURE_ANGLE);
       camera_angle = (float)APP_DISPERSE_CAPTURE_ANGLE;
       if (task_capture_observe(now_ms)) return;
-      if (audit_received && audit_last_total_count > 0U) {
+      if (audit_consistent_count >= 3U && audit_last_total_count > 0U) {
         Motor_Stop();
         task_status.motors_active = false;
-        task_enter(TASK_DISPERSE_READY, now_ms);
+        if (audit_received) { task_enter(TASK_DISPERSE_READY, now_ms); }
         return;
       }
       {
@@ -2409,7 +2485,7 @@ static void task_process_post_grab_audit(uint32_t now_ms)
     return;
   }
 
-  if (audit_received && !audit_valid) {
+  if (audit_received && audit_host_stable && !audit_valid) {
     if (!post_grab_invalid_waiting) {
       post_grab_invalid_waiting = true;
       post_grab_invalid_started_ms = now_ms;
@@ -4203,7 +4279,7 @@ static void task_process_safe_sweep(uint32_t now_ms)
   }
 }
 
-static void task_reset_sweep_audit(uint32_t now_ms)
+static void task_clear_sweep_audit_evidence(void)
 {
   if (accepted_context.opcode == VISION_CMD_CARGO_AUDIT) {
     accepted_context.completed = false;
@@ -4217,12 +4293,18 @@ static void task_reset_sweep_audit(uint32_t now_ms)
   sweep_audit_last_id = 0U;
   sweep_audit_last_id_valid = false;
   sweep_audit_valid = false;
-  sweep_audit_started_ms = now_ms;
+  sweep_audit_host_stable = false;
   task_status.audit_ready = false;
   task_status.audit_valid = false;
   task_status.audit_left_class = VISION_CARGO_NONE;
   task_status.audit_right_class = VISION_CARGO_NONE;
   task_status.audit_total_count = 0U;
+}
+
+static void task_reset_sweep_audit(uint32_t now_ms)
+{
+  task_clear_sweep_audit_evidence();
+  sweep_audit_started_ms = now_ms;
 }
 
 static void task_latch_sweep_audit(const VisionMissionCommand *command,
@@ -4265,7 +4347,8 @@ static void task_latch_sweep_audit(const VisionMissionCommand *command,
     sweep_audit_last_id = command->audit_id;
     sweep_audit_last_id_valid = true;
   }
-  sweep_audit_ready = sweep_audit_consistent_count >= 3U;
+  sweep_audit_host_stable = (command->audit_flags & VISION_AUDIT_STABLE) != 0U;
+  sweep_audit_ready = sweep_audit_consistent_count >= 3U && sweep_audit_host_stable;
   sweep_audit_valid = sweep_audit_ready && nonempty;
   task_status.audit_ready = sweep_audit_ready;
   task_status.audit_valid = sweep_audit_valid;
@@ -4757,6 +4840,19 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
         nav_forward_active = false;
       }
     }
+  } else if (task_audit_is_placeholder(command) &&
+             (task_audit_state() || state == TASK_INJURY_BACKOFF ||
+              state == TASK_INJURY_RECLOSE || state == TASK_WAIT_NAVIGATION ||
+              state == TASK_SAFE_SWEEP_DONE)) {
+    task_status.acknowledged_sequence = command->sequence;
+    command_accepted = true;
+    /* No-observation heartbeats cannot become empty cargo or change roles.
+     * Once mechanics owns a confirmed result, keep that snapshot intact. */
+    if (state == TASK_SAFE_SWEEP_AUDIT) {
+      task_clear_sweep_audit_evidence();
+    } else if (task_audit_state()) {
+      task_clear_audit_result();
+    }
   } else if ((command->command == VISION_CMD_CARGO_AUDIT) &&
              ((state == TASK_INJURY_BACKOFF) || (state == TASK_INJURY_RECLOSE))) {
     /* Camera placeholders/retransmissions are heartbeats, not new evidence. */
@@ -4836,7 +4932,7 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
       task_enter(TASK_GRAB_OBSERVE, now_ms);
     }
     task_latch_audit(command, now_ms);
-    if ((state == TASK_POST_GRAB_AUDIT) && audit_received) {
+    if ((state == TASK_POST_GRAB_AUDIT) && audit_received && audit_host_stable) {
       if (task_audit_is_empty(command)) {
         safe_sweep_recheck_pending = false;
         task_status.gripper_closed = false;
@@ -4853,7 +4949,7 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
                      TASK_SAFE_SWEEP_DONE : TASK_WAIT_NAVIGATION, now_ms);
         }
       }
-    } else if (cargo_recheck_pending && audit_received &&
+    } else if (cargo_recheck_pending && audit_received && audit_host_stable &&
         task_audit_is_empty(command)) {
       /* Nothing remained after unilateral separation.  There is no cargo to
        * grab, release or navigate with, so reopen and resume SEARCH locally
@@ -5333,7 +5429,9 @@ static bool task_context_complete(void)
              state == TASK_SAFE_SWEEP_RETRIEVE_AUDIT ||
              (state == TASK_APPROACH && approach_phase == APPROACH_CLUSTER_CAPTURE);
     case VISION_CMD_CARGO_AUDIT:
-      return state == TASK_SAFE_SWEEP_AUDIT ? sweep_audit_ready : audit_received;
+      return state == TASK_SAFE_SWEEP_AUDIT ?
+          (sweep_audit_ready && sweep_audit_host_stable) :
+          (audit_received && audit_host_stable);
     case VISION_CMD_GRAB_CONFIRMED:
       return task_status.gripper_closed && state != TASK_CLOSE_CLAW &&
              !(state == TASK_SAFE_SWEEP &&
@@ -5478,20 +5576,23 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
 
   /* Do not erase a valid audit on an out-of-state/rejected request. */
   if (incoming.command == VISION_CMD_CARGO_AUDIT) {
+    const bool placeholder = task_audit_is_placeholder(&incoming);
+    if (incoming.vision_frame == 0U && !placeholder) goto rejected;
+    const bool generic_placeholder = placeholder && incoming.audit_flags == 0U;
     const bool sweep_flag = (incoming.audit_flags & VISION_AUDIT_SWEEP_PICKUP) != 0U;
     const bool retrieving_audit = state == TASK_SAFE_SWEEP_RETRIEVE_AUDIT ||
         (state == TASK_POST_GRAB_AUDIT && safe_sweep_recheck_pending && safe_sweep_visual_pickup);
-    if ((sweep_flag != (state == TASK_SAFE_SWEEP_AUDIT)) ||
+    if (!generic_placeholder && ((sweep_flag != (state == TASK_SAFE_SWEEP_AUDIT)) ||
         (state == TASK_TRANSPORT_AUDIT &&
          (incoming.audit_flags & VISION_AUDIT_INITIAL_STASH) != 0U) ||
         (retrieving_audit &&
          (((incoming.audit_flags & VISION_AUDIT_INITIAL_STASH) != 0U) ||
           (((incoming.audit_flags & VISION_AUDIT_DESTINATION_INJURY) != 0U) !=
-           sweep_original_injury)))) goto rejected;
+           sweep_original_injury))))) goto rejected;
   }
   if (new_action && incoming.command == VISION_CMD_CARGO_AUDIT && task_audit_state()) {
     task_clear_audit_result();
-    if (state == TASK_SAFE_SWEEP_AUDIT) task_reset_sweep_audit(now_ms);
+    if (state == TASK_SAFE_SWEEP_AUDIT) task_clear_sweep_audit_evidence();
   }
   if (new_target && state == TASK_APPROACH &&
       incoming.command == VISION_CMD_APPROACH_TARGET) {
@@ -5702,7 +5803,8 @@ static void task_audit_watchdog(uint32_t now_ms)
 {
   const bool waiting = state == TASK_GRAB_OBSERVE ||
       state == TASK_DISPERSE_READY || state == TASK_POST_GRAB_AUDIT ||
-      state == TASK_TRANSPORT_AUDIT ||
+      state == TASK_TRANSPORT_AUDIT || state == TASK_WAIT_NAVIGATION ||
+      state == TASK_SAFE_SWEEP_DONE ||
       (state == TASK_APPROACH && approach_phase == APPROACH_CLUSTER_CAPTURE) ||
       (state == TASK_REMOTE_ACTION && remote_action.done && cargo_recheck_pending);
   if (!waiting) { audit_watch_active = false; return; }
@@ -5713,6 +5815,7 @@ static void task_audit_watchdog(uint32_t now_ms)
   }
   if (now_ms - audit_watch_started_ms >= APP_AUDIT_STATE_TIMEOUT_MS) {
     const bool return_to_center = state == TASK_TRANSPORT_AUDIT ||
+        state == TASK_SAFE_SWEEP_DONE ||
         safe_sweep_recheck_pending ||
         separation_total_attempts >= APP_SEPARATION_MAX_ATTEMPTS;
     task_begin_capture_escape(now_ms);
@@ -5785,7 +5888,7 @@ void Task_Process(uint32_t now_ms)
   }
   if (state == TASK_SAFE_SWEEP_AUDIT && sweep_audit_consistent_count > 0U &&
       now_ms - sweep_audit_evidence_ms > APP_AUDIT_EVIDENCE_MAX_GAP_MS) {
-    task_reset_sweep_audit(now_ms);
+    task_clear_sweep_audit_evidence();
   }
   task_accept_mission(&vision, now_ms);
   task_apply_complete_target(&vision);

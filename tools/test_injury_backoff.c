@@ -43,7 +43,8 @@ static VisionMissionCommand injury_audit(uint8_t id)
     .command = VISION_CMD_CARGO_AUDIT, .sequence = id, .audit_id = id,
     .audit_left_class = VISION_CARGO_INJURED, .audit_right_class = VISION_CARGO_NONE,
     .audit_counts = 1U, .audit_total_count = 1U,
-    .audit_flags = VISION_AUDIT_DESTINATION_INJURY};
+    .audit_flags = VISION_AUDIT_DESTINATION_INJURY | VISION_AUDIT_STABLE,
+    .vision_frame = (uint32_t)id + 1U};
 }
 
 static void prepare(void)
@@ -157,7 +158,8 @@ static void test_ordinary_and_stash_skip_backoff(void)
     for (uint8_t i = 1U; i <= 3U; ++i) {
       VisionMissionCommand command = injury_audit(i);
       command.audit_left_class = VISION_CARGO_GREEN;
-      command.audit_flags = stash ? VISION_AUDIT_INITIAL_STASH : 0U;
+      command.audit_flags = VISION_AUDIT_STABLE |
+          (stash ? VISION_AUDIT_INITIAL_STASH : 0U);
       command_visual_new = true;
       task_accept_mission_legacy(&command, i * 100U);
     }

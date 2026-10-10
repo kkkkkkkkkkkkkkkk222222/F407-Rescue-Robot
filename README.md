@@ -42,7 +42,7 @@ READY只说明启动时IMU校准成功，不证明舵机已物理到位，也不
 
 `NormalRun`启用完整救援Task，并已对照上位机`codex/gamepad-teleop@e5fb078`的抓前/抓后双重审核、分离、STAGE/ALIGN/ENTER和返中命令。正式投送先到围栏前600 mm预备点并完成两次ALIGN；ENTER由F407本地执行前400 mm接近和后200 mm补推，总目标600 mm，停车、张爪、相机120°稳定后才上报mode15。ALIGN首次进入1.5°、稳定期使用4°迟滞，避免IMU抖动使STAGE→ALIGN长期无法完成。
 
-普通、聚集、分离复审及合爪后复审统一要求3个不同`audit_id`语义一致，STABLE不能提前放行；合法时状态flags bit4置`AUDIT_VALID`。合法GRAB若包含核心或mixed，F407先以180 mm/s保持航向前进50 mm再Touch合爪。合爪后进入mode23、清空抓前审核并重新取得3帧；合法才进入mode22允许NAV，空爪张开回SEARCH，非法保持mode23并允许现有释放/分离。所有带侧曲线使用15°保持，普通RELEASE/YIELD使用25°。
+普通、聚集、分离复审及合爪后复审统一要求3个不同`audit_id`语义一致且相邻有效采样至少100ms，并要求上位机STABLE确认后才上报READY；合法时状态flags bit4置`AUDIT_VALID`。STABLE不能跳过本地计数。合法GRAB若包含核心或mixed，F407先以180 mm/s保持航向前进50 mm再Touch合爪。合爪后进入mode23、清空抓前审核并重新取得3帧及上位机确认；合法才继续伤员mode49/50或进入mode22允许NAV，空爪张开回SEARCH，非法保持mode23并允许现有释放/分离。所有带侧曲线使用15°保持，普通RELEASE/YIELD使用25°。
 
 mode23带有限恢复：先在140°等待3.5 s，未形成3帧则短暂观察138°并回140°重置审核，再观察142°并回140°做最后一次3.5 s复审；仍无结论则双开回SEARCH。若已得到三帧稳定非法审核，等待上位机释放/分离命令4 s，仍无动作同样双开回SEARCH；绝不因超时进入mode22或NAV。同一合法三帧中任意一帧出现core或mixed都会锁存核心证据并执行50 mm前移。
 

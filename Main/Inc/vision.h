@@ -149,6 +149,7 @@ typedef enum {
 #define VISION_AUDIT_DANGER_PRESENT     0x02U
 #define VISION_AUDIT_UNKNOWN_PRESENT    0x04U
 #define VISION_AUDIT_INJURY_MIXED       0x08U
+/* Host confirmation; READY/VALID also require the MCU's own three-frame gate. */
 #define VISION_AUDIT_STABLE             0x10U
 #define VISION_AUDIT_DESTINATION_INJURY 0x20U
 #define VISION_AUDIT_SWEEP_PICKUP       0x40U
