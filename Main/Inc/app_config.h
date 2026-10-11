@@ -165,7 +165,7 @@
 /*
  * Physical layout from the 2026-08-25 test photo:
  * Current motor-port layout: M1 is the right wheel, M2 is the left wheel,
- * and M3 is the rear wheel. Forward makes M1 positive, M2 negative and M3
+ * and M3 is the rear wheel. Gripper-forward makes M1 negative, M2 positive and M3
  * stationary; backward reverses M1/M2 while M3 remains stationary.
  * Change signs after checking the real installation.
  */
@@ -175,6 +175,12 @@
 #define APP_OMNI_M1_ENCODER_SIGN        -1
 #define APP_OMNI_M2_ENCODER_SIGN        -1
 #define APP_OMNI_M3_ENCODER_SIGN        -1
+/* Physical gripper-forward was measured opposite to the base wheel X axis.
+ * Apply the same polarity in the mixer, distance progress and odometry. */
+#define APP_OMNI_FORWARD_SIGN           -1
+#if APP_OMNI_FORWARD_SIGN != 1 && APP_OMNI_FORWARD_SIGN != -1
+#error "Forward calibration sign must be +1 or -1"
+#endif
 
 /* Three-motor speed loop, updated every 10 ms. */
 #define APP_MOTOR_ZERO_ENTER_MM_S          3.0f

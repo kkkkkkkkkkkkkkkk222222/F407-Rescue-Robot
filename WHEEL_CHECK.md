@@ -117,3 +117,19 @@ heading drift and full ACCEPT-to-FINAL log before increasing distance/speed.
 The previous MOVE also showed near-zero left-wheel feedback for negative
 targets initially; recheck reverse wheel response if drift remains after
 correcting the heading polarity. Do not change multiple parameters at once.
+
+The follow-up 200 mm MOVE ended at -1027 mdeg (after an intermediate +8844
+mdeg), confirming that heading error is now corrected rather than amplified.
+The user observed physical backward travel for that positive MOVE. Forward
+axis calibration is therefore now -1: gripper-forward drives M1 negative and
+M2 positive. The mixer, encoder distance progress and Location forward
+odometry use the same sign. Per-wheel motor/encoder signs and pure yaw are
+unchanged; lateral polarity is left untouched pending a separate physical
+check. This shared forward calibration affects MotionDebug, NormalRun and
+Gamepad translations, not just the USART1 command parser.
+
+After flashing, `STAT` must show `FORWARD_SIGN=-1 HEADING_SIGN=1`. On a clear
+floor, send `MOVE 200 150` once and report whether it travels toward the
+gripper, its approximate physical distance, heading drift and complete log.
+Only after it finishes, `MOVE -200 150` checks the opposite direction.
+Do not run the full NormalRun task until basic direction checks are complete.

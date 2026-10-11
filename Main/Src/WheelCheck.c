@@ -258,7 +258,12 @@ static void wheel_report_state(const char *prefix)
 
 static void wheel_report_version(void)
 {
-  wheel_send("MOTIONDEBUG SERIAL_V3 MODE=2 BUILT=" __DATE__ " " __TIME__ "\r\n");
+  char text[160];
+  (void)snprintf(text, sizeof(text),
+      "MOTIONDEBUG SERIAL_V3 MODE=%u FORWARD_SIGN=%d HEADING_SIGN=%d BUILT="
+      __DATE__ " " __TIME__ "\r\n", (unsigned int)APP_ACTIVE_MODE,
+      APP_OMNI_FORWARD_SIGN, (int)APP_MOTOR_HEADING_OUTPUT_SIGN);
+  wheel_send(text);
 }
 
 static bool wheel_parse_args(const char *cursor, int32_t args[3], uint8_t *count)

@@ -352,10 +352,11 @@ static void motor_set_omni_speed(float forward_mm_s, float lateral_mm_s,
    * M3=v1 (rear). The third
    * input is therefore R*w expressed as wheel tangential speed in mm/s.
    */
+  const float wheel_forward_mm_s = forward_mm_s * APP_OMNI_FORWARD_SIGN;
   float wheel[MOTOR_COUNT] = {
-     MOTOR_SQRT3_OVER_2 * forward_mm_s -
+     MOTOR_SQRT3_OVER_2 * wheel_forward_mm_s -
         MOTOR_ONE_HALF * lateral_mm_s + yaw_tangent_mm_s,
-    -MOTOR_SQRT3_OVER_2 * forward_mm_s -
+    -MOTOR_SQRT3_OVER_2 * wheel_forward_mm_s -
         MOTOR_ONE_HALF * lateral_mm_s + yaw_tangent_mm_s,
      lateral_mm_s + yaw_tangent_mm_s
   };
@@ -591,7 +592,8 @@ static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
   const float m2_mm = motor_counts_to_mm(
       (float)(encoder[1].position - distance_move.start_m2_count) *
       (float)encoder_signs[1]);
-  const float forward_mm = (m1_mm - m2_mm) / 1.7320508f;
+  const float forward_mm = APP_OMNI_FORWARD_SIGN *
+                          (m1_mm - m2_mm) / 1.7320508f;
   const float direction = (distance_move.target_mm >= 0.0f) ? 1.0f : -1.0f;
   const float target_mm = distance_move.target_mm * direction;
   const float travelled_mm = forward_mm * direction;

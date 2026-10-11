@@ -203,7 +203,8 @@ void Location_Update10ms(void)
   /* Forward kinematics matched to motor.c: M1=v3, M2=v2, M3=v1.
    * The second equation is physical left, hence the sign is opposite to the
    * mathematical Vy used by Motor_Move(). Common wheel rotation cancels. */
-  const float forward_mm = (m1_mm - m2_mm) / LOCATION_SQRT3;
+  const float forward_mm = APP_OMNI_FORWARD_SIGN *
+                          (m1_mm - m2_mm) / LOCATION_SQRT3;
   const float left_mm = (m1_mm + m2_mm - 2.0f * m3_mm) / 3.0f;
   const float middle_heading_rad =
       ((float)previous_heading_mdeg + 0.5f * (float)yaw_step_mdeg) *
