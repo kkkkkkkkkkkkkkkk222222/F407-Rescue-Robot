@@ -106,7 +106,7 @@ static volatile AngleTurn angle_turn;
 static volatile DirectionMove direction_move;
 static volatile SpinMove spin_move;
 static uint8_t brake_cycles_remaining;
-#if APP_ENABLE_WHEEL_CHECK
+#if APP_ENABLE_MOTION_DEBUG_TASK
 static volatile uint8_t wheel_check_id;
 static int16_t wheel_check_pwm;
 static uint32_t wheel_check_start_ms;
@@ -479,7 +479,7 @@ static void motor_clear_spin_move(void)
 
 static void motor_stop_outputs(bool use_brake)
 {
-#if APP_ENABLE_WHEEL_CHECK
+#if APP_ENABLE_MOTION_DEBUG_TASK
   wheel_check_id = 0U;
 #endif
   bool was_moving = false;
@@ -847,7 +847,7 @@ static void motor_update_direction_move(void)
 
 void Motor_Init(void)
 {
-#if APP_ENABLE_WHEEL_CHECK
+#if APP_ENABLE_MOTION_DEBUG_TASK
   wheel_check_id = 0U;
 #endif
   brake_cycles_remaining = 0U;
@@ -945,9 +945,9 @@ void Motor_Update(void)
         motor_round_to_int16(motor_counts_to_mm_s((float)measured_counts[index]));
   }
 
-#if APP_ENABLE_WHEEL_CHECK
-  /* No PID, mixer or heading correction may drive a wheel in this build.
-   * Expiry stays in TIM6 even if the console or main loop is delayed. */
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  /* Only the active bench pulse bypasses PID/mixing. Expiry stays in TIM6
+   * even if the console or main loop is delayed. */
   if (wheel_check_id != 0U) {
     if ((uint32_t)(HAL_GetTick() - wheel_check_start_ms) >=
         wheel_check_duration_ms) {
@@ -960,11 +960,9 @@ void Motor_Update(void)
     }
   }
 #endif
-  if (!APP_ENABLE_WHEEL_CHECK) {
-    motor_update_distance_move(encoder);
-    motor_update_angle_turn();
-    motor_update_direction_move();
-  }
+  motor_update_distance_move(encoder);
+  motor_update_angle_turn();
+  motor_update_direction_move();
 
   if (brake_cycles_remaining > 0U) {
     for (uint8_t id = 1U; id <= MOTOR_COUNT; ++id) {
@@ -978,13 +976,6 @@ void Motor_Update(void)
     }
     return;
   }
-
-#if APP_ENABLE_WHEEL_CHECK
-  for (uint8_t id = 1U; id <= MOTOR_COUNT; ++id) {
-    motor_apply_pwm(id, 0);
-  }
-  return;
-#endif
 
   if (motor_has_fault()) {
     motor_abort_all(MOTOR_DISTANCE_FAULT);
@@ -1075,7 +1066,7 @@ void Motor_Update(void)
   }
 }
 
-#if APP_ENABLE_WHEEL_CHECK
+#if APP_ENABLE_MOTION_DEBUG_TASK
 bool Motor_WheelCheckPulse(uint8_t id, int16_t pwm, uint16_t duration_ms)
 {
   if ((id < 1U) || (id > MOTOR_COUNT) || (pwm == 0) ||

@@ -1,52 +1,39 @@
-# Single-Wheel Bench Check
+# MotionDebug Three-Wheel Bench Check
 
-This is a temporary MotionDebug variant, not a new application mode.
-NormalRun, MotionDebug, Gamepad, PID gains and motor calibration are unchanged.
-USART3 motion commands cannot start motors in this variant.
+This is a USART1 command inside the existing MotionDebug firmware.
+There is no separate application mode or build preset. NormalRun, Gamepad,
+PID gains and motor calibration are unchanged.
 
-## Build And Flash
+Build the existing MotionDebug preset and flash `build/MotionDebug/WWW.elf`.
+The check never starts automatically on boot.
 
-```powershell
-cmake --preset WheelCheck -DAPP_AUTO_BACKUP=OFF
-cmake --build --preset WheelCheck
-```
-
-Flash `build/WheelCheck/WWW.elf`, NOT `build/MotionDebug/WWW.elf`.
-The backup option above allows only the intended changes to be committed
-manually, without including unrelated dirty files in the automatic backup.
-
-## Bench Procedure
+## Procedure
 
 1. Support the chassis securely with all wheels clear of the ground.
-2. Keep hands, wires and loose objects away from the wheels. Do not hold a wheel.
+2. Keep hands, wires and loose objects away. Do not hold a wheel.
 3. Open the programmer's USB serial port, connected to PCB serial port 2
    (USART1 PA9 TX / PA10 RX), at 115200, 8N1, no flow control.
-4. Send text with CR or LF; turn OFF periodic/automatic sending.
-5. Send `STAT`. Verify the `WHEELCHECK ONLY` response before any wheel command.
-6. Send exactly one command and wait for its `RESULT` before sending another.
+4. Use text with CR or LF; turn OFF periodic/automatic sending.
+5. Send `STAT` and verify the `MOTIONDEBUG` response.
+6. Send `WHEELS` once. Port 1 starts after one second, then ports 2 and 3
+   run in order. Each pulse is positive logical drive, open-loop 25%, for
+   at most 400 ms, with a two-second gap after each result.
+7. Send `STOP` at any point to cancel the entire sequence.
 
-| Command | Action |
-| --- | --- |
-| `W1+`, `W1-` | Motor port 1, positive/negative logical drive |
-| `W2+`, `W2-` | Motor port 2, positive/negative logical drive |
-| `W3+`, `W3-` | Motor port 3, positive/negative logical drive |
-| `STOP` | Cancel the pulse and stop |
-| `STAT` | Confirm bench firmware and limits; no motion |
+TIM6 bounds each pulse independently of console processing. Speed PID,
+heading correction and wheel mixing are bypassed only during a pulse.
+Other wheels receive no propulsion command. Existing braking then coasts.
+The whole sequence also has a 10-second console timeout.
 
-Every pulse is open-loop 25% for at most 400 ms. No speed PID, heading
-correction or wheel mixing is used. TIM6 stops the pulse even if serial or
-main-loop processing stalls. Existing braking then coasts the wheel.
-Startup is stationary. Other wheels receive no propulsion command.
+While testing, USART3 motion commands are consumed but do not run. USART3
+STOP also cancels the sequence. After completion/cancellation, ordinary
+MotionDebug commands resume; the pre-test action is not resumed, and commands
+received during testing are not queued for later execution.
 
-`RESULT W1+ RAW=a,b,c FB=x,y,z` reports cumulative encoder changes since
-the pulse began, in port order 1,2,3, including the brief braking/settling
-interval. `RAW` is unmodified; `FB` applies the current encoder polarity.
-The selected wheel's `FB` sign should match the command sign. An unexpected
-channel changing indicates a possible motor/encoder port mismatch.
-
-For each result, record the actual wheel that moved, the direction of its
-top tread relative to the gripper/front, whether other wheels moved, and
-whether it stopped automatically. Do not change polarity or PID settings
-until the physical motion and feedback have both been checked.
-
-Restore the original MotionDebug or NormalRun firmware after calibration.
+`RESULT W1+ RAW=a,b,c FB=x,y,z` reports encoder changes in port order 1,2,3,
+including braking/settling. `RAW` is unmodified; `FB` uses the current encoder
+polarity. The selected wheel's `FB` should be positive for each positive pulse.
+Record the physical wheel that moved, the direction of its top tread relative
+to the gripper/front, whether the other wheels moved, and each result line.
+Positive individual wheel drive does not mean all three wheels propel the
+chassis forward; this test is only for port mapping and feedback polarity.

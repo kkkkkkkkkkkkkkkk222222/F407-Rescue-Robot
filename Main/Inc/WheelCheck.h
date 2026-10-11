@@ -3,5 +3,6 @@
 
 void WheelCheck_Init(void);
 void WheelCheck_Process(void);
+void WheelCheck_Stop(void);
 
 #endif

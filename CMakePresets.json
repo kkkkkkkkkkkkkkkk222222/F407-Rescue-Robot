@@ -32,13 +32,6 @@
             }
         },
         {
-            "name": "WheelCheck",
-            "inherits": "MotionDebug",
-            "cacheVariables": {
-                "APP_ENABLE_WHEEL_CHECK": "ON"
-            }
-        },
-        {
             "name": "NormalRun",
             "inherits": "default",
             "cacheVariables": {
@@ -67,10 +60,6 @@
         {
             "name": "MotionDebug",
             "configurePreset": "MotionDebug"
-        },
-        {
-            "name": "WheelCheck",
-            "configurePreset": "WheelCheck"
         },
         {
             "name": "NormalRun",

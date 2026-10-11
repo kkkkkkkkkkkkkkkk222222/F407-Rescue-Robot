@@ -34,5 +34,7 @@ typedef struct {
 void Debug_Init(uint32_t now_ms);
 void Debug_Process(uint32_t now_ms);
 DebugStatus Debug_GetStatus(void);
+/* Cancel the current motion and discard commands received during a bench test. */
+void Debug_SetWheelCheckActive(bool enabled);
 
 #endif

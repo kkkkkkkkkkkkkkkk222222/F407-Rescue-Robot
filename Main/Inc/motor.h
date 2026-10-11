@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "app_config.h"
 
 typedef struct {
   int16_t command;
@@ -63,7 +64,7 @@ void Motor_Stop(void);
 void Motor_Update(void);
 MotorStatus Motor_GetStatus(uint8_t id);
 
-#if defined(APP_ENABLE_WHEEL_CHECK) && APP_ENABLE_WHEEL_CHECK
+#if APP_ENABLE_MOTION_DEBUG_TASK
 /* Logical wheel polarity, open loop; bounded by the 10 ms motor scheduler. */
 bool Motor_WheelCheckPulse(uint8_t id, int16_t pwm, uint16_t duration_ms);
 bool Motor_WheelCheckRunning(void);

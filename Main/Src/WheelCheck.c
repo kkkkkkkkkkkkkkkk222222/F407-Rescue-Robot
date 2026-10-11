@@ -2,11 +2,12 @@
 
 #include "app_config.h"
 
-#if APP_ENABLE_WHEEL_CHECK
+#if APP_ENABLE_MOTION_DEBUG_TASK
 
 #include <stdio.h>
 #include <string.h>
 
+#include "Debug.h"
 #include "encoder.h"
 #include "main.h"
 #include "motor.h"
@@ -35,6 +36,11 @@ static bool settling;
 static uint32_t settle_start_ms;
 static uint8_t pulse_id;
 static int pulse_sign;
+static bool sequence_active;
+static volatile bool cancel_requested;
+static uint8_t next_id;
+static uint32_t sequence_start_ms;
+static uint32_t next_pulse_ms;
 
 static const int8_t encoder_signs[3] = {
   APP_OMNI_M1_ENCODER_SIGN,
@@ -99,53 +105,91 @@ static void wheel_report(void)
   settling = false;
 }
 
+void WheelCheck_Stop(void)
+{
+  cancel_requested = true;
+  Motor_Stop();
+}
+
+static void wheel_finish(bool cancelled)
+{
+  if (result_pending) {
+    wheel_report();
+  }
+  Debug_SetWheelCheckActive(false);
+  sequence_active = false;
+  cancel_requested = false;
+  next_id = 0U;
+  wheel_send(cancelled ? "WHEELS CANCELLED\r\n" : "WHEELS DONE\r\n");
+}
+
+static bool wheel_start_pulse(uint8_t id)
+{
+  const uint32_t primask = __get_PRIMASK();
+  __disable_irq();
+  bool started = false;
+  if (!cancel_requested) {
+    Encoder_GetAll(start_encoder);
+    started = Motor_WheelCheckPulse(id, 250, 400U);
+    if (started) {
+      pulse_id = id;
+      pulse_sign = 1;
+      result_pending = true;
+      settling = false;
+    }
+  }
+  if (primask == 0U) {
+    __enable_irq();
+  }
+  if (started) {
+    char text[64];
+    (void)snprintf(text, sizeof(text), "START W%u+ PWM=25%% TIME=400ms\r\n", id);
+    wheel_send(text);
+  }
+  return started;
+}
+
 static void wheel_execute(void)
 {
   if (strcmp(line, "STOP") == 0) {
-    Motor_Stop();
+    WheelCheck_Stop();
     wheel_send("STOP OK\r\n");
     return;
   }
   if (strcmp(line, "STAT") == 0) {
-    wheel_send("WHEELCHECK ONLY: W1+ W1- W2+ W2- W3+ W3- STOP\r\n"
-               "OPEN LOOP 25% 400ms; NO PID/HEADING; USART3 MOTION DISABLED\r\n");
+    wheel_send("MOTIONDEBUG: WHEELS / STOP / STAT\r\n"
+               "WHEELS: 1+ -> 2+ -> 3+, 25% 400ms EACH, 2s GAP\r\n");
     return;
   }
-  if ((strlen(line) != 3U) || (line[0] != 'W') ||
-      (line[1] < '1') || (line[1] > '3') ||
-      ((line[2] != '+') && (line[2] != '-'))) {
+  if (strcmp(line, "WHEELS") != 0) {
     wheel_send("ERR COMMAND\r\n");
     return;
   }
-  if (result_pending) {
-    wheel_send("BUSY: WAIT RESULT\r\n");
+  if (sequence_active || cancel_requested) {
+    wheel_send("BUSY: WAIT WHEELS DONE\r\n");
     return;
   }
-  const uint8_t id = (uint8_t)(line[1] - '0');
-  const int sign = (line[2] == '+') ? 1 : -1;
-  Encoder_GetAll(start_encoder);
-  if (!Motor_WheelCheckPulse(id, (int16_t)(sign * 250), 400U)) {
-    wheel_send("BUSY: WAIT STOP\r\n");
-    return;
-  }
-  pulse_id = id;
-  pulse_sign = sign;
-  result_pending = true;
+  Debug_SetWheelCheckActive(true);
+  sequence_active = true;
+  sequence_start_ms = HAL_GetTick();
+  next_pulse_ms = sequence_start_ms + 1000U;
+  next_id = 1U;
+  result_pending = false;
   settling = false;
-  wheel_send("PULSE START 25% 400ms\r\n");
+  wheel_send("WHEELS BEGIN: FIRST WHEEL IN 1s\r\n");
 }
 
 void WheelCheck_Init(void)
 {
   Motor_Stop();
   wheel_start_rx();
-  wheel_send("WHEELCHECK READY USART1 115200 8N1; SEND STAT\r\n");
+  wheel_send("MOTIONDEBUG USART1 115200 8N1; WHEELS / STOP / STAT\r\n");
 }
 
 void WheelCheck_Process(void)
 {
   if (rx_overflow || (huart1.ErrorCode != HAL_UART_ERROR_NONE)) {
-    Motor_Stop();
+    WheelCheck_Stop();
     if (huart1.ErrorCode != HAL_UART_ERROR_NONE) {
       (void)HAL_UART_AbortReceive(&huart1);
     }
@@ -169,7 +213,7 @@ void WheelCheck_Process(void)
     } else if (!discard_line) {
       if ((value < ' ') || (value > '~') ||
           (line_length >= LINE_SIZE - 1U)) {
-        Motor_Stop();
+        WheelCheck_Stop();
         discard_line = true;
         line_length = 0U;
         wheel_send("ERR LINE; STOPPED\r\n");
@@ -181,13 +225,26 @@ void WheelCheck_Process(void)
       }
     }
   }
-  if (result_pending && !Motor_WheelCheckRunning()) {
+  const uint32_t now_ms = HAL_GetTick();
+  if (cancel_requested ||
+      (sequence_active && ((uint32_t)(now_ms - sequence_start_ms) >= 10000U))) {
+    wheel_finish(true);
+  } else if (result_pending && !Motor_WheelCheckRunning()) {
     if (!settling) {
       settling = true;
-      settle_start_ms = HAL_GetTick();
-    } else if ((uint32_t)(HAL_GetTick() - settle_start_ms) >= 100U) {
+      settle_start_ms = now_ms;
+    } else if ((uint32_t)(now_ms - settle_start_ms) >= 100U) {
       wheel_report();
+      if (pulse_id == 3U) {
+        wheel_finish(false);
+      } else {
+        next_id = (uint8_t)(pulse_id + 1U);
+        next_pulse_ms = now_ms + 2000U;
+      }
     }
+  } else if (sequence_active && !result_pending &&
+             ((int32_t)(now_ms - next_pulse_ms) >= 0)) {
+    (void)wheel_start_pulse(next_id);
   }
   wheel_pump_tx();
 }

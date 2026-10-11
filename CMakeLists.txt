@@ -80,11 +80,6 @@ if(NOT APP_ACTIVE_MODE_OVERRIDE STREQUAL "")
     target_compile_definitions(WWW PRIVATE APP_ACTIVE_MODE=${APP_ACTIVE_MODE_OVERRIDE})
 endif()
 
-option(APP_ENABLE_WHEEL_CHECK "Isolated USART1 single-wheel direction check" OFF)
-if(APP_ENABLE_WHEEL_CHECK)
-    target_compile_definitions(WWW PRIVATE APP_ENABLE_WHEEL_CHECK=1)
-endif()
-
 # Remove wrong libob.a library dependency when using cpp files
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 

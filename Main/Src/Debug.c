@@ -8,6 +8,7 @@
 #include "main.h"
 #include "motor.h"
 #include "vision.h"
+#include "WheelCheck.h"
 
 #if APP_ENABLE_MOTION_DEBUG_TASK && \
     ((VISION_MSG_MOTION_COMMAND != 0x19U) || \
@@ -20,6 +21,7 @@
 static volatile DebugStatus debug_status;
 static bool initialized;
 static bool active;
+static volatile bool wheel_check_active;
 static bool command_sequence_valid;
 static uint8_t last_command_sequence;
 static uint8_t active_command;
@@ -388,6 +390,7 @@ void Debug_Init(uint32_t now_ms)
 
   initialized = true;
   active = false;
+  wheel_check_active = false;
   command_sequence_valid = false;
   last_command_sequence = 0U;
   active_command = VISION_MOTION_CMD_STOP;
@@ -422,7 +425,20 @@ void Debug_Process(uint32_t now_ms)
        (vision.motion_sequence != last_command_sequence))) {
     command_sequence_valid = true;
     last_command_sequence = vision.motion_sequence;
-    debug_start_command(&vision, now_ms);
+    if (wheel_check_active) {
+#if APP_ENABLE_MOTION_DEBUG_TASK
+      if (vision.motion_opcode == VISION_MOTION_CMD_STOP) {
+        WheelCheck_Stop();
+      }
+#endif
+    } else {
+      debug_start_command(&vision, now_ms);
+    }
+  }
+
+  if (wheel_check_active) {
+    debug_publish_status(now_ms, false);
+    return;
   }
 
   if (active) {
@@ -447,4 +463,23 @@ DebugStatus Debug_GetStatus(void)
   const DebugStatus status = debug_status;
   debug_leave_critical(primask);
   return status;
+}
+
+void Debug_SetWheelCheckActive(bool enabled)
+{
+  const uint32_t primask = debug_enter_critical();
+  const VisionData vision = Vision_GetSnapshot();
+  if (vision.motion_valid) {
+    command_sequence_valid = true;
+    last_command_sequence = vision.motion_sequence;
+  }
+  active = false;
+  active_move_body_straight = false;
+  Motor_Stop();
+  debug_status.state = DEBUG_MOTION_STOPPED;
+  debug_status.fault = DEBUG_MOTION_FAULT_NONE;
+  debug_status.progress = 0;
+  debug_status.remaining = 0U;
+  wheel_check_active = enabled;
+  debug_leave_critical(primask);
 }
