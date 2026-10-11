@@ -263,14 +263,14 @@ static void test_wheel_zero_band_hysteresis_and_reversal(void)
   assert_drive_cap();
 }
 
-static void test_debug_straight_noise_and_real_correction(void)
+static void test_debug_field_noise_and_real_correction(void)
 {
   for (int direction = -1; direction <= 1; direction += 2) {
     reset();
     Debug_Init(test_ms);
     test_vision = (VisionData){
       .motion_valid = true, .motion_sequence = 1U,
-      .motion_opcode = VISION_MOTION_CMD_MOVE_BODY,
+      .motion_opcode = VISION_MOTION_CMD_MOVE_FIELD,
       .motion_arg1 = (int16_t)(direction * 1000), .motion_speed = 300U
     };
     Debug_Process(test_ms);
@@ -289,7 +289,11 @@ static void test_debug_straight_noise_and_real_correction(void)
     test_pose.y_mm = 12;
     Debug_Process(test_ms);
     update();
+    assert(Motor_GetStatus(3U).target == 0);
+    test_imu.yaw_mdeg = 10000LL;
+    update();
     assert(Motor_GetStatus(3U).target != 0 && Motor_GetStatus(3U).command != 0);
+    test_imu.yaw_mdeg = 0LL;
     test_pose.y_mm = 0;
     Debug_Process(test_ms);
     update();
@@ -298,6 +302,319 @@ static void test_debug_straight_noise_and_real_correction(void)
     Debug_Process(test_ms);
     update();
     assert(Motor_GetStatus(3U).target != 0);
+  }
+}
+
+static void start_debug_straight(int16_t distance, uint16_t speed)
+{
+  Debug_Init(test_ms);
+  test_vision = (VisionData){
+    .motion_valid = true, .motion_sequence = 1U,
+    .motion_opcode = VISION_MOTION_CMD_MOVE_BODY,
+    .motion_flags = VISION_MOTION_VALID | VISION_MOTION_KEEP_HEADING |
+                    VISION_MOTION_ACK_REQUIRED,
+    .motion_arg1 = distance, .motion_speed = speed
+  };
+  Debug_Process(test_ms);
+  update();
+  for (int i = 0; i < 100 &&
+       (distance_move.waiting_for_stop ||
+        distance_move.current_speed_mm_s < active_move_speed_mm_s); ++i) {
+    update();
+    Debug_Process(test_ms);
+  }
+  assert(!distance_move.waiting_for_stop && distance_move.status == MOTOR_DISTANCE_RUNNING);
+}
+
+static void set_straight_encoder_progress(float forward_mm)
+{
+  const float mm_per_count = 3.14159265359f * APP_WHEEL_DIAMETER_MM /
+                             APP_ENCODER_COUNTS_PER_WHEEL_REV;
+  const int64_t counts = (int64_t)llroundf(forward_mm * 0.86602540378f / mm_per_count);
+  test_encoder[0].position = distance_move.start_m1_count + counts * APP_OMNI_M1_ENCODER_SIGN;
+  test_encoder[1].position = distance_move.start_m2_count - counts * APP_OMNI_M2_ENCODER_SIGN;
+}
+
+static void test_debug_straight_uses_shared_heading_only(void)
+{
+  for (int direction = -1; direction <= 1; direction += 2) {
+    reset();
+    start_debug_straight((int16_t)(direction * 1000), 500U);
+    for (int i = 0; i < 100; ++i) {
+      test_pose.x_mm = direction * 5000;
+      test_pose.y_mm = (i & 1) ? 2000 : -2000;
+      test_pose.heading_mdeg = (i % 4) * 90000;
+      test_encoder[2].position = i * 1000;
+      test_encoder[2].delta_10ms = (i & 1) ? 100 : -100;
+      Debug_Process(test_ms);
+      update();
+      assert(Debug_GetStatus().state == DEBUG_MOTION_RUNNING);
+      assert(Debug_GetStatus().progress == 0 && Debug_GetStatus().remaining == 1000U);
+      assert(Motor_GetStatus(1U).target_speed_mm_s == direction * 433);
+      assert(Motor_GetStatus(2U).target_speed_mm_s == -direction * 433);
+      assert(Motor_GetStatus(3U).target == 0 && Motor_GetStatus(3U).command == 0);
+      assert_drive_cap();
+    }
+    test_imu.yaw_mdeg = 10000LL;
+    update();
+    Debug_Process(test_ms);
+    assert(Motor_GetStatus(3U).target > 0);
+    test_imu.yaw_mdeg = -10000LL;
+    update();
+    Debug_Process(test_ms);
+    assert(Motor_GetStatus(3U).target < 0);
+    assert_drive_cap();
+  }
+}
+
+static void test_debug_straight_signed_distance_and_completion(void)
+{
+  for (int direction = -1; direction <= 1; direction += 2) {
+    reset();
+    test_encoder[0].position = 10000000000LL;
+    test_encoder[1].position = -10000000000LL;
+    start_debug_straight((int16_t)(direction * 1000), 500U);
+    set_straight_encoder_progress(direction * 50.0f);
+    test_pose.x_mm = 9999;
+    test_pose.heading_mdeg = 180000;
+    test_encoder[2].position = 3000000LL;
+    update();
+    Debug_Process(test_ms);
+    assert(abs(Debug_GetStatus().progress - direction * 50) <= 1);
+    assert(abs((int)Debug_GetStatus().remaining - 950) <= 1);
+    set_straight_encoder_progress(-direction * 50.0f);
+    update();
+    Debug_Process(test_ms);
+    assert(Debug_GetStatus().progress == 0 && Debug_GetStatus().remaining == 1000U);
+    set_straight_encoder_progress(direction * 998.0f);
+    update();
+    Debug_Process(test_ms);
+    assert(Debug_GetStatus().state == DEBUG_MOTION_DONE);
+    assert(Debug_GetStatus().progress == direction * 1000);
+    assert(Debug_GetStatus().remaining == 0U);
+    for (uint8_t id = 1U; id <= 3U; ++id) {
+      assert(Motor_GetStatus(id).target == 0);
+    }
+  }
+}
+
+static void test_debug_blocked_front_without_yaw_keeps_rear_zero(void)
+{
+  reset();
+  start_debug_straight(1000, 500U);
+  for (int i = 0; i < 100; ++i) {
+    test_encoder[0].delta_10ms = 0;
+    test_encoder[1].delta_10ms = 13;
+    test_encoder[1].position += 13;
+    test_pose.y_mm = i * 5;
+    test_pose.heading_mdeg = 180000;
+    Debug_Process(test_ms);
+    update();
+    assert(Debug_GetStatus().state == DEBUG_MOTION_RUNNING);
+    assert(Motor_GetStatus(1U).target > 0 && Motor_GetStatus(2U).target < 0);
+    assert(Motor_GetStatus(3U).target == 0 && Motor_GetStatus(3U).command == 0);
+    assert_drive_cap();
+  }
+}
+
+static void test_debug_straight_default_and_explicit_speed(void)
+{
+  reset();
+  start_debug_straight(1000, 0U);
+  assert(active_move_speed_mm_s == 500.0f);
+  assert(Motor_GetStatus(1U).target_speed_mm_s == 433);
+  reset();
+  start_debug_straight(1000, 300U);
+  assert(active_move_speed_mm_s == 300.0f);
+  assert(Motor_GetStatus(1U).target_speed_mm_s == 260);
+}
+
+static void test_debug_turn_keeps_imu_completion(void)
+{
+  reset();
+  Debug_Init(test_ms);
+  test_vision = (VisionData){
+    .motion_valid = true, .motion_sequence = 1U,
+    .motion_opcode = VISION_MOTION_CMD_TURN_REL,
+    .motion_arg1 = 900, .motion_speed = 900U
+  };
+  Debug_Process(test_ms);
+  update();
+  assert(!active_move_body_straight);
+  for (uint8_t id = 1U; id <= 3U; ++id) {
+    assert(Motor_GetStatus(id).target > 0);
+  }
+  test_imu.yaw_mdeg = -90000LL;
+  update();
+  Debug_Process(test_ms);
+  assert(Debug_GetStatus().state == DEBUG_MOTION_DONE);
+  assert(Debug_GetStatus().progress == 900);
+}
+
+static void test_debug_straight_timeout_and_stop(void)
+{
+  reset();
+  start_debug_straight(1000, 500U);
+  test_ms = active_start_ms + active_timeout_ms;
+  Debug_Process(test_ms);
+  assert(Debug_GetStatus().state == DEBUG_MOTION_FAULT);
+  assert(Debug_GetStatus().fault == DEBUG_MOTION_FAULT_TIMEOUT);
+  for (uint8_t id = 1U; id <= 3U; ++id) {
+    assert(Motor_GetStatus(id).target == 0);
+  }
+  test_vision = (VisionData){
+    .motion_valid = true, .motion_sequence = 2U,
+    .motion_opcode = VISION_MOTION_CMD_STOP
+  };
+  Debug_Process(test_ms);
+  assert(Debug_GetStatus().state == DEBUG_MOTION_STOPPED);
+  assert(!active_move_body_straight);
+}
+
+static void test_debug_turn_both_feedback_signs_and_no_restart(void)
+{
+  for (int direction = -1; direction <= 1; direction += 2) {
+    for (int feedback_sign = -1; feedback_sign <= 1; feedback_sign += 2) {
+      reset();
+      Debug_Init(test_ms);
+      test_vision = (VisionData){
+        .motion_valid = true, .motion_sequence = 1U,
+        .motion_opcode = VISION_MOTION_CMD_TURN_REL,
+        .motion_arg1 = (int16_t)(direction * 900), .motion_speed = 900U
+      };
+      Debug_Process(test_ms);
+      update();
+      test_imu.yaw_mdeg = feedback_sign * 60000LL;
+      update();
+      assert(angle_turn.status == MOTOR_TURN_RUNNING && angle_turn.slowing);
+      assert(abs(Motor_GetStatus(1U).target_speed_mm_s) == 120);
+      test_imu.yaw_mdeg = feedback_sign * 90000LL;
+      update();
+      assert(angle_turn.status == MOTOR_TURN_DONE);
+      for (uint8_t id = 1U; id <= 3U; ++id) {
+        assert(Motor_GetStatus(id).target == 0);
+      }
+      Debug_Process(test_ms);
+      assert(Debug_GetStatus().state == DEBUG_MOTION_DONE);
+      assert(Debug_GetStatus().progress == direction * 900);
+      test_imu.yaw_mdeg = feedback_sign * 180000LL;
+      for (int i = 0; i < 10; ++i) {
+        update();
+        Debug_Process(test_ms);
+      }
+      assert(Debug_GetStatus().state == DEBUG_MOTION_DONE);
+      assert(angle_turn.status == MOTOR_TURN_IDLE);
+      assert_drive_cap();
+      test_vision.motion_sequence = 2U;
+      test_vision.motion_arg1 = 450;
+      Debug_Process(test_ms);
+      assert(angle_turn.status == MOTOR_TURN_RUNNING);
+      assert(angle_turn.start_yaw_mdeg == test_imu.yaw_mdeg);
+      assert(Motor_GetTurnTravelledDeg() == 0.0f);
+    }
+  }
+}
+
+static void test_turn_timer_timeout_without_debug_polling(void)
+{
+  reset();
+  Debug_Init(test_ms);
+  test_vision = (VisionData){
+    .motion_valid = true, .motion_sequence = 1U,
+    .motion_opcode = VISION_MOTION_CMD_TURN_REL,
+    .motion_arg1 = 900, .motion_speed = 900U
+  };
+  Debug_Process(test_ms);
+  for (uint32_t i = 0; i <= APP_MOTOR_TURN_TIMEOUT_MS / APP_MOTOR_CONTROL_PERIOD_MS; ++i) {
+    update();
+  }
+  assert(angle_turn.status == MOTOR_TURN_FAULT);
+  for (uint8_t id = 1U; id <= 3U; ++id) {
+    assert(Motor_GetStatus(id).target == 0);
+  }
+  Debug_Process(test_ms);
+  assert(Debug_GetStatus().state == DEBUG_MOTION_FAULT);
+  assert(Debug_GetStatus().fault == DEBUG_MOTION_FAULT_TIMEOUT);
+}
+
+static void test_turn_imu_failure_and_stop_cancel(void)
+{
+  reset();
+  Debug_Init(test_ms);
+  test_vision = (VisionData){
+    .motion_valid = true, .motion_sequence = 1U,
+    .motion_opcode = VISION_MOTION_CMD_TURN_REL,
+    .motion_arg1 = 900, .motion_speed = 900U
+  };
+  Debug_Process(test_ms);
+  test_imu.ready = false;
+  update();
+  Debug_Process(test_ms);
+  assert(Debug_GetStatus().fault == DEBUG_MOTION_FAULT_IMU);
+  test_imu.ready = true;
+  test_vision.motion_sequence = 2U;
+  Debug_Process(test_ms);
+  assert(angle_turn.status == MOTOR_TURN_RUNNING);
+  test_vision = (VisionData){
+    .motion_valid = true, .motion_sequence = 3U,
+    .motion_opcode = VISION_MOTION_CMD_STOP
+  };
+  Debug_Process(test_ms);
+  for (int i = 0; i < 10; ++i) { update(); Debug_Process(test_ms); }
+  assert(Debug_GetStatus().state == DEBUG_MOTION_STOPPED);
+  assert(angle_turn.status == MOTOR_TURN_IDLE);
+  assert_drive_cap();
+}
+
+static void test_slow_turn_does_not_accelerate_at_end(void)
+{
+  reset();
+  assert(Motor_TurnAngleSpeed(90.0f, 50.0f) == MOTOR_TURN_RUNNING);
+  test_imu.yaw_mdeg = 60000LL;
+  update();
+  assert(angle_turn.slowing);
+  for (uint8_t id = 1U; id <= 3U; ++id) {
+    assert(Motor_GetStatus(id).target_speed_mm_s == 50);
+  }
+}
+
+static void test_debug_and_normal_distance_heading_match(void)
+{
+  reset();
+  assert(Motor_MoveDistance(1.0f, 300.0f) == MOTOR_DISTANCE_RUNNING);
+  for (int i = 0; i < 20; ++i) { update(); }
+  test_imu.yaw_mdeg = 10000LL;
+  update();
+  assert(Motor_GetStatus(3U).target != 0);
+  float normal_targets[3];
+  memcpy(normal_targets, target_counts_per_update, sizeof(normal_targets));
+  reset();
+  start_debug_straight(1000, 300U);
+  test_imu.yaw_mdeg = 10000LL;
+  update();
+  assert(Motor_GetStatus(3U).target != 0);
+  for (uint32_t i = 0U; i < 3U; ++i) {
+    assert(fabsf(target_counts_per_update[i] - normal_targets[i]) < 0.001f);
+  }
+}
+
+static void test_debug_straight_stop_wait_is_bounded(void)
+{
+  reset();
+  Debug_Init(test_ms);
+  test_encoder[0].delta_10ms = 100;
+  test_vision = (VisionData){
+    .motion_valid = true, .motion_sequence = 1U,
+    .motion_opcode = VISION_MOTION_CMD_MOVE_BODY,
+    .motion_arg1 = 1000, .motion_speed = 500U
+  };
+  Debug_Process(test_ms);
+  for (uint32_t i = 0; i <= APP_OMNI_ZERO_TIMEOUT_CYCLES; ++i) { update(); }
+  assert(distance_move.status == MOTOR_DISTANCE_FAULT);
+  Debug_Process(test_ms);
+  assert(Debug_GetStatus().fault == DEBUG_MOTION_FAULT_MOTOR);
+  for (uint8_t id = 1U; id <= 3U; ++id) {
+    assert(Motor_GetStatus(id).target == 0);
   }
 }
 
@@ -314,7 +631,19 @@ int main(void)
   test_no_stall_or_direction_interlock();
   test_straight_idle_wheel_rejects_small_commands();
   test_wheel_zero_band_hysteresis_and_reversal();
-  test_debug_straight_noise_and_real_correction();
-  puts("MG310 motor: 12 scenarios PASS");
+  test_debug_field_noise_and_real_correction();
+  test_debug_straight_uses_shared_heading_only();
+  test_debug_straight_signed_distance_and_completion();
+  test_debug_blocked_front_without_yaw_keeps_rear_zero();
+  test_debug_straight_default_and_explicit_speed();
+  test_debug_turn_keeps_imu_completion();
+  test_debug_straight_timeout_and_stop();
+  test_debug_turn_both_feedback_signs_and_no_restart();
+  test_turn_timer_timeout_without_debug_polling();
+  test_turn_imu_failure_and_stop_cancel();
+  test_slow_turn_does_not_accelerate_at_end();
+  test_debug_and_normal_distance_heading_match();
+  test_debug_straight_stop_wait_is_bounded();
+  puts("MG310 motor: 24 scenarios PASS");
   return 0;
 }

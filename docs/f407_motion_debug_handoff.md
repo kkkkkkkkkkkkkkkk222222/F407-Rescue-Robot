@@ -57,7 +57,7 @@ P6..P7 unsigned speed
 
 flags：bit0 VALID、bit1 KEEP_HEADING、bit2 FIELD_FRAME、bit3 ACK_REQUIRED、bit4 CLEAR_FAULT。Debug.c会拒绝保留位、错误命令组合、零位移、超范围距离和速度。
 
-TURN使用IMU闭环；MOVE_BODY/MOVE_FIELD使用三轮里程计投影定距、横向误差修正和IMU航向保持。新SEQ只执行一次，STOP优先，动作还受电机/IMU/里程计故障及超时保护。
+TURN直接调用NormalRun的`Motor_TurnAngleSpeed()`，按相对原始IMU角度幅值判定完成，最后30度减速、1度容差停车和10秒超时均由电机定时周期执行；速度为0时使用NormalRun的500 mm/s轮缘速度默认值。MOVE_BODY中left=0的前后直行直接调用`Motor_MoveDistance()`，与NormalRun统一定距、加减速、静止确认、IMU航向PID和制动，不额外添加横向或场地坐标纠偏；后轮在航向修正时会参与，KEEP_HEADING保持原意。直行速度字段为0时默认500 mm/s，非零速度仍按上位机请求执行。MOVE_FIELD和带横向分量的MOVE_BODY复用`Motor_MoveAngle()`的向量加减速及IMU航向保持，距离由现有里程计投影判断，不额外叠加Debug纠偏。新SEQ只执行一次，STOP优先，动作仍受健康检查及超时保护。
 
 ## 0x1A状态
 

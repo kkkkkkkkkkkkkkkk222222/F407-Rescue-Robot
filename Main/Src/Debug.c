@@ -25,14 +25,14 @@ static uint8_t last_command_sequence;
 static uint8_t active_command;
 static float active_turn_angle_deg;
 static float active_turn_speed_mm_s;
-static int64_t active_turn_start_yaw_mdeg;
 static float active_move_start_x_mm;
 static float active_move_start_y_mm;
 static float active_move_field_angle_rad;
 static float active_move_distance_mm;
 static float active_move_speed_mm_s;
-static float active_move_heading_deg;
+static float active_move_body_angle_deg;
 static float active_move_progress_sign;
+static bool active_move_body_straight;
 static uint32_t active_start_ms;
 static uint32_t active_timeout_ms;
 static uint32_t last_status_ms;
@@ -58,28 +58,6 @@ static float debug_wrap_degrees(float angle_deg)
     angle_deg += 360.0f;
   }
   return angle_deg;
-}
-
-static float debug_wrap_error(float angle_deg)
-{
-  while (angle_deg > 180.0f) {
-    angle_deg -= 360.0f;
-  }
-  while (angle_deg < -180.0f) {
-    angle_deg += 360.0f;
-  }
-  return angle_deg;
-}
-
-static float debug_remove_deadband(float value, float tolerance)
-{
-  if (value > tolerance) {
-    return value - tolerance;
-  }
-  if (value < -tolerance) {
-    return value + tolerance;
-  }
-  return 0.0f;
 }
 
 static uint16_t debug_saturate_u16(float value)
@@ -178,6 +156,7 @@ static uint32_t debug_move_timeout(float distance_mm, float speed_mm_s)
 static void debug_start_command(const VisionData *vision, uint32_t now_ms)
 {
   active = false;
+  active_move_body_straight = false;
   Motor_Stop();
   debug_status.command = vision->motion_opcode;
   debug_status.command_sequence = vision->motion_sequence;
@@ -212,11 +191,9 @@ static void debug_start_command(const VisionData *vision, uint32_t now_ms)
 
   if (active_command == VISION_MOTION_CMD_TURN_REL) {
     active_turn_angle_deg = (float)vision->motion_arg1 * 0.1f;
-    const float turn_rate_deg_s = (vision->motion_speed == 0U) ?
-        90.0f : (float)vision->motion_speed * 0.1f;
-    active_turn_speed_mm_s = turn_rate_deg_s * DEBUG_DEG_RAD *
-                             APP_MOTION_DEBUG_TURN_RADIUS_MM;
-    active_turn_start_yaw_mdeg = imu.yaw_mdeg;
+    active_turn_speed_mm_s = (vision->motion_speed == 0U) ?
+        APP_MOTOR_TURN_FAST_MM_S : (float)vision->motion_speed * 0.1f *
+        DEBUG_DEG_RAD * APP_MOTION_DEBUG_TURN_RADIUS_MM;
     active_timeout_ms = APP_MOTOR_TURN_TIMEOUT_MS;
     debug_status.remaining = (uint16_t)((vision->motion_arg1 < 0) ?
         -vision->motion_arg1 : vision->motion_arg1);
@@ -240,6 +217,8 @@ static void debug_start_command(const VisionData *vision, uint32_t now_ms)
                                 57.2957795f;
     const float current_heading_deg = (float)pose.heading_mdeg * 0.001f;
     const bool field_frame = active_command == VISION_MOTION_CMD_MOVE_FIELD;
+    active_move_body_straight = !field_frame && (vision->motion_arg2 == 0) &&
+                               (vision->motion_arg1 != 0);
     const float field_direction_deg = field_frame ?
         debug_wrap_degrees(direction_deg) :
         debug_wrap_degrees(current_heading_deg + direction_deg);
@@ -248,8 +227,10 @@ static void debug_start_command(const VisionData *vision, uint32_t now_ms)
     active_move_field_angle_rad = field_direction_deg * DEBUG_DEG_RAD;
     active_move_distance_mm = sqrtf(arg1_mm * arg1_mm + arg2_mm * arg2_mm);
     active_move_speed_mm_s = (vision->motion_speed == 0U) ?
-        APP_GO_DISTANCE_SPEED_MM_S : (float)vision->motion_speed;
-    active_move_heading_deg = current_heading_deg;
+        (active_move_body_straight ? APP_MOTION_DEBUG_STRAIGHT_SPEED_MM_S :
+                                    APP_GO_DISTANCE_SPEED_MM_S) :
+        (float)vision->motion_speed;
+    active_move_body_angle_deg = direction_deg;
     active_move_progress_sign =
         ((arg1_mm < 0.0f) || ((arg1_mm == 0.0f) && (arg2_mm < 0.0f))) ?
         -1.0f : 1.0f;
@@ -272,17 +253,11 @@ static void debug_update_turn(uint32_t now_ms)
     debug_finish(DEBUG_MOTION_FAULT, DEBUG_MOTION_FAULT_IMU, now_ms);
     return;
   }
-  if ((uint32_t)(now_ms - active_start_ms) >= active_timeout_ms) {
-    debug_finish(DEBUG_MOTION_FAULT, DEBUG_MOTION_FAULT_TIMEOUT, now_ms);
-    return;
-  }
-
-  const int64_t raw_delta_mdeg = imu.yaw_mdeg - active_turn_start_yaw_mdeg;
-  const int64_t field_delta_mdeg = (APP_LOCATION_IMU_YAW_SIGN < 0.0f) ?
-      -raw_delta_mdeg : raw_delta_mdeg;
-  const float directed_delta_deg = (float)field_delta_mdeg * 0.001f *
-      ((active_turn_angle_deg >= 0.0f) ? 1.0f : -1.0f);
-  float progress_deg = (directed_delta_deg > 0.0f) ? directed_delta_deg : 0.0f;
+  /* Poll the same latched controller as NormalRun. Motor_Update owns
+   * completion, slowdown and braking even when Debug_Process is delayed. */
+  const MotorTurnStatus result = Motor_TurnAngleSpeed(active_turn_angle_deg,
+                                                     active_turn_speed_mm_s);
+  float progress_deg = Motor_GetTurnTravelledDeg();
   const float target_deg = (active_turn_angle_deg >= 0.0f) ?
       active_turn_angle_deg : -active_turn_angle_deg;
   if (progress_deg > target_deg) {
@@ -293,20 +268,45 @@ static void debug_update_turn(uint32_t now_ms)
   debug_status.remaining = debug_saturate_u16(
       (target_deg - progress_deg) * 10.0f);
 
-  const float remaining_deg = target_deg - progress_deg;
-  if (remaining_deg * 1000.0f <= APP_MOTOR_TURN_TOLERANCE_MDEG) {
+  if (result == MOTOR_TURN_DONE) {
     debug_status.progress = (int16_t)(turn_sign * target_deg * 10.0f);
     debug_status.remaining = 0U;
     debug_finish(DEBUG_MOTION_DONE, DEBUG_MOTION_FAULT_NONE, now_ms);
     return;
   }
 
-  const float speed =
-      (remaining_deg * 1000.0f <= APP_MOTOR_TURN_SLOWDOWN_MDEG) ?
-      fminf(active_turn_speed_mm_s, APP_MOTOR_TURN_SLOW_MM_S) :
-      active_turn_speed_mm_s;
-  Motor_Move(0.0f, 0.0f,
-             speed * ((active_turn_angle_deg >= 0.0f) ? 1.0f : -1.0f));
+  if (result == MOTOR_TURN_FAULT) {
+    const DebugMotionFault fault =
+        ((uint32_t)(now_ms - active_start_ms) >= active_timeout_ms) ?
+        DEBUG_MOTION_FAULT_TIMEOUT : DEBUG_MOTION_FAULT_MOTOR;
+    debug_finish(DEBUG_MOTION_FAULT, fault, now_ms);
+  } else if (result != MOTOR_TURN_RUNNING) {
+    debug_finish(DEBUG_MOTION_FAULT, DEBUG_MOTION_FAULT_INVALID, now_ms);
+  } else if ((uint32_t)(now_ms - active_start_ms) >= active_timeout_ms) {
+    debug_finish(DEBUG_MOTION_FAULT, DEBUG_MOTION_FAULT_TIMEOUT, now_ms);
+  }
+}
+
+static void debug_update_straight(uint32_t now_ms)
+{
+  const MotorDistanceStatus result = Motor_MoveDistance(
+      active_move_progress_sign * active_move_distance_mm * 0.001f,
+      active_move_speed_mm_s);
+  const float progress_mm = fminf(active_move_distance_mm,
+      fmaxf(0.0f, Motor_GetDistanceTravelledMm()));
+  debug_status.progress = (int16_t)(active_move_progress_sign * progress_mm);
+  debug_status.remaining = debug_saturate_u16(active_move_distance_mm - progress_mm);
+  if (result == MOTOR_DISTANCE_DONE) {
+    debug_status.progress = (int16_t)(active_move_progress_sign * active_move_distance_mm);
+    debug_status.remaining = 0U;
+    debug_finish(DEBUG_MOTION_DONE, DEBUG_MOTION_FAULT_NONE, now_ms);
+  } else if (result == MOTOR_DISTANCE_FAULT) {
+    debug_finish(DEBUG_MOTION_FAULT, DEBUG_MOTION_FAULT_MOTOR, now_ms);
+  } else if (result != MOTOR_DISTANCE_RUNNING) {
+    debug_finish(DEBUG_MOTION_FAULT, DEBUG_MOTION_FAULT_INVALID, now_ms);
+  } else if ((uint32_t)(now_ms - active_start_ms) >= active_timeout_ms) {
+    debug_finish(DEBUG_MOTION_FAULT, DEBUG_MOTION_FAULT_TIMEOUT, now_ms);
+  }
 }
 
 static void debug_update_move(uint32_t now_ms)
@@ -320,6 +320,10 @@ static void debug_update_move(uint32_t now_ms)
     debug_finish(DEBUG_MOTION_FAULT, DEBUG_MOTION_FAULT_MOTOR, now_ms);
     return;
   }
+  if (active_move_body_straight) {
+    debug_update_straight(now_ms);
+    return;
+  }
   if ((uint32_t)(now_ms - active_start_ms) >= active_timeout_ms) {
     debug_finish(DEBUG_MOTION_FAULT, DEBUG_MOTION_FAULT_TIMEOUT, now_ms);
     return;
@@ -330,7 +334,6 @@ static void debug_update_move(uint32_t now_ms)
   const float delta_x = (float)pose.x_mm - active_move_start_x_mm;
   const float delta_y = (float)pose.y_mm - active_move_start_y_mm;
   const float progress_mm = delta_x * cosine + delta_y * sine;
-  const float cross_track_mm = -delta_x * sine + delta_y * cosine;
   float bounded_progress_mm = (progress_mm > 0.0f) ? progress_mm : 0.0f;
   if (bounded_progress_mm > active_move_distance_mm) {
     bounded_progress_mm = active_move_distance_mm;
@@ -341,7 +344,8 @@ static void debug_update_move(uint32_t now_ms)
   debug_status.remaining = debug_saturate_u16(remaining_mm);
 
   if (remaining_mm <= APP_MOTION_DEBUG_DISTANCE_TOLERANCE_MM) {
-    debug_status.progress = debug_saturate_u16(active_move_distance_mm);
+    debug_status.progress = (int16_t)(active_move_progress_sign *
+                                     active_move_distance_mm);
     debug_status.remaining = 0U;
     debug_finish(DEBUG_MOTION_DONE, DEBUG_MOTION_FAULT_NONE, now_ms);
     return;
@@ -364,35 +368,10 @@ static void debug_update_move(uint32_t now_ms)
         (active_move_speed_mm_s - minimum_speed) * ratio;
   }
 
-  float correction_mm_s = -APP_MOTION_DEBUG_CROSS_TRACK_KP *
-      debug_remove_deadband(cross_track_mm,
-                            APP_MOTION_DEBUG_CROSS_TRACK_DEADBAND_MM);
-  if (correction_mm_s > APP_MOTION_DEBUG_CROSS_TRACK_LIMIT_MM_S) {
-    correction_mm_s = APP_MOTION_DEBUG_CROSS_TRACK_LIMIT_MM_S;
-  } else if (correction_mm_s < -APP_MOTION_DEBUG_CROSS_TRACK_LIMIT_MM_S) {
-    correction_mm_s = -APP_MOTION_DEBUG_CROSS_TRACK_LIMIT_MM_S;
-  }
-  const float field_x_mm_s = speed_mm_s * cosine - correction_mm_s * sine;
-  const float field_y_mm_s = speed_mm_s * sine + correction_mm_s * cosine;
-  const float heading_rad = (float)pose.heading_mdeg * 0.001f * DEBUG_DEG_RAD;
-  const float heading_cosine = cosf(heading_rad);
-  const float heading_sine = sinf(heading_rad);
-  const float body_forward_mm_s = heading_cosine * field_x_mm_s +
-                                  heading_sine * field_y_mm_s;
-  const float physical_left_mm_s = -heading_sine * field_x_mm_s +
-                                   heading_cosine * field_y_mm_s;
-  const float heading_error_deg = debug_wrap_error(
-      active_move_heading_deg - (float)pose.heading_mdeg * 0.001f);
-  float yaw_mm_s = debug_remove_deadband(heading_error_deg,
-      APP_MOTION_DEBUG_HEADING_DEADBAND_DEG) * APP_MOTOR_HEADING_KP;
-  if (yaw_mm_s > APP_MOTOR_HEADING_LIMIT_MM_S) {
-    yaw_mm_s = APP_MOTOR_HEADING_LIMIT_MM_S;
-  } else if (yaw_mm_s < -APP_MOTOR_HEADING_LIMIT_MM_S) {
-    yaw_mm_s = -APP_MOTOR_HEADING_LIMIT_MM_S;
-  }
-  Motor_Move(body_forward_mm_s,
-             physical_left_mm_s * APP_OMNI_LATERAL_API_SIGN,
-             yaw_mm_s);
+  const float body_angle_deg = active_command == VISION_MOTION_CMD_MOVE_FIELD ?
+      debug_wrap_degrees(active_move_field_angle_rad / DEBUG_DEG_RAD -
+                         (float)pose.heading_mdeg * 0.001f) : active_move_body_angle_deg;
+  (void)Motor_MoveAngle(speed_mm_s, body_angle_deg);
 }
 
 void Debug_Init(uint32_t now_ms)
@@ -414,14 +393,14 @@ void Debug_Init(uint32_t now_ms)
   active_command = VISION_MOTION_CMD_STOP;
   active_turn_angle_deg = 0.0f;
   active_turn_speed_mm_s = 0.0f;
-  active_turn_start_yaw_mdeg = 0LL;
   active_move_start_x_mm = 0.0f;
   active_move_start_y_mm = 0.0f;
   active_move_field_angle_rad = 0.0f;
   active_move_distance_mm = 0.0f;
   active_move_speed_mm_s = 0.0f;
-  active_move_heading_deg = 0.0f;
+  active_move_body_angle_deg = 0.0f;
   active_move_progress_sign = 1.0f;
+  active_move_body_straight = false;
   active_start_ms = now_ms;
   active_timeout_ms = 0U;
   last_status_ms = now_ms;

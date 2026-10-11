@@ -1,0 +1,12 @@
+diff --git a/localization/tools/t265_f407_motion_map.py b/localization/tools/t265_f407_motion_map.py
+--- a/localization/tools/t265_f407_motion_map.py
++++ b/localization/tools/t265_f407_motion_map.py
+@@ -271,7 +271,7 @@ class MotionMapApp:
+         self.return_phase: str | None = None
+         self.return_distance_mm = 0
+         self.distance_mm = 1000
+-        self.speed_mm_s = 300
++        self.speed_mm_s = 500
+         self.test_id = 0
+         self.active_test_parameters: dict = {}
+         self.session_config: dict[str, str] = {}

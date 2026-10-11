@@ -82,13 +82,73 @@ more than 6 mm/s. Zero targets clear speed-PID history and coast, so encoder noi
 cannot cause the idle wheel to counter-drive. This also means an intentional
 standalone wheel command of 6 mm/s or less will not start the wheel.
 
-MotionDebug MOVE_BODY/MOVE_FIELD additionally remove a 0.5-degree heading band
-and a 2 mm cross-track band before calculating feedback. Errors outside each
-band use only the excess, avoiding an output jump at the edge. PID gains,
-the 60% cap, slow decay and the existing action timeouts remain unchanged.
-The wheel is not forcibly disabled: real corrections and commanded turns still
-drive it. Suspended wheels do not represent ground odometry, so a sufficiently
-large accumulated apparent path error can still legitimately request correction.
+The earlier debug-specific heading and cross-track deadbands have now been
+removed with the duplicate debug correction loop. Non-straight translation
+uses NormalRun's Motor_MoveAngle controller instead. The wheel speed PID,
+60% cap, slow decay and existing action timeout settings are unchanged.
+
+## NormalRun-aligned straight MotionDebug (2026-10-11)
+
+MOVE_BODY with nonzero forward distance and exactly zero left distance now
+calls Motor_MoveDistance directly, exactly as NormalRun's straight actions do.
+This includes the same stationary-start confirmation, distance feedback,
+acceleration, terminal slowdown, raw-IMU heading PID and braking controller.
+The user explicitly requested restoring the main program's heading correction.
+There is no separate no-heading branch or duplicate Debug heading controller.
+KEEP_HEADING retains its heading-hold meaning. The rear wheel can participate
+when the shared heading controller requests yaw correction; it is not locked
+at zero. Blocking a front wheel does not add cross-track correction from a
+virtual lateral displacement, but a real yaw change can still drive the rear wheel.
+
+Progress comes from the shared controller's signed M1/M2 cumulative-count
+differences after its stationary-start confirmation:
+forward_mm = (delta_M1 * sign_M1 - delta_M2 * sign_M2) * mm_per_count / sqrt(3).
+Multiply by commanded forward/backward sign to obtain completion progress.
+M3 counts and the estimated world pose cannot determine its distance completion.
+Wrong-way encoder travel is not treated as successful progress. Backward DONE
+reports negative progress, consistent with the running status.
+
+The speed=0 fallback is 500 mm/s for this straight diagnostic. Explicit wire
+speeds remain authoritative (including 300 mm/s). The slowdown profile and
+3 mm completion tolerance now match NormalRun's Motor_MoveDistance defaults.
+Finite debug action timeout, STOP and health checks are retained. MOVE_FIELD
+and MOVE_BODY with a lateral component use Motor_MoveAngle for vector ramps
+and the existing raw-IMU heading controller; Debug only handles distance
+projection and status, without an extra yaw or cross-track control loop.
+NormalRun's existing public interfaces retain their heading behavior. Gamepad, motor
+signs, encoder signs, wheel speed PID, 60% cap and slow decay are unchanged.
+
+## Shared NormalRun turn controller (2026-10-11)
+
+TURN_REL now calls Motor_TurnAngleSpeed and reports Motor_GetTurnTravelledDeg,
+instead of running an independent signed-field-yaw completion loop. The shared
+controller measures abs(current_raw_yaw - start_raw_yaw), so a different IMU
+feedback sign does not turn real rotation into zero progress. This matches
+NormalRun; it does NOT certify that the physical left/right direction is calibrated.
+
+Motor_Update executes slowdown in the last 30 degrees, completion within
+1 degree, and the existing 10 s action timeout. These stop the wheels even
+without Debug_Process polling. DONE/FAULT is latched and the same UART sequence
+cannot restart the action. A fresh sequence starts from a new yaw reference.
+Explicit speed is still converted from 0.1 degree/s to wheel tangent mm/s;
+speed=0 selects NormalRun's APP_MOTOR_TURN_FAST_MM_S (500 mm/s). Slowdown never
+increases a caller's already-low requested turn speed. Lost IMU readiness,
+STOP and terminal results still brake and release outputs through Motor_Stop.
+
+For the upper codex/gamepad-teleop branch based on 0c03b690, the small patch
+[upper-motion-debug-speed-500.patch](upper-motion-debug-speed-500.patch) changes
+only the map's shared speed-control default from 300 to 500 mm/s. It is not a
+replacement protocol patch and does not modify the actual upper checkout here.
+Alternatively select 500 mm/s in the existing UI. The same speed control is
+also used for turning; lower it before turn tests if appropriate. The upper
+process must be restarted after applying the default change. No T265 extrinsics,
+localization modes, UART framing or serial pairing are changed.
+
+Removing the extra Debug pose-feedback loop avoids stacking it onto the
+NormalRun heading controller; this does not prove physical M1/M2 mapping,
+motor polarity or encoder feedback signs.
+If a fixed straight command still rotates or travels backward, stop and verify
+those hardware mappings before increasing speed or attempting ground navigation.
 
 The existing AT8236 60 ms stop-brake sequence remains. Both inputs high is
 the brake command, not a 100% forward-drive exception. Normal PWM writes
@@ -128,15 +188,20 @@ distance. External wheel-fusion/navigation therefore needs the update too.
 
 The slow-decay firmware builds in `build/MotionDebug` with APP_AUTO_BACKUP=OFF;
 no commit, push or flash is performed by that verification build.
-Twelve production motor/debug-controller scenarios pass in `tools/test_mg310_motor.c`:
+Twenty-four production motor/debug-controller scenarios pass in `tools/test_mg310_motor.c`:
 encoder units; the hardware duty cap and brake distinction; physical mixer
 speed limit; normal/spin forward/reverse caps; low-speed/overspeed behavior;
 preserved original PID parameters; absence of stall/direction interlocks;
 slow-decay truth table/paired update guard; brake release and queued restart;
 idle-wheel command noise; zero-band hysteresis/reversal; forward/backward
-MotionDebug pose noise with real correction retained.
+field-mode pose noise with shared heading correction retained; straight motion
+through pose rotation; signed front-encoder distance/completion; blocked-front
+rear-wheel isolation; default/explicit speed; IMU turn completion; debug timeout/STOP;
+both turn/feedback signs with no same-sequence restart; timer-owned turn timeout;
+IMU failure and STOP cancellation; low-speed turn slowdown; matching NormalRun
+and Debug straight heading targets; bounded stationary-start confirmation.
 The 22 Python UART tests also pass. The earlier cargo-audit verification covered
-ten injury/audit recovery scenarios; those are not rerun for this PWM-only change.
+ten injury/audit recovery scenarios; those are not rerun for this debug-controller change.
 Upper C++ runtime and actual motor performance have not been tested on hardware.
 
 First lift the chassis and check each wheel at 50/100/150 mm/s, especially

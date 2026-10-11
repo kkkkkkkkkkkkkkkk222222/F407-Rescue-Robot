@@ -33,6 +33,7 @@ typedef struct {
   MotorDistanceStatus status;
   bool slowing;
   bool waiting_for_stop;
+  float travelled_mm;
   float target_mm;
   float max_speed_mm_s;
   float end_speed_mm_s;
@@ -54,6 +55,8 @@ typedef struct {
   int32_t target_mdeg;
   int64_t start_yaw_mdeg;
   uint32_t start_ms;
+  int64_t travelled_mdeg;
+  float speed_mm_s;
 } AngleTurn;
 
 typedef struct {
@@ -583,6 +586,7 @@ static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
   const float direction = (distance_move.target_mm >= 0.0f) ? 1.0f : -1.0f;
   const float target_mm = distance_move.target_mm * direction;
   const float travelled_mm = forward_mm * direction;
+  distance_move.travelled_mm = travelled_mm;
   const float remaining_mm = target_mm - travelled_mm;
 
   if (remaining_mm <= APP_GO_DISTANCE_TOLERANCE_MM) {
@@ -672,6 +676,7 @@ static void motor_update_angle_turn(void)
   const int64_t signed_yaw_mdeg = imu.yaw_mdeg - angle_turn.start_yaw_mdeg;
   const int64_t yaw_mdeg =
       (signed_yaw_mdeg < 0LL) ? -signed_yaw_mdeg : signed_yaw_mdeg;
+  angle_turn.travelled_mdeg = yaw_mdeg;
   const int64_t remaining_mdeg =
       (int64_t)angle_turn.target_mdeg - yaw_mdeg;
 
@@ -688,7 +693,7 @@ static void motor_update_angle_turn(void)
     for (uint32_t i = 0U; i < MOTOR_COUNT; ++i) {
       Pid_Reset(&speed_pids[i]);
     }
-    motor_set_rotate_speed(APP_MOTOR_TURN_SLOW_MM_S *
+    motor_set_rotate_speed(fminf(angle_turn.speed_mm_s, APP_MOTOR_TURN_SLOW_MM_S) *
                            (float)angle_turn.direction);
   }
 }
@@ -865,6 +870,7 @@ void Motor_Init(void)
   distance_move.status = MOTOR_DISTANCE_IDLE;
   distance_move.slowing = false;
   distance_move.waiting_for_stop = false;
+  distance_move.travelled_mm = 0.0f;
   distance_move.target_mm = 0.0f;
   distance_move.max_speed_mm_s = APP_GO_DISTANCE_SPEED_MM_S;
   distance_move.end_speed_mm_s = APP_GO_DISTANCE_MIN_SPEED_MM_S;
@@ -883,6 +889,8 @@ void Motor_Init(void)
   angle_turn.target_mdeg = 0;
   angle_turn.start_yaw_mdeg = 0LL;
   angle_turn.start_ms = 0U;
+  angle_turn.travelled_mdeg = 0LL;
+  angle_turn.speed_mm_s = 0.0f;
   motor_clear_direction_move();
   motor_clear_spin_move();
   Pid_Init(&heading_pid,
@@ -1060,8 +1068,8 @@ void Motor_SetSpeed(float target_speed, uint8_t id)
 static MotorDistanceStatus motor_move_distance(float distance_m,
                                                float max_speed_mm_s,
                                                float slowdown_mm,
-                                               float end_speed_mm_s,
-                                               bool limit_slowdown_to_half)
+                                                float end_speed_mm_s,
+                                                bool limit_slowdown_to_half)
 {
   const uint32_t primask = motor_enter_critical();
   if (distance_move.status != MOTOR_DISTANCE_IDLE) {
@@ -1117,6 +1125,8 @@ static MotorDistanceStatus motor_move_distance(float distance_m,
   }
 
   motor_stop_outputs(false);
+  distance_move.target_mm = distance_mm;
+  distance_move.travelled_mm = 0.0f;
   if ((distance_mm >= -APP_GO_DISTANCE_TOLERANCE_MM) &&
       (distance_mm <= APP_GO_DISTANCE_TOLERANCE_MM)) {
     distance_move.status = MOTOR_DISTANCE_DONE;
@@ -1127,7 +1137,6 @@ static MotorDistanceStatus motor_move_distance(float distance_m,
   EncoderStatus encoder[MOTOR_COUNT];
   Encoder_GetAll(encoder);
   const float absolute_distance = motor_abs_float(distance_mm);
-  distance_move.target_mm = distance_mm;
   distance_move.max_speed_mm_s = max_speed_mm_s;
   distance_move.end_speed_mm_s = end_speed_mm_s;
   distance_move.current_speed_mm_s = 0.0f;
@@ -1155,7 +1164,7 @@ static MotorDistanceStatus motor_move_distance(float distance_m,
 }
 
 MotorDistanceStatus Motor_MoveDistance(float distance_m,
-                                       float max_speed_mm_s)
+                                        float max_speed_mm_s)
 {
   const float end_speed_mm_s =
       (max_speed_mm_s < APP_GO_DISTANCE_MIN_SPEED_MM_S) ?
@@ -1164,6 +1173,15 @@ MotorDistanceStatus Motor_MoveDistance(float distance_m,
       max_speed_mm_s / APP_GO_DISTANCE_SPEED_MM_S;
   return motor_move_distance(distance_m, max_speed_mm_s, slowdown_mm,
                              end_speed_mm_s, true);
+}
+
+float Motor_GetDistanceTravelledMm(void)
+{
+  const uint32_t primask = motor_enter_critical();
+  const float progress = distance_move.status == MOTOR_DISTANCE_IDLE ?
+      0.0f : distance_move.travelled_mm;
+  motor_leave_critical(primask);
+  return progress;
 }
 
 MotorDistanceStatus Motor_MoveDistanceLinear(float distance_m,
@@ -1220,6 +1238,11 @@ MotorTurnStatus Motor_TurnAngleSpeed(float angle_deg, float speed_mm_s)
   const int32_t target_mdeg =
       (int32_t)(absolute_angle * 1000.0f + 0.5f);
   motor_stop_outputs(false);
+  angle_turn.target_mdeg = target_mdeg;
+  angle_turn.start_yaw_mdeg = imu.yaw_mdeg;
+  angle_turn.start_ms = HAL_GetTick();
+  angle_turn.travelled_mdeg = 0LL;
+  angle_turn.speed_mm_s = speed_mm_s;
   if (target_mdeg <= APP_MOTOR_TURN_TOLERANCE_MDEG) {
     angle_turn.status = MOTOR_TURN_DONE;
     motor_leave_critical(primask);
@@ -1229,13 +1252,19 @@ MotorTurnStatus Motor_TurnAngleSpeed(float angle_deg, float speed_mm_s)
   angle_turn.status = MOTOR_TURN_RUNNING;
   angle_turn.slowing = false;
   angle_turn.direction = (angle_deg >= 0.0f) ? 1 : -1;
-  angle_turn.target_mdeg = target_mdeg;
-  angle_turn.start_yaw_mdeg = imu.yaw_mdeg;
-  angle_turn.start_ms = HAL_GetTick();
   motor_set_rotate_speed(speed_mm_s *
                          (float)angle_turn.direction);
   motor_leave_critical(primask);
   return MOTOR_TURN_RUNNING;
+}
+
+float Motor_GetTurnTravelledDeg(void)
+{
+  const uint32_t primask = motor_enter_critical();
+  const float progress = angle_turn.status == MOTOR_TURN_IDLE ?
+      0.0f : (float)angle_turn.travelled_mdeg * 0.001f;
+  motor_leave_critical(primask);
+  return progress;
 }
 
 void Motor_Move(float forward_mm_s, float lateral_mm_s,
