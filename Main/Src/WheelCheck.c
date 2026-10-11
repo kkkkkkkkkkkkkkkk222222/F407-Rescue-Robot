@@ -9,6 +9,7 @@
 
 #include "Debug.h"
 #include "encoder.h"
+#include "imu.h"
 #include "main.h"
 #include "motor.h"
 
@@ -41,6 +42,8 @@ static volatile bool cancel_requested;
 static uint8_t next_id;
 static uint32_t sequence_start_ms;
 static uint32_t next_pulse_ms;
+static bool gyro_reference_valid;
+static int64_t previous_gyro_yaw_mdeg;
 
 static const int8_t encoder_signs[3] = {
   APP_OMNI_M1_ENCODER_SIGN,
@@ -149,6 +152,25 @@ static bool wheel_start_pulse(uint8_t id)
   return started;
 }
 
+static void wheel_report_gyro(void)
+{
+  const IMUData imu = IMU_GetData();
+  const int64_t delta = gyro_reference_valid ?
+      imu.yaw_mdeg - previous_gyro_yaw_mdeg : 0LL;
+  const bool delta_valid = imu.ready && gyro_reference_valid &&
+      (delta >= INT32_MIN) && (delta <= INT32_MAX);
+  char text[192];
+  (void)snprintf(text, sizeof(text),
+      "GYRO READY=%u SAMPLE=%lu YAW_MOD_MDEG=%ld DELTA_VALID=%u "
+      "DELTA_MDEG=%ld HEADING_SIGN=%d\r\n",
+      (unsigned int)imu.ready, (unsigned long)imu.sample_count,
+      (long)(imu.yaw_mdeg % 360000LL), (unsigned int)delta_valid,
+      delta_valid ? (long)delta : 0L, (int)APP_MOTOR_HEADING_OUTPUT_SIGN);
+  wheel_send(text);
+  previous_gyro_yaw_mdeg = imu.yaw_mdeg;
+  gyro_reference_valid = imu.ready;
+}
+
 static void wheel_execute(void)
 {
   if (strcmp(line, "STOP") == 0) {
@@ -157,8 +179,12 @@ static void wheel_execute(void)
     return;
   }
   if (strcmp(line, "STAT") == 0) {
-    wheel_send("MOTIONDEBUG: WHEELS / STOP / STAT\r\n"
+    wheel_send("MOTIONDEBUG: WHEELS / GYRO / STOP / STAT\r\n"
                "WHEELS: 1+ -> 2+ -> 3+, 25% 400ms EACH, 2s GAP\r\n");
+    return;
+  }
+  if (strcmp(line, "GYRO") == 0) {
+    wheel_report_gyro();
     return;
   }
   if (strcmp(line, "WHEELS") != 0) {
@@ -183,7 +209,7 @@ void WheelCheck_Init(void)
 {
   Motor_Stop();
   wheel_start_rx();
-  wheel_send("MOTIONDEBUG USART1 115200 8N1; WHEELS / STOP / STAT\r\n");
+  wheel_send("MOTIONDEBUG USART1 115200 8N1; WHEELS / GYRO / STOP / STAT\r\n");
 }
 
 void WheelCheck_Process(void)

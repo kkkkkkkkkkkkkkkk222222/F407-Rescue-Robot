@@ -37,3 +37,20 @@ Record the physical wheel that moved, the direction of its top tread relative
 to the gripper/front, whether the other wheels moved, and each result line.
 Positive individual wheel drive does not mean all three wheels propel the
 chassis forward; this test is only for port mapping and feedback polarity.
+
+## Heading Polarity
+
+`GYRO` is read-only; it does not start/stop motion or zero the IMU. It reports
+raw IMU yaw modulo one revolution and the unwrapped yaw change since the
+previous successful `GYRO` query, in millidegrees (1000 = one degree).
+The first query has `DELTA_VALID=0`; subsequent ready queries have valid deltas.
+
+After checking wheel feedback, put the chassis on a clear floor. Query `GYRO`,
+run the existing upper-computer positive 30-degree relative turn, then query
+`GYRO` again after the chassis stops. Do not reset odometry/IMU between queries.
+Record the actual chassis turn direction and both complete responses.
+
+Positive rotation adds positive speed to all three wheel targets. For the
+existing error formula (reference yaw minus current yaw), a positive measured
+yaw response requires heading output sign +1; a negative response requires -1.
+This check does not change that sign or any PID gain automatically.
