@@ -204,8 +204,9 @@
 #define APP_MOTOR_HEADING_KD              0.0f
 #define APP_MOTOR_HEADING_LIMIT_MM_S      150.0f
 #define APP_MOTOR_HEADING_INTEGRAL_LIMIT  1500.0f
-/* The installed chassis rotates opposite to the IMU positive Z direction. */
-#define APP_MOTOR_HEADING_OUTPUT_SIGN    -1.0f
+/* Measured: positive wheel yaw increases raw IMU yaw. With reference-current
+ * error, positive PID polarity is required for negative feedback. */
+#define APP_MOTOR_HEADING_OUTPUT_SIGN     1.0f
 
 /* Non-blocking vector ramp used by Motor_MoveAngle(). */
 #define APP_OMNI_ACCEL_MM_S2              2500.0f

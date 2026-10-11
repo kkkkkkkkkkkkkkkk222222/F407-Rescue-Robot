@@ -102,3 +102,18 @@ Positive rotation adds positive speed to all three wheel targets. For the
 existing error formula (reference yaw minus current yaw), a positive measured
 yaw response requires heading output sign +1; a negative response requires -1.
 This check does not change that sign or any PID gain automatically.
+
+The recorded positive-turn test produced +359563 mdeg. During the following
+200 mm MOVE, positive yaw grew while the third-wheel heading correction grew
+from 0 to +150 mm/s, ending at +165650 mdeg. This confirms that the previous
+heading output sign -1 was positive feedback on the installed chassis.
+The shared heading output sign is now +1; PID gains, PWM limits, the turn
+controller and the startup MoveSpin task are unchanged. This calibration
+also applies to NormalRun's shared distance/vector heading hold.
+
+After flashing, send `GYRO` and verify `HEADING_SIGN=1`. On a clear floor,
+run only `MOVE 200 150` first. Report the actual forward/backward direction,
+heading drift and full ACCEPT-to-FINAL log before increasing distance/speed.
+The previous MOVE also showed near-zero left-wheel feedback for negative
+targets initially; recheck reverse wheel response if drift remains after
+correcting the heading polarity. Do not change multiple parameters at once.
