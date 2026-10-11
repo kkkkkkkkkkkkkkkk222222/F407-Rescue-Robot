@@ -1,4 +1,4 @@
-# MotionDebug Three-Wheel Bench Check
+# MotionDebug Serial Tests
 
 This is a USART1 command inside the existing MotionDebug firmware.
 There is no separate application mode or build preset. NormalRun, Gamepad,
@@ -6,6 +6,54 @@ PID gains and motor calibration are unchanged.
 
 Build the existing MotionDebug preset and flash `build/MotionDebug/WWW.elf`.
 The check never starts automatically on boot.
+
+## Serial Motion Commands
+
+The programmer's USART1 console is available in MotionDebug at 115200 8N1.
+`VER` or `STAT` must report `MOTIONDEBUG SERIAL_V3`; the response also includes
+the firmware build date/time. These commands are not added to NormalRun.
+
+| Command | Meaning |
+| --- | --- |
+| `TURN 30 60` | Relative +30 degrees at 60 degrees/s requested speed |
+| `TURN -30 60` | Relative -30 degrees at 60 degrees/s |
+| `MOVE 200 150` | Body-forward 200 mm at 150 mm/s, with existing heading hold |
+| `MOVE -200 150` | Body-backward 200 mm at 150 mm/s |
+| `BODY 200 100 150` | Body forward/left displacement in mm, speed in mm/s |
+| `FIELD 200 100 150` | Field-frame x/y displacement in mm, speed in mm/s |
+| `STOP` | Immediate stop; abort a wheel sequence or motion from either input |
+| `HOLD` | Stop and report DONE using the existing hold semantics |
+| `RESET` | Reset the odometry reference while idle; not IMU zeroing |
+| `STAT` / `STATE` | State, source, fault, IMU/odometry readiness, motor feedback |
+| `GYRO` | Read-only raw IMU yaw and change since the previous query |
+| `MOTOR` | Wheel target/actual mm/s and actual signed drive PWM per mille |
+| `ENC` | Raw cumulative encoder low 32 bits and last 10 ms deltas |
+| `WHEELS` | The suspended-chassis sequence below |
+| `HELP` / `VER` | Command help and firmware feature/build identification |
+
+Angles and distances accept signed integers. Turn speed is degrees/s, not
+mm/s. If omitted, turn speed defaults to 30 degrees/s and translation speed
+to 150 mm/s. Explicit translation speeds must be 50..700 mm/s; the existing
+10 m displacement limit is retained. Turn angles are limited to +/-360 degrees.
+
+Motion commands are queued to the same Debug task and shared NormalRun motor
+controllers used by USART3, not executed in UART interrupts. A second motion
+while busy is rejected; STOP/HOLD can interrupt. During a serial action,
+new USART3 motion commands are consumed and ignored, but USART3 STOP wins.
+Commands received during the serial action are not replayed at completion.
+Normal USART3 operation resumes after the action finishes. Existing binary
+command/status formats are unchanged.
+
+Each accepted serial motion reports its sequence, QUEUED/RUNNING state, final
+DONE/STOPPED/FAULT, raw IMU yaw change since acceptance, and wheel feedback.
+Fault names distinguish invalid requests, IMU not ready, invalid odometry,
+timeout, and motor faults. Progress units follow existing MotionDebug status:
+tenths of a degree for TURN and millimeters for translation. Speed is requested;
+the existing end-of-turn slowdown and braking still apply.
+
+For the next physical heading check, put the chassis on a clear floor, send
+`TURN 30 60` once, and record the actual direction and complete output through
+the `FINAL` line. Do not run WHEELS on the floor during this measurement.
 
 ## Procedure
 

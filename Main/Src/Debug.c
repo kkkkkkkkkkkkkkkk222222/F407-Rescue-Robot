@@ -22,6 +22,16 @@ static volatile DebugStatus debug_status;
 static bool initialized;
 static bool active;
 static volatile bool wheel_check_active;
+static bool console_owner;
+static volatile bool console_pending;
+static uint8_t console_sequence;
+static struct {
+  uint8_t opcode;
+  uint8_t sequence;
+  int16_t arg1;
+  int16_t arg2;
+  uint16_t speed;
+} console_request;
 static bool command_sequence_valid;
 static uint8_t last_command_sequence;
 static uint8_t active_command;
@@ -155,7 +165,8 @@ static uint32_t debug_move_timeout(float distance_mm, float speed_mm_s)
   return (uint32_t)(timeout_ms + 0.5f);
 }
 
-static void debug_start_command(const VisionData *vision, uint32_t now_ms)
+static void debug_start_command(const VisionData *vision, uint32_t now_ms,
+                                DebugCommandSource source)
 {
   active = false;
   active_move_body_straight = false;
@@ -165,6 +176,7 @@ static void debug_start_command(const VisionData *vision, uint32_t now_ms)
   debug_status.progress = 0U;
   debug_status.remaining = 0U;
   debug_status.fault = DEBUG_MOTION_FAULT_NONE;
+  debug_status.source = source;
   active_command = vision->motion_opcode;
   active_start_ms = now_ms;
 
@@ -386,11 +398,15 @@ void Debug_Init(uint32_t now_ms)
   debug_status.remaining = 0U;
   debug_status.flags = 0U;
   debug_status.fault = DEBUG_MOTION_FAULT_NONE;
+  debug_status.source = DEBUG_SOURCE_NONE;
   debug_leave_critical(primask);
 
   initialized = true;
   active = false;
   wheel_check_active = false;
+  console_owner = false;
+  console_pending = false;
+  console_sequence = 0U;
   command_sequence_valid = false;
   last_command_sequence = 0U;
   active_command = VISION_MOTION_CMD_STOP;
@@ -419,26 +435,39 @@ void Debug_Process(uint32_t now_ms)
     Debug_Init(now_ms);
   }
 
-  const VisionData vision = Vision_GetSnapshot();
+  VisionData vision = Vision_GetSnapshot();
   if (vision.motion_valid &&
       (!command_sequence_valid ||
        (vision.motion_sequence != last_command_sequence))) {
     command_sequence_valid = true;
     last_command_sequence = vision.motion_sequence;
-    if (wheel_check_active) {
+    if (vision.motion_opcode == VISION_MOTION_CMD_STOP) {
+      console_pending = false;
+      console_owner = false;
 #if APP_ENABLE_MOTION_DEBUG_TASK
-      if (vision.motion_opcode == VISION_MOTION_CMD_STOP) {
+      if (wheel_check_active) {
         WheelCheck_Stop();
       }
 #endif
-    } else {
-      debug_start_command(&vision, now_ms);
+      debug_start_command(&vision, now_ms, DEBUG_SOURCE_UPPER);
+    } else if (!wheel_check_active && !console_owner && !console_pending) {
+      debug_start_command(&vision, now_ms, DEBUG_SOURCE_UPPER);
     }
   }
 
   if (wheel_check_active) {
     debug_publish_status(now_ms, false);
     return;
+  }
+
+  if (console_pending) {
+    vision.motion_opcode = console_request.opcode;
+    vision.motion_sequence = console_request.sequence;
+    vision.motion_arg1 = console_request.arg1;
+    vision.motion_arg2 = console_request.arg2;
+    vision.motion_speed = console_request.speed;
+    console_pending = false;
+    debug_start_command(&vision, now_ms, DEBUG_SOURCE_CONSOLE);
   }
 
   if (active) {
@@ -454,13 +483,24 @@ void Debug_Process(uint32_t now_ms)
     }
   }
 
+  if (!active && !console_pending && console_owner) {
+    const uint32_t primask = debug_enter_critical();
+    const VisionData latest = Vision_GetSnapshot();
+    if (latest.motion_valid) {
+      command_sequence_valid = true;
+      last_command_sequence = latest.motion_sequence;
+    }
+    console_owner = false;
+    debug_leave_critical(primask);
+  }
   debug_publish_status(now_ms, false);
 }
 
 DebugStatus Debug_GetStatus(void)
 {
   const uint32_t primask = debug_enter_critical();
-  const DebugStatus status = debug_status;
+  DebugStatus status = debug_status;
+  status.console_pending = console_pending;
   debug_leave_critical(primask);
   return status;
 }
@@ -474,12 +514,87 @@ void Debug_SetWheelCheckActive(bool enabled)
     last_command_sequence = vision.motion_sequence;
   }
   active = false;
+  console_pending = false;
+  console_owner = false;
   active_move_body_straight = false;
   Motor_Stop();
   debug_status.state = DEBUG_MOTION_STOPPED;
   debug_status.fault = DEBUG_MOTION_FAULT_NONE;
   debug_status.progress = 0;
   debug_status.remaining = 0U;
+  if (enabled) {
+    debug_status.source = DEBUG_SOURCE_WHEELS;
+  }
   wheel_check_active = enabled;
   debug_leave_critical(primask);
+}
+
+DebugConsoleResult Debug_SubmitConsoleCommand(uint8_t opcode, int16_t arg1,
+    int16_t arg2, uint16_t speed, uint8_t *sequence)
+{
+  const int64_t distance_sq = (int64_t)arg1 * arg1 + (int64_t)arg2 * arg2;
+  bool valid = false;
+  if ((opcode == VISION_MOTION_CMD_STOP) || (opcode == VISION_MOTION_CMD_HOLD) ||
+      (opcode == VISION_MOTION_CMD_RESET_ODOM)) {
+    valid = (arg1 == 0) && (arg2 == 0) && (speed == 0U);
+  } else if (opcode == VISION_MOTION_CMD_TURN_REL) {
+    valid = (arg1 != 0) && (arg1 >= -3600) && (arg1 <= 3600) && (arg2 == 0) &&
+            (speed <= APP_MOTION_DEBUG_MAX_TURN_RATE_DDEG_S);
+  } else if ((opcode == VISION_MOTION_CMD_MOVE_BODY) ||
+             (opcode == VISION_MOTION_CMD_MOVE_FIELD)) {
+    valid = (distance_sq > 0LL) &&
+        (distance_sq <= (int64_t)APP_MOTION_DEBUG_MAX_DISTANCE_MM *
+                            APP_MOTION_DEBUG_MAX_DISTANCE_MM) &&
+        ((speed == 0U) || ((speed >= APP_MOTION_DEBUG_MIN_SPEED_MM_S) &&
+                          (speed <= APP_MOTION_DEBUG_MAX_SPEED_MM_S)));
+  }
+  if (!valid) {
+    return DEBUG_CONSOLE_INVALID;
+  }
+  const uint32_t primask = debug_enter_critical();
+  const bool stopping = (opcode == VISION_MOTION_CMD_STOP) ||
+                        (opcode == VISION_MOTION_CMD_HOLD);
+  if (!stopping &&
+      (wheel_check_active || active || console_pending)) {
+    debug_leave_critical(primask);
+    return DEBUG_CONSOLE_BUSY;
+  }
+  const VisionData latest = Vision_GetSnapshot();
+  if (latest.motion_valid) {
+    command_sequence_valid = true;
+    last_command_sequence = latest.motion_sequence;
+  }
+  ++console_sequence;
+  if (sequence != NULL) {
+    *sequence = console_sequence;
+  }
+  console_request.opcode = opcode;
+  console_request.sequence = console_sequence;
+  console_request.arg1 = arg1;
+  console_request.arg2 = arg2;
+  console_request.speed = speed;
+  console_owner = true;
+  console_pending = true;
+  debug_status.source = DEBUG_SOURCE_CONSOLE;
+  debug_status.command = opcode;
+  debug_status.command_sequence = console_sequence;
+  debug_status.progress = 0;
+  debug_status.remaining = 0U;
+  debug_status.fault = DEBUG_MOTION_FAULT_NONE;
+  debug_status.state = DEBUG_MOTION_IDLE;
+  if (stopping) {
+#if APP_ENABLE_MOTION_DEBUG_TASK
+    if (wheel_check_active) {
+      WheelCheck_Stop();
+    }
+#endif
+    active = false;
+    Motor_Stop();
+    console_pending = false;
+    console_owner = false;
+    debug_status.state = (opcode == VISION_MOTION_CMD_STOP) ?
+        DEBUG_MOTION_STOPPED : DEBUG_MOTION_DONE;
+  }
+  debug_leave_critical(primask);
+  return DEBUG_CONSOLE_ACCEPTED;
 }
