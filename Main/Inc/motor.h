@@ -63,4 +63,10 @@ void Motor_Stop(void);
 void Motor_Update(void);
 MotorStatus Motor_GetStatus(uint8_t id);
 
+#if defined(APP_ENABLE_WHEEL_CHECK) && APP_ENABLE_WHEEL_CHECK
+/* Logical wheel polarity, open loop; bounded by the 10 ms motor scheduler. */
+bool Motor_WheelCheckPulse(uint8_t id, int16_t pwm, uint16_t duration_ms);
+bool Motor_WheelCheckRunning(void);
+#endif
+
 #endif

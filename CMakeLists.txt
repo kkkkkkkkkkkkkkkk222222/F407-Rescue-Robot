@@ -62,6 +62,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Main/Src/Uart.c
     Main/Src/servo.c
     Main/Src/vision.c
+    Main/Src/WheelCheck.c
 )
 
 # Add include paths
@@ -77,6 +78,11 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
 set(APP_ACTIVE_MODE_OVERRIDE "" CACHE STRING "Firmware mode override")
 if(NOT APP_ACTIVE_MODE_OVERRIDE STREQUAL "")
     target_compile_definitions(WWW PRIVATE APP_ACTIVE_MODE=${APP_ACTIVE_MODE_OVERRIDE})
+endif()
+
+option(APP_ENABLE_WHEEL_CHECK "Isolated USART1 single-wheel direction check" OFF)
+if(APP_ENABLE_WHEEL_CHECK)
+    target_compile_definitions(WWW PRIVATE APP_ENABLE_WHEEL_CHECK=1)
 endif()
 
 # Remove wrong libob.a library dependency when using cpp files

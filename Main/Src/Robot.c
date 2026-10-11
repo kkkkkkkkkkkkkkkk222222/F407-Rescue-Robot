@@ -18,6 +18,7 @@
 #include "Task.h"
 #include "Uart.h"
 #include "vision.h"
+#include "WheelCheck.h"
 
 extern TIM_HandleTypeDef htim6;
 
@@ -377,7 +378,7 @@ void Robot_Init(void)
   HAL_NVIC_EnableIRQ(TIM6_DAC_IRQn);
   HAL_NVIC_SetPriority(USART3_IRQn, 7U, 0U);
   HAL_NVIC_EnableIRQ(USART3_IRQn);
-#if APP_ENABLE_RUNTIME_SERVO_DEBUG
+#if APP_ENABLE_RUNTIME_SERVO_DEBUG || APP_ENABLE_WHEEL_CHECK
   HAL_NVIC_SetPriority(USART1_IRQn, 7U, 0U);
   HAL_NVIC_EnableIRQ(USART1_IRQn);
 #endif
@@ -429,6 +430,9 @@ void Robot_Init(void)
 #if APP_ENABLE_RUNTIME_SERVO_DEBUG
   DebugConsole_Init();
 #endif
+#if APP_ENABLE_WHEEL_CHECK
+  WheelCheck_Init();
+#endif
 
   lcd_ready = LCD_Init();
   if (lcd_ready) {
@@ -460,6 +464,9 @@ void Robot_Init(void)
 
 void Robot_Process(void)
 {
+#if APP_ENABLE_WHEEL_CHECK
+  WheelCheck_Process();
+#endif
 #if APP_ENABLE_RUNTIME_SERVO_DEBUG
   DebugConsole_Process();
 #endif
@@ -533,6 +540,9 @@ void Robot_RunDeferredTask(void)
       Task_Process(now_ms);
 #elif APP_ENABLE_CENTERING_TASK
       CenteringTask_Process(now_ms);
+#elif APP_ENABLE_WHEEL_CHECK
+      /* Isolated bench firmware: USART3 motion commands cannot start motors. */
+      (void)now_ms;
 #elif APP_ENABLE_GAMEPAD_TASK
       Gamepad_Process(now_ms);
 #else

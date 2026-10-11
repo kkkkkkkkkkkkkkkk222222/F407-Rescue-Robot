@@ -106,6 +106,12 @@ static volatile AngleTurn angle_turn;
 static volatile DirectionMove direction_move;
 static volatile SpinMove spin_move;
 static uint8_t brake_cycles_remaining;
+#if APP_ENABLE_WHEEL_CHECK
+static volatile uint8_t wheel_check_id;
+static int16_t wheel_check_pwm;
+static uint32_t wheel_check_start_ms;
+static uint16_t wheel_check_duration_ms;
+#endif
 
 static const int8_t motor_signs[MOTOR_COUNT] = {
   APP_OMNI_M1_MOTOR_SIGN,
@@ -473,6 +479,9 @@ static void motor_clear_spin_move(void)
 
 static void motor_stop_outputs(bool use_brake)
 {
+#if APP_ENABLE_WHEEL_CHECK
+  wheel_check_id = 0U;
+#endif
   bool was_moving = false;
 
   for (uint32_t i = 0U; i < MOTOR_COUNT; ++i) {
@@ -838,6 +847,9 @@ static void motor_update_direction_move(void)
 
 void Motor_Init(void)
 {
+#if APP_ENABLE_WHEEL_CHECK
+  wheel_check_id = 0U;
+#endif
   brake_cycles_remaining = 0U;
   for (uint32_t i = 0U; i < MOTOR_COUNT; ++i) {
     motor_write_pwm_pair(&motors[i], 0U, 0U);
@@ -933,9 +945,26 @@ void Motor_Update(void)
         motor_round_to_int16(motor_counts_to_mm_s((float)measured_counts[index]));
   }
 
-  motor_update_distance_move(encoder);
-  motor_update_angle_turn();
-  motor_update_direction_move();
+#if APP_ENABLE_WHEEL_CHECK
+  /* No PID, mixer or heading correction may drive a wheel in this build.
+   * Expiry stays in TIM6 even if the console or main loop is delayed. */
+  if (wheel_check_id != 0U) {
+    if ((uint32_t)(HAL_GetTick() - wheel_check_start_ms) >=
+        wheel_check_duration_ms) {
+      Motor_Stop();
+    } else {
+      for (uint8_t id = 1U; id <= MOTOR_COUNT; ++id) {
+        motor_apply_pwm(id, (id == wheel_check_id) ? wheel_check_pwm : 0);
+      }
+      return;
+    }
+  }
+#endif
+  if (!APP_ENABLE_WHEEL_CHECK) {
+    motor_update_distance_move(encoder);
+    motor_update_angle_turn();
+    motor_update_direction_move();
+  }
 
   if (brake_cycles_remaining > 0U) {
     for (uint8_t id = 1U; id <= MOTOR_COUNT; ++id) {
@@ -949,6 +978,13 @@ void Motor_Update(void)
     }
     return;
   }
+
+#if APP_ENABLE_WHEEL_CHECK
+  for (uint8_t id = 1U; id <= MOTOR_COUNT; ++id) {
+    motor_apply_pwm(id, 0);
+  }
+  return;
+#endif
 
   if (motor_has_fault()) {
     motor_abort_all(MOTOR_DISTANCE_FAULT);
@@ -1038,6 +1074,38 @@ void Motor_Update(void)
     motor_abort_all(MOTOR_DISTANCE_FAULT);
   }
 }
+
+#if APP_ENABLE_WHEEL_CHECK
+bool Motor_WheelCheckPulse(uint8_t id, int16_t pwm, uint16_t duration_ms)
+{
+  if ((id < 1U) || (id > MOTOR_COUNT) || (pwm == 0) ||
+      (pwm < -250) || (pwm > 250) ||
+      (duration_ms == 0U) || (duration_ms > 400U)) {
+    return false;
+  }
+  const uint32_t primask = motor_enter_critical();
+  if ((wheel_check_id != 0U) || (brake_cycles_remaining != 0U)) {
+    motor_leave_critical(primask);
+    return false;
+  }
+  Motor_Stop();
+  if (brake_cycles_remaining != 0U) {
+    motor_leave_critical(primask);
+    return false;
+  }
+  wheel_check_pwm = (int16_t)(pwm * motor_signs[id - 1U]);
+  wheel_check_start_ms = HAL_GetTick();
+  wheel_check_duration_ms = duration_ms;
+  wheel_check_id = id;
+  motor_leave_critical(primask);
+  return true;
+}
+
+bool Motor_WheelCheckRunning(void)
+{
+  return wheel_check_id != 0U;
+}
+#endif
 
 void Motor_SetSpeed(float target_speed, uint8_t id)
 {
