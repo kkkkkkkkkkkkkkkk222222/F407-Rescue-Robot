@@ -265,6 +265,17 @@ static void motor_set_target_counts(uint8_t id, float target_counts)
     limited_counts = -(float)APP_MOTOR_MAX_COUNT_10MS;
   }
 
+  const uint32_t index = id - 1U;
+  const bool reversing = ((targets[index] > 0) && (limited_counts < 0.0f)) ||
+                         ((targets[index] < 0) && (limited_counts > 0.0f));
+  /* Keep tiny corrections from repeatedly applying static friction PWM.
+   * Starting or reversing must leave the wider zero band first. */
+  const float zero_limit_mm_s = ((targets[index] == 0) || reversing) ?
+      APP_MOTOR_ZERO_EXIT_MM_S : APP_MOTOR_ZERO_ENTER_MM_S;
+  if (motor_abs_float(motor_counts_to_mm_s(limited_counts)) <= zero_limit_mm_s) {
+    limited_counts = 0.0f;
+  }
+
   normalized = (int32_t)(limited_counts * (float)MOTOR_MAX_SPEED /
                          (float)APP_MOTOR_MAX_COUNT_10MS +
                          ((limited_counts >= 0.0f) ? 0.5f : -0.5f));
@@ -360,6 +371,22 @@ static void motor_set_omni_speed(float forward_mm_s, float lateral_mm_s,
   }
 }
 
+static void motor_write_pwm_pair(const MotorPwm *motor,
+                                uint32_t in1, uint32_t in2)
+{
+  const uint32_t primask = motor_enter_critical();
+  /* Each pair shares one timer with CCR preload enabled by HAL PWM setup.
+   * Block shadow transfers until both channels contain the new waveform. */
+  const uint32_t update_disabled = motor->in1_timer->Instance->CR1 & TIM_CR1_UDIS;
+  motor->in1_timer->Instance->CR1 |= TIM_CR1_UDIS;
+  __HAL_TIM_SET_COMPARE(motor->in1_timer, motor->in1_channel, in1);
+  __HAL_TIM_SET_COMPARE(motor->in2_timer, motor->in2_channel, in2);
+  if (update_disabled == 0U) {
+    motor->in1_timer->Instance->CR1 &= ~TIM_CR1_UDIS;
+  }
+  motor_leave_critical(primask);
+}
+
 static void motor_apply_pwm(uint8_t id, int16_t speed)
 {
   if ((id < 1U) || (id > MOTOR_COUNT)) {
@@ -373,10 +400,20 @@ static void motor_apply_pwm(uint8_t id, int16_t speed)
   }
 
   const MotorPwm *motor = &motors[id - 1U];
-  const uint32_t in1 = (speed > 0) ? speed_to_compare(motor->in1_timer, speed) : 0U;
-  const uint32_t in2 = (speed < 0) ? speed_to_compare(motor->in2_timer, speed) : 0U;
-  __HAL_TIM_SET_COMPARE(motor->in1_timer, motor->in1_channel, in1);
-  __HAL_TIM_SET_COMPARE(motor->in2_timer, motor->in2_channel, in2);
+  uint32_t in1 = 0U;
+  uint32_t in2 = 0U;
+  /* AT8236 slow decay: drive during 10/01, recirculate during 11.
+   * The complemented channel's LOW fraction is the capped drive duty. */
+  if (speed > 0) {
+    in1 = speed_to_compare(motor->in1_timer, MOTOR_MAX_SPEED);
+    in2 = speed_to_compare(motor->in2_timer, MOTOR_MAX_SPEED) -
+          speed_to_compare(motor->in2_timer, speed);
+  } else if (speed < 0) {
+    in1 = speed_to_compare(motor->in1_timer, MOTOR_MAX_SPEED) -
+          speed_to_compare(motor->in1_timer, speed);
+    in2 = speed_to_compare(motor->in2_timer, MOTOR_MAX_SPEED);
+  }
+  motor_write_pwm_pair(motor, in1, in2);
   commands[id - 1U] = speed;
 }
 
@@ -388,8 +425,7 @@ static void motor_apply_brake(uint8_t id)
   const MotorPwm *motor = &motors[id - 1U];
   const uint32_t in1 = speed_to_compare(motor->in1_timer, MOTOR_MAX_SPEED);
   const uint32_t in2 = speed_to_compare(motor->in2_timer, MOTOR_MAX_SPEED);
-  __HAL_TIM_SET_COMPARE(motor->in1_timer, motor->in1_channel, in1);
-  __HAL_TIM_SET_COMPARE(motor->in2_timer, motor->in2_channel, in2);
+  motor_write_pwm_pair(motor, in1, in2);
   commands[id - 1U] = 0;
 }
 
@@ -799,8 +835,7 @@ void Motor_Init(void)
 {
   brake_cycles_remaining = 0U;
   for (uint32_t i = 0U; i < MOTOR_COUNT; ++i) {
-    __HAL_TIM_SET_COMPARE(motors[i].in1_timer, motors[i].in1_channel, 0U);
-    __HAL_TIM_SET_COMPARE(motors[i].in2_timer, motors[i].in2_channel, 0U);
+    motor_write_pwm_pair(&motors[i], 0U, 0U);
     if (HAL_TIM_PWM_Start(motors[i].in1_timer, motors[i].in1_channel) != HAL_OK) {
       Error_Handler();
     }

@@ -71,6 +71,17 @@ static float debug_wrap_error(float angle_deg)
   return angle_deg;
 }
 
+static float debug_remove_deadband(float value, float tolerance)
+{
+  if (value > tolerance) {
+    return value - tolerance;
+  }
+  if (value < -tolerance) {
+    return value + tolerance;
+  }
+  return 0.0f;
+}
+
 static uint16_t debug_saturate_u16(float value)
 {
   if (!(value > 0.0f)) {
@@ -353,7 +364,9 @@ static void debug_update_move(uint32_t now_ms)
         (active_move_speed_mm_s - minimum_speed) * ratio;
   }
 
-  float correction_mm_s = -APP_MOTION_DEBUG_CROSS_TRACK_KP * cross_track_mm;
+  float correction_mm_s = -APP_MOTION_DEBUG_CROSS_TRACK_KP *
+      debug_remove_deadband(cross_track_mm,
+                            APP_MOTION_DEBUG_CROSS_TRACK_DEADBAND_MM);
   if (correction_mm_s > APP_MOTION_DEBUG_CROSS_TRACK_LIMIT_MM_S) {
     correction_mm_s = APP_MOTION_DEBUG_CROSS_TRACK_LIMIT_MM_S;
   } else if (correction_mm_s < -APP_MOTION_DEBUG_CROSS_TRACK_LIMIT_MM_S) {
@@ -368,9 +381,10 @@ static void debug_update_move(uint32_t now_ms)
                                   heading_sine * field_y_mm_s;
   const float physical_left_mm_s = -heading_sine * field_x_mm_s +
                                    heading_cosine * field_y_mm_s;
-  float yaw_mm_s = debug_wrap_error(
-      active_move_heading_deg - (float)pose.heading_mdeg * 0.001f) *
-      APP_MOTOR_HEADING_KP;
+  const float heading_error_deg = debug_wrap_error(
+      active_move_heading_deg - (float)pose.heading_mdeg * 0.001f);
+  float yaw_mm_s = debug_remove_deadband(heading_error_deg,
+      APP_MOTION_DEBUG_HEADING_DEADBAND_DEG) * APP_MOTOR_HEADING_KP;
   if (yaw_mm_s > APP_MOTOR_HEADING_LIMIT_MM_S) {
     yaw_mm_s = APP_MOTOR_HEADING_LIMIT_MM_S;
   } else if (yaw_mm_s < -APP_MOTOR_HEADING_LIMIT_MM_S) {
