@@ -22,7 +22,9 @@
 `APP_MOTOR_GEAR_RATIO=20.409f`, Hall lines=13 and quadrature=4 now yield a
 fractional average `1061.268 counts/wheel-rev`. No integer truncation to 20:1.
 The same constants drive motor speed, encoder distance and Location odometry.
-Encoder timer TI12 x4 mode, wheel diameter, channel wiring and sign conventions are unchanged.
+Encoder timer TI12 x4 mode, wheel diameter, channel wiring and per-wheel drive/
+encoder polarity are unchanged. Later measured forward-axis and heading-hold
+calibrations are documented in the Scheme A section below.
 
 The drive command scale remains +/-1000, but the final hardware mapping clamps
 positive/negative propulsion to +/-600 (60% actual drive time). This covers
@@ -102,7 +104,8 @@ virtual lateral displacement, but a real yaw change can still drive the rear whe
 
 Progress comes from the shared controller's signed M1/M2 cumulative-count
 differences after its stationary-start confirmation:
-forward_mm = (delta_M1 * sign_M1 - delta_M2 * sign_M2) * mm_per_count / sqrt(3).
+forward_mm = APP_OMNI_FORWARD_SIGN *
+             (delta_M1 * sign_M1 - delta_M2 * sign_M2) * mm_per_count / sqrt(3).
 Multiply by commanded forward/backward sign to obtain completion progress.
 M3 counts and the estimated world pose cannot determine its distance completion.
 Wrong-way encoder travel is not treated as successful progress. Backward DONE
@@ -115,8 +118,9 @@ Finite debug action timeout, STOP and health checks are retained. MOVE_FIELD
 and MOVE_BODY with a lateral component use Motor_MoveAngle for vector ramps
 and the existing raw-IMU heading controller; Debug only handles distance
 projection and status, without an extra yaw or cross-track control loop.
-NormalRun's existing public interfaces retain their heading behavior. Gamepad, motor
-signs, encoder signs, wheel speed PID, 60% cap and slow decay are unchanged.
+NormalRun's public motion APIs are shared, including the later Scheme A forward/
+heading calibration. Per-wheel motor/encoder signs, speed PID, 60% cap and slow
+decay remain unchanged by the Debug controller alignment.
 
 ## Shared NormalRun turn controller (2026-10-11)
 
@@ -184,7 +188,92 @@ Do not change UART raw encoder frames; TYPE 0x15 remains unchanged.
 Using the old 1768 scale would report only about 60.0% of the actual wheel
 distance. External wheel-fusion/navigation therefore needs the update too.
 
-## Verification and first run
+## Scheme A and comparison with the MG370 firmware
+
+Baseline: `d3913f4f1c80f0c06f3672831d4dac722ed62847`, the parent of the
+first MG310 adaptation commit `76f69b1`. This is the last pre-MG310 source
+snapshot, not a claim that every historical Debug path was physically verified.
+
+The user selected Scheme A. The existing values already implement it:
+
+```c
+APP_OMNI_M1_MOTOR_SIGN = APP_OMNI_M2_MOTOR_SIGN = APP_OMNI_M3_MOTOR_SIGN = 1;
+APP_OMNI_M1_ENCODER_SIGN = APP_OMNI_M2_ENCODER_SIGN = APP_OMNI_M3_ENCODER_SIGN = -1;
+APP_OMNI_FORWARD_SIGN = -1;
+APP_MOTOR_HEADING_OUTPUT_SIGN = 1.0f;
+```
+
+These are parameter values, not assignment statements to paste over macros.
+No Scheme B per-wheel polarity reversal was applied. The current update labels
+this selection explicitly; it does not flip the already-corrected values again.
+
+| Item | Pre-MG310 / MG370 baseline | Current MG310, Scheme A |
+| --- | --- | --- |
+| Wheel diameter | 70 mm | 70 mm, unchanged |
+| Configured gear ratio | 34 | 20.409 |
+| Hall lines and decoding | 13, x4 | 13, x4, unchanged |
+| Counts per output revolution | 1768 | 1061.268 |
+| Per-wheel drive signs | +1, +1, +1 | +1, +1, +1, unchanged |
+| Per-wheel encoder signs | -1, -1, -1 | -1, -1, -1, unchanged |
+| API forward to wheel X axis | Implicit +1 | Explicit -1 |
+| Heading-hold output sign | -1 | +1, based on measured yaw response |
+| Location IMU yaw sign | -1 | -1, unchanged |
+| Ordinary speed PID | 6 / 0.15 / 0, every 10 ms | Unchanged |
+| Heading PID | 4 / 0.02 / 0 | Unchanged gains; output polarity corrected |
+| Ordinary feed-forward | Fixed signed 450/1000 base term | 100/1000 static term plus voltage-scaled RPM term |
+| MoveSpin feed-forward | 220..900/1000, target-proportional | 80/1000 static term plus voltage-scaled RPM term |
+| Propulsion limits | Ordinary 900/1000; MoveSpin 1000/1000 | Both 600/1000, including final hardware clamp |
+| PWM decay | Drive/coast fast decay | Drive/brake slow decay |
+| PWM timers, frequency and pins | Existing 20 kHz configuration | Unchanged |
+| Wheel target zero hysteresis | None | Enter zero at <=3 mm/s; start/reverse only above 6 mm/s |
+| Wheel target count limit | Fixed 60 counts/10 ms | 53.0634 counts/10 ms, corresponding to 300 wheel RPM |
+| Local fault interlocks | Disabled in NormalRun, enabled in Debug/Gamepad | Disabled in all modes, per user request |
+| Debug straight control | Separate pose-projected motion and correction | Shared Motor_MoveDistance, encoder progress and raw-IMU heading hold |
+| Debug angle control | Separate completion loop using Motor_Move | Shared Motor_TurnAngleSpeed and timer-owned completion |
+| MotionDebug USART1 | No motion console | Text motion commands, state/yaw/motor/encoder feedback and WHEELS |
+
+The base PWM entries are feed-forward terms, not guaranteed minimum outputs:
+PID can reduce output, and zero targets coast. Duty values across fast/slow
+decay are not directly equivalent torque or winding-voltage settings.
+The first MG310 commit still used fast decay and a 55% cap; `bd6b451` later
+introduced slow decay, the 60% cap and near-zero hysteresis.
+
+`pid.c`, `encoder.c`, `Core/Src/main.c` and the MCU MSP pin configuration have
+no differences between the baseline and this comparison. The PWM timer and
+encoder decoding changes are therefore not the source of the new direction
+definitions. Raw encoder counts retain their meaning; coordinate signs are
+applied above the raw encoder layer.
+
+The forward sign is applied in three matched places: wheel mixing, encoder
+distance progress and Location forward odometry. It affects Debug, NormalRun
+and Gamepad translations. Pure yaw and lateral polarity were not reversed.
+The heading sign affects Motor_MoveDistance and Motor_MoveAngle heading hold;
+it does not automatically calibrate Task's independent nav_yaw, startup
+MoveSpin yaw, visual steering or the upper computer's coordinate convention.
+T265 extrinsics, location mode selection and binary UART framing/pairing were
+not modified by this Scheme A selection.
+
+Keeping the same speed-PID numbers does not imply an identical physical loop:
+the PID error is in encoder counts per 10 ms, and 1061.268/1768 is about 0.6003.
+Motor mechanics, feed-forward and PWM decay also changed. No gain rescaling
+is applied here. The observed delayed startup at roughly 20% output, followed
+by motion around 30% on that run, is a separate compensation/load calibration
+issue; do not restore the old 45% term or change PID just from this table.
+
+Current verification is firmware compilation plus the user's incremental
+physical measurements. The user observed restored heading correction after
+the heading-sign change (200 mm request: peak +8.844 degrees, final -1.027
+degrees), but physical backward travel. The forward-axis fix is selected and
+compiled; physical gripper-forward direction still requires the next test.
+Flash MotionDebug, query STAT for FORWARD_SIGN=-1 and HEADING_SIGN=1, then run
+only `MOVE 200 150` on a clear floor and report direction, distance and log.
+Do not run the full NormalRun task before basic axis checks are complete.
+
+## Historical verification and first run (before Scheme A)
+
+The automated results and commands below are retained from earlier work.
+They were not rerun for Scheme A and are not current physical validation.
+No additional self-test programs are introduced for this selection.
 
 The slow-decay firmware builds in `build/MotionDebug` with APP_AUTO_BACKUP=OFF;
 no commit, push or flash is performed by that verification build.

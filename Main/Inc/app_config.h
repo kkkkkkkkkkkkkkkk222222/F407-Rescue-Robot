@@ -169,6 +169,8 @@
  * stationary; backward reverses M1/M2 while M3 remains stationary.
  * Change signs after checking the real installation.
  */
+/* Scheme A: retain per-wheel drive/feedback polarity. Calibrate the forward
+ * axis and raw-IMU heading hold separately; do not apply Scheme B sign flips. */
 #define APP_OMNI_M1_MOTOR_SIGN           1
 #define APP_OMNI_M2_MOTOR_SIGN           1
 #define APP_OMNI_M3_MOTOR_SIGN           1
