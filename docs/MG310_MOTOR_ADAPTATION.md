@@ -1,5 +1,19 @@
 # MG310 Hall motor adaptation (2026-10-09)
 
+## Current shared wheel-speed tuning (2026-10-12)
+
+At the user's request, the shared 10 ms wheel-speed PI gains are reduced from
+Kp=6, Ki=0.15 to Kp=5, Ki=0.12; Kd remains 0. MotionDebug, NormalRun and Gamepad
+all initialize their three wheel controllers from these same constants.
+This is a modest physical-test trial, not a validated final tune: proportional
+response is about 17% lower and integral accumulation is 20% lower for the
+same encoder-count error. Low-speed startup and load recovery may be slower.
+
+Feed-forward, 60% PWM cap, slow decay, encoder scale, direction signs, speed
+limits and PID/integral limits are unchanged. Heading hold remains 2/0.005/0;
+visual chassis steering remains 0.45/0.01. No extra self-test is added or run.
+Earlier sections describing the original 6/0.15/0 gains are historical.
+
 ## Confirmed hardware and sources
 
 - User confirmed: MG310 Hall encoder, unchanged 70 mm omni wheels, regulated 12 V supply.

@@ -192,8 +192,8 @@
    APP_MOTOR_CONTROL_PERIOD_MS / 1000.0f)
 /* Static friction compensation, not a fixed PWM floor at every speed. */
 #define APP_MOTOR_BASE_PWM               100
-#define APP_MOTOR_SPEED_KP               6.0f
-#define APP_MOTOR_SPEED_KI               0.15f
+#define APP_MOTOR_SPEED_KP               5.0f
+#define APP_MOTOR_SPEED_KI               0.12f
 #define APP_MOTOR_SPEED_KD               0.0f
 #define APP_MOTOR_PID_LIMIT              450.0f
 #define APP_MOTOR_INTEGRAL_LIMIT         2500.0f
@@ -207,7 +207,7 @@
 #define APP_MOTOR_BRAKE_CYCLES           6U
 
 /* IMU heading hold shared by Motor_MoveAngle() and Motor_MoveDistance(). */
-/* Soft trial for MOVE left/right hunting; wheel-speed gains stay unchanged. */
+/* Heading-hold trial is separate from the shared wheel-speed PI tuning. */
 #define APP_MOTOR_HEADING_KP              2.0f
 #define APP_MOTOR_HEADING_KI              0.005f
 #define APP_MOTOR_HEADING_KD              0.0f
