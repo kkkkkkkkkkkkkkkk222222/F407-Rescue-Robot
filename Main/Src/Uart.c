@@ -2,9 +2,11 @@
 
 #include <string.h>
 
+#include "app_config.h"
 #include "Robot.h"
 #include "main.h"
 #include "vision.h"
+#include "WheelCheck.h"
 
 extern UART_HandleTypeDef huart3;
 
@@ -240,6 +242,12 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *uart, uint16_t size)
 
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *uart)
 {
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  if (uart->Instance == USART1) {
+    WheelCheck_OnTxComplete();
+    return;
+  }
+#endif
   if ((uart != &huart3) || (tx_active_slot < 0)) {
     return;
   }
@@ -256,6 +264,12 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *uart)
 
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *uart)
 {
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  if (uart->Instance == USART1) {
+    WheelCheck_OnUartError(uart->ErrorCode);
+    return;
+  }
+#endif
   if (uart != &huart3) {
     return;
   }

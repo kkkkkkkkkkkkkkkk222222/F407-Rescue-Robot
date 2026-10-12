@@ -19,14 +19,26 @@
 extern UART_HandleTypeDef huart1;
 
 #define RX_SIZE 128U
-#define TX_SIZE 512U
+#define TX_SIZE 1024U
 #define LINE_SIZE 64U
+#define TX_TIMEOUT_MS 250U
+#define LINE_TIMEOUT_MS 1000U
 
 static uint8_t rx_byte;
 static volatile uint8_t rx_ring[RX_SIZE];
 static volatile uint8_t rx_head;
 static volatile uint8_t rx_tail;
 static volatile bool rx_overflow;
+static volatile uint32_t rx_error_pending;
+static volatile bool rx_recovery_pending;
+static volatile uint32_t rx_bytes;
+static volatile uint32_t last_rx_byte_ms;
+static uint32_t rx_lines;
+static uint32_t rx_errors;
+static uint32_t rx_last_error;
+static uint32_t rx_overflows;
+static volatile uint32_t rx_start_failures;
+static uint32_t line_timeouts;
 static char line[LINE_SIZE];
 static uint8_t line_length;
 static bool discard_line;
@@ -34,6 +46,10 @@ static uint8_t tx_ring[TX_SIZE];
 static uint16_t tx_head;
 static uint16_t tx_tail;
 static uint8_t tx_chunk[128];
+static volatile bool tx_active;
+static uint32_t tx_start_ms;
+static uint32_t tx_timeouts;
+static uint32_t tx_dropped;
 static EncoderStatus start_encoder[3];
 static bool result_pending;
 static bool settling;
@@ -63,6 +79,7 @@ static void wheel_send(const char *text)
   const size_t length = strlen(text);
   const uint16_t available = (uint16_t)((tx_tail + TX_SIZE - tx_head - 1U) % TX_SIZE);
   if (length > available) {
+    ++tx_dropped;
     return;
   }
   for (size_t i = 0U; i < length; ++i) {
@@ -73,14 +90,55 @@ static void wheel_send(const char *text)
 
 static void wheel_start_rx(void)
 {
-  if (huart1.RxState == HAL_UART_STATE_READY) {
-    (void)HAL_UART_Receive_IT(&huart1, &rx_byte, 1U);
+  if (rx_recovery_pending || rx_overflow) {
+    return;
   }
+  if (huart1.RxState == HAL_UART_STATE_READY) {
+    if (HAL_UART_Receive_IT(&huart1, &rx_byte, 1U) != HAL_OK) {
+      ++rx_start_failures;
+    }
+  }
+}
+
+void WheelCheck_OnUartError(uint32_t error)
+{
+  rx_error_pending |= error;
+  rx_recovery_pending = true;
+  /* AbortReceive alone does not clear F4 SR error flags. Quiesce RX now to
+   * avoid an interrupt storm; defer parser reset and rearming to main. */
+  ATOMIC_CLEAR_BIT(huart1.Instance->CR1, USART_CR1_RXNEIE | USART_CR1_PEIE);
+  ATOMIC_CLEAR_BIT(huart1.Instance->CR3, USART_CR3_EIE);
+  __HAL_UART_CLEAR_OREFLAG(&huart1);
+}
+
+void WheelCheck_OnTxComplete(void)
+{
+  tx_active = false;
 }
 
 static void wheel_pump_tx(void)
 {
-  if ((huart1.gState != HAL_UART_STATE_READY) || (tx_tail == tx_head)) {
+  if (tx_active && ((uint32_t)(HAL_GetTick() - tx_start_ms) >= TX_TIMEOUT_MS)) {
+    bool recovered = false;
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    if (tx_active) {
+      (void)HAL_UART_AbortTransmit(&huart1);
+      tx_active = false;
+      tx_head = tx_tail;
+      ++tx_timeouts;
+      recovered = true;
+      WheelCheck_Stop();
+      (void)Debug_SubmitConsoleCommand(VISION_MOTION_CMD_STOP, 0, 0, 0, NULL);
+    }
+    if (primask == 0U) {
+      __enable_irq();
+    }
+    if (recovered) {
+      wheel_send("\r\nERR TX TIMEOUT; STOPPED; RETRY COMMAND\r\n");
+    }
+  }
+  if (tx_active || (huart1.gState != HAL_UART_STATE_READY) || (tx_tail == tx_head)) {
     return;
   }
   uint16_t tail = tx_tail;
@@ -89,8 +147,12 @@ static void wheel_pump_tx(void)
     tx_chunk[size++] = tx_ring[tail];
     tail = (uint16_t)((tail + 1U) % TX_SIZE);
   }
+  tx_start_ms = HAL_GetTick();
+  tx_active = true;
   if (HAL_UART_Transmit_IT(&huart1, tx_chunk, size) == HAL_OK) {
     tx_tail = tail;
+  } else {
+    tx_active = false;
   }
 }
 
@@ -143,7 +205,7 @@ static bool wheel_start_pulse(uint8_t id)
   const uint32_t primask = __get_PRIMASK();
   __disable_irq();
   bool started = false;
-  if (!cancel_requested) {
+  if (!cancel_requested && !rx_recovery_pending && !rx_overflow) {
     Encoder_GetAll(start_encoder);
     started = Motor_WheelCheckPulse(id, 250, 400U);
     if (started) {
@@ -260,7 +322,7 @@ static void wheel_report_version(void)
 {
   char text[240];
   (void)snprintf(text, sizeof(text),
-      "MOTIONDEBUG SERIAL_V3 MODE=%u FORWARD_SIGN=%d HEADING_SIGN=%d "
+      "MOTIONDEBUG SERIAL_V3 RX_GUARD=1 MODE=%u FORWARD_SIGN=%d HEADING_SIGN=%d "
       "HOLD_P_X100=%ld HOLD_I_X10000=%ld BUILT="
       __DATE__ " " __TIME__ "\r\n", (unsigned int)APP_ACTIVE_MODE,
       APP_OMNI_FORWARD_SIGN, (int)APP_MOTOR_HEADING_OUTPUT_SIGN,
@@ -297,6 +359,10 @@ static bool wheel_parse_args(const char *cursor, int32_t args[3], uint8_t *count
 static void wheel_submit_motion(uint8_t opcode, int16_t arg1, int16_t arg2,
                                 uint16_t speed)
 {
+  if (rx_recovery_pending || rx_overflow) {
+    wheel_send("ERR RX RECOVERY PENDING; RETRY\r\n");
+    return;
+  }
   if (cancel_requested || sequence_active) {
     if (opcode != VISION_MOTION_CMD_HOLD) {
       wheel_send("BUSY: WAIT WHEELS DONE\r\n");
@@ -307,7 +373,9 @@ static void wheel_submit_motion(uint8_t opcode, int16_t arg1, int16_t arg2,
        (opcode == VISION_MOTION_CMD_MOVE_FIELD)) &&
       ((speed < APP_MOTION_DEBUG_MIN_SPEED_MM_S) ||
        (speed > APP_MOTION_DEBUG_MAX_SPEED_MM_S))) {
-    wheel_send("ERR SPEED: 50..700 MM/S\r\n");
+    char text[80];
+    (void)snprintf(text, sizeof(text), "ERR SPEED=%u: ALLOWED 50..700 MM/S\r\n", speed);
+    wheel_send(text);
     return;
   }
   uint8_t sequence;
@@ -330,6 +398,10 @@ static void wheel_submit_motion(uint8_t opcode, int16_t arg1, int16_t arg2,
 
 static void wheel_execute(void)
 {
+  ++rx_lines;
+  char received[LINE_SIZE + 12U];
+  (void)snprintf(received, sizeof(received), "RXCMD %s\r\n", line);
+  wheel_send(received);
   char *command = line;
   while (*command == ' ') {
     ++command;
@@ -396,8 +468,21 @@ static void wheel_execute(void)
     wheel_send("TURN deg [deg/s=30]; MOVE mm [mm/s=150]\r\n"
                "BODY forward_mm left_mm [mm/s=150]\r\n"
                "FIELD x_mm y_mm [mm/s=150]\r\n"
-               "STOP HOLD RESET STAT GYRO MOTOR ENC WHEELS\r\n"
+               "STOP HOLD RESET STAT GYRO MOTOR ENC WHEELS PING\r\n"
                "WHEELS: AIR ONLY, 1+ -> 2+ -> 3+, 25% 400ms EACH\r\n");
+    return;
+  }
+  if (strcmp(command, "PING") == 0) {
+    char text[224];
+    (void)snprintf(text, sizeof(text),
+        "PONG MS=%lu RX_BYTES=%lu LINES=%lu RX_ERRORS=%lu LAST_RX_ERROR=0x%08lX "
+        "OVERFLOWS=%lu REARM_FAIL=%lu LINE_TIMEOUTS=%lu TX_TIMEOUTS=%lu TX_DROPS=%lu\r\n",
+        (unsigned long)HAL_GetTick(), (unsigned long)rx_bytes,
+        (unsigned long)rx_lines, (unsigned long)rx_errors,
+        (unsigned long)rx_last_error, (unsigned long)rx_overflows,
+        (unsigned long)rx_start_failures, (unsigned long)line_timeouts,
+        (unsigned long)tx_timeouts, (unsigned long)tx_dropped);
+    wheel_send(text);
     return;
   }
   if (strcmp(command, "MOTOR") == 0) {
@@ -448,16 +533,32 @@ void WheelCheck_Init(void)
 
 void WheelCheck_Process(void)
 {
-  if (rx_overflow || (huart1.ErrorCode != HAL_UART_ERROR_NONE)) {
-    WheelCheck_Stop();
-    (void)Debug_SubmitConsoleCommand(VISION_MOTION_CMD_STOP, 0, 0, 0, NULL);
-    if (huart1.ErrorCode != HAL_UART_ERROR_NONE) {
-      (void)HAL_UART_AbortReceive(&huart1);
+  if (rx_recovery_pending || rx_overflow || (huart1.ErrorCode != HAL_UART_ERROR_NONE)) {
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    const uint32_t error = rx_error_pending | huart1.ErrorCode;
+    if (rx_recovery_pending || (error != HAL_UART_ERROR_NONE)) {
+      ++rx_errors;
+      rx_last_error = error;
     }
+    if (rx_overflow) {
+      ++rx_overflows;
+    }
+    (void)HAL_UART_AbortReceive(&huart1);
+    __HAL_UART_CLEAR_OREFLAG(&huart1);
+    huart1.ErrorCode = HAL_UART_ERROR_NONE;
     rx_tail = rx_head;
     rx_overflow = false;
+    rx_error_pending = HAL_UART_ERROR_NONE;
+    rx_recovery_pending = false;
     line_length = 0U;
     discard_line = true;
+    last_rx_byte_ms = HAL_GetTick();
+    if (primask == 0U) {
+      __enable_irq();
+    }
+    WheelCheck_Stop();
+    (void)Debug_SubmitConsoleCommand(VISION_MOTION_CMD_STOP, 0, 0, 0, NULL);
     wheel_send("ERR RX; STOPPED; SEND NEWLINE THEN RETRY\r\n");
   }
   wheel_start_rx();
@@ -490,7 +591,17 @@ void WheelCheck_Process(void)
       }
     }
   }
+  const uint32_t rx_tick_ms = last_rx_byte_ms;
   const uint32_t now_ms = HAL_GetTick();
+  if (((line_length != 0U) || discard_line) &&
+      ((uint32_t)(now_ms - rx_tick_ms) >= LINE_TIMEOUT_MS)) {
+    line_length = 0U;
+    discard_line = false;
+    ++line_timeouts;
+    WheelCheck_Stop();
+    (void)Debug_SubmitConsoleCommand(VISION_MOTION_CMD_STOP, 0, 0, 0, NULL);
+    wheel_send("ERR LINE TIMEOUT; STOPPED; PARTIAL INPUT DISCARDED\r\n");
+  }
   if (cancel_requested ||
       (sequence_active && ((uint32_t)(now_ms - sequence_start_ms) >= 10000U))) {
     wheel_finish(true);
@@ -532,6 +643,8 @@ void WheelCheck_Process(void)
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *uart)
 {
   if (uart == &huart1) {
+    ++rx_bytes;
+    last_rx_byte_ms = HAL_GetTick();
     const uint8_t next = (uint8_t)((rx_head + 1U) % RX_SIZE);
     if (next == rx_tail) {
       rx_overflow = true;

@@ -26,6 +26,7 @@ the firmware build date/time. These commands are not added to NormalRun.
 | `RESET` | Reset the odometry reference while idle; not IMU zeroing |
 | `STAT` / `STATE` | State, source, fault, IMU/odometry readiness, motor feedback |
 | `GYRO` | Read-only raw IMU yaw and change since the previous query |
+| `PING` | Console liveness, RX/error/overflow/timeout and TX/drop counters |
 | `MOTOR` | Wheel target/actual mm/s and actual signed drive PWM per mille |
 | `ENC` | Raw cumulative encoder low 32 bits and last 10 ms deltas |
 | `WHEELS` | The suspended-chassis sequence below |
@@ -146,3 +147,40 @@ Repeat MOVE 200 150 under the same conditions before increasing distance or
 speed. Send the full motion log and report whether oscillation is reduced or
 replaced by a steady curve. This trial does not change the TURN controller or
 add automatic heading correction to Gamepad manual control.
+
+## Serial recovery and input diagnosis (2026-10-12)
+
+The user observed missing/truncated replies after input mistakes. The screenshot
+also contained MOVE 600 850; 850 mm/s exceeds the unchanged 50..700 console
+translation range. Range errors reject the request without latching a motion
+fault. The screenshot alone cannot prove that a hardware UART error occurred.
+
+The USART1 error callback is now routed separately from USART3. It latches the
+error, disables RX interrupts and clears the F4 SR error flags (SR/DR read).
+Main then aborts/rearms receive and discards the damaged partial line. Merely
+calling HAL_UART_AbortReceive does not clear these hardware flags in this HAL
+implementation. USART3 protocol and NormalRun/Gamepad callbacks are unchanged.
+
+The console also tracks TX completion explicitly. If a 128-byte TX chunk has
+not completed within 250 ms, it aborts TX, drops stale queued replies, stops
+the diagnostic motion and restarts with an error notice. The TX ring is now
+1024 bytes and full-queue drops are counted rather than silently unobservable.
+
+A partial command with no new input for 1000 ms is discarded and stops motion;
+it is never auto-executed without a newline. Parser recovery does not replay
+old movement. A new valid line can then be accepted. On RX recovery a newline
+resynchronizes the parser; waiting one second also clears the partial state.
+Motor stall interlocks remain disabled; these are console communication guards.
+
+STAT/VER now includes RX_GUARD=1. Each completed input is echoed as RXCMD before
+its reply. PING returns PONG, uptime and counters: RX_BYTES, LINES, RX_ERRORS,
+LAST_RX_ERROR (HAL bit mask), OVERFLOWS, REARM_FAIL, LINE_TIMEOUTS, TX_TIMEOUTS
+and TX_DROPS. If HAL cleared the error code before callback delivery, the error
+event is still latched and counted even if LAST_RX_ERROR is zero.
+
+After flashing, enable text sending with CR/LF and disable cyclic sending.
+Send STOP, PING and STAT separately, waiting for replies. Then, on a clear floor,
+send MOVE 200 150 once. MOVE 600 850 should show RXCMD followed by an ERR SPEED
+reply, with no movement; it does not permanently disable future valid commands.
+Do not try to clear pending input by sending only a newline to an older build,
+because that could execute the previously buffered movement command.
