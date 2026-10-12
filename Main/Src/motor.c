@@ -105,6 +105,8 @@ static volatile DistanceMove distance_move;
 static volatile AngleTurn angle_turn;
 static volatile DirectionMove direction_move;
 static volatile SpinMove spin_move;
+static volatile bool finite_motion_paused;
+static uint32_t finite_pause_started_ms;
 static uint8_t brake_cycles_remaining;
 #if APP_ENABLE_MOTION_DEBUG_TASK
 static volatile uint8_t wheel_check_id;
@@ -480,6 +482,7 @@ static void motor_clear_spin_move(void)
 
 static void motor_stop_outputs(bool use_brake)
 {
+  finite_motion_paused = false;
 #if APP_ENABLE_MOTION_DEBUG_TASK
   wheel_check_id = 0U;
 #endif
@@ -849,6 +852,8 @@ static void motor_update_direction_move(void)
 
 void Motor_Init(void)
 {
+  finite_motion_paused = false;
+  finite_pause_started_ms = 0U;
 #if APP_ENABLE_MOTION_DEBUG_TASK
   wheel_check_id = 0U;
 #endif
@@ -933,6 +938,39 @@ void Motor_Stop(void)
   motor_leave_critical(primask);
 }
 
+void Motor_PauseFiniteMotion(void)
+{
+  const uint32_t primask = motor_enter_critical();
+  if (!finite_motion_paused) {
+    motor_stop_outputs(true);
+    distance_move.current_speed_mm_s = 0.0f;
+    finite_pause_started_ms = HAL_GetTick();
+    finite_motion_paused = true;
+  }
+  motor_leave_critical(primask);
+}
+
+void Motor_ResumeFiniteMotion(void)
+{
+  const uint32_t primask = motor_enter_critical();
+  if (finite_motion_paused) {
+    if (angle_turn.status == MOTOR_TURN_RUNNING) {
+      angle_turn.start_ms += HAL_GetTick() - finite_pause_started_ms;
+    }
+    finite_motion_paused = false;
+    /* A turn normally latches its speed only at start/slowdown. Recheck
+     * coast-down progress before restoring that output after PAUSE. */
+    motor_update_angle_turn();
+    if (angle_turn.status == MOTOR_TURN_RUNNING) {
+      const float speed = angle_turn.slowing ?
+          fminf(angle_turn.speed_mm_s, APP_MOTOR_TURN_SLOW_MM_S) :
+          angle_turn.speed_mm_s;
+      motor_set_rotate_speed(speed * (float)angle_turn.direction);
+    }
+  }
+  motor_leave_critical(primask);
+}
+
 void Motor_Update(void)
 {
   int32_t measured_counts[MOTOR_COUNT];
@@ -962,9 +1000,11 @@ void Motor_Update(void)
     }
   }
 #endif
-  motor_update_distance_move(encoder);
-  motor_update_angle_turn();
-  motor_update_direction_move();
+  if (!finite_motion_paused) {
+    motor_update_distance_move(encoder);
+    motor_update_angle_turn();
+    motor_update_direction_move();
+  }
 
   if (brake_cycles_remaining > 0U) {
     for (uint8_t id = 1U; id <= MOTOR_COUNT; ++id) {

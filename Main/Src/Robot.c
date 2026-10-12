@@ -540,7 +540,10 @@ void Robot_RunDeferredTask(void)
 #if APP_ENABLE_RUNTIME_SERVO_DEBUG
     console_active = DebugConsole_IsActive();
 #endif
-    if ((APP_ENABLE_MOTION_DEBUG_TASK || (application_ready && IMU_GetData().ready)) &&
+    /* NormalRun must keep consuming STOP/ABORT and publishing its fault even
+     * after an IMU failure. Task_Process owns the stationary fault transition. */
+    if ((APP_ENABLE_MOTION_DEBUG_TASK ||
+         (application_ready && (APP_ENABLE_TASK || IMU_GetData().ready))) &&
         !console_active) {
 #if APP_ENABLE_TASK
       Task_Process(now_ms);

@@ -71,6 +71,8 @@ typedef struct {
   bool done;
   bool paused;
   uint32_t paused_ms;
+  bool hold_cancel_pending;
+  uint32_t hold_cancel_started_ms;
 } RemoteActionState;
 
 typedef struct {
@@ -283,6 +285,8 @@ static bool first_delivery_done;
 static bool first_green_bump_done;
 static bool complete_flow_active;
 static bool mission_paused;
+static bool pause_clock_active;
+static uint32_t pause_clock_ms;
 static bool audit_received;
 static bool audit_valid;
 static bool audit_host_stable;
@@ -348,6 +352,7 @@ static uint8_t sweep_audit_last_id;
 static bool sweep_audit_last_id_valid;
 static bool sweep_audit_valid;
 static bool sweep_audit_host_stable;
+static VisionMissionCommand sweep_last_evidence;
 static uint32_t sweep_audit_started_ms;
 static float boundary_recovery_heading_deg;
 static bool boundary_claw_opened;
@@ -1427,6 +1432,8 @@ static void task_initialize(uint32_t now_ms)
   first_green_bump_done = false;
   complete_flow_active = false;
   mission_paused = false;
+  pause_clock_active = false;
+  pause_clock_ms = now_ms;
   audit_received = false;
   audit_valid = false;
   audit_host_stable = false;
@@ -3613,22 +3620,32 @@ static void task_remote_action_finish(void)
 
 static void task_pause_action(uint32_t now_ms, bool cancel_disperse)
 {
-  Motor_Stop();
+  Motor_PauseFiniteMotion();
   task_status.motors_active = false;
   if (!remote_action.paused) {
     remote_action.paused = true;
     remote_action.paused_ms = now_ms;
   }
-  if (cancel_disperse &&
-      (remote_action.type == REMOTE_ACTION_DISPERSE) &&
-      ((uint32_t)(now_ms - remote_action.paused_ms) >=
-       APP_REMOTE_DISPERSE_HOLD_CANCEL_MS)) {
-    task_enter(TASK_SEARCH, now_ms);
+  if (cancel_disperse && remote_action.type == REMOTE_ACTION_DISPERSE) {
+    if (!remote_action.hold_cancel_pending) {
+      remote_action.hold_cancel_pending = true;
+      remote_action.hold_cancel_started_ms = now_ms;
+    }
+    if ((uint32_t)(now_ms - remote_action.hold_cancel_started_ms) >=
+        APP_REMOTE_DISPERSE_HOLD_CANCEL_MS) {
+      task_enter(TASK_SEARCH, now_ms);
+    }
+  } else {
+    remote_action.hold_cancel_pending = false;
   }
 }
 
 static void task_pause_runtime(uint32_t now_ms)
 {
+  if (mission_paused && !pause_clock_active) {
+    pause_clock_active = true;
+    pause_clock_ms = now_ms;
+  }
   if (state == TASK_INJURY_BACKOFF) {
     injury_backoff_last_ms = now_ms;
   }
@@ -3645,6 +3662,35 @@ static void task_pause_runtime(uint32_t now_ms)
   }
   nav_forward_active = false;
   task_pause_final_push(now_ms);
+}
+
+static void task_account_manual_pause(uint32_t now_ms)
+{
+  if (!mission_paused || !pause_clock_active) {
+    pause_clock_active = false;
+    return;
+  }
+  const uint32_t elapsed = now_ms - pause_clock_ms;
+  pause_clock_ms = now_ms;
+  state_started_ms += elapsed;
+  step_started_ms += elapsed;
+  if (audit_watch_active) { audit_watch_started_ms += elapsed; }
+  if (capture_wait_active) { capture_wait_started_ms += elapsed; }
+  if (approach_hold_pending) { approach_hold_started_ms += elapsed; }
+  if (pose_invalid_pending) { pose_invalid_started_ms += elapsed; }
+  if (state == TASK_POST_GRAB_AUDIT) {
+    post_grab_audit_phase_started_ms += elapsed;
+    if (post_grab_invalid_waiting) { post_grab_invalid_started_ms += elapsed; }
+  }
+  if (state == TASK_SAFE_SWEEP_AUDIT || state == TASK_SAFE_SWEEP_RETRIEVE_AUDIT) {
+    sweep_audit_started_ms += elapsed;
+  }
+  if (sweep_retrieving) {
+    sweep_retrieve_started_ms += elapsed;
+    if (sweep_budget_exhausted) { sweep_budget_exhausted_ms += elapsed; }
+  }
+  /* Evidence timestamps are deliberately not shifted: resuming an audit
+   * still requires fresh pictures, not a renewed pre-PAUSE STABLE. */
 }
 
 static bool task_remote_distance(float distance_m, float speed_mm_s,
@@ -4308,6 +4354,7 @@ static void task_clear_sweep_audit_evidence(void)
   sweep_audit_last_id_valid = false;
   sweep_audit_valid = false;
   sweep_audit_host_stable = false;
+  sweep_last_evidence = (VisionMissionCommand){0};
   task_status.audit_ready = false;
   task_status.audit_valid = false;
   task_status.audit_left_class = VISION_CARGO_NONE;
@@ -4324,7 +4371,29 @@ static void task_reset_sweep_audit(uint32_t now_ms)
 static void task_latch_sweep_audit(const VisionMissionCommand *command,
                                    uint32_t now_ms)
 {
-  if (!command_visual_new || Camera_GetAngle() != APP_GRAB_VIEW_ANGLE) { return; }
+  if (Camera_GetAngle() != APP_GRAB_VIEW_ANGLE || !task_status.claw_visible) { return; }
+  if (!command_visual_new) {
+    if (command->vision_frame != 0U && accepted_context.visual_valid &&
+        command->vision_frame == accepted_context.vision_frame &&
+        command->vision_frame == sweep_last_evidence.vision_frame &&
+        (command->audit_flags & VISION_AUDIT_STABLE) != 0U &&
+        sweep_audit_consistent_count >= 3U && sweep_audit_last_id_valid &&
+        now_ms - sweep_audit_evidence_ms <= APP_AUDIT_EVIDENCE_MAX_GAP_MS &&
+        command->audit_id == sweep_audit_last_id &&
+        command->audit_left_class == sweep_last_evidence.audit_left_class &&
+        command->audit_right_class == sweep_last_evidence.audit_right_class &&
+        command->audit_counts == sweep_last_evidence.audit_counts &&
+        command->audit_total_count == sweep_last_evidence.audit_total_count &&
+        (command->audit_flags & (uint8_t)~VISION_AUDIT_STABLE) ==
+            (sweep_last_evidence.audit_flags & (uint8_t)~VISION_AUDIT_STABLE)) {
+      sweep_audit_host_stable = true;
+      sweep_audit_ready = true;
+      sweep_audit_valid = sweep_audit_nonempty;
+      task_status.audit_ready = true;
+      task_status.audit_valid = sweep_audit_valid;
+    }
+    return;
+  }
   if (accepted_context.opcode == VISION_CMD_CARGO_AUDIT) {
     accepted_context.completed = false;
   }
@@ -4364,6 +4433,7 @@ static void task_latch_sweep_audit(const VisionMissionCommand *command,
   sweep_audit_host_stable = (command->audit_flags & VISION_AUDIT_STABLE) != 0U;
   sweep_audit_ready = sweep_audit_consistent_count >= 3U && sweep_audit_host_stable;
   sweep_audit_valid = sweep_audit_ready && nonempty;
+  sweep_last_evidence = *command;
   task_status.audit_ready = sweep_audit_ready;
   task_status.audit_valid = sweep_audit_valid;
   task_status.audit_left_class = command->audit_left_class;
@@ -4583,6 +4653,8 @@ static void task_process_remote_action(const VisionMissionCommand *command,
     task_stop(TASK_FAULT_MOTOR, now_ms);
     return;
   }
+  Motor_ResumeFiniteMotion();
+  remote_action.hold_cancel_pending = false;
 
   switch (remote_action.type) {
     case REMOTE_ACTION_RELEASE_LEFT:
@@ -5892,6 +5964,7 @@ void Task_Process(uint32_t now_ms)
   }
 
   VisionData vision = Vision_GetSnapshot();
+  task_account_manual_pause(now_ms);
   task_capture_budget_sample();
   task_sweep_sample(now_ms);
   task_update_match_time(now_ms);
@@ -5906,6 +5979,13 @@ void Task_Process(uint32_t now_ms)
   }
   task_accept_mission(&vision, now_ms);
   task_apply_complete_target(&vision);
+  if (!IMU_GetData().ready) {
+    if (state != TASK_STOPPED) { task_stop(TASK_FAULT_POSE_TIMEOUT, now_ms); }
+    Motor_Stop();
+    task_status.motors_active = false;
+    task_publish_status(now_ms);
+    return;
+  }
   /* Automatic map-edge recovery is intentionally disabled. Keep the helper
    * and mode41 handler for compatibility; no threshold or budget changed. */
   (void)task_check_boundary_guard;

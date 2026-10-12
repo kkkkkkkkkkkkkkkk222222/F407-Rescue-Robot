@@ -61,6 +61,10 @@ bool Motor_MoveSpin(float speed_mm_s, float direction_deg,
 /* 0 deg=forward, 90 deg=left, 180 deg=backward, 270 deg=right. */
 bool Motor_MoveAngle(float speed_mm_s, float angle_deg);
 void Motor_Stop(void);
+/* Suspend an existing finite move without changing its encoder/yaw origin.
+ * Only an explicit resume continues it; Stop still cancels it completely. */
+void Motor_PauseFiniteMotion(void);
+void Motor_ResumeFiniteMotion(void);
 void Motor_Update(void);
 MotorStatus Motor_GetStatus(uint8_t id);
 
