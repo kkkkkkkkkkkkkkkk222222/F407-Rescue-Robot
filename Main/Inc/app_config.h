@@ -207,8 +207,9 @@
 #define APP_MOTOR_BRAKE_CYCLES           6U
 
 /* IMU heading hold shared by Motor_MoveAngle() and Motor_MoveDistance(). */
-#define APP_MOTOR_HEADING_KP              4.0f
-#define APP_MOTOR_HEADING_KI              0.02f
+/* Soft trial for MOVE left/right hunting; wheel-speed gains stay unchanged. */
+#define APP_MOTOR_HEADING_KP              2.0f
+#define APP_MOTOR_HEADING_KI              0.005f
 #define APP_MOTOR_HEADING_KD              0.0f
 #define APP_MOTOR_HEADING_LIMIT_MM_S      150.0f
 #define APP_MOTOR_HEADING_INTEGRAL_LIMIT  1500.0f

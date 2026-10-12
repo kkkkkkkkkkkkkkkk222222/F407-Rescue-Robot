@@ -133,3 +133,16 @@ floor, send `MOVE 200 150` once and report whether it travels toward the
 gripper, its approximate physical distance, heading drift and complete log.
 Only after it finishes, `MOVE -200 150` checks the opposite direction.
 Do not run the full NormalRun task until basic direction checks are complete.
+
+## Softer MOVE heading correction (2026-10-12)
+
+The user confirmed left/right hunting during MotionDebug MOVE. Shared heading
+Kp is now 2 (was 4), Ki is 0.005 (was 0.02), and Kd stays zero. STAT/VER prints
+HOLD_P_X100=200 and HOLD_I_X10000=50 to identify the flashed trial. These are
+scaled parameter displays, not extra gains. Wheel-speed PID and feed-forward
+are unchanged, as are Scheme A signs and the 60% propulsion cap.
+
+Repeat MOVE 200 150 under the same conditions before increasing distance or
+speed. Send the full motion log and report whether oscillation is reduced or
+replaced by a steady curve. This trial does not change the TURN controller or
+add automatic heading correction to Gamepad manual control.

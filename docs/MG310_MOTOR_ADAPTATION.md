@@ -219,7 +219,7 @@ this selection explicitly; it does not flip the already-corrected values again.
 | Heading-hold output sign | -1 | +1, based on measured yaw response |
 | Location IMU yaw sign | -1 | -1, unchanged |
 | Ordinary speed PID | 6 / 0.15 / 0, every 10 ms | Unchanged |
-| Heading PID | 4 / 0.02 / 0 | Unchanged gains; output polarity corrected |
+| Heading PID | 4 / 0.02 / 0 | 2 / 0.005 / 0 in the 2026-10-12 soft trial; output polarity +1 |
 | Ordinary feed-forward | Fixed signed 450/1000 base term | 100/1000 static term plus voltage-scaled RPM term |
 | MoveSpin feed-forward | 220..900/1000, target-proportional | 80/1000 static term plus voltage-scaled RPM term |
 | Propulsion limits | Ordinary 900/1000; MoveSpin 1000/1000 | Both 600/1000, including final hardware clamp |
@@ -313,6 +313,41 @@ files are build/NormalRun/WWW.elf and build/Gamepad/WWW.elf, respectively. Start
 Gamepad checks with RB released and LB fine speed, verify release/disconnect
 stop behavior, then check forward/back and yaw on a clear floor. No new
 automatic self-test scripts are added or run for this synchronization.
+
+## MOVE heading-hold soft trial (2026-10-12)
+
+The user reports left/right hunting during MotionDebug USART1 MOVE, rather
+than persistent one-sided curvature. This trial reduces only the shared
+raw-IMU heading-hold gains: Kp 4 -> 2, Ki 0.02 -> 0.005, Kd remains 0.
+The 10 ms period, +/-150 mm/s heading output limit and integral state limit
+are unchanged. The integral contribution's maximum magnitude is consequently
+7.5 mm/s instead of 30 mm/s; at a given error, proportional correction halves.
+
+This follows the staged-tuning principle in the public
+[SiFli MG310 example](https://docs.sifli.com/projects/sdk/latest/sf32lb52x/example/rt_device/motor/README.html),
+not a copy of its gains: that example describes a 20 ms encoder window and
+TB6612 driver, unlike this 10 ms AT8236 chassis. The seller's private download
+package has not been inspected. These values are a conservative experiment,
+not a manufacturer preset or a proven final tune.
+
+Per-wheel speed PID remains 6 / 0.15 / 0. Feed-forward, 60% PWM cap, slow decay,
+Scheme A signs, zero hysteresis, acceleration profiles and action timeouts are
+unchanged. This does not try to solve unequal breakaway friction by weakening
+the wheel-speed loop, which could make the existing delayed startup worse.
+
+The change affects Motor_MoveDistance and Motor_MoveAngle in MotionDebug and
+NormalRun. NormalRun's independent navigation gain and manual Gamepad velocity
+control are unchanged. TURN does not use this heading PID, so turn-induced
+translation requires a separate wheel-speed/mechanical check if observed.
+
+After flashing MotionDebug, STAT should show HOLD_P_X100=200 and
+HOLD_I_X10000=50. Repeat the same MOVE 200 150 on the same floor/load first;
+keep speed/distance fixed for the comparison. Record heading peak-to-peak,
+final yaw, physical lateral displacement and the complete log. A larger
+steady curve after reducing gains would indicate insufficient correction or
+drive imbalance, not a reason to keep reducing gains blindly. No extra
+automated test program is added; verification here is compilation followed
+by the user's short physical run.
 
 ## Historical verification and first run (before Scheme A)
 
