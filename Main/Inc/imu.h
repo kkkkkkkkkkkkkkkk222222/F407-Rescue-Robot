@@ -21,6 +21,13 @@ typedef struct {
   uint8_t device_id;
   IMUInitResult init_result;
   bool ready;
+  int32_t gyro_bias_mdps[3];
+  uint32_t sample_interval_us;
+  uint32_t max_sample_interval_us;
+  uint32_t integration_gap_count;
+  uint32_t bias_update_count;
+  int8_t clock_fine;
+  bool stationary;
 } IMUData;
 
 bool IMU_Init(void);

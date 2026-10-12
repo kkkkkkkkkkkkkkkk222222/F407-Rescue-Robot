@@ -1,8 +1,9 @@
 # MotionDebug Serial Tests
 
 This is a USART1 command inside the existing MotionDebug firmware.
-There is no separate application mode or build preset. NormalRun, Gamepad,
-PID gains and motor calibration are unchanged.
+There is no separate application mode or build preset. Motor/IMU parameters
+are shared with NormalRun and Gamepad as documented in the calibration history
+below; the text console itself remains exclusive to MotionDebug.
 
 Build the existing MotionDebug preset and flash `build/MotionDebug/WWW.elf`.
 The check never starts automatically on boot.
@@ -26,6 +27,7 @@ the firmware build date/time. These commands are not added to NormalRun.
 | `RESET` | Reset the odometry reference while idle; not IMU zeroing |
 | `STAT` / `STATE` | State, source, fault, IMU/odometry readiness, motor feedback |
 | `GYRO` | Read-only raw IMU yaw and change since the previous query |
+| `IMU` | Timestamp/integration diagnostics, bias, sampling gaps and scale |
 | `PING` | Console liveness, RX/error/overflow/timeout and TX/drop counters |
 | `MOTOR` | Wheel target/actual mm/s and actual signed drive PWM per mille |
 | `ENC` | Raw cumulative encoder low 32 bits and last 10 ms deltas |
@@ -184,3 +186,32 @@ send MOVE 200 150 once. MOVE 600 850 should show RXCMD followed by an ERR SPEED
 reply, with no movement; it does not permanently disable future valid commands.
 Do not try to clear pending input by sending only a newline to an older build,
 because that could execute the previously buffered movement command.
+
+## Timestamp integration and visual steering trial (2026-10-12)
+
+Wheel speed PI remains 6 / 0.15 / 0 and shared heading hold is 2 / 0.005 / 0.
+NormalRun's visual chassis steering PD is now 0.45 / 0.01 (was 0.72 / 0.02),
+with minimum active correction 20 mm/s (was 40). STAT displays
+STEER_P_X1000=450 and STEER_D_X10000=100. Servo-camera PID, navigation heading
+gain, PWM cap, signs and serial protocol are unchanged. Gamepad remains manual
+velocity control without a new automatic heading lock.
+
+IMU660RC yaw now uses sensor timestamps and trapezoidal integration with
+fractional microdegree carry, longer startup zero-rate calibration and gated
+stationary bias adaptation. Query IMU for ALG=TS_TRAPZ, DT_US, MAX_DT_US, GAPS,
+clock calibration, bias and bias-update counters. This does not enable FIFO or
+quaternion fusion; see docs/IMU660RC_YAW_IMPROVEMENTS.md for limitations.
+
+GYRO now also prints TOTAL_MDEG, the unwrapped accumulated angle since boot or
+IMU zeroing (display saturates at signed 32-bit millidegrees). The algorithm's
+internal angle remains signed 64-bit. YAW_MOD_MDEG is modulo one revolution;
+DELTA_MDEG is only the change since the previous GYRO query. Do not confuse
+either of those fields with the cumulative multi-turn angle.
+
+For a known-angle check, keep the chassis stationary during startup, wait for
+READY, send IMU and GYRO, then manually rotate on a marked level surface by one
+known full turn. Stop for two seconds, query GYRO and IMU, and record both
+complete responses. Do not use TURN 360 as the independent reference to
+calibrate the same gyro that stops that command. No guessed scale correction
+is applied: Z_SCALE_PPM remains 1000000. The six-axis sensor has no absolute
+yaw reference; improvements do not guarantee zero long-term drift.

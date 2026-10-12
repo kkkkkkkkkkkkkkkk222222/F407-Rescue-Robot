@@ -2,20 +2,28 @@
 
 #include <string.h>
 
+#include "app_config.h"
+#include "encoder.h"
 #include "main.h"
+#include "motor.h"
 
 #define IMU_SPI_MAX_DATA            12U
 #define IMU_SPI_TIMEOUT_MS          2U
 #define IMU_BOOT_TIME_MS            10U
 #define IMU_RESET_TIMEOUT_MS        10U
-#define IMU_SETTLING_TIME_MS        50U
+#define IMU_SETTLING_TIME_MS        250U
 #define IMU_CALIBRATION_DISCARD     32U
-#define IMU_CALIBRATION_SAMPLES     512U
-#define IMU_CALIBRATION_TIMEOUT_MS  5000U
+#define IMU_CALIBRATION_SAMPLES     2048U
+#define IMU_CALIBRATION_TIMEOUT_MS  8000U
 #define IMU_MAX_INTEGRATION_GAP_MS  100U
 #define IMU_RUNTIME_TIMEOUT_MS      250U
 #define IMU_IDENTITY_CHECK_MS       250U
 #define IMU_CAL_MAX_STDDEV_RAW      25LL
+#define IMU_CAL_MAX_MEAN_MDPS       5000LL
+#define IMU_STATIONARY_RATE_MDPS    250
+#define IMU_STATIONARY_DWELL_US     3000000U
+#define IMU_BIAS_TIME_CONSTANT_US   30000000.0f
+#define IMU_SAMPLE_GAP_WARN_US      5000U
 
 #define LSM6DSV16X_WHO_AM_I         0x0FU
 #define LSM6DSV16X_IF_CFG           0x03U
@@ -28,6 +36,9 @@
 #define LSM6DSV16X_STATUS_REG       0x1EU
 #define LSM6DSV16X_OUTX_L_G         0x22U
 #define LSM6DSV16X_HAODR_CFG        0x62U
+#define LSM6DSV16X_TIMESTAMP0       0x40U
+#define LSM6DSV16X_INTERNAL_FREQ    0x4FU
+#define LSM6DSV16X_FUNCTIONS_ENABLE 0x50U
 
 #define LSM6DSV16X_ID               0x70U
 #define LSM6DSV16X_I2C_I3C_DISABLE  0x01U
@@ -48,8 +59,13 @@
 
 static IMUData imu_data;
 static int64_t gyro_bias_sum[3];
-static int64_t yaw_numerator;
-static uint32_t last_sample_ms;
+static int64_t yaw_udeg;
+static int64_t integration_remainder;
+static int64_t previous_corrected_z;
+static uint32_t last_sensor_tick;
+static int64_t sensor_clock_denominator;
+static uint32_t stationary_time_us;
+static float bias_adjustment_remainder[3];
 static bool sample_time_valid;
 static bool runtime_poll_started;
 static bool identity_check_started;
@@ -164,6 +180,17 @@ static bool read_raw(int16_t gyro[3], int16_t accel[3])
   return true;
 }
 
+static bool read_sensor_tick(uint32_t *tick)
+{
+  uint8_t raw[4];
+  if (!spi_read(LSM6DSV16X_TIMESTAMP0, raw, sizeof(raw))) {
+    return false;
+  }
+  *tick = (uint32_t)raw[0] | ((uint32_t)raw[1] << 8U) |
+          ((uint32_t)raw[2] << 16U) | ((uint32_t)raw[3] << 24U);
+  return true;
+}
+
 static bool wait_for_reset(void)
 {
   const uint32_t deadline = HAL_GetTick() + IMU_RESET_TIMEOUT_MS;
@@ -237,7 +264,12 @@ static bool calibrate_gyro(void)
       const int64_t variance_limit =
           IMU_CAL_MAX_STDDEV_RAW * IMU_CAL_MAX_STDDEV_RAW *
           IMU_CALIBRATION_SAMPLES * IMU_CALIBRATION_SAMPLES;
-      if (variance_numerator > variance_limit) {
+      const int64_t mean_mdps = divide_round64(
+          sum[axis] * IMU_GYRO_SCALE_NUMERATOR,
+          IMU_GYRO_SCALE_DENOMINATOR * IMU_CALIBRATION_SAMPLES);
+      if ((variance_numerator > variance_limit) ||
+          (mean_mdps > IMU_CAL_MAX_MEAN_MDPS) ||
+          (mean_mdps < -IMU_CAL_MAX_MEAN_MDPS)) {
         stationary = false;
         break;
       }
@@ -259,8 +291,13 @@ bool IMU_Init(void)
   memset(&imu_data, 0, sizeof(imu_data));
   imu_data.init_result = IMU_INIT_ID_ERROR;
   memset(gyro_bias_sum, 0, sizeof(gyro_bias_sum));
-  yaw_numerator = 0LL;
-  last_sample_ms = 0U;
+  yaw_udeg = 0LL;
+  integration_remainder = 0LL;
+  previous_corrected_z = 0LL;
+  last_sensor_tick = 0U;
+  sensor_clock_denominator = 46080LL * 10000LL;
+  stationary_time_us = 0U;
+  memset(bias_adjustment_remainder, 0, sizeof(bias_adjustment_remainder));
   sample_time_valid = false;
   runtime_poll_started = false;
   identity_check_started = false;
@@ -318,6 +355,19 @@ bool IMU_Init(void)
     return false;
   }
 
+  uint8_t fine = 0U;
+  uint8_t functions_enable = 0U;
+  if (!spi_read(LSM6DSV16X_INTERNAL_FREQ, &fine, 1U) ||
+      !spi_read(LSM6DSV16X_FUNCTIONS_ENABLE, &functions_enable, 1U) ||
+      !spi_write_checked(LSM6DSV16X_FUNCTIONS_ENABLE,
+                         (uint8_t)(functions_enable | 0x40U), 0x40U)) {
+    imu_data.init_result = IMU_INIT_CONFIG_ERROR;
+    return false;
+  }
+  imu_data.clock_fine = (int8_t)fine;
+  /* AN5763: timestamp seconds/tick = 10000 / (46080*(10000+13*FREQ_FINE)). */
+  sensor_clock_denominator = 46080LL * (10000LL + 13LL * imu_data.clock_fine);
+
   imu_data.ready = true;
   imu_data.init_result = IMU_INIT_OK;
   return true;
@@ -328,6 +378,7 @@ static void imu_latch_runtime_fault(void)
   const uint32_t primask = imu_enter_critical();
   if (imu_data.ready) {
     imu_data.ready = false;
+    imu_data.stationary = false;
     ++imu_data.error_count;
   }
   sample_time_valid = false;
@@ -344,6 +395,36 @@ static void imu_check_runtime_timeout(uint32_t now_ms)
   if ((uint32_t)(now_ms - last_successful_sample_ms) >=
       IMU_RUNTIME_TIMEOUT_MS) {
     imu_latch_runtime_fault();
+  }
+}
+
+static bool imu_stationary_gate(const int32_t gyro_mdps[3], const int32_t accel_mg[3])
+{
+  int64_t acceleration_sq = 0LL;
+  EncoderStatus encoder[3];
+  Encoder_GetAll(encoder);
+  for (uint8_t axis = 0U; axis < 3U; ++axis) {
+    const MotorStatus motor = Motor_GetStatus((uint8_t)(axis + 1U));
+    if ((motor.command != 0) || (motor.target_speed_mm_s != 0) ||
+        (encoder[axis].delta_10ms != 0) ||
+        (gyro_mdps[axis] > IMU_STATIONARY_RATE_MDPS) ||
+        (gyro_mdps[axis] < -IMU_STATIONARY_RATE_MDPS)) {
+      return false;
+    }
+    acceleration_sq += (int64_t)accel_mg[axis] * accel_mg[axis];
+  }
+  return (acceleration_sq >= 950LL * 950LL) &&
+         (acceleration_sq <= 1050LL * 1050LL);
+}
+
+static void imu_update_bias(const int64_t corrected[3], uint32_t elapsed_us)
+{
+  for (uint8_t axis = 0U; axis < 3U; ++axis) {
+    bias_adjustment_remainder[axis] += (float)corrected[axis] *
+        ((float)elapsed_us / IMU_BIAS_TIME_CONSTANT_US);
+    const int32_t adjustment = (int32_t)bias_adjustment_remainder[axis];
+    gyro_bias_sum[axis] += adjustment;
+    bias_adjustment_remainder[axis] -= (float)adjustment;
   }
 }
 
@@ -378,7 +459,8 @@ void IMU_Update(uint32_t now_ms)
 
   int16_t gyro[3];
   int16_t accel[3];
-  if (!read_raw(gyro, accel)) {
+  uint32_t sensor_tick;
+  if (!read_raw(gyro, accel) || !read_sensor_tick(&sensor_tick)) {
     imu_check_runtime_timeout(now_ms);
     return;
   }
@@ -389,6 +471,10 @@ void IMU_Update(uint32_t now_ms)
   for (uint8_t axis = 0U; axis < 3U; ++axis) {
     corrected_gyro[axis] =
         ((int64_t)gyro[axis] * IMU_CALIBRATION_SAMPLES) - gyro_bias_sum[axis];
+    if (axis == 2U) {
+      corrected_gyro[axis] = divide_round64(
+          corrected_gyro[axis] * APP_IMU_GYRO_Z_SCALE_PPM, 1000000LL);
+    }
     gyro_mdps[axis] = divide_round(
         corrected_gyro[axis] * IMU_GYRO_SCALE_NUMERATOR,
         IMU_GYRO_SCALE_DENOMINATOR * IMU_CALIBRATION_SAMPLES);
@@ -397,23 +483,77 @@ void IMU_Update(uint32_t now_ms)
         IMU_ACCEL_SCALE_DENOMINATOR);
   }
 
+  uint32_t elapsed_us = 0U;
+  uint32_t elapsed_ns = 0U;
+  bool integration_valid = false;
+  if (sample_time_valid) {
+    const uint32_t tick_delta = sensor_tick - last_sensor_tick;
+    /* Bound before multiplication: a reset/long outage must not overflow. */
+    if ((tick_delta > 0U) && (tick_delta <= 10000U)) {
+      const int64_t dt_ns = divide_round64(
+          (int64_t)tick_delta * 10000000000000LL, sensor_clock_denominator);
+      integration_valid = (dt_ns > 0LL) &&
+          (dt_ns <= (int64_t)IMU_MAX_INTEGRATION_GAP_MS * 1000000LL);
+      if (integration_valid) {
+        elapsed_ns = (uint32_t)dt_ns;
+        elapsed_us = (elapsed_ns + 500U) / 1000U;
+      }
+    }
+  }
+  const bool stationary = integration_valid &&
+      imu_stationary_gate(gyro_mdps, accel_mg);
+
   const uint32_t primask = imu_enter_critical();
   for (uint8_t axis = 0U; axis < 3U; ++axis) {
     imu_data.gyro_mdps[axis] = gyro_mdps[axis];
     imu_data.accel_mg[axis] = accel_mg[axis];
+    imu_data.gyro_bias_mdps[axis] = divide_round(
+        gyro_bias_sum[axis] * IMU_GYRO_SCALE_NUMERATOR,
+        IMU_GYRO_SCALE_DENOMINATOR * IMU_CALIBRATION_SAMPLES);
   }
   if (sample_time_valid) {
-    const uint32_t elapsed_ms = now_ms - last_sample_ms;
-    if (elapsed_ms <= IMU_MAX_INTEGRATION_GAP_MS) {
-      yaw_numerator += corrected_gyro[2] * IMU_GYRO_SCALE_NUMERATOR * elapsed_ms;
-      imu_data.yaw_mdeg = divide_round64(
-          yaw_numerator,
-          1000LL * IMU_GYRO_SCALE_DENOMINATOR * IMU_CALIBRATION_SAMPLES);
+    imu_data.sample_interval_us = elapsed_us;
+    if (elapsed_us > imu_data.max_sample_interval_us) {
+      imu_data.max_sample_interval_us = elapsed_us;
+    }
+    if (!integration_valid || (elapsed_us > IMU_SAMPLE_GAP_WARN_US)) {
+      ++imu_data.integration_gap_count;
+    }
+    if (integration_valid) {
+      /* Carry fractional microdegrees rather than growing a nanosecond-scale
+       * numerator that would overflow after only a few full rotations. */
+      const int64_t denominator = 2LL * IMU_GYRO_SCALE_DENOMINATOR *
+          IMU_CALIBRATION_SAMPLES * 1000000LL;
+      const int64_t numerator = integration_remainder +
+          (previous_corrected_z + corrected_gyro[2]) *
+          IMU_GYRO_SCALE_NUMERATOR * elapsed_ns;
+      yaw_udeg += numerator / denominator;
+      integration_remainder = numerator % denominator;
+      imu_data.yaw_mdeg = divide_round64(yaw_udeg, 1000LL);
     }
   } else {
     sample_time_valid = true;
   }
-  last_sample_ms = now_ms;
+  if (stationary) {
+    if (stationary_time_us < IMU_STATIONARY_DWELL_US) {
+      stationary_time_us += elapsed_us;
+    } else {
+      /* Use unscaled raw residual for offset estimation, not a yaw gain. */
+      int64_t residual[3];
+      for (uint8_t axis = 0U; axis < 3U; ++axis) {
+        residual[axis] = (int64_t)gyro[axis] * IMU_CALIBRATION_SAMPLES -
+                         gyro_bias_sum[axis];
+      }
+      imu_update_bias(residual, elapsed_us);
+      ++imu_data.bias_update_count;
+    }
+  } else {
+    stationary_time_us = 0U;
+    memset(bias_adjustment_remainder, 0, sizeof(bias_adjustment_remainder));
+  }
+  imu_data.stationary = stationary && (stationary_time_us >= IMU_STATIONARY_DWELL_US);
+  last_sensor_tick = sensor_tick;
+  previous_corrected_z = corrected_gyro[2];
   ++imu_data.sample_count;
   imu_leave_critical(primask);
   last_successful_sample_ms = now_ms;
@@ -423,7 +563,9 @@ void IMU_Update(uint32_t now_ms)
 void IMU_ZeroYaw(void)
 {
   const uint32_t primask = imu_enter_critical();
-  yaw_numerator = 0LL;
+  yaw_udeg = 0LL;
+  integration_remainder = 0LL;
+  previous_corrected_z = 0LL;
   imu_data.yaw_mdeg = 0;
   sample_time_valid = false;
   imu_leave_critical(primask);

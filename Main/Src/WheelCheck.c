@@ -233,12 +233,14 @@ static void wheel_report_gyro(void)
       imu.yaw_mdeg - previous_gyro_yaw_mdeg : 0LL;
   const bool delta_valid = imu.ready && gyro_reference_valid &&
       (delta >= INT32_MIN) && (delta <= INT32_MAX);
-  char text[192];
+  const long total = (imu.yaw_mdeg > INT32_MAX) ? INT32_MAX :
+      ((imu.yaw_mdeg < INT32_MIN) ? INT32_MIN : (long)imu.yaw_mdeg);
+  char text[256];
   (void)snprintf(text, sizeof(text),
-      "GYRO READY=%u SAMPLE=%lu YAW_MOD_MDEG=%ld DELTA_VALID=%u "
+      "GYRO READY=%u SAMPLE=%lu TOTAL_MDEG=%ld YAW_MOD_MDEG=%ld DELTA_VALID=%u "
       "DELTA_MDEG=%ld HEADING_SIGN=%d\r\n",
       (unsigned int)imu.ready, (unsigned long)imu.sample_count,
-      (long)(imu.yaw_mdeg % 360000LL), (unsigned int)delta_valid,
+      total, (long)(imu.yaw_mdeg % 360000LL), (unsigned int)delta_valid,
       delta_valid ? (long)delta : 0L, (int)APP_MOTOR_HEADING_OUTPUT_SIGN);
   wheel_send(text);
   previous_gyro_yaw_mdeg = imu.yaw_mdeg;
@@ -323,11 +325,13 @@ static void wheel_report_version(void)
   char text[240];
   (void)snprintf(text, sizeof(text),
       "MOTIONDEBUG SERIAL_V3 RX_GUARD=1 MODE=%u FORWARD_SIGN=%d HEADING_SIGN=%d "
-      "HOLD_P_X100=%ld HOLD_I_X10000=%ld BUILT="
+      "HOLD_P_X100=%ld HOLD_I_X10000=%ld STEER_P_X1000=%ld STEER_D_X10000=%ld BUILT="
       __DATE__ " " __TIME__ "\r\n", (unsigned int)APP_ACTIVE_MODE,
       APP_OMNI_FORWARD_SIGN, (int)APP_MOTOR_HEADING_OUTPUT_SIGN,
       (long)(APP_MOTOR_HEADING_KP * 100.0f + 0.5f),
-      (long)(APP_MOTOR_HEADING_KI * 10000.0f + 0.5f));
+      (long)(APP_MOTOR_HEADING_KI * 10000.0f + 0.5f),
+      (long)(APP_STEERING_KP_MM_S * 1000.0f + 0.5f),
+      (long)(APP_STEERING_KD_MM * 10000.0f + 0.5f));
   wheel_send(text);
 }
 
@@ -468,7 +472,7 @@ static void wheel_execute(void)
     wheel_send("TURN deg [deg/s=30]; MOVE mm [mm/s=150]\r\n"
                "BODY forward_mm left_mm [mm/s=150]\r\n"
                "FIELD x_mm y_mm [mm/s=150]\r\n"
-               "STOP HOLD RESET STAT GYRO MOTOR ENC WHEELS PING\r\n"
+               "STOP HOLD RESET STAT GYRO IMU MOTOR ENC WHEELS PING\r\n"
                "WHEELS: AIR ONLY, 1+ -> 2+ -> 3+, 25% 400ms EACH\r\n");
     return;
   }
@@ -503,6 +507,24 @@ static void wheel_execute(void)
   }
   if (strcmp(command, "GYRO") == 0) {
     wheel_report_gyro();
+    return;
+  }
+  if (strcmp(command, "IMU") == 0) {
+    const IMUData imu = IMU_GetData();
+    char text[288];
+    (void)snprintf(text, sizeof(text),
+        "IMU ALG=TS_TRAPZ READY=%u INIT=%u ID=0x%02X SAMPLE=%lu ERRORS=%lu "
+        "DT_US=%lu MAX_DT_US=%lu GAPS=%lu CLOCK_FINE=%d "
+        "BIAS_MDPS=%ld,%ld,%ld STILL=%u BIAS_UPDATES=%lu Z_SCALE_PPM=%ld\r\n",
+        (unsigned int)imu.ready, (unsigned int)imu.init_result,
+        imu.device_id, (unsigned long)imu.sample_count,
+        (unsigned long)imu.error_count, (unsigned long)imu.sample_interval_us,
+        (unsigned long)imu.max_sample_interval_us,
+        (unsigned long)imu.integration_gap_count, (int)imu.clock_fine,
+        (long)imu.gyro_bias_mdps[0], (long)imu.gyro_bias_mdps[1],
+        (long)imu.gyro_bias_mdps[2], (unsigned int)imu.stationary,
+        (unsigned long)imu.bias_update_count, (long)APP_IMU_GYRO_Z_SCALE_PPM);
+    wheel_send(text);
     return;
   }
   if (strcmp(command, "WHEELS") != 0) {

@@ -462,8 +462,18 @@ void Robot_Init(void)
   }
 }
 
+static void robot_sample_imu(void)
+{
+  const uint32_t released = imu_release_sequence;
+  if (released != imu_consumed_sequence) {
+    imu_consumed_sequence = released;
+    IMU_Update(app_milliseconds);
+  }
+}
+
 void Robot_Process(void)
 {
+  robot_sample_imu();
 #if APP_ENABLE_MOTION_DEBUG_TASK
   WheelCheck_Process();
 #endif
@@ -489,11 +499,6 @@ void Robot_Process(void)
   }
 
   Vision_Process();
-  const uint32_t imu_released = imu_release_sequence;
-  if (imu_released != imu_consumed_sequence) {
-    imu_consumed_sequence = imu_released;
-    IMU_Update(app_milliseconds);
-  }
 
 #if APP_ENABLE_AUTOMATIC_MOTOR_TEST && !APP_ENABLE_TASK && \
     !APP_ENABLE_CENTERING_TASK
@@ -506,6 +511,7 @@ void Robot_Process(void)
       draw_dashboard();
     }
   }
+  robot_sample_imu();
 
 #if APP_ENABLE_SERVO_SWEEP_TEST && !APP_ENABLE_TASK && \
     !APP_ENABLE_CENTERING_TASK

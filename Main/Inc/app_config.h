@@ -246,6 +246,11 @@
 
 /* IMU polls at 1 kHz; motor feedback runs at 10 ms; task remains at 20 ms. */
 #define APP_IMU_UPDATE_PERIOD_MS         1U
+/* Identity until measured against a known external rotation, not TURN output. */
+#define APP_IMU_GYRO_Z_SCALE_PPM         1000000L
+#if APP_IMU_GYRO_Z_SCALE_PPM < 900000L || APP_IMU_GYRO_Z_SCALE_PPM > 1100000L
+#error "IMU gyro scale must be within +/-10 percent"
+#endif
 #define APP_MOTOR_CONTROL_PERIOD_MS      10U
 #define APP_TASK_PERIOD_MS               20U
 #define APP_COMMAND_RX_TIMEOUT_MS         500U
@@ -315,11 +320,10 @@
 #define APP_APPROACH_LOSS_HOLD_MS         500U
 #define APP_STEERING_EXIT_DEAD_ZONE       8
 #define APP_STEERING_ENTER_DEAD_ZONE     16
-#define APP_STEERING_KP_MM_S             0.72f
-/* Time-normalized equivalent of the former 0.745-per-frame derivative at
- * the nominal 40 ms vision period. */
-#define APP_STEERING_KD_MM                0.0200f
-#define APP_STEERING_MIN_MM_S             40.0f
+#define APP_STEERING_KP_MM_S             0.45f
+/* Derivative uses seconds, not frames; softened together with visual P. */
+#define APP_STEERING_KD_MM                0.0100f
+#define APP_STEERING_MIN_MM_S             20.0f
 #define APP_STEERING_LIMIT_MM_S          175.0f
 #define APP_STEERING_RATE_MM_S2         1000.0f
 #define APP_STEERING_DIRECTION           1.0f
