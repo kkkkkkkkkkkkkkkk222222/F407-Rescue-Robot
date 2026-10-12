@@ -22,7 +22,7 @@ pass through the original audit/recovery logic, never direct transport.
 ## Motion
 
 - Selective DISPERSE: open the release side and wait the existing 600 ms,
-  move toward that side by a nominal 20 mm at 180 mm/s, stop, then reverse
+  move toward that side by a nominal 20 mm at 360 mm/s, stop, then reverse
   straight by the existing 300 mm request at up to 500 mm/s.
 - RELEASE_LEFT/RIGHT: retain the existing release-completed handoff; its
   following YIELD performs the same 20 mm peel, then the requested backoff.
