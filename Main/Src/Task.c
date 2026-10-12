@@ -424,6 +424,19 @@ static float task_heading_360(float angle_deg)
   return angle_deg;
 }
 
+/* Task yaw/turn requests use Location heading, unlike low-level wheel yaw. */
+static void task_move_body(float forward_mm_s, float lateral_mm_s,
+                            float field_yaw_mm_s)
+{
+  Motor_Move(forward_mm_s, lateral_mm_s,
+             field_yaw_mm_s * APP_OMNI_FIELD_YAW_TO_DRIVE_SIGN);
+}
+
+static MotorTurnStatus task_motor_turn(float field_angle_deg)
+{
+  return Motor_TurnAngle(field_angle_deg * APP_OMNI_FIELD_YAW_TO_DRIVE_SIGN);
+}
+
 static float task_safe_zone_heading(void)
 {
   const float heading_deg = (configured_color == VISION_COLOR_RED) ?
@@ -1718,7 +1731,8 @@ static void task_process_start(uint32_t now_ms)
 
   /* Outside the obstacle zone, keep the remaining path straight on the floor
    * while rotating toward the final heading and opening both claws. */
-  if (!Motor_MoveSpin(speed_mm_s, 180.0f, yaw_mm_s)) {
+  if (!Motor_MoveSpin(speed_mm_s, 180.0f,
+                     yaw_mm_s * APP_OMNI_FIELD_YAW_TO_DRIVE_SIGN)) {
     task_stop(TASK_FAULT_MOTOR, now_ms);
     return;
   }
@@ -1795,7 +1809,7 @@ static void task_process_search(const VisionData *vision, uint32_t now_ms)
         step_started_ms = now_ms;
         return;
       }
-      Motor_Move(0.0f, 0.0f, APP_SEARCH_ROTATE_SPEED_MM_S);
+      task_move_body(0.0f, 0.0f, APP_SEARCH_ROTATE_SPEED_MM_S);
       task_status.motors_active = true;
       return;
 
@@ -1831,12 +1845,12 @@ static void task_process_search(const VisionData *vision, uint32_t now_ms)
         step_started_ms = now_ms;
         return;
       }
-      Motor_Move(0.0f, 0.0f, APP_SEARCH_ROTATE_SPEED_MM_S);
+      task_move_body(0.0f, 0.0f, APP_SEARCH_ROTATE_SPEED_MM_S);
       task_status.motors_active = true;
       return;
 
     case SEARCH_WAIT_RETURN:
-      Motor_Move(0.0f, 0.0f, APP_SEARCH_WAIT_RETURN_SPEED_MM_S);
+      task_move_body(0.0f, 0.0f, APP_SEARCH_WAIT_RETURN_SPEED_MM_S);
       task_status.motors_active = true;
       return;
 
@@ -2020,7 +2034,7 @@ static void task_process_capture_escape(uint32_t now_ms)
       }
       const float speed = fminf(APP_CAPTURE_ESCAPE_SPEED_MM_S,
           fmaxf(40.0f, (APP_CAPTURE_ESCAPE_DISTANCE_MM - used) * 4.0f));
-      Motor_Move(-speed, 0.0f, nav_yaw(task_wrap_angle(
+      task_move_body(-speed, 0.0f, nav_yaw(task_wrap_angle(
           capture_escape_heading_deg - pose.heading_mdeg * 0.001f)));
       task_status.motors_active = true;
       return;
@@ -2038,7 +2052,7 @@ static void task_process_capture_escape(uint32_t now_ms)
       }
       LocationPose pose;
       if (!task_get_location_pose(&pose, now_ms)) return;
-      const MotorTurnStatus result = Motor_TurnAngle(task_wrap_angle(
+      const MotorTurnStatus result = task_motor_turn(task_wrap_angle(
           capture_escape_turn_deg - pose.heading_mdeg * 0.001f));
       task_status.motors_active = result == MOTOR_TURN_RUNNING;
       if (result == MOTOR_TURN_DONE) {
@@ -2168,7 +2182,7 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
         const float cluster_speed =
             (approach_speed_mm_s < APP_DISPERSE_APPROACH_SPEED_MM_S) ?
                 approach_speed_mm_s : APP_DISPERSE_APPROACH_SPEED_MM_S;
-        Motor_Move(task_approach_aligned_speed(cluster_speed),
+        task_move_body(task_approach_aligned_speed(cluster_speed),
                    0.0f, task_approach_steering());
         task_status.motors_active = true;
         return;
@@ -2181,7 +2195,7 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
         task_status.motors_active = false;
         return;
       }
-      Motor_Move(task_approach_aligned_speed(approach_speed_mm_s),
+      task_move_body(task_approach_aligned_speed(approach_speed_mm_s),
                  0.0f, task_approach_steering());
       task_status.motors_active = true;
       return;
@@ -2214,7 +2228,7 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
         task_status.found = false;
         return;
       }
-      Motor_Move(0.0f, 0.0f, task_approach_steering());
+      task_move_body(0.0f, 0.0f, task_approach_steering());
       task_status.motors_active = task_abs(steering_mm_s) > 0.5f;
       return;
 
@@ -2266,7 +2280,7 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
         const float heading_deg = (float)pose.heading_mdeg * 0.001f;
         const float heading_error = task_wrap_angle(
             approach_locked_heading_deg - heading_deg);
-        Motor_Move(APP_DISPERSE_CAPTURE_SPEED_MM_S, 0.0f,
+        task_move_body(APP_DISPERSE_CAPTURE_SPEED_MM_S, 0.0f,
                    nav_yaw(heading_error));
         task_status.motors_active = true;
       }
@@ -2288,7 +2302,7 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
         step_started_ms = now_ms;
         return;
       }
-      Motor_Move(0.0f, 0.0f, task_approach_steering());
+      task_move_body(0.0f, 0.0f, task_approach_steering());
       task_status.motors_active = task_abs(steering_mm_s) > 0.5f;
       return;
 
@@ -2408,7 +2422,7 @@ static void task_process_grab_observe(const VisionData *vision,
     const float heading_deg = (float)pose.heading_mdeg * 0.001f;
     const float heading_error = task_wrap_angle(
         approach_locked_heading_deg - heading_deg);
-    Motor_Move(APP_GRAB_WATCH_CRAWL_SPEED_MM_S, 0.0f,
+    task_move_body(APP_GRAB_WATCH_CRAWL_SPEED_MM_S, 0.0f,
                nav_yaw(heading_error));
     task_status.motors_active = true;
     return;
@@ -2468,7 +2482,7 @@ static void task_process_grab_rotate(const VisionData *vision,
     task_enter(TASK_GRAB_RAISE_WAIT, now_ms);
     return;
   }
-  Motor_Move(0.0f, 0.0f, APP_GRAB_SCAN_ROTATE_MM_S);
+  task_move_body(0.0f, 0.0f, APP_GRAB_SCAN_ROTATE_MM_S);
   task_status.motors_active = true;
 }
 
@@ -2619,7 +2633,7 @@ static void task_process_injury_backoff(uint32_t now_ms)
       }
       LocationPose pose;
       if (!task_get_location_pose(&pose, now_ms)) { return; }
-      Motor_Move(-APP_INJURY_BACKOFF_SPEED_MM_S, 0.0f,
+      task_move_body(-APP_INJURY_BACKOFF_SPEED_MM_S, 0.0f,
                  nav_yaw(task_wrap_angle(injury_backoff_heading_deg -
                      (float)pose.heading_mdeg * 0.001f)));
       task_status.motors_active = true;
@@ -2646,7 +2660,7 @@ static bool turn_to(float desired_deg, float current_deg,
     return true;
   }
 
-  const MotorTurnStatus result = Motor_TurnAngle(error_deg);
+  const MotorTurnStatus result = task_motor_turn(error_deg);
   task_status.motors_active = result == MOTOR_TURN_RUNNING;
   if (result == MOTOR_TURN_DONE) {
     Motor_Stop();
@@ -2973,7 +2987,7 @@ static RemoteRouteStatus nav_push(uint32_t now_ms)
   }
 
   const float yaw_mm_s = nav_yaw(heading_error_deg);
-  Motor_Move(APP_NAV_FINAL_PUSH_SPEED_MM_S, 0.0f, yaw_mm_s);
+  task_move_body(APP_NAV_FINAL_PUSH_SPEED_MM_S, 0.0f, yaw_mm_s);
   task_status.motors_active = true;
   return REMOTE_ROUTE_RUNNING;
 }
@@ -3214,7 +3228,7 @@ static RemoteRouteStatus nav_follow(
   remote_yaw_mm_s = task_step_toward(
       remote_yaw_mm_s, target_yaw_mm_s,
       APP_NAV_YAW_ACCEL_MM_S2 * APP_TASK_PERIOD_MS * 0.001f);
-  Motor_Move(remote_speed_mm_s, 0.0f, remote_yaw_mm_s);
+  task_move_body(remote_speed_mm_s, 0.0f, remote_yaw_mm_s);
   task_status.motors_active = true;
   return REMOTE_ROUTE_RUNNING;
 }
@@ -3356,7 +3370,7 @@ static RemoteRouteStatus safe_enter_follow(
       nav_stop_output();
       return REMOTE_ROUTE_REACHED;
     }
-    Motor_Move(APP_SAFE_FINAL_PUSH_SPEED_MM_S, 0.0f, yaw_mm_s);
+    task_move_body(APP_SAFE_FINAL_PUSH_SPEED_MM_S, 0.0f, yaw_mm_s);
     task_status.motors_active = true;
     return REMOTE_ROUTE_RUNNING;
   }
@@ -3374,7 +3388,7 @@ static RemoteRouteStatus safe_enter_follow(
   remote_speed_mm_s = task_step_toward(
       remote_speed_mm_s, target_speed_mm_s,
       speed_rate_mm_s2 * APP_TASK_PERIOD_MS * 0.001f);
-  Motor_Move(remote_speed_mm_s, 0.0f, yaw_mm_s);
+  task_move_body(remote_speed_mm_s, 0.0f, yaw_mm_s);
   task_status.motors_active = true;
   return REMOTE_ROUTE_RUNNING;
 }
@@ -3552,7 +3566,7 @@ static void task_process_face_center(const VisionData *vision,
     const float current_heading_deg = (float)pose.heading_mdeg * 0.001f;
     const float heading_error_deg = task_wrap_angle(
         nav_locked_heading_deg - current_heading_deg);
-    Motor_Move(-APP_STASH_RETURN_BACKOFF_SPEED_MM_S, 0.0f,
+    task_move_body(-APP_STASH_RETURN_BACKOFF_SPEED_MM_S, 0.0f,
                nav_yaw(heading_error_deg));
     task_status.motors_active = true;
     return;
@@ -3696,7 +3710,7 @@ static bool task_remote_separation_curve(uint32_t distance_mm,
    * toward the released side, instead of first reversing in a straight line.
    * Motor_Move inputs are body-frame mm/s; signs mirror for left/right. */
   const float side_sign = (separation_keep_side > 0) ? 1.0f : -1.0f;
-  Motor_Move(-APP_CARGO_SEPARATE_CURVE_BACK_MM_S,
+  task_move_body(-APP_CARGO_SEPARATE_CURVE_BACK_MM_S,
              side_sign * APP_CARGO_SEPARATE_CURVE_SIDE_MM_S,
              -side_sign * APP_CARGO_SEPARATE_CURVE_YAW_MM_S);
   task_status.motors_active = true;
@@ -3705,7 +3719,7 @@ static bool task_remote_separation_curve(uint32_t distance_mm,
 
 static bool task_remote_turn(float angle_deg, uint32_t now_ms)
 {
-  const MotorTurnStatus result = Motor_TurnAngle(angle_deg);
+  const MotorTurnStatus result = task_motor_turn(angle_deg);
   task_status.motors_active = result == MOTOR_TURN_RUNNING;
   if (result == MOTOR_TURN_DONE) {
     task_remote_action_advance(now_ms);
@@ -3750,7 +3764,7 @@ static bool task_safe_sweep_move(float forward_mm_s, float lateral_mm_s,
   const float current_heading_deg = (float)pose.heading_mdeg * 0.001f;
   const float heading_error = task_wrap_angle(
       safe_sweep_heading_deg - current_heading_deg);
-  Motor_Move(forward_mm_s, lateral_mm_s, nav_yaw(heading_error));
+  task_move_body(forward_mm_s, lateral_mm_s, nav_yaw(heading_error));
   task_status.motors_active = true;
   return false;
 }
@@ -3818,7 +3832,7 @@ static bool task_sweep_turn(float heading, uint32_t now_ms)
 {
   LocationPose pose;
   if (!task_get_location_pose(&pose, now_ms)) { return false; }
-  const MotorTurnStatus result = Motor_TurnAngle(task_wrap_angle(
+  const MotorTurnStatus result = task_motor_turn(task_wrap_angle(
       heading - (float)pose.heading_mdeg * 0.001f));
   task_status.sweep_turn_status = (uint8_t)result;
   task_status.motors_active = result == MOTOR_TURN_RUNNING;
@@ -3849,7 +3863,7 @@ static bool task_sweep_stroke(float heading, bool reverse, uint32_t now_ms)
   }
   float speed = fminf(APP_SAFE_SWEEP_FORWARD_SPEED_MM_S,
       fmaxf(30.0f, (APP_SAFE_SWEEP_PLACEMENT_MM - used) * 4.0f));
-  Motor_Move(reverse ? -speed : speed, 0.0f, nav_yaw(task_wrap_angle(
+  task_move_body(reverse ? -speed : speed, 0.0f, nav_yaw(task_wrap_angle(
       heading - (float)pose.heading_mdeg * 0.001f)));
   task_status.motors_active = true;
   return false;
@@ -4046,7 +4060,7 @@ static bool task_sweep_reverse_trace(uint32_t now_ms)
       task_status.sweep_reverse_forward_mm_s =
           -fminf(120.0f, fmaxf(20.0f, remaining * 4.0f));
       task_status.sweep_reverse_yaw_mm_s = nav_yaw(error);
-      Motor_Move(task_status.sweep_reverse_forward_mm_s, 0.0f,
+      task_move_body(task_status.sweep_reverse_forward_mm_s, 0.0f,
                  task_status.sweep_reverse_yaw_mm_s);
       task_status.motors_active = true;
       return false;
@@ -4367,7 +4381,7 @@ static void task_sweep_drive(float forward, float yaw)
     if (remaining == 0U) { forward = 0.0f; }
   }
   sweep_forward_commanded = forward > 0.0f;
-  Motor_Move(forward, 0.0f, yaw);
+  task_move_body(forward, 0.0f, yaw);
   task_status.motors_active = (forward > 0.0f) || (task_abs(yaw) > 0.5f);
 }
 
@@ -4474,7 +4488,7 @@ static void task_process_safe_sweep_approach(const VisionData *vision,
         step_started_ms = now_ms;
         return;
       }
-      Motor_Move(0.0f, 0.0f, task_approach_steering());
+      task_move_body(0.0f, 0.0f, task_approach_steering());
       task_status.motors_active = task_abs(steering_mm_s) > 0.5f;
       return;
 
@@ -5794,7 +5808,7 @@ static void task_process_boundary_recover(uint32_t now_ms)
   }
   const float heading_error = task_wrap_angle(
       boundary_recovery_heading_deg - heading_deg);
-  Motor_Move(APP_BOUNDARY_RECOVERY_SPEED_MM_S, 0.0f,
+  task_move_body(APP_BOUNDARY_RECOVERY_SPEED_MM_S, 0.0f,
              nav_yaw(heading_error));
   task_status.motors_active = true;
 }
@@ -6029,7 +6043,7 @@ void Task_Process(uint32_t now_ms)
           const float heading_deg = (float)pose.heading_mdeg * 0.001f;
           const float heading_error = task_wrap_angle(
               grab_core_advance_heading_deg - heading_deg);
-          Motor_Move(APP_GRAB_WATCH_CRAWL_SPEED_MM_S, 0.0f,
+          task_move_body(APP_GRAB_WATCH_CRAWL_SPEED_MM_S, 0.0f,
                      nav_yaw(heading_error));
           task_status.motors_active = true;
           break;

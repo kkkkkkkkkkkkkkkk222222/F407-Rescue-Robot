@@ -269,6 +269,51 @@ Flash MotionDebug, query STAT for FORWARD_SIGN=-1 and HEADING_SIGN=1, then run
 only `MOVE 200 150` on a clear floor and report direction, distance and log.
 Do not run the full NormalRun task before basic axis checks are complete.
 
+## NormalRun and Gamepad synchronization (2026-10-12)
+
+All three presets already compile the same motor.c and app_config.h. Scheme A
+forward polarity, encoder conversion, slow decay, 60% hardware cap, feed-forward,
+speed PID and disabled local fault interlocks therefore require no duplicate
+driver configuration in Task or Gamepad.
+
+The remaining mode boundary is yaw direction. Task heading errors and relative
+turn requests use Location's positive field-heading convention. The Gamepad
+wire/UI convention is positive counter-clockwise yaw. Neither is the low-level
+wheel-yaw convention used by Motor_Move and the existing MotionDebug TURN.
+
+The shared conversion is:
+
+```c
+APP_OMNI_FIELD_YAW_TO_DRIVE_SIGN =
+    APP_LOCATION_IMU_YAW_SIGN * APP_MOTOR_HEADING_OUTPUT_SIGN;
+```
+
+With the current calibration this equals -1. It is a dimensionless polarity
+conversion, not a PID gain. Task's continuous moves, navigation/visual steering,
+relative turns and startup MoveSpin now apply it exactly once at the motor API
+boundary. Navigation error computation, PID gains, speeds, state transitions,
+mechanism timing, audit logic and mission protocol are unchanged.
+
+Gamepad applies the same yaw conversion at its Motor_Move call, while its
+reported requested yaw retains the existing wire/UI sign. Forward continues
+through the shared mixer, without a second forward inversion. Lateral mapping,
+servo controls, RB deadman and the 150 ms command timeout are unchanged.
+Gamepad remains manual velocity control: no automatic heading lock is added.
+
+Debug TURN retains its existing low-level positive-yaw definition. Its commands,
+USART1 console and USART3 frames are unchanged. Do not compare the signs of a
+Debug low-level yaw request and a field/teleop yaw request without the conversion.
+Location IMU sign, mode selection, T265 extrinsics and UART pairing were not
+modified. Lateral physical direction and full autonomous navigation still need
+the user's incremental hardware checks; successful compilation is not proof
+of correct physical navigation.
+
+Build/flash the existing NormalRun or Gamepad preset as appropriate. Firmware
+files are build/NormalRun/WWW.elf and build/Gamepad/WWW.elf, respectively. Start
+Gamepad checks with RB released and LB fine speed, verify release/disconnect
+stop behavior, then check forward/back and yaw on a clear floor. No new
+automatic self-test scripts are added or run for this synchronization.
+
 ## Historical verification and first run (before Scheme A)
 
 The automated results and commands below are retained from earlier work.

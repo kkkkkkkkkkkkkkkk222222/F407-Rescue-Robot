@@ -281,7 +281,9 @@ void Gamepad_Process(uint32_t now_ms)
                       APP_GAMEPAD_MAX_YAW_MM_S * scale;
 
     gamepad_update_servos((float)elapsed_ms * 0.001f);
-    Motor_Move(forward, left * APP_OMNI_LATERAL_API_SIGN, yaw);
+    /* Keep the wire/UI convention: positive yaw is counter-clockwise. */
+    Motor_Move(forward, left * APP_OMNI_LATERAL_API_SIGN,
+                yaw * APP_OMNI_FIELD_YAW_TO_DRIVE_SIGN);
     gamepad_status.state = GAMEPAD_RUNNING;
     gamepad_status.forward_mm_s = gamepad_round_speed(forward);
     gamepad_status.left_mm_s = gamepad_round_speed(left);

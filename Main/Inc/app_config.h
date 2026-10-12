@@ -215,6 +215,10 @@
 /* Measured: positive wheel yaw increases raw IMU yaw. With reference-current
  * error, positive PID polarity is required for negative feedback. */
 #define APP_MOTOR_HEADING_OUTPUT_SIGN     1.0f
+/* Location/teleop yaw is positive counter-clockwise; wheel yaw follows raw
+ * IMU polarity. Convert at mode boundaries, not again inside the mixer. */
+#define APP_OMNI_FIELD_YAW_TO_DRIVE_SIGN \
+  (APP_LOCATION_IMU_YAW_SIGN * APP_MOTOR_HEADING_OUTPUT_SIGN)
 
 /* Non-blocking vector ramp used by Motor_MoveAngle(). */
 #define APP_OMNI_ACCEL_MM_S2              2500.0f
