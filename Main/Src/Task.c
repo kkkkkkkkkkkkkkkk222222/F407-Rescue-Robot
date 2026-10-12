@@ -3732,35 +3732,29 @@ static bool task_remote_lateral(int16_t distance_mm, float speed_mm_s,
   return false;
 }
 
-static bool task_remote_separation_curve(uint32_t distance_mm,
-                                         uint32_t now_ms)
+static bool task_remote_separation_peel(uint32_t now_ms)
 {
-  if ((distance_mm == 0U) || (separation_keep_side == 0)) {
+  if (separation_keep_side == 0) {
     task_remote_action_advance(now_ms);
     return true;
   }
+  /* Move toward the released side before backing away. Motor_MoveAngle's
+   * +90 degrees is physical left, unlike Motor_Move's raw lateral input. */
+  const int16_t lateral_mm = separation_keep_side > 0 ?
+      -APP_CARGO_SEPARATE_PEEL_DISTANCE_MM : APP_CARGO_SEPARATE_PEEL_DISTANCE_MM;
+  return task_remote_lateral(lateral_mm, APP_CARGO_SEPARATE_PEEL_SPEED_MM_S,
+                             now_ms);
+}
 
-  const LocationPose pose = Location_GetPose();
-  if (!pose.valid) {
-    Motor_Stop();
-    task_status.motors_active = false;
-    return false;
-  }
-  if ((pose.path_mm - remote_action.phase_path_mm) >= distance_mm) {
+static bool task_remote_separation_backoff(uint32_t distance_mm,
+                                           uint32_t now_ms)
+{
+  if (distance_mm == 0U || separation_keep_side == 0) {
     task_remote_action_advance(now_ms);
     return true;
   }
-
-  /* Peel the open claw away on the outside of one continuous arc.  The
-   * retained side moves diagonally backward while the nose slowly turns
-   * toward the released side, instead of first reversing in a straight line.
-   * Motor_Move inputs are body-frame mm/s; signs mirror for left/right. */
-  const float side_sign = (separation_keep_side > 0) ? 1.0f : -1.0f;
-  task_move_body(-APP_CARGO_SEPARATE_CURVE_BACK_MM_S,
-             side_sign * APP_CARGO_SEPARATE_CURVE_SIDE_MM_S,
-             -side_sign * APP_CARGO_SEPARATE_CURVE_YAW_MM_S);
-  task_status.motors_active = true;
-  return false;
+  return task_remote_distance(-(float)distance_mm * 0.001f,
+                              APP_CARGO_SEPARATE_BACK_SPEED_MM_S, now_ms);
 }
 
 static bool task_remote_turn(float angle_deg, uint32_t now_ms)
@@ -4705,10 +4699,12 @@ static void task_process_remote_action(const VisionMissionCommand *command,
         const uint32_t magnitude_mm = (uint32_t)(
             (requested_mm < 0) ? -requested_mm : requested_mm);
         if (remote_action.phase == 0U) {
-          (void)task_remote_separation_curve(magnitude_mm, now_ms);
+          (void)task_remote_separation_peel(now_ms);
         } else if (remote_action.phase == 1U) {
-          /* After the curved separation, look back into the claw before
-           * accepting either navigation or a new search target. */
+          (void)task_remote_separation_backoff(magnitude_mm, now_ms);
+        } else if (remote_action.phase == 2U) {
+          /* After separation, look back into the claw before accepting
+           * either navigation or a new search target. */
           if (task_scan_camera_to(APP_GRAB_VIEW_ANGLE, now_ms)) {
             task_remote_action_advance(now_ms);
           }
@@ -4805,8 +4801,8 @@ static void task_process_remote_action(const VisionMissionCommand *command,
         return;
       }
       if (remote_action.phase == 0U) {
-        /* The first attempt selects a 15-degree curve/25-degree release
-         * baseline; subsequent attempts relax that same baseline by 10 deg. */
+        /* Both release paths start with 10-degree extra closure. Existing
+         * per-side retry relaxation still applies to that baseline. */
         const bool ready = (separation_keep_side > 0) ?
             Claw_ClusterOpenRight(now_ms) :
             Claw_ClusterOpenLeft(now_ms);
@@ -4815,9 +4811,11 @@ static void task_process_remote_action(const VisionMissionCommand *command,
           task_remote_action_advance(now_ms);
         }
       } else if (remote_action.phase == 1U) {
-        (void)task_remote_separation_curve(
-            APP_SELECTIVE_DISPERSE_CURVE_MM, now_ms);
+        (void)task_remote_separation_peel(now_ms);
       } else if (remote_action.phase == 2U) {
+        (void)task_remote_separation_backoff(
+            APP_SELECTIVE_DISPERSE_CURVE_MM, now_ms);
+      } else if (remote_action.phase == 3U) {
         if (task_scan_camera_to(APP_GRAB_VIEW_ANGLE, now_ms)) {
           task_remote_action_advance(now_ms);
         }

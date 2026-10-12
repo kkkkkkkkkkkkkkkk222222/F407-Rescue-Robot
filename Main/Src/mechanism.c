@@ -160,7 +160,7 @@ bool Claw_OpenRight(uint32_t now_ms)
 
 bool Claw_ClusterOpenLeft(uint32_t now_ms)
 {
-  /* Curve separation uses the same retained-side profile across retries. */
+  /* Selective separation uses the same retained-side profile across retries. */
   return claw_move_together(CLAW_ACTION_CLUSTER_OPEN_LEFT, now_ms,
                             108U, claw_relaxed_right(), 600U);
 }
