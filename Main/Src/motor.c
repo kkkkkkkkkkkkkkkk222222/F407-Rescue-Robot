@@ -132,6 +132,8 @@ static volatile uint8_t wheel_check_id;
 static int16_t wheel_check_pwm;
 static uint32_t wheel_check_start_ms;
 static uint16_t wheel_check_duration_ms;
+static bool wheel_calibration;
+static uint32_t wheel_calibration_started_ms;
 #endif
 
 static const int8_t motor_signs[MOTOR_COUNT] = {
@@ -509,6 +511,7 @@ static void motor_stop_outputs(bool use_brake)
   finite_motion_paused = false;
 #if APP_ENABLE_MOTION_DEBUG_TASK
   wheel_check_id = 0U;
+  wheel_calibration = false;
 #endif
   bool was_moving = false;
 
@@ -1283,8 +1286,9 @@ void Motor_Update(void)
   /* Only the active bench pulse bypasses PID/mixing. Expiry stays in TIM6
    * even if the console or main loop is delayed. */
   if (wheel_check_id != 0U) {
-    if ((uint32_t)(HAL_GetTick() - wheel_check_start_ms) >=
-        wheel_check_duration_ms) {
+    if (((uint32_t)(HAL_GetTick() - wheel_check_start_ms) >=
+         wheel_check_duration_ms) ||
+        (wheel_calibration && (uint32_t)(HAL_GetTick() - wheel_calibration_started_ms) >= 30000U)) {
       Motor_Stop();
     } else {
       for (uint8_t id = 1U; id <= MOTOR_COUNT; ++id) {
@@ -1509,6 +1513,36 @@ bool Motor_WheelCheckPulse(uint8_t id, int16_t pwm, uint16_t duration_ms)
 bool Motor_WheelCheckRunning(void)
 {
   return wheel_check_id != 0U;
+}
+
+bool Motor_CalibrationStep(uint8_t id, int16_t pwm, uint16_t duration_ms)
+{
+  if (id < 1U || id > MOTOR_COUNT || pwm == 0 || pwm < -250 || pwm > 250 ||
+      duration_ms < 100U || duration_ms > 1500U) { return false; }
+  const uint32_t mask = motor_enter_critical();
+  const uint32_t now = HAL_GetTick();
+  const int16_t physical_pwm = pwm * motor_signs[id - 1U];
+  if (wheel_check_id != 0U) {
+    if (!wheel_calibration || wheel_check_id != id ||
+        (physical_pwm > 0) != (wheel_check_pwm > 0) ||
+        (uint32_t)(now - wheel_calibration_started_ms) >= 30000U ||
+        (uint32_t)(now - wheel_check_start_ms) >= wheel_check_duration_ms) {
+      motor_leave_critical(mask);
+      return false;
+    }
+  } else {
+    if (brake_cycles_remaining != 0U) { motor_leave_critical(mask); return false; }
+    Motor_Stop();
+    if (brake_cycles_remaining != 0U) { motor_leave_critical(mask); return false; }
+    wheel_calibration_started_ms = now;
+  }
+  wheel_calibration = true;
+  wheel_check_pwm = physical_pwm;
+  wheel_check_start_ms = now;
+  wheel_check_duration_ms = duration_ms;
+  wheel_check_id = id;
+  motor_leave_critical(mask);
+  return true;
 }
 #endif
 

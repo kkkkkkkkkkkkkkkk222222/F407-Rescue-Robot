@@ -101,6 +101,8 @@ MotorDebugTrace Motor_GetDebugTrace(void);
 /* Logical wheel polarity, open loop; bounded by the 10 ms motor scheduler. */
 bool Motor_WheelCheckPulse(uint8_t id, int16_t pwm, uint16_t duration_ms);
 bool Motor_WheelCheckRunning(void);
+/* Air-only same-wheel/same-direction steps; 25%, 1.5 s lease, 30 s total. */
+bool Motor_CalibrationStep(uint8_t id, int16_t pwm, uint16_t duration_ms);
 #endif
 
 #endif

@@ -68,6 +68,7 @@ the firmware build date/time. These commands are not added to NormalRun.
 | `MOTOR` | Wheel target/actual mm/s and actual signed drive PWM per mille |
 | `ENC` | Raw cumulative encoder low 32 bits and last 10 ms deltas |
 | `WHEELS` | The suspended-chassis sequence below |
+| `CAL 3 -60 1000` | Air only: rear wheel -6% open-loop PWM, 1-second lease |
 | `HELP` / `VER` | Command help and firmware feature/build identification |
 
 Angles and distances accept signed integers. Turn speed is degrees/s, not
@@ -79,6 +80,16 @@ stationary dwell between laps. It retains per-lap PROGRESS and reports cumulativ
 angle separately in CIRCLE lines. Any STOP or fault cancels the entire batch;
 it never resumes automatically. Only the batch uses a bounded absolute-yaw motor
 entry point; ordinary TURN remains relative to the current physical pose.
+
+The `CAL=1` build adds bounded single-wheel calibration, not another application
+mode. CAL accepts wheel 1..3, nonzero signed PWM up to 250 per mille and leases
+100..1500 ms; same-wheel/same-direction steps may continue for at most 30 seconds.
+The motor timer enforces both deadlines independently of console processing.
+It reports encoder increments every 50 ms without changing normal PID settings.
+Use `tools/calibrate_motor_serial.ps1 -WheelsSuspended` only after suspending all
+wheels. `-Fine` measures the low-speed region; `-StartTrials 3` stops between
+every point and repeats 5/6/7/8 percent starts. See
+[the measured results](docs/MG310_NO_LOAD_CALIBRATION.md).
 
 Motion commands are queued to the same Debug task and motor API used by
 USART3, not executed in UART interrupts. A second motion
