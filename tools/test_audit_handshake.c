@@ -178,6 +178,204 @@ static void test_zero_frame_stable_is_rejected(void)
   assert(!command_accepted && !audit_received && state == TASK_POST_GRAB_AUDIT);
 }
 
+static void separation_audit_at(bool single, bool swap_sides, uint32_t start_ms)
+{
+  task_clear_audit_result();
+  for (uint8_t id = 1U; id <= 3U; ++id) {
+    VisionMissionCommand c = injury_audit(id);
+    c.audit_flags = VISION_AUDIT_STABLE | VISION_AUDIT_DANGER_PRESENT;
+    c.audit_left_class = VISION_CARGO_GREEN;
+    c.audit_right_class = single ? VISION_CARGO_DANGER : VISION_CARGO_NONE;
+    c.audit_counts = single ? 5U : 2U;
+    c.audit_total_count = 2U;
+    if (swap_sides && id == 2U) {
+      c.audit_left_class = VISION_CARGO_DANGER;
+      c.audit_right_class = VISION_CARGO_GREEN;
+    }
+    command_visual_new = true;
+    task_latch_audit(&c, start_ms + id * 100U);
+  }
+  assert(audit_received && !audit_valid);
+}
+
+static void separation_audit(bool single, bool swap_sides)
+{
+  separation_audit_at(single, swap_sides, 0U);
+}
+
+static void test_quantity_grip_and_retry_budget(void)
+{
+  for (uint8_t single = 0U; single <= 1U; ++single) {
+    prepare(); separation_audit(single, false);
+    for (uint8_t attempt = 0U; attempt < 3U; ++attempt) {
+      assert(task_prepare_separation(1, 400U + attempt));
+      assert(separation_extra_close_deg == (single ? 20U : 10U) - 5U * attempt);
+      (void)Claw_ClusterOpenRight(500U + attempt);
+      assert(servo_angles[3] == 76U - separation_extra_close_deg && servo_angles[1] == 72U);
+    }
+    assert(!task_prepare_separation(-1, 410U) && separation_total_attempts == 3U);
+    assert(capture_escape_return_center && capture_escape_reclose);
+  }
+  prepare(); separation_audit(false, false);
+  assert(task_prepare_separation(1, 400U) && separation_extra_close_deg == 10U);
+  separation_audit_at(true, false, 400U);
+  assert(task_prepare_separation(1, 800U) && separation_extra_close_deg == 20U);
+  assert(separation_total_attempts == 2U && separation_side_attempts == 1U);
+  assert(task_prepare_separation(1, 900U) && separation_extra_close_deg == 15U);
+  prepare(); separation_audit(true, true);
+  assert(audit_single_side_mask == 0U);
+  assert(task_prepare_separation(1, 400U) && separation_extra_close_deg == 10U);
+  prepare();
+  task_enter(TASK_GRAB_OBSERVE, 0U);
+  for (uint8_t id = 1U; id <= 3U; ++id) {
+    VisionMissionCommand c = injury_audit(id);
+    c.audit_left_class = VISION_CARGO_UNKNOWN;
+    c.audit_counts = c.audit_total_count = 2U;
+    c.audit_flags = VISION_AUDIT_STABLE | VISION_AUDIT_UNKNOWN_PRESENT;
+    command_visual_new = true; task_latch_audit(&c, id * 100U);
+  }
+  (void)task_capture_observe(400U);
+  assert(state == TASK_GRAB_OBSERVE && !capture_escape_active);
+  assert(task_prepare_separation(1, 410U) && separation_extra_close_deg == 10U);
+  VisionMissionCommand c = injury_audit(1U);
+  assert(task_single_side_mask(&c) == 1U);
+  c.audit_left_class = VISION_CARGO_GREEN;
+  assert(task_single_side_mask(&c) == 0U);
+  c.audit_flags = VISION_AUDIT_STABLE;
+  assert(task_single_side_mask(&c) == 1U);
+  first_delivery_done = false;
+  c.audit_left_class = VISION_CARGO_CORE;
+  assert(task_single_side_mask(&c) == 0U);
+}
+
+static void test_ready_mode_reaudit_and_stale_grip_rejection(void)
+{
+  wire_prepare(TASK_DISPERSE_READY, 0U);
+  for (uint8_t id = 1U; id <= 3U; ++id) {
+    VisionMissionCommand c = injury_audit(id);
+    c.vision_frame = 8U + id;
+    c.audit_left_class = VISION_CARGO_GREEN;
+    c.audit_right_class = VISION_CARGO_DANGER;
+    c.audit_counts = 5U; c.audit_total_count = 2U;
+    c.audit_flags = VISION_AUDIT_STABLE | VISION_AUDIT_DANGER_PRESENT;
+    wire_send(c, id * 100U, id);
+  }
+  assert(state == TASK_DISPERSE_READY && task_status.claw_visible && task_audit_state());
+  assert(audit_received && !audit_valid && audit_single_side_mask == 1U);
+  assert(!task_prepare_separation(1, 900U));
+  assert(task_status.command_reject_reason == TASK_COMMAND_REJECT_AUDIT && separation_total_attempts == 0U);
+}
+
+static void test_curve_mirrors_limits_and_pause(void)
+{
+  for (int8_t side = -1; side <= 1; side += 2) {
+    prepare();
+    separation_keep_side = side; separation_total_attempts = 1U;
+    const VisionMissionCommand c = {.received = true, .flags = VISION_CMD_VALID,
+                                    .command = VISION_CMD_DISPERSE_PILE};
+    task_start_remote_action(REMOTE_ACTION_DISPERSE, &c, 0U);
+    remote_action.phase = 1U;
+    assert(!task_remote_separation_curve(300U, 0U));
+    assert(!task_remote_separation_curve(300U, 20U));
+    assert(reverse_output < 0.0f && side * lateral_output > 0.0f);
+    assert(side * yaw_output > 0.0f); /* field yaw is converted once to wheel yaw */
+    test_pose.path_mm = 65U; test_pose.y_mm = -65;
+    test_pose.heading_mdeg = 90000 - side * 12000;
+    (void)task_remote_separation_curve(300U, 40U);
+    assert(separation_motion.stage == SEPARATION_PULL);
+    assert(fabsf(separation_motion.pull_heading_deg - test_pose.heading_mdeg * 0.001f) < 0.01f);
+    const float locked = separation_motion.pull_heading_deg;
+    task_pause_action(60U, false);
+    assert(reverse_output == 0.0f && separation_motion.back_mm_s == 0.0f);
+    task_process_remote_action(&c, 5060U);
+    assert(separation_motion.start_path_mm == 0U && separation_motion.pull_heading_deg == locked);
+    assert(reverse_output < 0.0f && fabsf(reverse_output) <= 36.01f);
+    test_pose.path_mm = 300U;
+    assert(task_remote_separation_curve(300U, 5080U));
+    assert(remote_action.phase == 2U && reverse_output == 0.0f);
+  }
+  prepare(); separation_keep_side = 1; separation_total_attempts = 1U;
+  (void)task_remote_separation_curve(300U, 0U);
+  (void)task_remote_separation_curve(300U, 20U);
+  test_pose.x_mm = -70; test_pose.path_mm = 80U;
+  assert(task_remote_separation_curve(300U, 40U));
+  assert(lateral_output == 0.0f && reverse_output == 0.0f);
+  prepare(); separation_keep_side = 1; separation_total_attempts = 1U;
+  (void)task_remote_separation_curve(300U, 0U);
+  (void)task_remote_separation_curve(300U, 20U);
+  test_pose.heading_mdeg = 64000; test_pose.path_mm = 70U;
+  (void)task_remote_separation_curve(300U, 40U);
+  assert(yaw_output == 0.0f && separation_motion.stage == SEPARATION_PULL);
+  prepare(); separation_keep_side = 1; separation_total_attempts = 1U;
+  test_pose.heading_mdeg = 30000;
+  (void)task_remote_separation_curve(300U, 0U);
+  for (uint32_t mm = 1U; mm <= 100U; ++mm) {
+    test_pose.x_mm = (int32_t)lroundf(-0.8660254f * mm);
+    test_pose.y_mm = (int32_t)lroundf(-0.5f * mm);
+    test_pose.path_mm = mm;
+    assert(!task_remote_separation_curve(300U, mm * 20U));
+  }
+  assert(separation_motion.lateral_peak_mm < 1.0f);
+  prepare(); separation_keep_side = 1; separation_total_attempts = 1U;
+  (void)task_remote_separation_curve(300U, 0U);
+  separation_motion.stage = SEPARATION_PULL;
+  separation_motion.pull_heading_deg = 70.0f;
+  separation_motion.back_mm_s = 500.0f;
+  test_pose.heading_mdeg = 70000; test_pose.x_mm = -50; test_pose.path_mm = 200U;
+  assert(!task_remote_separation_curve(300U, 20U));
+  assert(reverse_output < 0.0f && fabsf(reverse_output) < 150.0f && yaw_output == 0.0f);
+}
+
+static void test_separation_retransmission_is_one_round(void)
+{
+  wire_prepare(TASK_GRAB_OBSERVE, 0U);
+  separation_audit(true, false);
+  task_enter(TASK_DISPERSE_READY, 350U);
+  const VisionMissionCommand c = {.command = VISION_CMD_DISPERSE_PILE,
+      .flags = VISION_CMD_VALID | VISION_CMD_SIDE_VALID};
+  wire_send(c, 400U, 1U);
+  assert(command_accepted && state == TASK_REMOTE_ACTION && separation_total_attempts == 1U);
+  wire_send(c, 420U, 2U);
+  assert(command_accepted && separation_total_attempts == 1U && remote_action.phase == 0U);
+  wire_send((VisionMissionCommand){.command = VISION_CMD_PAUSE, .flags = VISION_CMD_VALID},
+            440U, 3U);
+  assert(mission_paused && separation_total_attempts == 1U);
+  wire_send(c, 460U, 4U);
+  assert(!mission_paused && separation_total_attempts == 1U && separation_extra_close_deg == 20U);
+}
+
+static void test_third_failure_recloses_and_reopens_at_center(void)
+{
+  prepare(); separation_total_attempts = 3U; audit_received = true; audit_valid = false;
+  task_begin_capture_escape(0U);
+  task_process_capture_escape(0U);
+  task_process_capture_escape(1000U);
+  assert(capture_escape_phase == 1U && !task_status.gripper_closed);
+  test_pose.path_mm = 300U;
+  task_process_capture_escape(1100U);
+  task_process_capture_escape(1200U);
+  assert(state == TASK_APPROACH_RECOVER && servo_angles[3] == 76U && servo_angles[1] == 104U);
+  task_process_capture_escape(3199U);
+  assert(state == TASK_APPROACH_RECOVER);
+  task_process_capture_escape(3200U);
+  assert(state == TASK_CAPTURE_RETURN_WAIT && capture_return_closed && task_status.gripper_closed);
+  initial_claw_ready = true;
+  Task_Process(3220U);
+  assert(state == TASK_CAPTURE_RETURN_WAIT && task_status.gripper_closed && !audit_valid);
+  configured_color = VISION_COLOR_BLUE;
+  VisionData v = {.mission = {.received = true, .command = VISION_CMD_RETURN_CENTER,
+      .flags = VISION_CMD_VALID | VISION_CMD_DISTANCE_VALID | VISION_CMD_DRIVE_STRAIGHT |
+               VISION_CMD_USE_FINAL_HEADING, .heading_cdeg = 9000U}};
+  task_accept_mission_legacy(&v.mission, 3240U);
+  assert(state == TASK_FACE_FIELD_CENTER);
+  task_process_face_center(&v, 3260U);
+  assert(capture_return_opening && !distance_command_done);
+  task_process_face_center(&v, 4259U);
+  assert(state == TASK_FACE_FIELD_CENTER);
+  task_process_face_center(&v, 4260U);
+  assert(state == TASK_SEARCH && !task_status.gripper_closed && !capture_return_closed);
+}
+
 int main(void)
 {
   test_receipt_cadence_cannot_outrun_host();
@@ -189,6 +387,11 @@ int main(void)
   test_placeholder_never_means_empty_or_resets_deadline();
   test_final_wait_keeps_snapshot_and_expires();
   test_zero_frame_stable_is_rejected();
-  puts("audit handshake: 9 scenarios PASS");
+  test_quantity_grip_and_retry_budget();
+  test_ready_mode_reaudit_and_stale_grip_rejection();
+  test_curve_mirrors_limits_and_pause();
+  test_separation_retransmission_is_one_round();
+  test_third_failure_recloses_and_reopens_at_center();
+  puts("audit/separation handshake: 14 scenario groups PASS");
   return 0;
 }

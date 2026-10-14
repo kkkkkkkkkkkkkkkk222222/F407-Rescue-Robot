@@ -9,7 +9,7 @@ void Camera_SetAngle(uint8_t angle);
 uint8_t Camera_GetAngle(void);
 void Lift_SetStartPosition(void);
 void Lift_SetTravelPosition(void);
-void Claw_SetSeparationRelax(uint8_t degrees, bool cluster_base);
+void Claw_SetSeparationHold(uint8_t extra_close_deg);
 bool Claw_Open(uint32_t now_ms);
 bool Claw_OpenLeft(uint32_t now_ms);
 bool Claw_OpenRight(uint32_t now_ms);

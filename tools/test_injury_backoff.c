@@ -8,16 +8,20 @@
 
 static uint8_t servo_angles[4];
 static float reverse_output;
+static float lateral_output, yaw_output;
+static VisionData test_vision;
 static LocationPose test_pose = {.valid = true, .heading_mdeg = 90000};
 static bool motor_fault;
 void Servo_SetAngle(uint8_t id, uint8_t angle) { servo_angles[id - 1U] = angle; }
-void Motor_Stop(void) { reverse_output = 0.0f; }
+void Motor_Stop(void) { reverse_output = lateral_output = yaw_output = 0.0f; }
+void Motor_PauseFiniteMotion(void) { Motor_Stop(); }
+void Motor_ResumeFiniteMotion(void) {}
 void Motor_Move(float forward, float lateral, float yaw)
-{ (void)lateral; (void)yaw; reverse_output = forward; }
+{ lateral_output = lateral; yaw_output = yaw; reverse_output = forward; }
 MotorStatus Motor_GetStatus(uint8_t id)
 { (void)id; return (MotorStatus){.stall_fault = motor_fault}; }
 LocationPose Location_GetPose(void) { return test_pose; }
-VisionData Vision_GetSnapshot(void) { return (VisionData){0}; }
+VisionData Vision_GetSnapshot(void) { return test_vision; }
 void Vision_RearmConfig(void) {}
 void Vision_ClearAbort(void) {}
 void Vision_RequestConfigAck(void) {}
@@ -53,7 +57,8 @@ static void prepare(void)
   task_initialize(0U);
   accepted_context = (TaskContext){.valid = true, .opcode = VISION_CMD_CARGO_AUDIT};
   first_delivery_done = true;
-  test_pose.valid = true;
+  test_pose = (LocationPose){.valid = true, .heading_mdeg = 90000};
+  test_vision = (VisionData){0};
   motor_fault = false;
   complete_flow_active = true;
   task_status.gripper_closed = true;

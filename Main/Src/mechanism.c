@@ -21,32 +21,27 @@ static ClawAction claw_action;
 static uint8_t claw_step;
 static uint32_t claw_step_ms;
 static bool claw_done;
-static uint8_t separation_relax_deg;
-static bool separation_cluster_base;
+static uint8_t separation_extra_close_deg;
 
-void Claw_SetSeparationRelax(uint8_t degrees, bool cluster_base)
+void Claw_SetSeparationHold(uint8_t extra_close_deg)
 {
-  if (degrees > 20U) degrees = 20U;
-  if (degrees != separation_relax_deg || cluster_base != separation_cluster_base) {
-    separation_relax_deg = degrees;
-    separation_cluster_base = cluster_base;
+  if (extra_close_deg > APP_CLAW_SEPARATE_SINGLE_CLOSE_DEG) {
+    extra_close_deg = APP_CLAW_SEPARATE_SINGLE_CLOSE_DEG;
+  }
+  if (extra_close_deg != separation_extra_close_deg) {
+    separation_extra_close_deg = extra_close_deg;
     claw_action = CLAW_ACTION_NONE;
   }
 }
 
 static uint8_t claw_relaxed_left(void)
 {
-  const uint8_t angle = separation_cluster_base ? APP_CLAW_LEFT_CLUSTER_HOLD_ANGLE :
-                                                 APP_CLAW_LEFT_SEPARATE_HOLD_ANGLE;
-  const uint16_t relaxed = (uint16_t)angle + separation_relax_deg;
-  return relaxed > 108U ? 108U : (uint8_t)relaxed;
+  return APP_CLAW_LEFT_TOUCH_ANGLE - separation_extra_close_deg;
 }
 
 static uint8_t claw_relaxed_right(void)
 {
-  const uint8_t angle = separation_cluster_base ? APP_CLAW_RIGHT_CLUSTER_HOLD_ANGLE :
-                                                 APP_CLAW_RIGHT_SEPARATE_HOLD_ANGLE;
-  return angle < 72U + separation_relax_deg ? 72U : angle - separation_relax_deg;
+  return APP_CLAW_RIGHT_TOUCH_ANGLE + separation_extra_close_deg;
 }
 
 static bool claw_move_sequential(ClawAction action, uint32_t now_ms,
@@ -101,8 +96,7 @@ static bool claw_move_together(ClawAction action, uint32_t now_ms,
 
 void Mechanism_Init(void)
 {
-  separation_relax_deg = 0U;
-  separation_cluster_base = false;
+  separation_extra_close_deg = 0U;
   claw_action = CLAW_ACTION_NONE;
   claw_step = 0U;
   claw_step_ms = 0U;
