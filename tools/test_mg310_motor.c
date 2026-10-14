@@ -23,7 +23,7 @@ void Location_ResetReference(int32_t x, int32_t y, int32_t heading)
 { test_pose.x_mm = x; test_pose.y_mm = y; test_pose.heading_mdeg = heading; }
 VisionData Vision_GetSnapshot(void) { return test_vision; }
 void Vision_QueueMotionStatus(const VisionMotionStatus *status) { (void)status; }
-#if defined(MOTOR_TRACE_CHECK_ONLY)
+#if defined(MOTOR_TRACE_CHECK_ONLY) || defined(MOTOR_TURN_PROFILE_CHECK_ONLY)
 void WheelCheck_Stop(void) { Motor_Stop(); }
 #endif
 
@@ -48,6 +48,9 @@ static void reset(void)
 static void update(void)
 {
   test_ms += APP_MOTOR_CONTROL_PERIOD_MS;
+#if defined(MOTOR_TRACE_CHECK_ONLY) || defined(MOTOR_TURN_PROFILE_CHECK_ONLY)
+  ++test_imu.sample_count;
+#endif
   Motor_Update();
 }
 
@@ -646,12 +649,19 @@ static void test_trace_keeps_post_stop_yaw(void)
 {
   reset();
   assert(Motor_TurnAngleSpeed(60.0f, 136.0f) == MOTOR_TURN_RUNNING);
-  test_imu.yaw_mdeg = 31000;
+  test_imu.yaw_mdeg = 45000;
   update();
   MotorDebugTrace trace = Motor_GetDebugTrace();
-  assert(trace.turn_target_mdeg == 60000 && trace.turn_delta_mdeg == 31000 && trace.slowing);
+  assert(trace.turn_target_mdeg == 60000 && trace.turn_delta_mdeg == 45000 && trace.slowing);
   test_imu.yaw_mdeg = 60000;
+  test_imu.gyro_mdps[2] = 80000;
   update();
+  assert(angle_turn.status == MOTOR_TURN_RUNNING);
+  test_imu.gyro_mdps[2] = 0;
+  for (uint32_t elapsed = 0U; elapsed < APP_DEBUG_TURN_SETTLE_MS;
+       elapsed += APP_MOTOR_CONTROL_PERIOD_MS) {
+    update();
+  }
   trace = Motor_GetDebugTrace();
   assert(trace.turn_state == MOTOR_TURN_DONE && trace.pi_active_mask == 0U);
   assert(trace.output[0] == 0 && trace.output[1] == 0 && trace.output[2] == 0);
@@ -662,9 +672,248 @@ static void test_trace_keeps_post_stop_yaw(void)
 }
 #endif
 
+#if defined(MOTOR_TURN_PROFILE_CHECK_ONLY)
+static void profile_ticks(uint32_t count)
+{
+  for (uint32_t i = 0U; i < count; ++i) { update(); }
+}
+
+static void profile_stop_ticks(void)
+{
+  test_imu.gyro_mdps[2] = 0;
+  memset(test_encoder, 0, sizeof(test_encoder));
+  profile_ticks(APP_DEBUG_TURN_SETTLE_MS / APP_MOTOR_CONTROL_PERIOD_MS);
+}
+
+static void assert_targets_zero(void)
+{
+  for (uint8_t id = 1U; id <= 3U; ++id) {
+    assert(Motor_GetStatus(id).target == 0);
+  }
+}
+
+static void test_profile_signed_unwrapped_targets(void)
+{
+  static const int32_t degrees[] = {60, 180, 360};
+  for (int sign = -1; sign <= 1; sign += 2) {
+    for (uint32_t i = 0U; i < sizeof(degrees) / sizeof(degrees[0]); ++i) {
+      reset();
+      const int64_t origin = sign * 10000000359000LL;
+      test_imu.yaw_mdeg = origin;
+      assert(Motor_TurnAngleSpeed(sign * degrees[i], 136.0f) == MOTOR_TURN_RUNNING);
+      update();
+      assert(angle_turn.reference_rate_dps * sign > 0.0f);
+      test_imu.yaw_mdeg = origin + sign * (degrees[i] * 1000LL - 2000LL);
+      update();
+      assert(angle_turn.status == MOTOR_TURN_RUNNING && angle_turn.slowing);
+      assert(abs(angle_turn.error_mdeg) == 2000);
+      test_imu.yaw_mdeg = origin + sign * (degrees[i] * 1000LL + 400LL);
+      test_imu.gyro_mdps[2] = sign * 80000;
+      update();
+      assert(angle_turn.status == MOTOR_TURN_RUNNING);
+      assert(angle_turn.phase == MOTOR_TURN_PHASE_SETTLE);
+      assert_targets_zero();
+      profile_stop_ticks();
+      assert(angle_turn.status == MOTOR_TURN_DONE);
+      assert(fabsf(Motor_GetTurnTravelledDeg() - (degrees[i] + 0.4f)) < 0.002f);
+      assert(angle_turn.start_yaw_mdeg == origin);
+    }
+  }
+}
+
+static void test_profile_stopped_fresh_samples_required(void)
+{
+  reset();
+  assert(Motor_TurnAngleSpeed(60.0f, 136.0f) == MOTOR_TURN_RUNNING);
+  test_imu.yaw_mdeg = 60000;
+  test_imu.gyro_mdps[2] = 80000;
+  profile_ticks(20U);
+  assert(angle_turn.status == MOTOR_TURN_RUNNING && angle_turn.settle_ms == 0U);
+  test_imu.gyro_mdps[2] = 0;
+  test_encoder[0].delta_10ms = -1;
+  profile_ticks(20U);
+  assert(angle_turn.status == MOTOR_TURN_RUNNING && angle_turn.settle_ms == 0U);
+  test_encoder[0].delta_10ms = 0;
+  profile_ticks(5U);
+  assert(angle_turn.settle_ms == 5U * APP_MOTOR_CONTROL_PERIOD_MS);
+  test_imu.gyro_mdps[2] = APP_DEBUG_TURN_STOP_RATE_MDPS + 1;
+  update();
+  assert(angle_turn.settle_ms == 0U && angle_turn.status == MOTOR_TURN_RUNNING);
+  test_imu.gyro_mdps[2] = 0;
+  const uint32_t needed = APP_DEBUG_TURN_SETTLE_MS / APP_MOTOR_CONTROL_PERIOD_MS;
+  profile_ticks(needed - 1U);
+  assert(angle_turn.status == MOTOR_TURN_RUNNING);
+  const uint32_t settled = angle_turn.settle_ms;
+  test_ms += APP_MOTOR_CONTROL_PERIOD_MS;
+  Motor_Update();
+  assert(angle_turn.settle_ms == settled && angle_turn.status == MOTOR_TURN_RUNNING);
+  update();
+  assert(angle_turn.status == MOTOR_TURN_DONE);
+}
+
+static void test_profile_reverse_requires_stop_and_is_bounded(void)
+{
+  reset();
+  assert(Motor_TurnAngleSpeed(60.0f, 136.0f) == MOTOR_TURN_RUNNING);
+  profile_ticks(25U);
+  test_imu.yaw_mdeg = 64000;
+  test_imu.gyro_mdps[2] = 80000;
+  profile_ticks(20U);
+  assert(angle_turn.status == MOTOR_TURN_RUNNING && angle_turn.corrections == 0U);
+  assert(angle_turn.phase == MOTOR_TURN_PHASE_BRAKE);
+  assert_targets_zero();
+  profile_stop_ticks();
+  assert(angle_turn.corrections == 1U && angle_turn.last_direction == -1);
+  assert(angle_turn.command_rate_dps < 0.0f);
+  assert(fabsf(angle_turn.command_rate_dps) <= APP_DEBUG_TURN_TRIM_RATE_DPS);
+  test_imu.yaw_mdeg = 57000;
+  test_imu.gyro_mdps[2] = -10000;
+  update();
+  assert(angle_turn.corrections == 1U);
+  assert_targets_zero();
+  profile_stop_ticks();
+  assert(angle_turn.corrections == 2U && angle_turn.last_direction == 1);
+  assert(angle_turn.command_rate_dps > 0.0f);
+  test_imu.yaw_mdeg = 63000;
+  test_imu.gyro_mdps[2] = 10000;
+  update();
+  profile_stop_ticks();
+  assert(angle_turn.status == MOTOR_TURN_FAULT);
+  assert(angle_turn.failure == MOTOR_TURN_FAIL_TRIM_LIMIT);
+  assert(angle_turn.corrections == APP_DEBUG_TURN_MAX_CORRECTIONS);
+  assert_targets_zero();
+}
+
+static void test_profile_stale_timeout_and_direction_faults(void)
+{
+  reset();
+  assert(Motor_TurnAngleSpeed(360.0f, 136.0f) == MOTOR_TURN_RUNNING);
+  update();
+  for (uint32_t elapsed = APP_MOTOR_CONTROL_PERIOD_MS;
+       elapsed < APP_DEBUG_TURN_IMU_STALE_MS; elapsed += APP_MOTOR_CONTROL_PERIOD_MS) {
+    test_ms += APP_MOTOR_CONTROL_PERIOD_MS;
+    Motor_Update();
+    assert(angle_turn.status == MOTOR_TURN_RUNNING);
+  }
+  test_ms += APP_MOTOR_CONTROL_PERIOD_MS;
+  Motor_Update();
+  assert(angle_turn.failure == MOTOR_TURN_FAIL_IMU_STALE);
+  assert_targets_zero();
+  reset();
+  assert(Motor_TurnAngleSpeed(360.0f, 136.0f) == MOTOR_TURN_RUNNING);
+  profile_ticks(APP_MOTOR_TURN_TIMEOUT_MS / APP_MOTOR_CONTROL_PERIOD_MS - 1U);
+  assert(angle_turn.status == MOTOR_TURN_RUNNING);
+  update();
+  assert(angle_turn.status == MOTOR_TURN_FAULT);
+  assert(angle_turn.failure == MOTOR_TURN_FAIL_TIMEOUT);
+  assert_targets_zero();
+  reset();
+  assert(Motor_TurnAngleSpeed(60.0f, 136.0f) == MOTOR_TURN_RUNNING);
+  test_imu.yaw_mdeg = -APP_DEBUG_TURN_WRONG_WAY_MDEG - 1LL;
+  update();
+  assert(angle_turn.failure == MOTOR_TURN_FAIL_WRONG_WAY);
+  reset();
+  assert(Motor_TurnAngleSpeed(60.0f, 136.0f) == MOTOR_TURN_RUNNING);
+  test_imu.yaw_mdeg = 60000LL + APP_DEBUG_TURN_OVERRUN_MDEG + 1LL;
+  update();
+  assert(angle_turn.failure == MOTOR_TURN_FAIL_OVERRUN);
+}
+
+static void test_profile_pause_resume_and_stop(void)
+{
+  reset();
+  test_imu.yaw_mdeg = 350000LL;
+  assert(Motor_TurnAngleSpeed(60.0f, 136.0f) == MOTOR_TURN_RUNNING);
+  profile_ticks(50U);
+  assert(angle_turn.reference_rate_dps > 30.0f);
+  const uint32_t started = angle_turn.start_ms;
+  const uint32_t paused = test_ms;
+  Motor_PauseFiniteMotion();
+  test_imu.yaw_mdeg = 405000LL;
+  profile_ticks(200U);
+  assert(angle_turn.status == MOTOR_TURN_RUNNING && finite_motion_paused);
+  assert_targets_zero();
+  Motor_ResumeFiniteMotion();
+  assert(!finite_motion_paused && angle_turn.start_yaw_mdeg == 350000LL);
+  assert(angle_turn.start_ms == started + test_ms - paused);
+  assert(angle_turn.travelled_mdeg == 55000LL);
+  assert(fabsf(angle_turn.reference_rate_dps) <=
+         APP_DEBUG_TURN_ACCEL_DPS2 * APP_MOTOR_CONTROL_PERIOD_MS * 0.001f + 0.001f);
+  assert(abs(Motor_GetStatus(1U).target_speed_mm_s) < 20);
+  update();
+  assert(angle_turn.status == MOTOR_TURN_RUNNING);
+  Motor_Stop();
+  profile_ticks(20U);
+  assert(angle_turn.status == MOTOR_TURN_IDLE);
+  assert_targets_zero();
+}
+
+static void test_profile_debug_reports_actual_done_without_restart(void)
+{
+  for (int sign = -1; sign <= 1; sign += 2) {
+    reset();
+    Debug_Init(test_ms);
+    test_vision = (VisionData){
+      .motion_valid = true, .motion_sequence = 1U,
+      .motion_opcode = VISION_MOTION_CMD_TURN_REL,
+      .motion_arg1 = (int16_t)(sign * 600), .motion_speed = 600U
+    };
+    Debug_Process(test_ms);
+    update();
+    test_imu.yaw_mdeg = sign * 60400LL;
+    profile_stop_ticks();
+    assert(angle_turn.status == MOTOR_TURN_DONE);
+    Debug_Process(test_ms);
+    assert(Debug_GetStatus().state == DEBUG_MOTION_DONE);
+    assert(abs(Debug_GetStatus().progress - sign * 604) <= 1);
+    assert(Debug_GetStatus().progress != sign * 600);
+    assert(Debug_GetStatus().remaining == 0U);
+    test_imu.yaw_mdeg = sign * 63000LL;
+    for (uint32_t i = 0U; i < 20U; ++i) {
+      update();
+      Debug_Process(test_ms);
+    }
+    assert(Debug_GetStatus().state == DEBUG_MOTION_DONE);
+    assert(angle_turn.status == MOTOR_TURN_IDLE);
+    assert_targets_zero();
+  }
+}
+
+static void test_profile_feedforward_scope_and_original_gains(void)
+{
+  reset();
+  assert(APP_DEBUG_TURN_STATIC_PWM == 70.0f && APP_MOTOR_BASE_PWM == 100);
+  assert(APP_MOTOR_PWM_MAX_PERMILLE == 600);
+  assert(speed_pids[0].kp == 5.0f && speed_pids[0].ki == 0.12f && speed_pids[0].kd == 0.0f);
+  assert(Motor_TurnAngleSpeed(180.0f, 136.0f) == MOTOR_TURN_RUNNING);
+  profile_ticks(25U);
+  const float target = target_counts_per_update[0];
+  const int16_t turn_ff = Motor_GetDebugTrace().feedforward[0];
+  assert(turn_ff > 70 && turn_ff < 150);
+  assert_drive_cap();
+  Motor_Stop();
+  profile_ticks(APP_MOTOR_BRAKE_CYCLES);
+  Motor_Move(motor_counts_to_mm_s(target) / 0.8660254f, 0.0f, 0.0f);
+  update();
+  const int16_t move_ff = Motor_GetDebugTrace().feedforward[0];
+  assert(abs((abs(move_ff) - abs(turn_ff)) - 30) <= 1);
+  assert(speed_pids[0].kp == 5.0f && speed_pids[0].ki == 0.12f);
+  assert_drive_cap();
+}
+#endif
+
 int main(void)
 {
-#if defined(MOTOR_TRACE_CHECK_ONLY)
+#if defined(MOTOR_TURN_PROFILE_CHECK_ONLY)
+  test_profile_signed_unwrapped_targets();
+  test_profile_stopped_fresh_samples_required();
+  test_profile_reverse_requires_stop_and_is_bounded();
+  test_profile_stale_timeout_and_direction_faults();
+  test_profile_pause_resume_and_stop();
+  test_profile_debug_reports_actual_done_without_restart();
+  test_profile_feedforward_scope_and_original_gains();
+  puts("MotionDebug turn profile: 7 focused boundary groups PASS");
+#elif defined(MOTOR_TRACE_CHECK_ONLY)
   test_trace_read_only_and_signed_pi();
   test_trace_keeps_post_stop_yaw();
   puts("Motion diagnostic trace: signed PI, read-only access and post-stop yaw PASS");

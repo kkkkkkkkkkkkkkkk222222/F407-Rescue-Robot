@@ -327,9 +327,9 @@ static void wheel_report_state(const char *prefix)
 
 static void wheel_report_version(void)
 {
-  char text[240];
+  char text[320];
   (void)snprintf(text, sizeof(text),
-      "MOTIONDEBUG SERIAL_V3 RX_GUARD=1 DIAG=1 MODE=%u FORWARD_SIGN=%d HEADING_SIGN=%d "
+      "MOTIONDEBUG SERIAL_V3 RX_GUARD=1 DIAG=1 TURN_PROFILE=1 MODE=%u FORWARD_SIGN=%d HEADING_SIGN=%d "
       "HOLD_P_X100=%ld HOLD_I_X10000=%ld STEER_P_X1000=%ld STEER_D_X10000=%ld BUILT="
       __DATE__ " " __TIME__ "\r\n", (unsigned int)APP_ACTIVE_MODE,
       APP_OMNI_FORWARD_SIGN, (int)APP_MOTOR_HEADING_OUTPUT_SIGN,
@@ -339,10 +339,18 @@ static void wheel_report_version(void)
       (long)(APP_STEERING_KD_MM * 10000.0f + 0.5f));
   wheel_send(text);
   (void)snprintf(text, sizeof(text),
-      "DIAG_CFG TRACE=%u PERIOD_MS=250 POST_MS=2000 SPEED_P100=%ld SPEED_I10000=%ld TURN_SLOW_MM_S=%ld TURN_TIMEOUT_MS=%lu\r\n",
+      "DIAG_CFG TRACE=%u PERIOD_MS=250 POST_MS=2000 SPEED_P100=%ld SPEED_I10000=%ld TURN_TIMEOUT_MS=%lu\r\n",
       trace_enabled, (long)(APP_MOTOR_SPEED_KP * 100.0f),
-      (long)(APP_MOTOR_SPEED_KI * 10000.0f), (long)APP_MOTOR_TURN_SLOW_MM_S,
+      (long)(APP_MOTOR_SPEED_KI * 10000.0f),
       (unsigned long)APP_MOTOR_TURN_TIMEOUT_MS);
+  wheel_send(text);
+  (void)snprintf(text, sizeof(text),
+      "TURN_CFG POS_P100=%ld RATE_P100=%ld ACCEL_DPS2=%ld DECEL_DPS2=%ld STATIC_PWM=%ld TOL_MDEG=%ld STOP_MDPS=%ld SETTLE_MS=%u MAX_TRIMS=%u STALE_MS=%u\r\n",
+      (long)(APP_DEBUG_TURN_POSITION_KP * 100.0f), (long)(APP_DEBUG_TURN_RATE_KP * 100.0f),
+      (long)APP_DEBUG_TURN_ACCEL_DPS2, (long)APP_DEBUG_TURN_DECEL_DPS2,
+      (long)APP_DEBUG_TURN_STATIC_PWM, (long)APP_MOTOR_TURN_TOLERANCE_MDEG,
+      (long)APP_DEBUG_TURN_STOP_RATE_MDPS, APP_DEBUG_TURN_SETTLE_MS,
+      APP_DEBUG_TURN_MAX_CORRECTIONS, APP_DEBUG_TURN_IMU_STALE_MS);
   wheel_send(text);
 }
 

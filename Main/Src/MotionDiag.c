@@ -9,7 +9,7 @@
 #include "motor.h"
 
 #define DIAG_MAGIC 0x4D444731UL
-#define DIAG_FORMAT 1U
+#define DIAG_FORMAT 2U
 
 typedef struct {
   uint32_t valid, exception, pc, lr, xpsr, stack_pointer, exc_return;
@@ -101,6 +101,12 @@ static void print_record(void (*send)(const char *), const char *prefix, const M
       prefix, (long)m->turn_target_mdeg, bounded_i64(m->turn_delta_mdeg), m->turn_state,
       m->slowing, m->brake_cycles, m->paused, (unsigned long)m->turn_elapsed_ms,
       (long)r->imu.gyro_mdps[2]);
+  send(text);
+  (void)snprintf(text, sizeof(text),
+      "%s TURN_CTL PHASE=%u ERR_MDEG=%ld REF_MDPS=%ld CMD_MDPS=%ld SETTLE_MS=%u TRIMS=%u FAIL=%u IMU_AGE_MS=%lu\r\n",
+      prefix, m->turn_phase, (long)m->turn_error_mdeg, (long)m->turn_reference_mdps,
+      (long)m->turn_command_mdps, m->turn_settle_ms, m->turn_corrections,
+      m->turn_failure, (unsigned long)m->turn_imu_age_ms);
   send(text);
   (void)snprintf(text, sizeof(text),
       "%s PI ACTIVE=%u ERR_C100=%ld,%ld,%ld P100=%ld,%ld,%ld I100=%ld,%ld,%ld FF=%d,%d,%d CORR100=%ld,%ld,%ld PWM=%d,%d,%d\r\n",

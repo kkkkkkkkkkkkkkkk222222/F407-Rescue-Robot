@@ -3,14 +3,15 @@
 This is a USART1 command inside the existing MotionDebug firmware.
 There is no separate application mode or build preset. Motor/IMU parameters
 are shared with NormalRun and Gamepad as documented in the calibration history
-below; the text console itself remains exclusive to MotionDebug.
+below; the text console and the new TURN_PROFILE=1 angle controller are
+exclusive to MotionDebug while awaiting chassis validation.
 
 Build the existing MotionDebug preset and flash `build/MotionDebug/WWW.elf`.
 The check never starts automatically on boot.
 
 ## Diagnostic Trace
 
-The current build adds `DIAG=1` to the banner. `DIAG` prints the latest motor,
+The current build adds `DIAG=1 TURN_PROFILE=1` to the banner. `DIAG` prints the latest motor,
 PI, IMU and scheduler snapshot; `TRACE 1/0` controls expanded automatic output.
 Expanded trace is on by default during serial actions and continues for two
 seconds after completion as `SETTLE`, including raw post-stop yaw changes.
@@ -20,6 +21,14 @@ This is not a watchdog; a non-exception hang may retain only its last snapshot.
 NormalRun/Gamepad control and the binary 0x19/0x1A protocol are unchanged.
 See [the diagnostic capture guide](docs/MOTIONDEBUG_DIAGNOSTICS.md) for exact
 units and what to send back after a failure.
+
+TURN now uses a remaining-angle speed envelope, acceleration limiting and
+measured yaw-rate feedback. It keeps the wheel PI gains but lowers TURN-only
+static feedforward from 100 to 70 per mille. Completion requires angle error
+within 1 degree, yaw rate within 3 degrees/s and zero wheel counts for 150 ms
+of fresh control observations. Overshoot is braked before at most two low-speed
+corrections. The 10-second timeout is retained; stale IMU samples and excessive
+overshoot stop the test. NormalRun/Gamepad retain their previous turn controller.
 
 ## Serial Motion Commands
 
@@ -52,8 +61,8 @@ mm/s. If omitted, turn speed defaults to 30 degrees/s and translation speed
 to 150 mm/s. Explicit translation speeds must be 50..700 mm/s; the existing
 10 m displacement limit is retained. Turn angles are limited to +/-360 degrees.
 
-Motion commands are queued to the same Debug task and shared NormalRun motor
-controllers used by USART3, not executed in UART interrupts. A second motion
+Motion commands are queued to the same Debug task and motor API used by
+USART3, not executed in UART interrupts. A second motion
 while busy is rejected; STOP/HOLD can interrupt. During a serial action,
 new USART3 motion commands are consumed and ignored, but USART3 STOP wins.
 Commands received during the serial action are not replayed at completion.
@@ -65,7 +74,8 @@ DONE/STOPPED/FAULT, raw IMU yaw change since acceptance, and wheel feedback.
 Fault names distinguish invalid requests, IMU not ready, invalid odometry,
 timeout, and motor faults. Progress units follow existing MotionDebug status:
 tenths of a degree for TURN and millimeters for translation. Speed is requested;
-the existing end-of-turn slowdown and braking still apply.
+the new turn profile slows down and confirms rest before declaring DONE.
+TURN progress now reports the measured angle instead of being forced to the goal.
 
 For the next physical heading check, put the chassis on a clear floor, send
 `TURN 30 60` once, and record the actual direction and complete output through

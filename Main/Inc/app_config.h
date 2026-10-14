@@ -72,6 +72,20 @@
 #define APP_MOTOR_TURN_SLOW_MM_S         120.0f
 #define APP_MOTOR_TURN_TIMEOUT_MS        10000U
 #define APP_MOTOR_TURN_MAX_DEG           360.0f
+/* Trial angle controller: MotionDebug only until validated on the chassis. */
+#define APP_DEBUG_TURN_POSITION_KP       2.5f
+#define APP_DEBUG_TURN_RATE_KP           0.5f
+#define APP_DEBUG_TURN_ACCEL_DPS2        120.0f
+#define APP_DEBUG_TURN_DECEL_DPS2        120.0f
+#define APP_DEBUG_TURN_MIN_RATE_DPS      6.0f
+#define APP_DEBUG_TURN_TRIM_RATE_DPS     12.0f
+#define APP_DEBUG_TURN_STATIC_PWM        70.0f
+#define APP_DEBUG_TURN_STOP_RATE_MDPS    3000L
+#define APP_DEBUG_TURN_SETTLE_MS         150U
+#define APP_DEBUG_TURN_IMU_STALE_MS      100U
+#define APP_DEBUG_TURN_OVERRUN_MDEG      8000L
+#define APP_DEBUG_TURN_WRONG_WAY_MDEG    5000L
+#define APP_DEBUG_TURN_MAX_CORRECTIONS   2U
 #define APP_MOTION_TEST_SPEED_MM_S       750.0f
 #define APP_MOTION_TEST_MOVE_ANGLE_DEG   180.0f
 #define APP_MOTION_TEST_MOVE_TIME_MS     3000U

@@ -57,6 +57,17 @@ typedef struct {
   uint32_t start_ms;
   int64_t travelled_mdeg;
   float speed_mm_s;
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  float reference_rate_dps, command_rate_dps;
+  int32_t error_mdeg;
+  uint32_t last_sample_count, last_sample_ms;
+  uint16_t settle_ms;
+  int8_t last_direction;
+  uint8_t corrections;
+  MotorTurnPhase phase;
+  MotorTurnFailure failure;
+  bool holding, waiting_for_stop;
+#endif
 } AngleTurn;
 
 typedef struct {
@@ -284,8 +295,13 @@ static void motor_set_target_counts(uint8_t id, float target_counts)
                          ((targets[index] < 0) && (limited_counts > 0.0f));
   /* Keep tiny corrections from repeatedly applying static friction PWM.
    * Starting or reversing must leave the wider zero band first. */
-  const float zero_limit_mm_s = ((targets[index] == 0) || reversing) ?
+  float zero_limit_mm_s = ((targets[index] == 0) || reversing) ?
       APP_MOTOR_ZERO_EXIT_MM_S : APP_MOTOR_ZERO_ENTER_MM_S;
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  if (angle_turn.status == MOTOR_TURN_RUNNING) {
+    zero_limit_mm_s = 0.5f;
+  }
+#endif
   if (motor_abs_float(motor_counts_to_mm_s(limited_counts)) <= zero_limit_mm_s) {
     limited_counts = 0.0f;
   }
@@ -668,6 +684,139 @@ static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
                        0.0f, rotate_correction);
 }
 
+#if APP_ENABLE_MOTION_DEBUG_TASK
+static void motor_turn_fail(MotorTurnFailure failure)
+{
+  angle_turn.failure = failure;
+  angle_turn.phase = MOTOR_TURN_PHASE_FAULT;
+  angle_turn.status = MOTOR_TURN_FAULT;
+  angle_turn.slowing = false;
+  angle_turn.holding = false;
+  angle_turn.reference_rate_dps = 0.0f;
+  angle_turn.command_rate_dps = 0.0f;
+  motor_stop_outputs(true);
+}
+
+static void motor_turn_hold(MotorTurnPhase phase)
+{
+  if (!angle_turn.holding) {
+    motor_reset_targets();
+  }
+  angle_turn.holding = true;
+  angle_turn.command_rate_dps = 0.0f;
+  angle_turn.phase = phase;
+}
+
+static void motor_update_debug_turn(const IMUData *imu)
+{
+  const uint32_t now = HAL_GetTick();
+  const bool fresh = imu->sample_count != angle_turn.last_sample_count;
+  if (fresh) {
+    angle_turn.last_sample_count = imu->sample_count;
+    angle_turn.last_sample_ms = now;
+  } else if ((uint32_t)(now - angle_turn.last_sample_ms) >=
+             APP_DEBUG_TURN_IMU_STALE_MS) {
+    motor_turn_fail(MOTOR_TURN_FAIL_IMU_STALE);
+    return;
+  }
+
+  /* Keep relative turns unwrapped, including negative and full-circle goals. */
+  const int64_t delta = (imu->yaw_mdeg - angle_turn.start_yaw_mdeg) *
+      (APP_MOTOR_HEADING_OUTPUT_SIGN > 0.0f ? 1LL : -1LL);
+  const int64_t progress = delta * angle_turn.direction;
+  const int64_t error = (int64_t)angle_turn.target_mdeg * angle_turn.direction - delta;
+  angle_turn.travelled_mdeg = progress;
+  angle_turn.error_mdeg = error > INT32_MAX ? INT32_MAX :
+      error < INT32_MIN ? INT32_MIN : (int32_t)error;
+  if (progress < -APP_DEBUG_TURN_WRONG_WAY_MDEG) {
+    motor_turn_fail(MOTOR_TURN_FAIL_WRONG_WAY);
+    return;
+  }
+  if (progress > (int64_t)angle_turn.target_mdeg + APP_DEBUG_TURN_OVERRUN_MDEG) {
+    motor_turn_fail(MOTOR_TURN_FAIL_OVERRUN);
+    return;
+  }
+  const float error_deg = (float)error * 0.001f;
+  const float abs_error = motor_abs_float(error_deg);
+  const float rate = (float)imu->gyro_mdps[2] * 0.001f * APP_MOTOR_HEADING_OUTPUT_SIGN;
+  bool stopped = motor_abs_float(rate) <= APP_DEBUG_TURN_STOP_RATE_MDPS * 0.001f;
+  for (uint32_t i = 0U; i < MOTOR_COUNT; ++i) {
+    stopped = stopped && (measured_speeds_mm_s[i] == 0);
+  }
+
+  const bool in_tolerance = abs_error <= APP_MOTOR_TURN_TOLERANCE_MDEG * 0.001f;
+  const int8_t requested_direction = error >= 0LL ? 1 : -1;
+  const bool reverse = requested_direction != angle_turn.last_direction;
+  if (in_tolerance || reverse || angle_turn.waiting_for_stop) {
+    if (in_tolerance != (angle_turn.phase == MOTOR_TURN_PHASE_SETTLE)) {
+      angle_turn.settle_ms = 0U;
+    }
+    angle_turn.waiting_for_stop = true;
+    angle_turn.reference_rate_dps = 0.0f;
+    motor_turn_hold(in_tolerance ? MOTOR_TURN_PHASE_SETTLE : MOTOR_TURN_PHASE_BRAKE);
+    if (!stopped) {
+      angle_turn.settle_ms = 0U;
+    } else if (fresh) {
+      angle_turn.settle_ms += APP_MOTOR_CONTROL_PERIOD_MS;
+    }
+    if (angle_turn.settle_ms < APP_DEBUG_TURN_SETTLE_MS) {
+      return;
+    }
+    if (in_tolerance) {
+      angle_turn.status = MOTOR_TURN_DONE;
+      angle_turn.phase = MOTOR_TURN_PHASE_DONE;
+      angle_turn.slowing = false;
+      angle_turn.holding = false;
+      motor_stop_outputs(true);
+      return;
+    }
+    if (reverse) {
+      if ((angle_turn.corrections >= APP_DEBUG_TURN_MAX_CORRECTIONS) ||
+          (abs_error > APP_DEBUG_TURN_OVERRUN_MDEG * 0.001f)) {
+        motor_turn_fail(MOTOR_TURN_FAIL_TRIM_LIMIT);
+        return;
+      }
+      ++angle_turn.corrections;
+      angle_turn.last_direction = requested_direction;
+    }
+    angle_turn.waiting_for_stop = false;
+    angle_turn.settle_ms = 0U;
+  }
+
+  const float mm_s_per_dps = MOTOR_DEG_TO_RAD * APP_MOTION_DEBUG_TURN_RADIUS_MM;
+  float limit = angle_turn.speed_mm_s / mm_s_per_dps;
+  if (angle_turn.corrections > 0U) {
+    limit = fminf(limit, APP_DEBUG_TURN_TRIM_RATE_DPS);
+  }
+  /* Position envelope plus a braking-distance bound, then rate feedback.
+   * The existing wheel PI remains the inner loop; no reset at 30 degrees. */
+  const float stopping_rate = sqrtf(2.0f * APP_DEBUG_TURN_DECEL_DPS2 *
+      fmaxf(abs_error - APP_MOTOR_TURN_TOLERANCE_MDEG * 0.001f, 0.0f));
+  float requested_rate = fminf(APP_DEBUG_TURN_POSITION_KP * abs_error, stopping_rate);
+  requested_rate = fminf(limit, fmaxf(APP_DEBUG_TURN_MIN_RATE_DPS, requested_rate));
+  angle_turn.slowing = requested_rate < angle_turn.speed_mm_s / mm_s_per_dps;
+  if (brake_cycles_remaining > 0U) {
+    angle_turn.reference_rate_dps = 0.0f;
+    angle_turn.command_rate_dps = 0.0f;
+    return;
+  }
+  angle_turn.reference_rate_dps = motor_step_toward(angle_turn.reference_rate_dps,
+      requested_rate * requested_direction,
+      APP_DEBUG_TURN_ACCEL_DPS2 * APP_MOTOR_CONTROL_PERIOD_MS * 0.001f);
+  float command = angle_turn.reference_rate_dps + APP_DEBUG_TURN_RATE_KP *
+      (angle_turn.reference_rate_dps - rate);
+  command = motor_clamp_float(command, -limit, limit);
+  if (command * requested_direction <= 0.0f) {
+    motor_turn_hold(MOTOR_TURN_PHASE_BRAKE);
+    return;
+  }
+  angle_turn.holding = false;
+  angle_turn.command_rate_dps = command;
+  angle_turn.phase = angle_turn.corrections > 0U ? MOTOR_TURN_PHASE_TRIM : MOTOR_TURN_PHASE_DRIVE;
+  motor_set_rotate_speed(command * mm_s_per_dps);
+}
+#endif
+
 static void motor_update_angle_turn(void)
 {
   if (angle_turn.status != MOTOR_TURN_RUNNING) {
@@ -676,20 +825,31 @@ static void motor_update_angle_turn(void)
 
   const IMUData imu = IMU_GetData();
   if (!imu.ready) {
+#if APP_ENABLE_MOTION_DEBUG_TASK
+    motor_turn_fail(MOTOR_TURN_FAIL_IMU_NOT_READY);
+#else
     angle_turn.status = MOTOR_TURN_FAULT;
     angle_turn.slowing = false;
     motor_stop_outputs(true);
+#endif
     return;
   }
 
   if ((uint32_t)(HAL_GetTick() - angle_turn.start_ms) >=
       APP_MOTOR_TURN_TIMEOUT_MS) {
+#if APP_ENABLE_MOTION_DEBUG_TASK
+    motor_turn_fail(MOTOR_TURN_FAIL_TIMEOUT);
+#else
     angle_turn.status = MOTOR_TURN_FAULT;
     angle_turn.slowing = false;
     motor_stop_outputs(true);
+#endif
     return;
   }
 
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  motor_update_debug_turn(&imu);
+#else
   const int64_t signed_yaw_mdeg = imu.yaw_mdeg - angle_turn.start_yaw_mdeg;
   const int64_t yaw_mdeg =
       (signed_yaw_mdeg < 0LL) ? -signed_yaw_mdeg : signed_yaw_mdeg;
@@ -713,6 +873,7 @@ static void motor_update_angle_turn(void)
     motor_set_rotate_speed(fminf(angle_turn.speed_mm_s, APP_MOTOR_TURN_SLOW_MM_S) *
                            (float)angle_turn.direction);
   }
+#endif
 }
 
 static int32_t motor_wrap_heading_error(int64_t error_mdeg)
@@ -910,6 +1071,9 @@ void Motor_Init(void)
   distance_move.no_progress_cycles = 0U;
   distance_move.zero_wait_cycles = 0U;
   distance_move.zero_confirm_cycles = 0U;
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  angle_turn = (AngleTurn){0};
+#endif
   angle_turn.status = MOTOR_TURN_IDLE;
   angle_turn.slowing = false;
   angle_turn.direction = 1;
@@ -940,6 +1104,15 @@ void Motor_Stop(void)
   distance_move.no_progress_cycles = 0U;
   distance_move.zero_wait_cycles = 0U;
   distance_move.zero_confirm_cycles = 0U;
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  if (angle_turn.status == MOTOR_TURN_RUNNING) {
+    angle_turn.phase = MOTOR_TURN_PHASE_IDLE;
+  }
+  angle_turn.holding = false;
+  angle_turn.waiting_for_stop = false;
+  angle_turn.reference_rate_dps = 0.0f;
+  angle_turn.command_rate_dps = 0.0f;
+#endif
   angle_turn.status = MOTOR_TURN_IDLE;
   angle_turn.slowing = false;
   motor_stop_outputs(true);
@@ -952,6 +1125,12 @@ void Motor_PauseFiniteMotion(void)
   if (!finite_motion_paused) {
     motor_stop_outputs(true);
     distance_move.current_speed_mm_s = 0.0f;
+#if APP_ENABLE_MOTION_DEBUG_TASK
+    angle_turn.reference_rate_dps = 0.0f;
+    angle_turn.command_rate_dps = 0.0f;
+    angle_turn.holding = false;
+    angle_turn.settle_ms = 0U;
+#endif
     finite_pause_started_ms = HAL_GetTick();
     finite_motion_paused = true;
   }
@@ -964,17 +1143,23 @@ void Motor_ResumeFiniteMotion(void)
   if (finite_motion_paused) {
     if (angle_turn.status == MOTOR_TURN_RUNNING) {
       angle_turn.start_ms += HAL_GetTick() - finite_pause_started_ms;
+#if APP_ENABLE_MOTION_DEBUG_TASK
+      angle_turn.last_sample_count = IMU_GetData().sample_count;
+      angle_turn.last_sample_ms = HAL_GetTick();
+#endif
     }
     finite_motion_paused = false;
     /* A turn normally latches its speed only at start/slowdown. Recheck
      * coast-down progress before restoring that output after PAUSE. */
     motor_update_angle_turn();
+#if !APP_ENABLE_MOTION_DEBUG_TASK
     if (angle_turn.status == MOTOR_TURN_RUNNING) {
       const float speed = angle_turn.slowing ?
           fminf(angle_turn.speed_mm_s, APP_MOTOR_TURN_SLOW_MM_S) :
           angle_turn.speed_mm_s;
       motor_set_rotate_speed(speed * (float)angle_turn.direction);
     }
+#endif
   }
   motor_leave_critical(primask);
 }
@@ -1016,6 +1201,16 @@ void Motor_Update(void)
     motor_update_angle_turn();
     motor_update_direction_move();
   }
+
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  if (!finite_motion_paused && angle_turn.status == MOTOR_TURN_RUNNING && angle_turn.holding) {
+    brake_cycles_remaining = 0U;
+    for (uint8_t id = 1U; id <= MOTOR_COUNT; ++id) {
+      motor_apply_brake(id);
+    }
+    return;
+  }
+#endif
 
   if (brake_cycles_remaining > 0U) {
     for (uint8_t id = 1U; id <= MOTOR_COUNT; ++id) {
@@ -1087,8 +1282,13 @@ void Motor_Update(void)
      * The two paths share the 12 V voltage scale and final drive duty cap. */
     const float rpm = motor_abs_float(target_counts_per_update[index]) *
         60000.0f / (APP_ENCODER_COUNTS_PER_WHEEL_REV * APP_MOTOR_CONTROL_PERIOD_MS);
-    const float static_pwm = spin_move.active ?
+    float static_pwm = spin_move.active ?
         APP_MOVE_SPIN_FF_STATIC_PWM : (float)APP_MOTOR_BASE_PWM;
+#if APP_ENABLE_MOTION_DEBUG_TASK
+    if (angle_turn.status == MOTOR_TURN_RUNNING) {
+      static_pwm = APP_DEBUG_TURN_STATIC_PWM;
+    }
+#endif
     const float feedforward = static_pwm + rpm / APP_MOTOR_NO_LOAD_RPM *
         (float)APP_MOTOR_RATED_VOLTAGE_MV / APP_MOTOR_SUPPLY_VOLTAGE_MV * 1000.0f;
     const int32_t output_limit = spin_move.active ?
@@ -1150,6 +1350,14 @@ MotorDebugTrace Motor_GetDebugTrace(void)
   trace.turn_delta_mdeg = imu.yaw_mdeg - angle_turn.start_yaw_mdeg;
   trace.turn_elapsed_ms = HAL_GetTick() - angle_turn.start_ms;
   trace.turn_state = (uint8_t)angle_turn.status;
+  trace.turn_error_mdeg = angle_turn.error_mdeg;
+  trace.turn_reference_mdps = (int32_t)(angle_turn.reference_rate_dps * 1000.0f);
+  trace.turn_command_mdps = (int32_t)(angle_turn.command_rate_dps * 1000.0f);
+  trace.turn_imu_age_ms = HAL_GetTick() - angle_turn.last_sample_ms;
+  trace.turn_settle_ms = angle_turn.settle_ms;
+  trace.turn_phase = (uint8_t)angle_turn.phase;
+  trace.turn_corrections = angle_turn.corrections;
+  trace.turn_failure = (uint8_t)angle_turn.failure;
   trace.slowing = angle_turn.slowing;
   trace.brake_cycles = brake_cycles_remaining;
   trace.paused = finite_motion_paused;
@@ -1373,9 +1581,13 @@ MotorTurnStatus Motor_TurnAngleSpeed(float angle_deg, float speed_mm_s)
   }
   const IMUData imu = IMU_GetData();
   if (motor_has_fault() || !imu.ready) {
+#if APP_ENABLE_MOTION_DEBUG_TASK
+    motor_turn_fail(!imu.ready ? MOTOR_TURN_FAIL_IMU_NOT_READY : MOTOR_TURN_FAIL_NONE);
+#else
     angle_turn.status = MOTOR_TURN_FAULT;
     angle_turn.slowing = false;
     motor_stop_outputs(true);
+#endif
     motor_leave_critical(primask);
     return MOTOR_TURN_FAULT;
   }
@@ -1393,17 +1605,37 @@ MotorTurnStatus Motor_TurnAngleSpeed(float angle_deg, float speed_mm_s)
   angle_turn.start_ms = HAL_GetTick();
   angle_turn.travelled_mdeg = 0LL;
   angle_turn.speed_mm_s = speed_mm_s;
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  angle_turn.direction = (angle_deg >= 0.0f) ? 1 : -1;
+  angle_turn.reference_rate_dps = 0.0f;
+  angle_turn.command_rate_dps = 0.0f;
+  angle_turn.error_mdeg = target_mdeg * angle_turn.direction;
+  angle_turn.last_sample_count = imu.sample_count;
+  angle_turn.last_sample_ms = HAL_GetTick();
+  angle_turn.settle_ms = 0U;
+  angle_turn.last_direction = angle_turn.direction;
+  angle_turn.corrections = 0U;
+  angle_turn.phase = MOTOR_TURN_PHASE_DRIVE;
+  angle_turn.failure = MOTOR_TURN_FAIL_NONE;
+  angle_turn.holding = false;
+  angle_turn.waiting_for_stop = false;
+#else
   if (target_mdeg <= APP_MOTOR_TURN_TOLERANCE_MDEG) {
     angle_turn.status = MOTOR_TURN_DONE;
     motor_leave_critical(primask);
     return MOTOR_TURN_DONE;
   }
+#endif
 
   angle_turn.status = MOTOR_TURN_RUNNING;
   angle_turn.slowing = false;
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  motor_set_rotate_speed(0.0f);
+#else
   angle_turn.direction = (angle_deg >= 0.0f) ? 1 : -1;
   motor_set_rotate_speed(speed_mm_s *
                          (float)angle_turn.direction);
+#endif
   motor_leave_critical(primask);
   return MOTOR_TURN_RUNNING;
 }

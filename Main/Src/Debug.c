@@ -92,6 +92,15 @@ static uint16_t debug_heading_cdeg(void)
   return (uint16_t)((uint32_t)pose.heading_mdeg / 10U);
 }
 
+#if APP_ENABLE_MOTION_DEBUG_TASK
+static int16_t debug_saturate_i16(float value)
+{
+  if (value >= INT16_MAX) { return INT16_MAX; }
+  if (value <= INT16_MIN) { return INT16_MIN; }
+  return (int16_t)value;
+}
+#endif
+
 static bool debug_motor_fault(void)
 {
   for (uint8_t id = 1U; id <= 3U; ++id) {
@@ -274,16 +283,25 @@ static void debug_update_turn(uint32_t now_ms)
   float progress_deg = Motor_GetTurnTravelledDeg();
   const float target_deg = (active_turn_angle_deg >= 0.0f) ?
       active_turn_angle_deg : -active_turn_angle_deg;
+#if !APP_ENABLE_MOTION_DEBUG_TASK
   if (progress_deg > target_deg) {
     progress_deg = target_deg;
   }
+#endif
   const float turn_sign = (active_turn_angle_deg >= 0.0f) ? 1.0f : -1.0f;
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  debug_status.progress = debug_saturate_i16(turn_sign * progress_deg * 10.0f);
+  debug_status.remaining = debug_saturate_u16(fabsf(target_deg - progress_deg) * 10.0f);
+#else
   debug_status.progress = (int16_t)(turn_sign * progress_deg * 10.0f);
   debug_status.remaining = debug_saturate_u16(
       (target_deg - progress_deg) * 10.0f);
+#endif
 
   if (result == MOTOR_TURN_DONE) {
+#if !APP_ENABLE_MOTION_DEBUG_TASK
     debug_status.progress = (int16_t)(turn_sign * target_deg * 10.0f);
+#endif
     debug_status.remaining = 0U;
     debug_finish(DEBUG_MOTION_DONE, DEBUG_MOTION_FAULT_NONE, now_ms);
     return;

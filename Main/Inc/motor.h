@@ -47,9 +47,9 @@ MotorDistanceStatus Motor_MoveDistanceLinear(float distance_m,
 MotorDistanceStatus Motor_MoveDistanceConstant(float distance_m,
                                                float speed_mm_s);
 MotorTurnStatus Motor_TurnAngle(float angle_deg);
-/* Same relative IMU turn with a caller-specific initial rotation speed. */
+/* Caller-specific rotation speed; MotionDebug profiles and confirms rest. */
 MotorTurnStatus Motor_TurnAngleSpeed(float angle_deg, float speed_mm_s);
-/* Absolute relative IMU rotation used by the shared turn completion check. */
+/* Travel along the request; MotionDebug preserves signed, unwrapped progress. */
 float Motor_GetTurnTravelledDeg(void);
 /* yaw_tangent_mm_s is R*omega, so all three inputs use mm/s. */
 void Motor_Move(float forward_mm_s, float lateral_mm_s,
@@ -69,6 +69,17 @@ void Motor_Update(void);
 MotorStatus Motor_GetStatus(uint8_t id);
 
 #if APP_ENABLE_MOTION_DEBUG_TASK
+typedef enum {
+  MOTOR_TURN_PHASE_IDLE = 0, MOTOR_TURN_PHASE_DRIVE,
+  MOTOR_TURN_PHASE_BRAKE, MOTOR_TURN_PHASE_SETTLE,
+  MOTOR_TURN_PHASE_TRIM, MOTOR_TURN_PHASE_DONE, MOTOR_TURN_PHASE_FAULT
+} MotorTurnPhase;
+typedef enum {
+  MOTOR_TURN_FAIL_NONE = 0, MOTOR_TURN_FAIL_IMU_STALE,
+  MOTOR_TURN_FAIL_TIMEOUT, MOTOR_TURN_FAIL_OVERRUN,
+  MOTOR_TURN_FAIL_WRONG_WAY, MOTOR_TURN_FAIL_TRIM_LIMIT,
+  MOTOR_TURN_FAIL_IMU_NOT_READY
+} MotorTurnFailure;
 typedef struct {
   int32_t raw_count[3], feedback_count[3];
   int32_t error_c100[3], p_pwm100[3], i_pwm100[3], correction_pwm100[3];
@@ -76,6 +87,10 @@ typedef struct {
   int32_t turn_target_mdeg;
   int64_t turn_delta_mdeg;
   uint32_t turn_elapsed_ms;
+  int32_t turn_error_mdeg, turn_reference_mdps, turn_command_mdps;
+  uint32_t turn_imu_age_ms;
+  uint16_t turn_settle_ms;
+  uint8_t turn_phase, turn_corrections, turn_failure;
   uint8_t turn_state, slowing, brake_cycles, paused, pi_active_mask;
 } MotorDebugTrace;
 MotorDebugTrace Motor_GetDebugTrace(void);
