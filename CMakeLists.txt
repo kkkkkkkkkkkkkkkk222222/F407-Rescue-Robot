@@ -46,6 +46,7 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Main/Src/CenteringTask.c
     Main/Src/Debug.c
+    Main/Src/MotionDiag.c
     Main/Src/Gamepad.c
     Main/Src/DebugConsole.c
     Main/Src/Robot.c

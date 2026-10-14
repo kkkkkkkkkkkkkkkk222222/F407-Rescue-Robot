@@ -19,12 +19,18 @@
 #include "Uart.h"
 #include "vision.h"
 #include "WheelCheck.h"
+#include "MotionDiag.h"
 
 extern TIM_HandleTypeDef htim6;
 
 #define LCD_PERIOD_MS     100U
 
 static volatile uint32_t app_milliseconds;
+#if APP_ENABLE_MOTION_DEBUG_TASK
+#define ROBOT_TRACE_STAGE(stage) MotionDiag_SetStage(stage, app_milliseconds)
+#else
+#define ROBOT_TRACE_STAGE(stage) ((void)0)
+#endif
 
 static volatile uint32_t lcd_release_sequence;
 static uint32_t lcd_consumed_sequence;
@@ -332,6 +338,9 @@ static void process_motor_test_key(uint32_t now_ms)
 
 void Robot_Init(void)
 {
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  MotionDiag_Init();
+#endif
   application_ready = false;
   app_milliseconds = 0U;
   lcd_release_sequence = 0U;
@@ -473,13 +482,17 @@ static void robot_sample_imu(void)
 
 void Robot_Process(void)
 {
+  ROBOT_TRACE_STAGE(MOTION_DIAG_MAIN);
+  ROBOT_TRACE_STAGE(MOTION_DIAG_IMU);
   robot_sample_imu();
 #if APP_ENABLE_MOTION_DEBUG_TASK
+  ROBOT_TRACE_STAGE(MOTION_DIAG_CONSOLE);
   WheelCheck_Process();
 #endif
 #if APP_ENABLE_RUNTIME_SERVO_DEBUG
   DebugConsole_Process();
 #endif
+  ROBOT_TRACE_STAGE(MOTION_DIAG_UART3);
   uart_active = Uart_Receive(0U);
 
   const uint32_t odom_released = odom_release_sequence;
@@ -498,6 +511,7 @@ void Robot_Process(void)
     odom_reset_pending = false;
   }
 
+  ROBOT_TRACE_STAGE(MOTION_DIAG_VISION);
   Vision_Process();
 
 #if APP_ENABLE_AUTOMATIC_MOTOR_TEST && !APP_ENABLE_TASK && \
@@ -508,10 +522,13 @@ void Robot_Process(void)
   if (lcd_released != lcd_consumed_sequence) {
     lcd_consumed_sequence = lcd_released;
     if (lcd_ready) {
+      ROBOT_TRACE_STAGE(MOTION_DIAG_LCD);
       draw_dashboard();
     }
   }
+  ROBOT_TRACE_STAGE(MOTION_DIAG_IMU);
   robot_sample_imu();
+  ROBOT_TRACE_STAGE(MOTION_DIAG_IDLE);
 
 #if APP_ENABLE_SERVO_SWEEP_TEST && !APP_ENABLE_TASK && \
     !APP_ENABLE_CENTERING_TASK
@@ -552,6 +569,7 @@ void Robot_RunDeferredTask(void)
 #elif APP_ENABLE_GAMEPAD_TASK
       Gamepad_Process(now_ms);
 #else
+      MotionDiag_TaskTick();
       Debug_Process(now_ms);
 #endif
     }
@@ -603,6 +621,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *timer)
 
   if (motor_update_due) {
     Motor_Update();
+#if APP_ENABLE_MOTION_DEBUG_TASK
+    MotionDiag_MotorTick(app_milliseconds);
+#endif
   }
   if (++lcd_period_ms >= LCD_PERIOD_MS) {
     lcd_period_ms = 0U;

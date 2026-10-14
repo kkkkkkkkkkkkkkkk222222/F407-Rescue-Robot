@@ -15,11 +15,12 @@
 #include "main.h"
 #include "motor.h"
 #include "vision.h"
+#include "MotionDiag.h"
 
 extern UART_HandleTypeDef huart1;
 
 #define RX_SIZE 128U
-#define TX_SIZE 1024U
+#define TX_SIZE 4096U
 #define LINE_SIZE 64U
 #define TX_TIMEOUT_MS 250U
 #define LINE_TIMEOUT_MS 1000U
@@ -67,6 +68,9 @@ static bool motion_tracking;
 static uint8_t tracked_sequence;
 static int64_t motion_start_yaw_mdeg;
 static uint32_t last_motion_report_ms;
+static bool trace_enabled = true;
+static bool post_motion_trace;
+static uint32_t post_motion_started_ms;
 
 static const int8_t encoder_signs[3] = {
   APP_OMNI_M1_ENCODER_SIGN,
@@ -306,7 +310,8 @@ static void wheel_report_state(const char *prefix)
   const DebugStatus status = Debug_GetStatus();
   const IMUData imu = IMU_GetData();
   const LocationPose pose = Location_GetPose();
-  const int64_t delta = motion_tracking ? imu.yaw_mdeg - motion_start_yaw_mdeg : 0LL;
+  const int64_t delta = (motion_tracking || post_motion_trace) ?
+      imu.yaw_mdeg - motion_start_yaw_mdeg : 0LL;
   const long bounded_delta = (delta > INT32_MAX) ? INT32_MAX :
       ((delta < INT32_MIN) ? INT32_MIN : (long)delta);
   char text[224];
@@ -324,7 +329,7 @@ static void wheel_report_version(void)
 {
   char text[240];
   (void)snprintf(text, sizeof(text),
-      "MOTIONDEBUG SERIAL_V3 RX_GUARD=1 MODE=%u FORWARD_SIGN=%d HEADING_SIGN=%d "
+      "MOTIONDEBUG SERIAL_V3 RX_GUARD=1 DIAG=1 MODE=%u FORWARD_SIGN=%d HEADING_SIGN=%d "
       "HOLD_P_X100=%ld HOLD_I_X10000=%ld STEER_P_X1000=%ld STEER_D_X10000=%ld BUILT="
       __DATE__ " " __TIME__ "\r\n", (unsigned int)APP_ACTIVE_MODE,
       APP_OMNI_FORWARD_SIGN, (int)APP_MOTOR_HEADING_OUTPUT_SIGN,
@@ -332,6 +337,12 @@ static void wheel_report_version(void)
       (long)(APP_MOTOR_HEADING_KI * 10000.0f + 0.5f),
       (long)(APP_STEERING_KP_MM_S * 1000.0f + 0.5f),
       (long)(APP_STEERING_KD_MM * 10000.0f + 0.5f));
+  wheel_send(text);
+  (void)snprintf(text, sizeof(text),
+      "DIAG_CFG TRACE=%u PERIOD_MS=250 POST_MS=2000 SPEED_P100=%ld SPEED_I10000=%ld TURN_SLOW_MM_S=%ld TURN_TIMEOUT_MS=%lu\r\n",
+      trace_enabled, (long)(APP_MOTOR_SPEED_KP * 100.0f),
+      (long)(APP_MOTOR_SPEED_KI * 10000.0f), (long)APP_MOTOR_TURN_SLOW_MM_S,
+      (unsigned long)APP_MOTOR_TURN_TIMEOUT_MS);
   wheel_send(text);
 }
 
@@ -392,6 +403,7 @@ static void wheel_submit_motion(uint8_t opcode, int16_t arg1, int16_t arg2,
     return;
   }
   motion_tracking = true;
+  post_motion_trace = false;
   tracked_sequence = sequence;
   motion_start_yaw_mdeg = start_yaw;
   last_motion_report_ms = HAL_GetTick() - 250U;
@@ -447,6 +459,11 @@ static void wheel_execute(void)
     return;
   }
   if (count != 0U) {
+    if (strcmp(command, "TRACE") == 0 && count == 1U && (args[0] == 0 || args[0] == 1)) {
+      trace_enabled = args[0] != 0;
+      wheel_send(trace_enabled ? "TRACE ON\r\n" : "TRACE OFF\r\n");
+      return;
+    }
     wheel_send("ERR COMMAND ARGUMENTS; SEND HELP\r\n");
     return;
   }
@@ -467,8 +484,17 @@ static void wheel_execute(void)
     wheel_report_motors();
     return;
   }
+  if (strcmp(command, "DIAG") == 0) {
+    MotionDiag_Print(wheel_send, "DIAG");
+    return;
+  }
+  if (strcmp(command, "CRASH") == 0) {
+    MotionDiag_PrintPrevious(wheel_send);
+    return;
+  }
   if ((strcmp(command, "HELP") == 0) || (strcmp(command, "VER") == 0)) {
     wheel_report_version();
+    wheel_send("DIAG CRASH TRACE 0/1; MOTION TRACE + 2s POST-STOP; NO AUTO MOTION\r\n");
     wheel_send("TURN deg [deg/s=30]; MOVE mm [mm/s=150]\r\n"
                "BODY forward_mm left_mm [mm/s=150]\r\n"
                "FIELD x_mm y_mm [mm/s=150]\r\n"
@@ -551,6 +577,7 @@ void WheelCheck_Init(void)
   wheel_start_rx();
   wheel_report_version();
   wheel_send("USART1 115200 8N1; SEND HELP; NO AUTOMATIC MOTION\r\n");
+  MotionDiag_PrintPrevious(wheel_send);
 }
 
 void WheelCheck_Process(void)
@@ -653,11 +680,23 @@ void WheelCheck_Process(void)
     if (terminal || ((uint32_t)(now_ms - last_motion_report_ms) >= 250U)) {
       wheel_report_state(terminal ? "FINAL" : "MOTION");
       wheel_report_motors();
+      if (trace_enabled) { MotionDiag_Print(wheel_send, "DIAG"); }
       last_motion_report_ms = now_ms;
     }
     if (terminal) {
       motion_tracking = false;
+      post_motion_trace = true;
+      post_motion_started_ms = now_ms;
     }
+  }
+  if (post_motion_trace && !motion_tracking &&
+      (uint32_t)(now_ms - last_motion_report_ms) >= 250U) {
+    if (trace_enabled) {
+      wheel_report_state("SETTLE");
+      MotionDiag_Print(wheel_send, "DIAG");
+    }
+    last_motion_report_ms = now_ms;
+    if ((uint32_t)(now_ms - post_motion_started_ms) >= 2000U) { post_motion_trace = false; }
   }
   wheel_pump_tx();
 }

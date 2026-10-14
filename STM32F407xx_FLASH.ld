@@ -247,6 +247,12 @@ SECTIONS
   PROVIDE( __bss_size = __bss_end - __bss_start );
 
   /* User_heap_stack section, used to check that there is enough RAM left */
+  .noinit.motion_diag (NOLOAD) : ALIGN(8)
+  {
+    KEEP(*(.noinit.motion_diag))
+    . = ALIGN(8);
+  } >RAM
+
   ._user_heap_stack (NOLOAD) :
   {
     . = ALIGN(8);

@@ -23,6 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "Robot.h"
+#include "MotionDiag.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -37,6 +38,11 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
+#if APP_ENABLE_MOTION_DEBUG_TASK
+#define MOTION_DIAG_HANDLER __attribute__((naked))
+#else
+#define MOTION_DIAG_HANDLER
+#endif
 
 /* USER CODE END PM */
 
@@ -71,8 +77,11 @@ extern UART_HandleTypeDef huart3;
 /**
   * @brief This function handles Non maskable interrupt.
   */
-void NMI_Handler(void)
+MOTION_DIAG_HANDLER void NMI_Handler(void)
 {
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  __asm volatile("b MotionDiag_FaultEntry");
+#else
   /* USER CODE BEGIN NonMaskableInt_IRQn 0 */
 
   /* USER CODE END NonMaskableInt_IRQn 0 */
@@ -81,13 +90,17 @@ void NMI_Handler(void)
   {
   }
   /* USER CODE END NonMaskableInt_IRQn 1 */
+#endif
 }
 
 /**
   * @brief This function handles Hard fault interrupt.
   */
-void HardFault_Handler(void)
+MOTION_DIAG_HANDLER void HardFault_Handler(void)
 {
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  __asm volatile("b MotionDiag_FaultEntry");
+#else
   /* USER CODE BEGIN HardFault_IRQn 0 */
 
   /* USER CODE END HardFault_IRQn 0 */
@@ -96,13 +109,17 @@ void HardFault_Handler(void)
     /* USER CODE BEGIN W1_HardFault_IRQn 0 */
     /* USER CODE END W1_HardFault_IRQn 0 */
   }
+#endif
 }
 
 /**
   * @brief This function handles Memory management fault.
   */
-void MemManage_Handler(void)
+MOTION_DIAG_HANDLER void MemManage_Handler(void)
 {
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  __asm volatile("b MotionDiag_FaultEntry");
+#else
   /* USER CODE BEGIN MemoryManagement_IRQn 0 */
 
   /* USER CODE END MemoryManagement_IRQn 0 */
@@ -111,13 +128,17 @@ void MemManage_Handler(void)
     /* USER CODE BEGIN W1_MemoryManagement_IRQn 0 */
     /* USER CODE END W1_MemoryManagement_IRQn 0 */
   }
+#endif
 }
 
 /**
   * @brief This function handles Pre-fetch fault, memory access fault.
   */
-void BusFault_Handler(void)
+MOTION_DIAG_HANDLER void BusFault_Handler(void)
 {
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  __asm volatile("b MotionDiag_FaultEntry");
+#else
   /* USER CODE BEGIN BusFault_IRQn 0 */
 
   /* USER CODE END BusFault_IRQn 0 */
@@ -126,13 +147,17 @@ void BusFault_Handler(void)
     /* USER CODE BEGIN W1_BusFault_IRQn 0 */
     /* USER CODE END W1_BusFault_IRQn 0 */
   }
+#endif
 }
 
 /**
   * @brief This function handles Undefined instruction or illegal state.
   */
-void UsageFault_Handler(void)
+MOTION_DIAG_HANDLER void UsageFault_Handler(void)
 {
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  __asm volatile("b MotionDiag_FaultEntry");
+#else
   /* USER CODE BEGIN UsageFault_IRQn 0 */
 
   /* USER CODE END UsageFault_IRQn 0 */
@@ -141,6 +166,7 @@ void UsageFault_Handler(void)
     /* USER CODE BEGIN W1_UsageFault_IRQn 0 */
     /* USER CODE END W1_UsageFault_IRQn 0 */
   }
+#endif
 }
 
 /**

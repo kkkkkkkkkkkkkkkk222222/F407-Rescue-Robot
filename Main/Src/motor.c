@@ -109,6 +109,9 @@ static volatile bool finite_motion_paused;
 static uint32_t finite_pause_started_ms;
 static uint8_t brake_cycles_remaining;
 #if APP_ENABLE_MOTION_DEBUG_TASK
+static int16_t debug_feedforward[3];
+static int32_t debug_correction_pwm100[3];
+static uint8_t debug_pi_active_mask;
 static volatile uint8_t wheel_check_id;
 static int16_t wheel_check_pwm;
 static uint32_t wheel_check_start_ms;
@@ -856,6 +859,11 @@ void Motor_Init(void)
   finite_pause_started_ms = 0U;
 #if APP_ENABLE_MOTION_DEBUG_TASK
   wheel_check_id = 0U;
+  debug_pi_active_mask = 0U;
+  for (uint8_t i = 0U; i < MOTOR_COUNT; ++i) {
+    debug_feedforward[i] = 0;
+    debug_correction_pwm100[i] = 0;
+  }
 #endif
   brake_cycles_remaining = 0U;
   for (uint32_t i = 0U; i < MOTOR_COUNT; ++i) {
@@ -973,6 +981,9 @@ void Motor_ResumeFiniteMotion(void)
 
 void Motor_Update(void)
 {
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  debug_pi_active_mask = 0U;
+#endif
   int32_t measured_counts[MOTOR_COUNT];
   bool fault_detected = false;
   EncoderStatus encoder[MOTOR_COUNT];
@@ -1090,6 +1101,11 @@ void Motor_Update(void)
     correction = boost * Pid_Update(&speed_pids[index],
                                     target_counts_per_update[index],
                                     (float)measured);
+#if APP_ENABLE_MOTION_DEBUG_TASK
+    debug_feedforward[index] = (int16_t)base_pwm;
+    debug_correction_pwm100[index] = (int32_t)(correction * 100.0f);
+    debug_pi_active_mask |= (uint8_t)(1U << index);
+#endif
     int32_t output = base_pwm + (int32_t)correction;
     if (!spin_move.active && ((targets[index] > 0 && output < 0) ||
                               (targets[index] < 0 && output > 0))) {
@@ -1109,6 +1125,39 @@ void Motor_Update(void)
 }
 
 #if APP_ENABLE_MOTION_DEBUG_TASK
+MotorDebugTrace Motor_GetDebugTrace(void)
+{
+  const uint32_t primask = motor_enter_critical();
+  EncoderStatus encoder[MOTOR_COUNT];
+  Encoder_GetAll(encoder);
+  const IMUData imu = IMU_GetData();
+  MotorDebugTrace trace = {0};
+  for (uint8_t i = 0U; i < MOTOR_COUNT; ++i) {
+    trace.raw_count[i] = encoder[i].delta_10ms;
+    trace.feedback_count[i] = trace.raw_count[i] * encoder_signs[i];
+    trace.error_c100[i] = (int32_t)(speed_pids[i].last_error * 100.0f);
+    const float boost = spin_move.active ? APP_MOVE_SPIN_PID_BOOST : 1.0f;
+    trace.p_pwm100[i] = (int32_t)(boost * speed_pids[i].kp * speed_pids[i].last_error * 100.0f);
+    trace.i_pwm100[i] = (int32_t)(boost * speed_pids[i].ki * speed_pids[i].integral * 100.0f);
+    const bool pi_active = (debug_pi_active_mask & (1U << i)) != 0U;
+    trace.correction_pwm100[i] = pi_active ? debug_correction_pwm100[i] : 0;
+    trace.feedforward[i] = pi_active ? debug_feedforward[i] : 0;
+    trace.target_mm_s[i] = target_speeds_mm_s[i];
+    trace.actual_mm_s[i] = measured_speeds_mm_s[i];
+    trace.output[i] = commands[i];
+  }
+  trace.turn_target_mdeg = angle_turn.target_mdeg * angle_turn.direction;
+  trace.turn_delta_mdeg = imu.yaw_mdeg - angle_turn.start_yaw_mdeg;
+  trace.turn_elapsed_ms = HAL_GetTick() - angle_turn.start_ms;
+  trace.turn_state = (uint8_t)angle_turn.status;
+  trace.slowing = angle_turn.slowing;
+  trace.brake_cycles = brake_cycles_remaining;
+  trace.paused = finite_motion_paused;
+  trace.pi_active_mask = debug_pi_active_mask;
+  motor_leave_critical(primask);
+  return trace;
+}
+
 bool Motor_WheelCheckPulse(uint8_t id, int16_t pwm, uint16_t duration_ms)
 {
   if ((id < 1U) || (id > MOTOR_COUNT) || (pwm == 0) ||

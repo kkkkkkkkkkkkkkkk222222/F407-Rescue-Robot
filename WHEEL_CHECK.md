@@ -8,6 +8,19 @@ below; the text console itself remains exclusive to MotionDebug.
 Build the existing MotionDebug preset and flash `build/MotionDebug/WWW.elf`.
 The check never starts automatically on boot.
 
+## Diagnostic Trace
+
+The current build adds `DIAG=1` to the banner. `DIAG` prints the latest motor,
+PI, IMU and scheduler snapshot; `TRACE 1/0` controls expanded automatic output.
+Expanded trace is on by default during serial actions and continues for two
+seconds after completion as `SETTLE`, including raw post-stop yaw changes.
+`CRASH` reads the previous warm-reset record. Debug-only exception handlers
+force motor inputs low and save fault registers using a separate stack.
+This is not a watchdog; a non-exception hang may retain only its last snapshot.
+NormalRun/Gamepad control and the binary 0x19/0x1A protocol are unchanged.
+See [the diagnostic capture guide](docs/MOTIONDEBUG_DIAGNOSTICS.md) for exact
+units and what to send back after a failure.
+
 ## Serial Motion Commands
 
 The programmer's USART1 console is available in MotionDebug at 115200 8N1.

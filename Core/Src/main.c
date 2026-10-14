@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "Robot.h"
+#include "MotionDiag.h"
 #include "servo.h"
 /* USER CODE END Includes */
 
@@ -838,6 +839,9 @@ static void MX_GPIO_Init(void)
   */
 void Error_Handler(void)
 {
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  MotionDiag_Error((uint32_t)__builtin_return_address(0));
+#endif
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
   __disable_irq();

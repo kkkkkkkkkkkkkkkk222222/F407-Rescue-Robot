@@ -23,6 +23,9 @@ void Location_ResetReference(int32_t x, int32_t y, int32_t heading)
 { test_pose.x_mm = x; test_pose.y_mm = y; test_pose.heading_mdeg = heading; }
 VisionData Vision_GetSnapshot(void) { return test_vision; }
 void Vision_QueueMotionStatus(const VisionMotionStatus *status) { (void)status; }
+#if defined(MOTOR_TRACE_CHECK_ONLY)
+void WheelCheck_Stop(void) { Motor_Stop(); }
+#endif
 
 void MotorTest_SetCompare(TIM_HandleTypeDef *timer, uint32_t channel, uint32_t value)
 {
@@ -618,8 +621,54 @@ static void test_debug_straight_stop_wait_is_bounded(void)
   }
 }
 
+#if defined(MOTOR_TRACE_CHECK_ONLY)
+static void test_trace_read_only_and_signed_pi(void)
+{
+  reset(); Motor_SetSpeed(136.0f, 1U);
+  test_encoder[0].delta_10ms = -8;
+  update();
+  const MotorDebugTrace positive = Motor_GetDebugTrace();
+  assert(positive.raw_count[0] == -8 && positive.feedback_count[0] == 8);
+  assert(positive.error_c100[0] < 0 && positive.p_pwm100[0] < 0);
+  assert(positive.correction_pwm100[0] < 0 && positive.output[0] < positive.feedforward[0]);
+  const float integral = speed_pids[0].integral;
+  const MotorDebugTrace again = Motor_GetDebugTrace();
+  assert(speed_pids[0].integral == integral && again.output[0] == positive.output[0]);
+  Motor_SetSpeed(-136.0f, 1U);
+  test_encoder[0].delta_10ms = 8;
+  update();
+  const MotorDebugTrace negative = Motor_GetDebugTrace();
+  assert(negative.feedback_count[0] == -8 && negative.error_c100[0] > 0);
+  assert(negative.correction_pwm100[0] > 0 && negative.output[0] > negative.feedforward[0]);
+}
+
+static void test_trace_keeps_post_stop_yaw(void)
+{
+  reset();
+  assert(Motor_TurnAngleSpeed(60.0f, 136.0f) == MOTOR_TURN_RUNNING);
+  test_imu.yaw_mdeg = 31000;
+  update();
+  MotorDebugTrace trace = Motor_GetDebugTrace();
+  assert(trace.turn_target_mdeg == 60000 && trace.turn_delta_mdeg == 31000 && trace.slowing);
+  test_imu.yaw_mdeg = 60000;
+  update();
+  trace = Motor_GetDebugTrace();
+  assert(trace.turn_state == MOTOR_TURN_DONE && trace.pi_active_mask == 0U);
+  assert(trace.output[0] == 0 && trace.output[1] == 0 && trace.output[2] == 0);
+  Motor_Stop();
+  test_imu.yaw_mdeg = 64000;
+  trace = Motor_GetDebugTrace();
+  assert(trace.turn_state == MOTOR_TURN_IDLE && trace.turn_delta_mdeg == 64000);
+}
+#endif
+
 int main(void)
 {
+#if defined(MOTOR_TRACE_CHECK_ONLY)
+  test_trace_read_only_and_signed_pi();
+  test_trace_keeps_post_stop_yaw();
+  puts("Motion diagnostic trace: signed PI, read-only access and post-stop yaw PASS");
+#else
   test_units_and_encoder_scale();
   test_hard_cap_and_brake_are_distinct();
   test_slow_decay_mapping_and_update_guard();
@@ -645,5 +694,6 @@ int main(void)
   test_debug_and_normal_distance_heading_match();
   test_debug_straight_stop_wait_is_bounded();
   puts("MG310 motor: 24 scenarios PASS");
+#endif
   return 0;
 }

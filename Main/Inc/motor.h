@@ -69,6 +69,16 @@ void Motor_Update(void);
 MotorStatus Motor_GetStatus(uint8_t id);
 
 #if APP_ENABLE_MOTION_DEBUG_TASK
+typedef struct {
+  int32_t raw_count[3], feedback_count[3];
+  int32_t error_c100[3], p_pwm100[3], i_pwm100[3], correction_pwm100[3];
+  int16_t target_mm_s[3], actual_mm_s[3], feedforward[3], output[3];
+  int32_t turn_target_mdeg;
+  int64_t turn_delta_mdeg;
+  uint32_t turn_elapsed_ms;
+  uint8_t turn_state, slowing, brake_cycles, paused, pi_active_mask;
+} MotorDebugTrace;
+MotorDebugTrace Motor_GetDebugTrace(void);
 /* Logical wheel polarity, open loop; bounded by the 10 ms motor scheduler. */
 bool Motor_WheelCheckPulse(uint8_t id, int16_t pwm, uint16_t duration_ms);
 bool Motor_WheelCheckRunning(void);
