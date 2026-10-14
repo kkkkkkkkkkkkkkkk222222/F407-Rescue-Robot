@@ -1,6 +1,7 @@
 #include "Debug.h"
 
 #include <math.h>
+#include <string.h>
 
 #include "app_config.h"
 #include "imu.h"
@@ -17,6 +18,7 @@
 #endif
 
 #define DEBUG_DEG_RAD 0.01745329252f
+#define DEBUG_RAW_YAW_SIGN ((APP_MOTOR_HEADING_OUTPUT_SIGN < 0.0f) ? -1LL : 1LL)
 
 static volatile DebugStatus debug_status;
 static bool initialized;
@@ -31,6 +33,10 @@ static struct {
   int16_t arg1;
   int16_t arg2;
   uint16_t speed;
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  int8_t circle_count;
+  int64_t circle_anchor_raw_mdeg;
+#endif
 } console_request;
 static bool command_sequence_valid;
 static uint8_t last_command_sequence;
@@ -48,6 +54,16 @@ static bool active_move_body_straight;
 static uint32_t active_start_ms;
 static uint32_t active_timeout_ms;
 static uint32_t last_status_ms;
+
+#if APP_ENABLE_MOTION_DEBUG_TASK
+static DebugCircleStatus circles;
+static uint32_t circles_start_ms;
+static uint32_t circles_dwell_start_ms;
+static uint32_t circles_still_start_ms;
+static bool circles_still;
+static uint32_t circles_last_sample;
+static uint32_t circles_last_sample_ms;
+#endif
 
 static uint32_t debug_enter_critical(void)
 {
@@ -98,6 +114,20 @@ static int16_t debug_saturate_i16(float value)
   if (value >= INT16_MAX) { return INT16_MAX; }
   if (value <= INT16_MIN) { return INT16_MIN; }
   return (int16_t)value;
+}
+
+static int32_t debug_saturate_i32(int64_t value)
+{
+  if (value > INT32_MAX) { return INT32_MAX; }
+  if (value < INT32_MIN) { return INT32_MIN; }
+  return (int32_t)value;
+}
+
+static void debug_cancel_circles(void)
+{
+  circles.active = false;
+  circles.dwelling = false;
+  circles_still = false;
 }
 #endif
 
@@ -155,6 +185,9 @@ static void debug_finish(DebugMotionState state, DebugMotionFault fault,
 {
   Motor_Stop();
   active = false;
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  debug_cancel_circles();
+#endif
   debug_status.state = state;
   debug_status.fault = fault;
   debug_publish_status(now_ms, true);
@@ -177,6 +210,13 @@ static uint32_t debug_move_timeout(float distance_mm, float speed_mm_s)
 static void debug_start_command(const VisionData *vision, uint32_t now_ms,
                                 DebugCommandSource source)
 {
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  debug_cancel_circles();
+  if ((vision->motion_opcode != VISION_MOTION_CMD_STOP) &&
+      (vision->motion_opcode != VISION_MOTION_CMD_HOLD)) {
+    memset(&circles, 0, sizeof(circles));
+  }
+#endif
   active = false;
   active_move_body_straight = false;
   Motor_Stop();
@@ -269,6 +309,79 @@ static void debug_start_command(const VisionData *vision, uint32_t now_ms,
   debug_finish(DEBUG_MOTION_FAULT, DEBUG_MOTION_FAULT_INVALID, now_ms);
 }
 
+#if APP_ENABLE_MOTION_DEBUG_TASK
+static void debug_circle_start_lap(uint32_t now_ms, const IMUData *imu)
+{
+  circles.current = (uint8_t)(circles.completed + 1U);
+  circles.goal_raw_mdeg = circles.anchor_raw_mdeg +
+      (int64_t)circles.direction * circles.current * 360000LL *
+      DEBUG_RAW_YAW_SIGN;
+  active_turn_angle_deg = (float)(circles.goal_raw_mdeg - imu->yaw_mdeg) *
+      APP_MOTOR_HEADING_OUTPUT_SIGN * 0.001f;
+  active_start_ms = now_ms;
+  debug_status.progress = 0;
+  debug_status.remaining = debug_saturate_u16(fabsf(active_turn_angle_deg) * 10.0f);
+  circles.dwelling = false;
+  circles_still = false;
+}
+
+static void debug_start_circles(int8_t count, int64_t anchor_raw_mdeg,
+                                uint32_t now_ms)
+{
+  const IMUData imu = IMU_GetData();
+  circles.valid = true;
+  circles.active = true;
+  circles.sequence = debug_status.command_sequence;
+  circles.total = (uint8_t)((count < 0) ? -count : count);
+  circles.direction = (count < 0) ? -1 : 1;
+  circles.anchor_raw_mdeg = anchor_raw_mdeg;
+  circles_start_ms = now_ms;
+  circles_last_sample = imu.sample_count;
+  circles_last_sample_ms = now_ms;
+  debug_circle_start_lap(now_ms, &imu);
+}
+
+static bool debug_circle_wait(uint32_t now_ms, const IMUData *imu)
+{
+  const uint32_t maximum_dwell_ms = APP_DEBUG_CIRCLES_DWELL_MS + 2000U;
+  const uint32_t maximum_batch_ms = circles.total *
+      (APP_MOTOR_TURN_TIMEOUT_MS + maximum_dwell_ms);
+  if (imu->sample_count != circles_last_sample) {
+    circles_last_sample = imu->sample_count;
+    circles_last_sample_ms = now_ms;
+  }
+  if ((uint32_t)(now_ms - circles_last_sample_ms) >= APP_DEBUG_TURN_IMU_STALE_MS) {
+    debug_finish(DEBUG_MOTION_FAULT, DEBUG_MOTION_FAULT_IMU, now_ms);
+    return true;
+  }
+  if ((uint32_t)(now_ms - circles_start_ms) >= maximum_batch_ms) {
+    debug_finish(DEBUG_MOTION_FAULT, DEBUG_MOTION_FAULT_TIMEOUT, now_ms);
+    return true;
+  }
+  if (!circles.dwelling) {
+    return false;
+  }
+  if ((uint32_t)(now_ms - circles_dwell_start_ms) >= maximum_dwell_ms) {
+    debug_finish(DEBUG_MOTION_FAULT, DEBUG_MOTION_FAULT_TIMEOUT, now_ms);
+    return true;
+  }
+  bool stopped = (imu->gyro_mdps[2] >= -APP_DEBUG_TURN_STOP_RATE_MDPS) &&
+                 (imu->gyro_mdps[2] <= APP_DEBUG_TURN_STOP_RATE_MDPS);
+  for (uint8_t id = 1U; id <= 3U; ++id) {
+    stopped = stopped && (Motor_GetStatus(id).measured_speed_mm_s == 0);
+  }
+  if (!stopped) {
+    circles_still = false;
+  } else if (!circles_still) {
+    circles_still = true;
+    circles_still_start_ms = now_ms;
+  } else if ((uint32_t)(now_ms - circles_still_start_ms) >= APP_DEBUG_CIRCLES_DWELL_MS) {
+    debug_circle_start_lap(now_ms, imu);
+  }
+  return true;
+}
+#endif
+
 static void debug_update_turn(uint32_t now_ms)
 {
   const IMUData imu = IMU_GetData();
@@ -276,10 +389,17 @@ static void debug_update_turn(uint32_t now_ms)
     debug_finish(DEBUG_MOTION_FAULT, DEBUG_MOTION_FAULT_IMU, now_ms);
     return;
   }
-  /* Poll the same latched controller as NormalRun. Motor_Update owns
-   * completion, slowdown and braking even when Debug_Process is delayed. */
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  if (circles.active && debug_circle_wait(now_ms, &imu)) {
+    return;
+  }
+  const MotorTurnStatus result = circles.active ?
+      Motor_DebugTurnToYaw(circles.goal_raw_mdeg, active_turn_speed_mm_s) :
+      Motor_TurnAngleSpeed(active_turn_angle_deg, active_turn_speed_mm_s);
+#else
   const MotorTurnStatus result = Motor_TurnAngleSpeed(active_turn_angle_deg,
                                                      active_turn_speed_mm_s);
+#endif
   float progress_deg = Motor_GetTurnTravelledDeg();
   const float target_deg = (active_turn_angle_deg >= 0.0f) ?
       active_turn_angle_deg : -active_turn_angle_deg;
@@ -299,6 +419,20 @@ static void debug_update_turn(uint32_t now_ms)
 #endif
 
   if (result == MOTOR_TURN_DONE) {
+#if APP_ENABLE_MOTION_DEBUG_TASK
+    if (circles.active) {
+      ++circles.completed;
+      if (circles.completed < circles.total) {
+        Motor_Stop();
+        circles.dwelling = true;
+        circles_still = false;
+        circles_dwell_start_ms = now_ms;
+        debug_status.remaining = 0U;
+        debug_publish_status(now_ms, true);
+        return;
+      }
+    }
+#endif
 #if !APP_ENABLE_MOTION_DEBUG_TASK
     debug_status.progress = (int16_t)(turn_sign * target_deg * 10.0f);
 #endif
@@ -441,6 +575,11 @@ void Debug_Init(uint32_t now_ms)
   active_start_ms = now_ms;
   active_timeout_ms = 0U;
   last_status_ms = now_ms;
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  memset(&circles, 0, sizeof(circles));
+  console_request.circle_count = 0;
+  circles_still = false;
+#endif
 
   /* Mapping starts at the actual three-wheel rotation centre. */
   Location_ResetReference(0, 0, 0);
@@ -484,8 +623,18 @@ void Debug_Process(uint32_t now_ms)
     vision.motion_arg1 = console_request.arg1;
     vision.motion_arg2 = console_request.arg2;
     vision.motion_speed = console_request.speed;
+#if APP_ENABLE_MOTION_DEBUG_TASK
+    const int8_t count = console_request.circle_count;
+    const int64_t anchor = console_request.circle_anchor_raw_mdeg;
+#endif
     console_pending = false;
     debug_start_command(&vision, now_ms, DEBUG_SOURCE_CONSOLE);
+#if APP_ENABLE_MOTION_DEBUG_TASK
+    if ((count != 0) && active &&
+        (active_command == VISION_MOTION_CMD_TURN_REL)) {
+      debug_start_circles(count, anchor, now_ms);
+    }
+#endif
   }
 
   if (active) {
@@ -523,6 +672,24 @@ DebugStatus Debug_GetStatus(void)
   return status;
 }
 
+DebugCircleStatus Debug_GetCircleStatus(void)
+{
+  DebugCircleStatus status = {0};
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  const uint32_t primask = debug_enter_critical();
+  status = circles;
+  if (status.valid) {
+    const IMUData imu = IMU_GetData();
+    status.total_delta_mdeg = debug_saturate_i32(
+        (imu.yaw_mdeg - status.anchor_raw_mdeg) * DEBUG_RAW_YAW_SIGN);
+    status.goal_error_mdeg = debug_saturate_i32(
+        (status.goal_raw_mdeg - imu.yaw_mdeg) * DEBUG_RAW_YAW_SIGN);
+  }
+  debug_leave_critical(primask);
+#endif
+  return status;
+}
+
 void Debug_SetWheelCheckActive(bool enabled)
 {
   const uint32_t primask = debug_enter_critical();
@@ -535,6 +702,9 @@ void Debug_SetWheelCheckActive(bool enabled)
   console_pending = false;
   console_owner = false;
   active_move_body_straight = false;
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  debug_cancel_circles();
+#endif
   Motor_Stop();
   debug_status.state = DEBUG_MOTION_STOPPED;
   debug_status.fault = DEBUG_MOTION_FAULT_NONE;
@@ -591,6 +761,12 @@ DebugConsoleResult Debug_SubmitConsoleCommand(uint8_t opcode, int16_t arg1,
   console_request.arg1 = arg1;
   console_request.arg2 = arg2;
   console_request.speed = speed;
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  console_request.circle_count = 0;
+  if (!stopping) {
+    memset(&circles, 0, sizeof(circles));
+  }
+#endif
   console_owner = true;
   console_pending = true;
   debug_status.source = DEBUG_SOURCE_CONSOLE;
@@ -601,6 +777,9 @@ DebugConsoleResult Debug_SubmitConsoleCommand(uint8_t opcode, int16_t arg1,
   debug_status.fault = DEBUG_MOTION_FAULT_NONE;
   debug_status.state = DEBUG_MOTION_IDLE;
   if (stopping) {
+#if APP_ENABLE_MOTION_DEBUG_TASK
+    debug_cancel_circles();
+#endif
 #if APP_ENABLE_MOTION_DEBUG_TASK
     if (wheel_check_active) {
       WheelCheck_Stop();
@@ -615,4 +794,37 @@ DebugConsoleResult Debug_SubmitConsoleCommand(uint8_t opcode, int16_t arg1,
   }
   debug_leave_critical(primask);
   return DEBUG_CONSOLE_ACCEPTED;
+}
+
+DebugConsoleResult Debug_SubmitConsoleCircles(int8_t count, uint16_t rate_dps,
+                                             uint8_t *sequence)
+{
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  if ((count == 0) || (count < -(int)APP_DEBUG_CIRCLES_MAX_COUNT) ||
+      (count > (int)APP_DEBUG_CIRCLES_MAX_COUNT) ||
+      (rate_dps < APP_DEBUG_CIRCLES_MIN_RATE_DPS) ||
+      (rate_dps > APP_DEBUG_CIRCLES_MAX_RATE_DPS)) {
+    return DEBUG_CONSOLE_INVALID;
+  }
+  const uint32_t primask = debug_enter_critical();
+  const IMUData imu = IMU_GetData();
+  if (!imu.ready) {
+    debug_leave_critical(primask);
+    return DEBUG_CONSOLE_INVALID;
+  }
+  const DebugConsoleResult result = Debug_SubmitConsoleCommand(
+      VISION_MOTION_CMD_TURN_REL, (count < 0) ? -3600 : 3600, 0,
+      (uint16_t)(rate_dps * 10U), sequence);
+  if (result == DEBUG_CONSOLE_ACCEPTED) {
+    console_request.circle_count = count;
+    console_request.circle_anchor_raw_mdeg = imu.yaw_mdeg;
+  }
+  debug_leave_critical(primask);
+  return result;
+#else
+  (void)count;
+  (void)rate_dps;
+  (void)sequence;
+  return DEBUG_CONSOLE_INVALID;
+#endif
 }

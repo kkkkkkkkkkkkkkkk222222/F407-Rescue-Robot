@@ -313,6 +313,35 @@ static void wheel_report_motors(void)
   wheel_send(text);
 }
 
+static void wheel_report_circles(void)
+{
+  static uint8_t last_sequence;
+  static uint8_t last_completed;
+  const DebugCircleStatus circle = Debug_GetCircleStatus();
+  if (!circle.valid) {
+    last_completed = 0U;
+    return;
+  }
+  if (circle.sequence != last_sequence) {
+    last_sequence = circle.sequence;
+    last_completed = 0U;
+  }
+  const char *event = !circle.active ?
+      ((circle.completed == circle.total) ? "DONE" : "CANCELLED") :
+      ((circle.completed != last_completed) ? "LAP_DONE" :
+       (circle.dwelling ? "DWELL" : "RUNNING"));
+  char text[256];
+  (void)snprintf(text, sizeof(text),
+      "CIRCLE EVENT=%s SEQ=%u ACTIVE=%u CURRENT=%u COMPLETED=%u TOTAL=%u DIR=%d "
+      "TOTAL_MDEG=%ld GOAL_MDEG=%ld ERR_MDEG=%ld PROGRESS_SCOPE=LAP\r\n",
+      event, circle.sequence, circle.active, circle.current, circle.completed,
+      circle.total, circle.direction, (long)circle.total_delta_mdeg,
+      (long)circle.direction * circle.current * 360000L,
+      (long)circle.goal_error_mdeg);
+  wheel_send(text);
+  last_completed = circle.completed;
+}
+
 static void wheel_report_state(const char *prefix)
 {
   const DebugStatus status = Debug_GetStatus();
@@ -331,13 +360,14 @@ static void wheel_report_state(const char *prefix)
       wheel_fault_name(status.fault), (unsigned int)status.fault,
       (unsigned int)imu.ready, (unsigned int)pose.valid, bounded_delta);
   wheel_send(text);
+  wheel_report_circles();
 }
 
 static void wheel_report_version(void)
 {
   char text[320];
   (void)snprintf(text, sizeof(text),
-      "MOTIONDEBUG SERIAL_V3 RX_GUARD=1 DIAG=1 TURN_PROFILE=1 UART_FIX=1 MODE=%u FORWARD_SIGN=%d HEADING_SIGN=%d "
+      "MOTIONDEBUG SERIAL_V3 RX_GUARD=1 DIAG=1 TURN_PROFILE=2 UART_FIX=1 MODE=%u FORWARD_SIGN=%d HEADING_SIGN=%d "
       "HOLD_P_X100=%ld HOLD_I_X10000=%ld STEER_P_X1000=%ld STEER_D_X10000=%ld BUILT="
       __DATE__ " " __TIME__ "\r\n", (unsigned int)APP_ACTIVE_MODE,
       APP_OMNI_FORWARD_SIGN, (int)APP_MOTOR_HEADING_OUTPUT_SIGN,
@@ -353,12 +383,19 @@ static void wheel_report_version(void)
       (unsigned long)APP_MOTOR_TURN_TIMEOUT_MS);
   wheel_send(text);
   (void)snprintf(text, sizeof(text),
-      "TURN_CFG POS_P100=%ld RATE_P100=%ld ACCEL_DPS2=%ld DECEL_DPS2=%ld STATIC_PWM=%ld TOL_MDEG=%ld STOP_MDPS=%ld SETTLE_MS=%u MAX_TRIMS=%u STALE_MS=%u\r\n",
+      "TURN_CFG POS_P100=%ld RATE_P100=%ld ACCEL_DPS2=%ld DECEL_DPS2=%ld STATIC_PWM=%ld ENTER_MDEG=%ld EXIT_MDEG=%ld STOP_MDPS=%ld SETTLE_MS=%u MAX_TRIMS=%u STALE_MS=%u\r\n",
       (long)(APP_DEBUG_TURN_POSITION_KP * 100.0f), (long)(APP_DEBUG_TURN_RATE_KP * 100.0f),
       (long)APP_DEBUG_TURN_ACCEL_DPS2, (long)APP_DEBUG_TURN_DECEL_DPS2,
-      (long)APP_DEBUG_TURN_STATIC_PWM, (long)APP_MOTOR_TURN_TOLERANCE_MDEG,
+      (long)APP_DEBUG_TURN_STATIC_PWM, (long)APP_DEBUG_TURN_ENTER_MDEG,
+      (long)APP_DEBUG_TURN_EXIT_MDEG,
       (long)APP_DEBUG_TURN_STOP_RATE_MDPS, APP_DEBUG_TURN_SETTLE_MS,
       APP_DEBUG_TURN_MAX_CORRECTIONS, APP_DEBUG_TURN_IMU_STALE_MS);
+  wheel_send(text);
+  (void)snprintf(text, sizeof(text),
+      "BOOST_CFG PWM=%u MAX_MS=%u WAIT_MS=%u COOLDOWN_MS=%u MAX_COUNT=%u TRAVEL_MDEG=%ld\r\n",
+      APP_DEBUG_TURN_BOOST_PWM, APP_DEBUG_TURN_BOOST_MAX_MS,
+      APP_DEBUG_TURN_BOOST_WAIT_MS, APP_DEBUG_TURN_BOOST_COOLDOWN_MS,
+      APP_DEBUG_TURN_BOOST_MAX_COUNT, (long)APP_DEBUG_TURN_BOOST_TRAVEL_MDEG);
   wheel_send(text);
 }
 
@@ -428,6 +465,36 @@ static void wheel_submit_motion(uint8_t opcode, int16_t arg1, int16_t arg2,
   wheel_send(text);
 }
 
+static void wheel_submit_circles(int8_t count, uint16_t rate_dps)
+{
+  if (rx_recovery_pending || rx_overflow) {
+    wheel_send("ERR RX RECOVERY PENDING; RETRY\r\n");
+    return;
+  }
+  if (cancel_requested || sequence_active) {
+    wheel_send("BUSY: WAIT WHEELS DONE\r\n");
+    return;
+  }
+  const int64_t start_yaw = IMU_GetData().yaw_mdeg;
+  uint8_t sequence;
+  const DebugConsoleResult result = Debug_SubmitConsoleCircles(count, rate_dps, &sequence);
+  if (result != DEBUG_CONSOLE_ACCEPTED) {
+    wheel_send((result == DEBUG_CONSOLE_BUSY) ?
+        "BUSY: MOTION ACTIVE; STOP FIRST\r\n" : "ERR CIRCLES RANGE OR IMU NOT READY\r\n");
+    return;
+  }
+  motion_tracking = true;
+  post_motion_trace = false;
+  tracked_sequence = sequence;
+  motion_start_yaw_mdeg = start_yaw;
+  last_motion_report_ms = HAL_GetTick() - 250U;
+  char text[144];
+  (void)snprintf(text, sizeof(text),
+      "ACCEPT SERIAL CMD=%u SEQ=%u CIRCLES=%d RATE_DPS=%u DWELL_MS=%u FIXED_REFERENCE=1\r\n",
+      VISION_MOTION_CMD_TURN_REL, sequence, count, rate_dps, APP_DEBUG_CIRCLES_DWELL_MS);
+  wheel_send(text);
+}
+
 static void wheel_execute(void)
 {
   ++rx_lines;
@@ -448,6 +515,19 @@ static void wheel_execute(void)
   uint8_t count;
   if (!wheel_parse_args(args_text, args, &count)) {
     wheel_send("ERR ARGUMENTS; SEND HELP\r\n");
+    return;
+  }
+  if (strcmp(command, "CIRCLES") == 0) {
+    const int32_t rate = (count == 2U) ? args[1] : 60;
+    if (((count != 1U) && (count != 2U)) || (args[0] == 0) ||
+        (args[0] < -(int32_t)APP_DEBUG_CIRCLES_MAX_COUNT) ||
+        (args[0] > (int32_t)APP_DEBUG_CIRCLES_MAX_COUNT) ||
+        (rate < (int32_t)APP_DEBUG_CIRCLES_MIN_RATE_DPS) ||
+        (rate > (int32_t)APP_DEBUG_CIRCLES_MAX_RATE_DPS)) {
+      wheel_send("ERR CIRCLES RANGE: COUNT -10..-1 OR 1..10, RATE 60..120 DEG/S\r\n");
+      return;
+    }
+    wheel_submit_circles((int8_t)args[0], (uint16_t)rate);
     return;
   }
   if ((strcmp(command, "TURN") == 0) && ((count == 1U) || (count == 2U))) {
@@ -512,6 +592,8 @@ static void wheel_execute(void)
     wheel_report_version();
     wheel_send("DIAG CRASH TRACE 0/1; MOTION TRACE + 2s POST-STOP; NO AUTO MOTION\r\n");
     wheel_send("TURN deg [deg/s=30]; MOVE mm [mm/s=150]\r\n"
+               "CIRCLES signed_count [deg/s=60]: 1..10 LAPS, RATE 60..120, 1s DWELL\r\n"
+               "CIRCLES: FIXED REFERENCE; PROGRESS IS PER LAP; STOP CANCELS BATCH\r\n"
                "BODY forward_mm left_mm [mm/s=150]\r\n"
                "FIELD x_mm y_mm [mm/s=150]\r\n"
                "STOP HOLD RESET STAT GYRO IMU MOTOR ENC WHEELS PING\r\n"

@@ -46,12 +46,31 @@ typedef struct {
   bool console_pending;
 } DebugStatus;
 
+typedef struct {
+  bool valid;
+  bool active;
+  bool dwelling;
+  uint8_t sequence;
+  uint8_t total;
+  uint8_t completed;
+  uint8_t current;
+  int8_t direction;
+  int64_t anchor_raw_mdeg;
+  int64_t goal_raw_mdeg;
+  int32_t total_delta_mdeg;
+  int32_t goal_error_mdeg;
+} DebugCircleStatus;
+
 void Debug_Init(uint32_t now_ms);
 void Debug_Process(uint32_t now_ms);
 DebugStatus Debug_GetStatus(void);
+DebugCircleStatus Debug_GetCircleStatus(void);
 /* Cancel the current motion and discard commands received during a bench test. */
 void Debug_SetWheelCheckActive(bool enabled);
 DebugConsoleResult Debug_SubmitConsoleCommand(uint8_t opcode, int16_t arg1,
     int16_t arg2, uint16_t speed, uint8_t *sequence);
+/* Console-only fixed-reference batch; ordinary TURN remains relative. */
+DebugConsoleResult Debug_SubmitConsoleCircles(int8_t count, uint16_t rate_dps,
+    uint8_t *sequence);
 
 #endif

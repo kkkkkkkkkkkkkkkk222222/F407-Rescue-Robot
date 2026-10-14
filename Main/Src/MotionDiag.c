@@ -9,7 +9,7 @@
 #include "motor.h"
 
 #define DIAG_MAGIC 0x4D444731UL
-#define DIAG_FORMAT 2U
+#define DIAG_FORMAT 3U
 
 typedef struct {
   uint32_t valid, exception, pc, lr, xpsr, stack_pointer, exc_return;
@@ -103,10 +103,12 @@ static void print_record(void (*send)(const char *), const char *prefix, const M
       (long)r->imu.gyro_mdps[2]);
   send(text);
   (void)snprintf(text, sizeof(text),
-      "%s TURN_CTL PHASE=%u ERR_MDEG=%ld REF_MDPS=%ld CMD_MDPS=%ld SETTLE_MS=%u TRIMS=%u FAIL=%u IMU_AGE_MS=%lu\r\n",
+      "%s TURN_CTL PHASE=%u ERR_MDEG=%ld REF_MDPS=%ld CMD_MDPS=%ld SETTLE_MS=%u TRIMS=%u FAIL=%u IMU_AGE_MS=%lu REST_MS=%u BRAKE_PRED_MDEG=%ld BOOST=%u BOOST_MS=%u BOOSTS=%u BOOST_EXIT=%u\r\n",
       prefix, m->turn_phase, (long)m->turn_error_mdeg, (long)m->turn_reference_mdps,
       (long)m->turn_command_mdps, m->turn_settle_ms, m->turn_corrections,
-      m->turn_failure, (unsigned long)m->turn_imu_age_ms);
+      m->turn_failure, (unsigned long)m->turn_imu_age_ms, m->turn_rest_ms,
+      (long)m->turn_brake_distance_mdeg, m->turn_boost_active, m->turn_boost_ms,
+      m->turn_boost_count, m->turn_boost_exit);
   send(text);
   (void)snprintf(text, sizeof(text),
       "%s PI ACTIVE=%u ERR_C100=%ld,%ld,%ld P100=%ld,%ld,%ld I100=%ld,%ld,%ld FF=%d,%d,%d CORR100=%ld,%ld,%ld PWM=%d,%d,%d\r\n",

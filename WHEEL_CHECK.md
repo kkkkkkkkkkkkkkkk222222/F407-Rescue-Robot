@@ -3,7 +3,7 @@
 This is a USART1 command inside the existing MotionDebug firmware.
 There is no separate application mode or build preset. Motor/IMU parameters
 are shared with NormalRun and Gamepad as documented in the calibration history
-below; the text console and the new TURN_PROFILE=1 angle controller are
+below; the text console and the new TURN_PROFILE=2 angle controller are
 exclusive to MotionDebug while awaiting chassis validation.
 
 Build the existing MotionDebug preset and flash `build/MotionDebug/WWW.elf`.
@@ -11,7 +11,7 @@ The check never starts automatically on boot.
 
 ## Diagnostic Trace
 
-The current build adds `DIAG=1 TURN_PROFILE=1 UART_FIX=1` to the banner. `DIAG` prints the latest motor,
+The current build adds `DIAG=1 TURN_PROFILE=2 UART_FIX=1` to the banner. `DIAG` prints the latest motor,
 PI, IMU and scheduler snapshot; `TRACE 1/0` controls expanded automatic output.
 Expanded trace is on by default during serial actions and continues for two
 seconds after completion as `SETTLE`, including raw post-stop yaw changes.
@@ -33,13 +33,14 @@ TX count. A UART3 receive error should no longer freeze the main controller.
 The programmer console still stops safely on invalid input. After discarding
 a damaged line it reports `RX READY; RESEND COMMAND`; it never replays motion.
 
-TURN now uses a remaining-angle speed envelope, acceleration limiting and
-measured yaw-rate feedback. It keeps the wheel PI gains but lowers TURN-only
-static feedforward from 100 to 70 per mille. Completion requires angle error
-within 1 degree, yaw rate within 3 degrees/s and zero wheel counts for 150 ms
-of fresh control observations. Overshoot is braked before at most two low-speed
-corrections. The 10-second timeout is retained; stale IMU samples and excessive
-overshoot stop the test. NormalRun/Gamepad retain their previous turn controller.
+TURN now hard-clamps falling speed references and rate-corrected commands to
+the remaining-angle envelope. Actual yaw rate predicts braking distance.
+The settle band enters at 0.3 deg and exits at 0.5 deg, independently of the
+150 ms zero-wheel/low-yaw-rate confirmation. Up to three bounded 130-per-mille
+breakaway pulses address terminal stiction; motion feedback immediately cancels
+each pulse. Wheel PI, 60% output cap and MOVE remain unchanged. At most two
+reverse trims, the 10-second deadline and stale-IMU stops remain in effect.
+NormalRun/Gamepad retain their previous turn controller.
 
 ## Serial Motion Commands
 
@@ -51,6 +52,8 @@ the firmware build date/time. These commands are not added to NormalRun.
 | --- | --- |
 | `TURN 30 60` | Relative +30 degrees at 60 degrees/s requested speed |
 | `TURN -30 60` | Relative -30 degrees at 60 degrees/s |
+| `CIRCLES 3 60` | Three positive full turns anchored to the original heading |
+| `CIRCLES -3 60` | Three negative full turns with the same fixed-goal method |
 | `MOVE 200 150` | Body-forward 200 mm at 150 mm/s, with existing heading hold |
 | `MOVE -200 150` | Body-backward 200 mm at 150 mm/s |
 | `BODY 200 100 150` | Body forward/left displacement in mm, speed in mm/s |
@@ -71,6 +74,11 @@ Angles and distances accept signed integers. Turn speed is degrees/s, not
 mm/s. If omitted, turn speed defaults to 30 degrees/s and translation speed
 to 150 mm/s. Explicit translation speeds must be 50..700 mm/s; the existing
 10 m displacement limit is retained. Turn angles are limited to +/-360 degrees.
+CIRCLES is console-only: signed count +/-1..10, rate 60..120 deg/s, 1-second
+stationary dwell between laps. It retains per-lap PROGRESS and reports cumulative
+angle separately in CIRCLE lines. Any STOP or fault cancels the entire batch;
+it never resumes automatically. Only the batch uses a bounded absolute-yaw motor
+entry point; ordinary TURN remains relative to the current physical pose.
 
 Motion commands are queued to the same Debug task and motor API used by
 USART3, not executed in UART interrupts. A second motion

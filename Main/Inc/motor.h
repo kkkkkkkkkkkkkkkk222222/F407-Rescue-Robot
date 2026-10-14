@@ -78,8 +78,10 @@ typedef enum {
   MOTOR_TURN_FAIL_NONE = 0, MOTOR_TURN_FAIL_IMU_STALE,
   MOTOR_TURN_FAIL_TIMEOUT, MOTOR_TURN_FAIL_OVERRUN,
   MOTOR_TURN_FAIL_WRONG_WAY, MOTOR_TURN_FAIL_TRIM_LIMIT,
-  MOTOR_TURN_FAIL_IMU_NOT_READY
+  MOTOR_TURN_FAIL_IMU_NOT_READY, MOTOR_TURN_FAIL_NO_PROGRESS
 } MotorTurnFailure;
+/* Fixed raw-IMU goal for a debug circle batch; each leg is bounded to 368 deg. */
+MotorTurnStatus Motor_DebugTurnToYaw(int64_t raw_goal_mdeg, float speed_mm_s);
 typedef struct {
   int32_t raw_count[3], feedback_count[3];
   int32_t error_c100[3], p_pwm100[3], i_pwm100[3], correction_pwm100[3];
@@ -89,7 +91,9 @@ typedef struct {
   uint32_t turn_elapsed_ms;
   int32_t turn_error_mdeg, turn_reference_mdps, turn_command_mdps;
   uint32_t turn_imu_age_ms;
-  uint16_t turn_settle_ms;
+  uint16_t turn_settle_ms, turn_rest_ms, turn_boost_ms;
+  int32_t turn_brake_distance_mdeg;
+  uint8_t turn_boost_active, turn_boost_count, turn_boost_exit;
   uint8_t turn_phase, turn_corrections, turn_failure;
   uint8_t turn_state, slowing, brake_cycles, paused, pi_active_mask;
 } MotorDebugTrace;
