@@ -15,7 +15,7 @@
 ## 使用
 
 烧录 `build/MotionDebug/WWW.elf`，串口115200、8N1、文本发送，勾选发送新行。
-启动头应包含 `MOTIONDEBUG SERIAL_V3 RX_GUARD=1 DIAG=1 TURN_PROFILE=1 MODE=2`，
+启动头应包含 `MOTIONDEBUG SERIAL_V3 RX_GUARD=1 DIAG=1 TURN_PROFILE=1 UART_FIX=1 MODE=2`，
 并带编译时间、DIAG_CFG和TURN_CFG。没有TURN_PROFILE=1则不是本次转角修正版。
 保持完整启动输出，单次发送命令，等动作结束后的SETTLE数据输出完，再发下一条。
 
@@ -104,3 +104,40 @@ PREV FAULT=0不等于没有卡死：关中断死循环、ISR阻塞和调试器�
 - [WPILib运动轨迹约束](https://docs.wpilib.org/en/stable/docs/software/advanced-controls/controllers/trapezoidal-profiles.html)
 - [WPILib位置/速度双容差](https://docs.wpilib.org/en/stable/docs/software/advanced-controls/controllers/pidcontroller.html)
 - [WPILib前馈与实测静摩擦参数](https://docs.wpilib.org/en/stable/docs/software/advanced-controls/controllers/feedforward.html)
+
+## 2026-10-14 串口失响应修复
+
+在未复位前通过Horco CMSIS-DAP读取到真实HardFault现场，旧固件为a4f6645：
+- 异常PC `0x08004B88` 对应HAL `UART_Transmit_IT()`读取发送缓冲区。
+- 异常栈r0 `0x20000474` 是huart3，xPSR `0x01000037` 表明异常发生在USART3中断。
+- `CFSR=0x00008200`、`HFSR=0x40000000`、`BFAR=0x20020000`。
+- huart3发送指针已到 `0x20020001`，原包长15字节，剩余计数却为 `0xFEAA`；错误码4为FE。
+
+本地旧HAL的 `UART_DMAAbortOnError()`在RX DMA出错后同时清零TX计数。
+TXE仍继续触发，计数从0下溢并越界读内存，最终触发HardFault。
+MotionDebug异常入口会关闭电机，因此表现为MOVE中途停车、程序器串口后续指令无响应。
+这不是速度PID、距离比例或正常完成后的指令锁问题；USART3即使没有上位机指令也会发送遥测。
+
+修复只移植ST官方源码中RX错误不清TX的改动，没有整体替换HAL库。
+另加TXE零计数保护、串口启动短临界区、RX错误锁存和主循环恢复，
+并将USART3与其DMA设为相同抢占优先级，避免HAL状态和协议解析重入。
+`PING`增加UART3错误、重启、丢包和剩余发送计数。电机/编码器参数、PID和0x19/0x1A协议不改。
+底层UART修复也编译进NormalRun和Gamepad，本次实际烧录的是MotionDebug。
+
+官方依据：[ST当前F4 HAL UART源码](https://github.com/STMicroelectronics/stm32f4xx-hal-driver/blob/master/Src/stm32f4xx_hal_uart.c)
+中的 `UART_DMAAbortOnError()`只清Rx计数；
+[ST UART中断使用说明](https://wiki.st.com/stm32mcu/wiki/Getting_started_with_UART)说明接收完成后需要重新挂接接收。
+
+实际测试记录：
+- 三种配置编译通过；MotionDebug通过SWD烧录并校验成功，启动标识UART_FIX=1。
+- COM18连续20次PING通过；10组DIAG紧跟PING通过；CR/LF/CRLF三种结束符通过。
+- 故意输入非ASCII字节、残缺指令会安全停车，随后正确PING仍可继续，无需复位。
+- 架空依次执行 `MOVE 200 200`、`MOVE -200 200`、`MOVE 1000 500`、`MOVE -1000 500`，
+  四次均收到FINAL DONE，且每次结束后PING正常。最后显式STOP并关闭端口。
+- UART3实际出现多次FE并自动恢复；最终运动测试统计为23次错误、24次接收启动，无死机。
+- USB重新连接后一度无回传；恢复后进行了上述成功测试。一轮启动时IMU校准失败，
+  未绕过IMU检查，保持静止复位后READY=1才执行运动测试。
+
+日志位于 `build/MotionDebug/serial-uart-fix-smoke.log` 和 `serial-uart-fix-motion.log`。
+这验证串口连续执行、状态释放和编码器完成流程；架空测试不代表落地距离或航向精度已验证。
+UART3错误计数仍可能增加，接收线路/共地/未连接时悬空等硬件因素仍需按实际接线排查。

@@ -11,7 +11,7 @@ The check never starts automatically on boot.
 
 ## Diagnostic Trace
 
-The current build adds `DIAG=1 TURN_PROFILE=1` to the banner. `DIAG` prints the latest motor,
+The current build adds `DIAG=1 TURN_PROFILE=1 UART_FIX=1` to the banner. `DIAG` prints the latest motor,
 PI, IMU and scheduler snapshot; `TRACE 1/0` controls expanded automatic output.
 Expanded trace is on by default during serial actions and continues for two
 seconds after completion as `SETTLE`, including raw post-stop yaw changes.
@@ -21,6 +21,17 @@ This is not a watchdog; a non-exception hang may retain only its last snapshot.
 NormalRun/Gamepad control and the binary 0x19/0x1A protocol are unchanged.
 See [the diagnostic capture guide](docs/MOTIONDEBUG_DIAGNOSTICS.md) for exact
 units and what to send back after a failure.
+
+`UART_FIX=1` backports ST's RX DMA abort fix: a receive error must not zero an
+independent interrupt-mode transmit count. The previous firmware was captured
+in USART3 TX with an underflowed count and a pointer past SRAM, explaining why
+the programmer console also stopped responding. TXE now handles zero count
+without reading another byte. Receive recovery runs in main; USART3 and its
+RX DMA have equal interrupt priority. Packet formats and motor tuning are unchanged.
+`PING` also prints a `UART3` line with receive-error/restart counters and current
+TX count. A UART3 receive error should no longer freeze the main controller.
+The programmer console still stops safely on invalid input. After discarding
+a damaged line it reports `RX READY; RESEND COMMAND`; it never replays motion.
 
 TURN now uses a remaining-angle speed envelope, acceleration limiting and
 measured yaw-rate feedback. It keeps the wheel PI gains but lowers TURN-only

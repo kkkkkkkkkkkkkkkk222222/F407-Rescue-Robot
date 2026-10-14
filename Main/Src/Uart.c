@@ -17,8 +17,10 @@ extern UART_HandleTypeDef huart3;
 
 static uint8_t rx_dma[UART_RX_DMA_SIZE];
 static uint16_t rx_position;
-static uint32_t retry_ms;
-static bool rx_active;
+static volatile uint32_t retry_ms;
+static volatile bool rx_active;
+static volatile bool rx_recovery_pending;
+static volatile uint32_t rx_errors, last_rx_error, rx_restarts;
 
 typedef struct {
   uint8_t data[UART_TX_MAX_SIZE];
@@ -107,18 +109,24 @@ static bool uart_start_rx(void)
     return false;
   }
 
+  const uint32_t primask = __get_PRIMASK();
+  __disable_irq();
   rx_position = 0U;
-  if (HAL_UARTEx_ReceiveToIdle_DMA(&huart3,
+  const HAL_StatusTypeDef result = HAL_UARTEx_ReceiveToIdle_DMA(&huart3,
                                   rx_dma,
-                                  UART_RX_DMA_SIZE) != HAL_OK) {
+                                  UART_RX_DMA_SIZE);
+  if (result != HAL_OK) {
     rx_active = false;
     retry_ms = Robot_GetMilliseconds() + UART_RETRY_MS;
+    if (primask == 0U) { __enable_irq(); }
     (void)HAL_UART_AbortReceive(&huart3);
     return false;
   }
 
   __HAL_DMA_DISABLE_IT(huart3.hdmarx, DMA_IT_HT);
   rx_active = true;
+  ++rx_restarts;
+  if (primask == 0U) { __enable_irq(); }
   return true;
 }
 
@@ -151,6 +159,10 @@ bool Uart_Init(void)
   rx_position = 0U;
   retry_ms = 0U;
   rx_active = false;
+  rx_recovery_pending = false;
+  rx_errors = 0U;
+  last_rx_error = 0U;
+  rx_restarts = 0U;
   tx_active_slot = -1;
   tx_order = 0U;
   tx_dropped = 0U;
@@ -212,6 +224,18 @@ bool Uart_Send(const uint8_t *data, uint16_t size)
 bool Uart_Receive(uint16_t size)
 {
   if (size == 0U) {
+    if (rx_recovery_pending) {
+      /* HAL DMA abort may wait; keep SysTick running during that operation. */
+      (void)HAL_UART_AbortReceive(&huart3);
+      const uint32_t mask = __get_PRIMASK();
+      __disable_irq();
+      __HAL_UART_CLEAR_OREFLAG(&huart3);
+      huart3.ErrorCode = HAL_UART_ERROR_NONE;
+      rx_position = 0U;
+      Vision_ResetParser();
+      rx_recovery_pending = false;
+      if (mask == 0U) { __enable_irq(); }
+    }
     const uint32_t primask = __get_PRIMASK();
     __disable_irq();
     uart_start_tx();
@@ -224,13 +248,27 @@ bool Uart_Receive(uint16_t size)
     }
     return rx_active;
   }
-  if (size > UART_RX_DMA_SIZE) {
+  if ((size > UART_RX_DMA_SIZE) || rx_recovery_pending) {
     return false;
   }
 
   rx_active = true;
   uart_parse(size);
   return true;
+}
+
+UartLinkStatus Uart_GetLinkStatus(void)
+{
+  const uint32_t mask = __get_PRIMASK();
+  __disable_irq();
+  const UartLinkStatus status = {
+    .rx_errors = rx_errors, .last_rx_error = last_rx_error,
+    .rx_restarts = rx_restarts, .tx_dropped = tx_dropped,
+    .tx_remaining = huart3.TxXferCount, .tx_size = huart3.TxXferSize,
+    .rx_active = rx_active, .rx_pending = rx_recovery_pending
+  };
+  if (mask == 0U) { __enable_irq(); }
+  return status;
 }
 
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *uart, uint16_t size)
@@ -274,9 +312,13 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *uart)
     return;
   }
 
+  ++rx_errors;
+  last_rx_error = uart->ErrorCode;
   rx_active = false;
+  rx_recovery_pending = true;
   retry_ms = Robot_GetMilliseconds() + UART_RETRY_MS;
-  (void)HAL_UART_AbortReceive(uart);
-  rx_position = 0U;
-  Vision_ResetParser();
+  ATOMIC_CLEAR_BIT(uart->Instance->CR1,
+      USART_CR1_RXNEIE | USART_CR1_PEIE | USART_CR1_IDLEIE);
+  ATOMIC_CLEAR_BIT(uart->Instance->CR3, USART_CR3_EIE);
+  __HAL_UART_CLEAR_OREFLAG(uart);
 }

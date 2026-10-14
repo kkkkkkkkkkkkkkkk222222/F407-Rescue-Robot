@@ -3343,7 +3343,8 @@ static void UART_DMAAbortOnError(DMA_HandleTypeDef *hdma)
 {
   UART_HandleTypeDef *huart = (UART_HandleTypeDef *)((DMA_HandleTypeDef *)hdma)->Parent;
   huart->RxXferCount = 0x00U;
-  huart->TxXferCount = 0x00U;
+  /* Backport ST upstream: an RX DMA error must not reset independent TX.
+     Clearing TxXferCount here underflows the next TXE interrupt (F407 fault). */
 
 #if (USE_HAL_UART_REGISTER_CALLBACKS == 1)
   /*Call registered error callback*/
@@ -3516,6 +3517,13 @@ static HAL_StatusTypeDef UART_Transmit_IT(UART_HandleTypeDef *huart)
   /* Check that a Tx process is ongoing */
   if (huart->gState == HAL_UART_STATE_BUSY_TX)
   {
+    /* A stale TXE interrupt must never read beyond the completed buffer. */
+    if (huart->TxXferCount == 0U)
+    {
+      ATOMIC_CLEAR_BIT(huart->Instance->CR1, USART_CR1_TXEIE);
+      ATOMIC_SET_BIT(huart->Instance->CR1, USART_CR1_TCIE);
+      return HAL_OK;
+    }
     if ((huart->Init.WordLength == UART_WORDLENGTH_9B) && (huart->Init.Parity == UART_PARITY_NONE))
     {
       tmp = (const uint16_t *) huart->pTxBuffPtr;

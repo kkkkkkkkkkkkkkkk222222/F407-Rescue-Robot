@@ -386,6 +386,8 @@ void Robot_Init(void)
   HAL_NVIC_SetPriority(TIM6_DAC_IRQn, 4U, 0U);
   HAL_NVIC_EnableIRQ(TIM6_DAC_IRQn);
   HAL_NVIC_SetPriority(USART3_IRQn, 7U, 0U);
+  /* RX DMA and USART share HAL state/parser; neither may preempt the other. */
+  HAL_NVIC_SetPriority(DMA1_Stream1_IRQn, 7U, 0U);
   HAL_NVIC_EnableIRQ(USART3_IRQn);
 #if APP_ENABLE_RUNTIME_SERVO_DEBUG || APP_ENABLE_MOTION_DEBUG_TASK
   HAL_NVIC_SetPriority(USART1_IRQn, 7U, 0U);

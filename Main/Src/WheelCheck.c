@@ -1,4 +1,5 @@
 #include "WheelCheck.h"
+#include "Uart.h"
 
 #include "app_config.h"
 
@@ -94,7 +95,10 @@ static void wheel_send(const char *text)
 
 static void wheel_start_rx(void)
 {
+  const uint32_t mask = __get_PRIMASK();
+  __disable_irq();
   if (rx_recovery_pending || rx_overflow) {
+    if (mask == 0U) { __enable_irq(); }
     return;
   }
   if (huart1.RxState == HAL_UART_STATE_READY) {
@@ -102,6 +106,7 @@ static void wheel_start_rx(void)
       ++rx_start_failures;
     }
   }
+  if (mask == 0U) { __enable_irq(); }
 }
 
 void WheelCheck_OnUartError(uint32_t error)
@@ -151,6 +156,8 @@ static void wheel_pump_tx(void)
     tx_chunk[size++] = tx_ring[tail];
     tail = (uint16_t)((tail + 1U) % TX_SIZE);
   }
+  const uint32_t mask = __get_PRIMASK();
+  __disable_irq();
   tx_start_ms = HAL_GetTick();
   tx_active = true;
   if (HAL_UART_Transmit_IT(&huart1, tx_chunk, size) == HAL_OK) {
@@ -158,6 +165,7 @@ static void wheel_pump_tx(void)
   } else {
     tx_active = false;
   }
+  if (mask == 0U) { __enable_irq(); }
 }
 
 static void wheel_report(void)
@@ -329,7 +337,7 @@ static void wheel_report_version(void)
 {
   char text[320];
   (void)snprintf(text, sizeof(text),
-      "MOTIONDEBUG SERIAL_V3 RX_GUARD=1 DIAG=1 TURN_PROFILE=1 MODE=%u FORWARD_SIGN=%d HEADING_SIGN=%d "
+      "MOTIONDEBUG SERIAL_V3 RX_GUARD=1 DIAG=1 TURN_PROFILE=1 UART_FIX=1 MODE=%u FORWARD_SIGN=%d HEADING_SIGN=%d "
       "HOLD_P_X100=%ld HOLD_I_X10000=%ld STEER_P_X1000=%ld STEER_D_X10000=%ld BUILT="
       __DATE__ " " __TIME__ "\r\n", (unsigned int)APP_ACTIVE_MODE,
       APP_OMNI_FORWARD_SIGN, (int)APP_MOTOR_HEADING_OUTPUT_SIGN,
@@ -521,6 +529,13 @@ static void wheel_execute(void)
         (unsigned long)rx_start_failures, (unsigned long)line_timeouts,
         (unsigned long)tx_timeouts, (unsigned long)tx_dropped);
     wheel_send(text);
+    const UartLinkStatus link = Uart_GetLinkStatus();
+    (void)snprintf(text, sizeof(text),
+        "UART3 RX_ERRORS=%lu LAST_RX_ERROR=0x%08lX RX_RESTARTS=%lu TX_DROPS=%lu TX_LEFT=%u TX_SIZE=%u RX_ACTIVE=%u RECOVERY=%u\r\n",
+        (unsigned long)link.rx_errors, (unsigned long)link.last_rx_error,
+        (unsigned long)link.rx_restarts, (unsigned long)link.tx_dropped,
+        link.tx_remaining, link.tx_size, link.rx_active, link.rx_pending);
+    wheel_send(text);
     return;
   }
   if (strcmp(command, "MOTOR") == 0) {
@@ -626,6 +641,7 @@ void WheelCheck_Process(void)
       value = ' ';
     }
     if ((value == '\r') || (value == '\n')) {
+      if (discard_line) { wheel_send("RX READY; RESEND COMMAND\r\n"); }
       if (!discard_line && (line_length != 0U)) {
         line[line_length] = '\0';
         wheel_execute();
@@ -712,6 +728,12 @@ void WheelCheck_Process(void)
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *uart)
 {
   if (uart == &huart1) {
+    /* HAL calls RxCplt before its error callback. Rearming here would erase
+     * ErrorCode and admit a damaged byte as a valid command character. */
+    if (uart->ErrorCode != HAL_UART_ERROR_NONE) {
+      WheelCheck_OnUartError(uart->ErrorCode);
+      return;
+    }
     ++rx_bytes;
     last_rx_byte_ms = HAL_GetTick();
     const uint8_t next = (uint8_t)((rx_head + 1U) % RX_SIZE);
