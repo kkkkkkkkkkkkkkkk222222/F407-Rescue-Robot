@@ -719,7 +719,7 @@ static void wheel_execute(void)
     const IMUData imu = IMU_GetData();
     char text[288];
     (void)snprintf(text, sizeof(text),
-        "IMU ALG=TS_TRAPZ READY=%u INIT=%u ID=0x%02X SAMPLE=%lu ERRORS=%lu "
+        "IMU ALG=FIFO_TS_TRAPZ READY=%u INIT=%u ID=0x%02X SAMPLE=%lu ERRORS=%lu "
         "DT_US=%lu MAX_DT_US=%lu GAPS=%lu CLOCK_FINE=%d "
         "BIAS_MDPS=%ld,%ld,%ld STILL=%u BIAS_UPDATES=%lu Z_SCALE_PPM=%ld\r\n",
         (unsigned int)imu.ready, (unsigned int)imu.init_result,
@@ -730,6 +730,12 @@ static void wheel_execute(void)
         (long)imu.gyro_bias_mdps[0], (long)imu.gyro_bias_mdps[1],
         (long)imu.gyro_bias_mdps[2], (unsigned int)imu.stationary,
         (unsigned long)imu.bias_update_count, (long)APP_IMU_GYRO_Z_SCALE_PPM);
+    wheel_send(text);
+    (void)snprintf(text, sizeof(text),
+        "IMU_FIFO PEAK=%u OVERRUN=%lu FAULTS=%lu MAX_POLL_MS=%lu TEMP_MC=%ld\r\n",
+        (unsigned int)imu.fifo_peak_words, (unsigned long)imu.fifo_overrun_count,
+        (unsigned long)imu.fifo_fault_count, (unsigned long)imu.max_poll_interval_ms,
+        (long)imu.temperature_mdeg_c);
     wheel_send(text);
     return;
   }

@@ -15,7 +15,6 @@
 #define IMU_CALIBRATION_DISCARD     32U
 #define IMU_CALIBRATION_SAMPLES     2048U
 #define IMU_CALIBRATION_TIMEOUT_MS  8000U
-#define IMU_MAX_INTEGRATION_GAP_MS  100U
 #define IMU_RUNTIME_TIMEOUT_MS      250U
 #define IMU_IDENTITY_CHECK_MS       250U
 #define IMU_CAL_MAX_STDDEV_RAW      25LL
@@ -24,6 +23,10 @@
 #define IMU_STATIONARY_DWELL_US     3000000U
 #define IMU_BIAS_TIME_CONSTANT_US   30000000.0f
 #define IMU_SAMPLE_GAP_WARN_US      5000U
+#define IMU_FIFO_MAX_WORDS          128U
+#define IMU_FIFO_GYRO_TAG             1U
+#define IMU_FIFO_TIMESTAMP_TAG        4U
+#define IMU_FIFO_STREAM_TIMESTAMP 0x46U
 
 #define LSM6DSV16X_WHO_AM_I         0x0FU
 #define LSM6DSV16X_IF_CFG           0x03U
@@ -39,6 +42,11 @@
 #define LSM6DSV16X_TIMESTAMP0       0x40U
 #define LSM6DSV16X_INTERNAL_FREQ    0x4FU
 #define LSM6DSV16X_FUNCTIONS_ENABLE 0x50U
+#define LSM6DSV16X_FIFO_CTRL3        0x09U
+#define LSM6DSV16X_FIFO_CTRL4        0x0AU
+#define LSM6DSV16X_FIFO_STATUS1      0x1BU
+#define LSM6DSV16X_FIFO_DATA_OUT_TAG 0x78U
+#define LSM6DSV16X_OUT_TEMP_L       0x20U
 
 #define LSM6DSV16X_ID               0x70U
 #define LSM6DSV16X_I2C_I3C_DISABLE  0x01U
@@ -71,6 +79,12 @@ static bool runtime_poll_started;
 static bool identity_check_started;
 static uint32_t last_successful_sample_ms;
 static uint32_t last_identity_check_ms;
+static volatile bool fifo_restart_pending;
+static int16_t fifo_gyro[3];
+static uint32_t fifo_tick;
+static bool fifo_gyro_valid, fifo_tick_valid;
+static uint32_t last_poll_ms;
+static bool poll_valid;
 
 extern SPI_HandleTypeDef hspi3;
 
@@ -180,17 +194,6 @@ static bool read_raw(int16_t gyro[3], int16_t accel[3])
   return true;
 }
 
-static bool read_sensor_tick(uint32_t *tick)
-{
-  uint8_t raw[4];
-  if (!spi_read(LSM6DSV16X_TIMESTAMP0, raw, sizeof(raw))) {
-    return false;
-  }
-  *tick = (uint32_t)raw[0] | ((uint32_t)raw[1] << 8U) |
-          ((uint32_t)raw[2] << 16U) | ((uint32_t)raw[3] << 24U);
-  return true;
-}
-
 static bool wait_for_reset(void)
 {
   const uint32_t deadline = HAL_GetTick() + IMU_RESET_TIMEOUT_MS;
@@ -241,6 +244,7 @@ static bool calibrate_gyro(void)
   while ((int32_t)(HAL_GetTick() - deadline) < 0) {
     int64_t sum[3] = {0LL, 0LL, 0LL};
     int64_t sum_squares[3] = {0LL, 0LL, 0LL};
+    bool gravity_valid = true;
 
     for (uint16_t sample = 0U; sample < IMU_CALIBRATION_SAMPLES; ++sample) {
       int16_t gyro[3];
@@ -254,9 +258,17 @@ static bool calibrate_gyro(void)
         sum[axis] += value;
         sum_squares[axis] += value * value;
       }
+      int64_t norm_sq = 0LL;
+      for (uint8_t axis = 0U; axis < 3U; ++axis) {
+        const int64_t mg = divide_round((int64_t)accel[axis] *
+            IMU_ACCEL_SCALE_NUMERATOR, IMU_ACCEL_SCALE_DENOMINATOR);
+        norm_sq += mg * mg;
+      }
+      gravity_valid = gravity_valid && norm_sq >= 900LL * 900LL &&
+                      norm_sq <= 1100LL * 1100LL;
     }
 
-    bool stationary = true;
+    bool stationary = gravity_valid;
     for (uint8_t axis = 0U; axis < 3U; ++axis) {
       const int64_t variance_numerator =
           sum_squares[axis] * IMU_CALIBRATION_SAMPLES -
@@ -303,6 +315,9 @@ bool IMU_Init(void)
   identity_check_started = false;
   last_successful_sample_ms = 0U;
   last_identity_check_ms = 0U;
+  fifo_restart_pending = true;
+  fifo_gyro_valid = fifo_tick_valid = false;
+  poll_valid = false;
 
   HAL_GPIO_WritePin(IMU_CS_GPIO_Port, IMU_CS_Pin, GPIO_PIN_SET);
   HAL_Delay(IMU_BOOT_TIME_MS);
@@ -360,7 +375,9 @@ bool IMU_Init(void)
   if (!spi_read(LSM6DSV16X_INTERNAL_FREQ, &fine, 1U) ||
       !spi_read(LSM6DSV16X_FUNCTIONS_ENABLE, &functions_enable, 1U) ||
       !spi_write_checked(LSM6DSV16X_FUNCTIONS_ENABLE,
-                         (uint8_t)(functions_enable | 0x40U), 0x40U)) {
+                         (uint8_t)(functions_enable | 0x40U), 0x40U) ||
+      !spi_write_checked(LSM6DSV16X_FIFO_CTRL4, 0U, 0xFFU) ||
+      !spi_write_checked(LSM6DSV16X_FIFO_CTRL3, 0x90U, 0xFFU)) {
     imu_data.init_result = IMU_INIT_CONFIG_ERROR;
     return false;
   }
@@ -428,43 +445,12 @@ static void imu_update_bias(const int64_t corrected[3], uint32_t elapsed_us)
   }
 }
 
-void IMU_Update(uint32_t now_ms)
+static bool imu_integrate_sample(const int16_t gyro[3], const int16_t accel[3],
+                                 uint32_t sensor_tick)
 {
-  if (!imu_data.ready) {
-    return;
-  }
-
-  if (!identity_check_started ||
-      ((uint32_t)(now_ms - last_identity_check_ms) >=
-       IMU_IDENTITY_CHECK_MS)) {
-    uint8_t device_id = 0U;
-    identity_check_started = true;
-    last_identity_check_ms = now_ms;
-    if (!spi_read(LSM6DSV16X_WHO_AM_I, &device_id, 1U) ||
-        (device_id != LSM6DSV16X_ID)) {
-      const uint32_t primask = imu_enter_critical();
-      imu_data.device_id = device_id;
-      imu_leave_critical(primask);
-      imu_latch_runtime_fault();
-      return;
-    }
-  }
-
-  uint8_t status = 0U;
-  if (!spi_read(LSM6DSV16X_STATUS_REG, &status, 1U) ||
-      ((status & LSM6DSV16X_DATA_READY) != LSM6DSV16X_DATA_READY)) {
-    imu_check_runtime_timeout(now_ms);
-    return;
-  }
-
-  int16_t gyro[3];
-  int16_t accel[3];
-  uint32_t sensor_tick;
-  if (!read_raw(gyro, accel) || !read_sensor_tick(&sensor_tick)) {
-    imu_check_runtime_timeout(now_ms);
-    return;
-  }
-
+  /* A task may zero yaw between FIFO reads; commit one sample atomically. */
+  const uint32_t primask = imu_enter_critical();
+  if (fifo_restart_pending) { imu_leave_critical(primask); return true; }
   int64_t corrected_gyro[3];
   int32_t gyro_mdps[3];
   int32_t accel_mg[3];
@@ -493,17 +479,21 @@ void IMU_Update(uint32_t now_ms)
       const int64_t dt_ns = divide_round64(
           (int64_t)tick_delta * 10000000000000LL, sensor_clock_denominator);
       integration_valid = (dt_ns > 0LL) &&
-          (dt_ns <= (int64_t)IMU_MAX_INTEGRATION_GAP_MS * 1000000LL);
+          (dt_ns >= 500000LL) && (dt_ns <= 1500000LL);
       if (integration_valid) {
         elapsed_ns = (uint32_t)dt_ns;
         elapsed_us = (elapsed_ns + 500U) / 1000U;
       }
     }
   }
+  if (sample_time_valid && !integration_valid) {
+    ++imu_data.integration_gap_count;
+    imu_leave_critical(primask);
+    return false;
+  }
   const bool stationary = integration_valid &&
       imu_stationary_gate(gyro_mdps, accel_mg);
 
-  const uint32_t primask = imu_enter_critical();
   for (uint8_t axis = 0U; axis < 3U; ++axis) {
     imu_data.gyro_mdps[axis] = gyro_mdps[axis];
     imu_data.accel_mg[axis] = accel_mg[axis];
@@ -556,8 +546,106 @@ void IMU_Update(uint32_t now_ms)
   previous_corrected_z = corrected_gyro[2];
   ++imu_data.sample_count;
   imu_leave_critical(primask);
-  last_successful_sample_ms = now_ms;
-  runtime_poll_started = true;
+  return true;
+}
+
+static void imu_fifo_fault(void)
+{
+  ++imu_data.fifo_fault_count;
+  imu_latch_runtime_fault();
+}
+
+void IMU_Update(uint32_t now_ms)
+{
+  if (!imu_data.ready) { return; }
+  if (poll_valid && now_ms - last_poll_ms > imu_data.max_poll_interval_ms) {
+    imu_data.max_poll_interval_ms = now_ms - last_poll_ms;
+  }
+  last_poll_ms = now_ms;
+  poll_valid = true;
+
+  /* Start only after boot/UI initialization. ZeroYaw also discards pre-zero data.
+   * SPI stays in this foreground owner, never in the task calling ZeroYaw. */
+  if (fifo_restart_pending) {
+    const uint32_t mask = imu_enter_critical();
+    fifo_restart_pending = false;
+    sample_time_valid = false;
+    fifo_gyro_valid = fifo_tick_valid = false;
+    stationary_time_us = 0U;
+    imu_leave_critical(mask);
+    if (!spi_write_checked(LSM6DSV16X_FIFO_CTRL4, 0U, 0xFFU) ||
+        !spi_write_checked(LSM6DSV16X_FIFO_CTRL4,
+                           IMU_FIFO_STREAM_TIMESTAMP, 0xFFU)) {
+      imu_fifo_fault();
+    }
+    last_successful_sample_ms = now_ms;
+    runtime_poll_started = true;
+    return;
+  }
+
+  if (!identity_check_started || now_ms - last_identity_check_ms >= IMU_IDENTITY_CHECK_MS) {
+    uint8_t id = 0U, temp[2];
+    identity_check_started = true;
+    last_identity_check_ms = now_ms;
+    if (!spi_read(LSM6DSV16X_WHO_AM_I, &id, 1U) || id != LSM6DSV16X_ID ||
+        !spi_read(LSM6DSV16X_OUT_TEMP_L, temp, 2U)) {
+      imu_fifo_fault();
+      return;
+    }
+    imu_data.temperature_mdeg_c = 25000 + divide_round((int64_t)read_i16(temp) * 1000, 256);
+  }
+
+  uint8_t status[2], accel_bytes[6];
+  if (!spi_read(LSM6DSV16X_FIFO_STATUS1, status, 2U)) {
+    imu_fifo_fault();
+    return;
+  }
+  const uint16_t words = status[0] | ((uint16_t)(status[1] & 1U) << 8U);
+  if (words > imu_data.fifo_peak_words) { imu_data.fifo_peak_words = words; }
+  if ((status[1] & 0x48U) != 0U) {
+    ++imu_data.fifo_overrun_count;
+    imu_fifo_fault();
+    return;
+  }
+  /* Bound catch-up latency; never claim a stale angle is a live control input. */
+  if (words > IMU_FIFO_MAX_WORDS) { imu_fifo_fault(); return; }
+  if (words == 0U) { imu_check_runtime_timeout(now_ms); return; }
+  if (!spi_read(0x28U, accel_bytes, 6U)) { imu_fifo_fault(); return; }
+  int16_t accel[3];
+  for (uint8_t i = 0U; i < 3U; ++i) { accel[i] = read_i16(&accel_bytes[i * 2U]); }
+
+  /* Only gyro + timestamp are batched, both at BDR_MAX, uncompressed.
+   * Pair one of each in either order and retain an incomplete pair across polls. */
+  for (uint16_t i = 0U; i < words; ++i) {
+    uint8_t entry[7];
+    if (fifo_restart_pending) { return; }
+    if (!spi_read(LSM6DSV16X_FIFO_DATA_OUT_TAG, entry, 7U)) {
+      imu_fifo_fault(); return;
+    }
+    const uint8_t tag = entry[0] >> 3U;
+    if (tag == IMU_FIFO_GYRO_TAG && !fifo_gyro_valid) {
+      for (uint8_t axis = 0U; axis < 3U; ++axis) {
+        fifo_gyro[axis] = read_i16(&entry[1U + axis * 2U]);
+      }
+      fifo_gyro_valid = true;
+    } else if (tag == IMU_FIFO_TIMESTAMP_TAG && !fifo_tick_valid) {
+      fifo_tick = (uint32_t)entry[1] | ((uint32_t)entry[2] << 8U) |
+          ((uint32_t)entry[3] << 16U) | ((uint32_t)entry[4] << 24U);
+      fifo_tick_valid = true;
+    } else {
+      imu_fifo_fault(); return;
+    }
+    if (fifo_gyro_valid && fifo_tick_valid) {
+      if (fifo_restart_pending) { return; }
+      if (!imu_integrate_sample(fifo_gyro, accel, fifo_tick)) {
+        imu_fifo_fault(); return;
+      }
+      fifo_gyro_valid = fifo_tick_valid = false;
+      last_successful_sample_ms = now_ms;
+      runtime_poll_started = true;
+    }
+  }
+  imu_check_runtime_timeout(now_ms);
 }
 
 void IMU_ZeroYaw(void)
@@ -568,6 +656,7 @@ void IMU_ZeroYaw(void)
   previous_corrected_z = 0LL;
   imu_data.yaw_mdeg = 0;
   sample_time_valid = false;
+  fifo_restart_pending = true;
   imu_leave_critical(primask);
 }
 

@@ -28,6 +28,11 @@ typedef struct {
   uint32_t bias_update_count;
   int8_t clock_fine;
   bool stationary;
+  uint16_t fifo_peak_words;
+  uint32_t fifo_overrun_count;
+  uint32_t fifo_fault_count;
+  uint32_t max_poll_interval_ms;
+  int32_t temperature_mdeg_c;
 } IMUData;
 
 bool IMU_Init(void);

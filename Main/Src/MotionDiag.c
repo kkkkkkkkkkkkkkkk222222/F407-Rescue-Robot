@@ -9,7 +9,7 @@
 #include "motor.h"
 
 #define DIAG_MAGIC 0x4D444731UL
-#define DIAG_FORMAT 3U
+#define DIAG_FORMAT 4U
 
 typedef struct {
   uint32_t valid, exception, pc, lr, xpsr, stack_pointer, exc_return;
@@ -133,6 +133,12 @@ static void print_record(void (*send)(const char *), const char *prefix, const M
       (unsigned long)r->imu.sample_interval_us, (unsigned long)r->imu.max_sample_interval_us,
       (unsigned long)r->imu.integration_gap_count, (unsigned long)r->imu.error_count,
       (long)r->imu.gyro_bias_mdps[2]);
+  send(text);
+  (void)snprintf(text, sizeof(text),
+      "%s IMU_FIFO PEAK=%u OVERRUN=%lu FAULTS=%lu MAX_POLL_MS=%lu TEMP_MC=%ld\r\n",
+      prefix, (unsigned int)r->imu.fifo_peak_words,
+      (unsigned long)r->imu.fifo_overrun_count, (unsigned long)r->imu.fifo_fault_count,
+      (unsigned long)r->imu.max_poll_interval_ms, (long)r->imu.temperature_mdeg_c);
   send(text);
 }
 
