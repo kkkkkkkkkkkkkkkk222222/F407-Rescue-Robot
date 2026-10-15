@@ -49,7 +49,7 @@ MotorDistanceStatus Motor_MoveDistanceConstant(float distance_m,
 MotorTurnStatus Motor_TurnAngle(float angle_deg);
 /* Caller-specific rotation speed; MotionDebug profiles and confirms rest. */
 MotorTurnStatus Motor_TurnAngleSpeed(float angle_deg, float speed_mm_s);
-/* Travel along the request; MotionDebug preserves signed, unwrapped progress. */
+  /* Signed, unwrapped progress along the request in every application mode. */
 float Motor_GetTurnTravelledDeg(void);
 /* yaw_tangent_mm_s is R*omega, so all three inputs use mm/s. */
 void Motor_Move(float forward_mm_s, float lateral_mm_s,

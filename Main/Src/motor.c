@@ -946,10 +946,17 @@ static void motor_update_angle_turn(void)
 #if APP_ENABLE_MOTION_DEBUG_TASK
   motor_update_debug_turn(&imu);
 #else
-  const int64_t signed_yaw_mdeg = imu.yaw_mdeg - angle_turn.start_yaw_mdeg;
-  const int64_t yaw_mdeg =
-      (signed_yaw_mdeg < 0LL) ? -signed_yaw_mdeg : signed_yaw_mdeg;
+  /* Match MotionDebug: unwrapped progress along the requested drive direction. */
+  const int64_t yaw_mdeg = (imu.yaw_mdeg - angle_turn.start_yaw_mdeg) *
+      (APP_MOTOR_HEADING_OUTPUT_SIGN > 0.0f ? 1LL : -1LL) *
+      angle_turn.direction;
   angle_turn.travelled_mdeg = yaw_mdeg;
+  if (yaw_mdeg < -APP_MOTOR_TURN_WRONG_WAY_MDEG) {
+    angle_turn.status = MOTOR_TURN_FAULT;
+    angle_turn.slowing = false;
+    motor_stop_outputs(true);
+    return;
+  }
   const int64_t remaining_mdeg =
       (int64_t)angle_turn.target_mdeg - yaw_mdeg;
 

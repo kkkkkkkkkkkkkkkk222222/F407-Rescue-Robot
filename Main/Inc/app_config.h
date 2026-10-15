@@ -72,6 +72,7 @@
 #define APP_MOTOR_TURN_SLOW_MM_S         120.0f
 #define APP_MOTOR_TURN_TIMEOUT_MS        10000U
 #define APP_MOTOR_TURN_MAX_DEG           360.0f
+#define APP_MOTOR_TURN_WRONG_WAY_MDEG    5000L
 /* Trial angle controller: MotionDebug only until validated on the chassis. */
 #define APP_DEBUG_TURN_POSITION_KP       2.5f
 #define APP_DEBUG_TURN_RATE_KP           0.5f
@@ -84,7 +85,7 @@
 #define APP_DEBUG_TURN_SETTLE_MS         150U
 #define APP_DEBUG_TURN_IMU_STALE_MS      100U
 #define APP_DEBUG_TURN_OVERRUN_MDEG      8000L
-#define APP_DEBUG_TURN_WRONG_WAY_MDEG    5000L
+#define APP_DEBUG_TURN_WRONG_WAY_MDEG    APP_MOTOR_TURN_WRONG_WAY_MDEG
 #define APP_DEBUG_TURN_MAX_CORRECTIONS   2U
 #define APP_DEBUG_TURN_ENTER_MDEG        300L
 #define APP_DEBUG_TURN_EXIT_MDEG         500L
@@ -116,7 +117,7 @@
 #define APP_ENCODER_COUNTS_PER_WHEEL_REV (APP_MOTOR_GEAR_RATIO * \
                                           APP_ENCODER_LINES_PER_MOTOR_REV * \
                                           APP_ENCODER_QUADRATURE_FACTOR)
-/* Confirmed hardware: MG310 Hall, 70 mm wheels, regulated 12 V motor rail. */
+/* MG310 Hall, 70 mm wheels, battery-fed rail modeled as 12 V (not regulated). */
 #define APP_MOTOR_RATED_VOLTAGE_MV        7400U
 #define APP_MOTOR_SUPPLY_VOLTAGE_MV      12000U
 #define APP_MOTOR_NO_LOAD_RPM             500.0f
