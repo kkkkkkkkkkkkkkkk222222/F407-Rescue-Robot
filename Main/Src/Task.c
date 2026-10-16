@@ -6424,7 +6424,7 @@ void Task_Process(uint32_t now_ms)
         const uint32_t travelled_mm =
             pose.path_mm - grab_core_advance_start_path_mm;
         if (travelled_mm < APP_CORE_GRAB_ADVANCE_DISTANCE_MM) {
-          (void)task_move_heading(APP_GRAB_WATCH_CRAWL_SPEED_MM_S,
+          (void)task_move_heading(APP_CORE_GRAB_ADVANCE_SPEED_MM_S,
                                   grab_core_advance_heading_deg, now_ms);
           break;
         }
