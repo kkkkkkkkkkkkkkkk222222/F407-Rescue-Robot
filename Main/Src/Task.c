@@ -2075,10 +2075,10 @@ static void task_begin_capture_escape(uint32_t now_ms)
 {
   /* Only a completed final illegal re-audit selects return-to-centre.
    * Other abandonment reasons retain their existing 90-degree SEARCH path. */
-  const bool third_illegal = audit_received && !audit_valid &&
+  const bool final_illegal = audit_received && !audit_valid &&
       separation_total_attempts >= APP_SEPARATION_MAX_ATTEMPTS;
   task_enter(TASK_APPROACH_RECOVER, now_ms);
-  capture_escape_return_center = third_illegal;
+  capture_escape_return_center = final_illegal;
   capture_escape_reclose = separation_total_attempts >= APP_SEPARATION_MAX_ATTEMPTS;
   capture_return_closed = capture_return_opening = false;
   capture_escape_active = true;
@@ -2514,7 +2514,7 @@ static void task_process_grab_observe(const VisionData *vision,
   if (complete_flow_active) {
     const VisionMissionCommand *command = &vision->mission;
     if (task_capture_observe(now_ms)) return;
-    const bool three_frame_cargo_audit = task_mission_valid(command) &&
+    const bool sampled_nonempty_audit = task_mission_valid(command) &&
         (command->command == VISION_CMD_CARGO_AUDIT) &&
         (audit_consistent_count >= APP_AUDIT_REQUIRED_SAMPLES) &&
         (command->audit_total_count > 0U);
@@ -2523,7 +2523,7 @@ static void task_process_grab_observe(const VisionData *vision,
      * pickup, however, CLAW_VISIBLE means "start inspecting", not "cargo is
      * already inside".  Crawl straight until the upper computer confirms a
      * stable non-empty claw audit, then stop before it sends GRAB. */
-    if (cargo_recheck_pending || three_frame_cargo_audit) {
+    if (cargo_recheck_pending || sampled_nonempty_audit) {
       Motor_Stop();
       task_status.motors_active = false;
       return;
