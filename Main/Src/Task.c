@@ -2243,6 +2243,20 @@ static bool task_prepare_separation(int8_t keep_side, uint32_t now_ms)
   return true;
 }
 
+static bool task_approach_alignment_ready(const VisionData *vision,
+                                         uint32_t now_ms, bool new_locked_target)
+{
+  if ((uint32_t)(now_ms - step_started_ms) < APP_GRAB_CAMERA_SETTLE_MS) {
+    return false;
+  }
+  /* A commanded servo angle is not position feedback. Discard coordinates
+   * received before settling; the host must also discard older captures. */
+  return tracking_filter_valid ||
+         (new_locked_target &&
+          (int32_t)(vision->tick_ms - step_started_ms) >=
+              (int32_t)APP_GRAB_CAMERA_SETTLE_MS);
+}
+
 static void task_process_approach(const VisionData *vision, uint32_t now_ms)
 {
   task_status.auto_approach = true;
@@ -2288,6 +2302,8 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
           Camera_SetAngle(APP_DISPERSE_APPROACH_ANGLE);
           camera_angle = (float)APP_DISPERSE_APPROACH_ANGLE;
           approach_phase = APPROACH_CLUSTER_ALIGN;
+          step_started_ms = now_ms;
+          task_reset_tracking();
           task_cluster_align_begin();
           Motor_Stop();
           task_status.motors_active = false;
@@ -2305,6 +2321,8 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
         Camera_SetAngle(APP_GRAB_ALIGN_CAMERA_ANGLE);
         camera_angle = (float)APP_GRAB_ALIGN_CAMERA_ANGLE;
         approach_phase = APPROACH_ALIGN_125;
+        step_started_ms = now_ms;
+        task_reset_tracking();
         Motor_Stop();
         task_status.motors_active = false;
         return;
@@ -2315,9 +2333,14 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
       return;
 
     case APPROACH_CLUSTER_ALIGN:
-      task_cluster_align_sample();
       Camera_SetAngle(APP_DISPERSE_APPROACH_ANGLE);
       camera_angle = (float)APP_DISPERSE_APPROACH_ANGLE;
+      if (!task_approach_alignment_ready(vision, now_ms, new_locked_target)) {
+        Motor_Stop();
+        task_status.motors_active = false;
+        return;
+      }
+      task_cluster_align_sample();
       if (new_locked_target) {
         task_status.found = true;
         (void)task_track_target(vision, false);
@@ -2403,6 +2426,11 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
     case APPROACH_ALIGN_125:
       Camera_SetAngle(APP_GRAB_ALIGN_CAMERA_ANGLE);
       camera_angle = (float)APP_GRAB_ALIGN_CAMERA_ANGLE;
+      if (!task_approach_alignment_ready(vision, now_ms, new_locked_target)) {
+        Motor_Stop();
+        task_status.motors_active = false;
+        return;
+      }
       if (new_locked_target) {
         task_status.found = true;
         (void)task_track_target(vision, false);
