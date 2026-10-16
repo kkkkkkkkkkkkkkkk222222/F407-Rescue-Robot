@@ -186,9 +186,10 @@ static void run_move_spin_test(uint32_t now_ms)
     return;
   }
   move_spin_test_next_ms = now_ms + APP_MOVE_SPIN_TEST_CONTROL_MS;
-  if (!Motor_MoveSpin(APP_MOVE_SPIN_TEST_SPEED_MM_S,
-                      APP_MOVE_SPIN_TEST_ANGLE_DEG,
-                      APP_MOVE_SPIN_TEST_YAW_MM_S)) {
+  const MotorTurnStatus result = Motor_MoveSpinAngle(APP_MOVE_SPIN_TEST_SPEED_MM_S,
+                      APP_MOVE_SPIN_TEST_ANGLE_DEG, APP_MOVE_SPIN_TEST_TURN_DEG,
+                      APP_MOVE_SPIN_TEST_RATE_DPS);
+  if (result != MOTOR_TURN_RUNNING) {
     Motor_Stop();
     move_spin_test_running = false;
   }

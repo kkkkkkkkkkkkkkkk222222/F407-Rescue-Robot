@@ -57,7 +57,11 @@ void Motor_Move(float forward_mm_s, float lateral_mm_s,
 /* Keep translation on one Location-assisted floor line while the chassis
  * spins. 0 deg=initial forward, 90 deg=initial left. */
 bool Motor_MoveSpin(float speed_mm_s, float direction_deg,
-                    float yaw_tangent_mm_s);
+                     float yaw_tangent_mm_s);
+/* Finite ground-line translation + relative turn, CCW-positive turn degrees.
+ * Latches arguments once; DONE/FAULT remain until Motor_Stop. Units: mm/s, deg, deg, deg/s. */
+MotorTurnStatus Motor_MoveSpinAngle(float speed_mm_s, float direction_deg,
+                                   float turn_deg, float max_rate_dps);
 /* 0 deg=forward, 90 deg=left, 180 deg=backward, 270 deg=right. */
 bool Motor_MoveAngle(float speed_mm_s, float angle_deg);
 /* Continuous signed forward speed with an absolute Location heading.

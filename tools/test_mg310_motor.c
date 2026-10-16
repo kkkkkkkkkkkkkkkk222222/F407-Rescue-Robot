@@ -23,7 +23,7 @@ void Location_ResetReference(int32_t x, int32_t y, int32_t heading)
 { test_pose.x_mm = x; test_pose.y_mm = y; test_pose.heading_mdeg = heading; }
 VisionData Vision_GetSnapshot(void) { return test_vision; }
 void Vision_QueueMotionStatus(const VisionMotionStatus *status) { (void)status; }
-#if defined(MOTOR_TRACE_CHECK_ONLY) || defined(MOTOR_TURN_PROFILE_CHECK_ONLY)
+#if defined(MOTOR_TRACE_CHECK_ONLY) || defined(MOTOR_TURN_PROFILE_CHECK_ONLY) || defined(MOTOR_SPIN_CHECK_ONLY)
 void WheelCheck_Stop(void) { Motor_Stop(); }
 #endif
 
@@ -48,7 +48,7 @@ static void reset(void)
 static void update(void)
 {
   test_ms += APP_MOTOR_CONTROL_PERIOD_MS;
-#if defined(MOTOR_TRACE_CHECK_ONLY) || defined(MOTOR_TURN_PROFILE_CHECK_ONLY)
+#if defined(MOTOR_TRACE_CHECK_ONLY) || defined(MOTOR_TURN_PROFILE_CHECK_ONLY) || defined(MOTOR_SPIN_CHECK_ONLY)
   ++test_imu.sample_count;
 #endif
   Motor_Update();
@@ -199,7 +199,7 @@ static void test_original_pid_parameters_preserved(void)
   assert(speed_pids[0].kp == 6.0f && speed_pids[0].ki == 0.15f && speed_pids[0].kd == 0.0f);
   assert(speed_pids[0].output_min == -450.0f && speed_pids[0].output_max == 450.0f);
   assert(speed_pids[0].integral_min == -2500.0f && speed_pids[0].integral_max == 2500.0f);
-  assert(APP_MOVE_SPIN_PID_BOOST == 1.8f);
+  assert(APP_MOVE_SPIN_PID_BOOST == 1.0f);
 }
 
 static void test_no_stall_or_direction_interlock(void)
@@ -1183,9 +1183,44 @@ static void test_delivery_heading_reference(void)
   assert(!Motor_MoveHeading(200.0f, 1.0f));
 }
 
+static void test_finite_spin_angle(void)
+{
+  for (int sign=-1; sign<=1; sign+=2) {
+    reset();
+    test_imu.yaw_mdeg=359000;
+    assert(Motor_MoveSpinAngle(300, 180, sign*180.0f, 60) == MOTOR_TURN_RUNNING);
+    for (unsigned i=0;i<20;++i) update();
+    assert(spin_move.active && spin_move.angle_status == MOTOR_TURN_RUNNING);
+    assert(spin_move.current_yaw_mm_s * sign < 0);
+    const int64_t origin = spin_move.start_raw_yaw_mdeg;
+    assert(Motor_MoveSpinAngle(300,180,sign*180.0f,60) == MOTOR_TURN_RUNNING);
+    assert(spin_move.start_raw_yaw_mdeg == origin);
+    test_imu.yaw_mdeg=origin-sign*180000LL;
+    test_imu.gyro_mdps[2]=10000;
+    update(); assert(spin_move.angle_status == MOTOR_TURN_RUNNING);
+    test_imu.gyro_mdps[2]=0;
+    for (unsigned i=0;i<APP_MOVE_SPIN_SETTLE_MS/APP_MOTOR_CONTROL_PERIOD_MS;++i) update();
+    assert(spin_move.angle_status == MOTOR_TURN_DONE);
+    assert(Motor_MoveSpinAngle(300,180,sign*180.0f,60) == MOTOR_TURN_DONE);
+    Motor_Stop(); assert(spin_move.angle_status == MOTOR_TURN_IDLE);
+  }
+  reset(); assert(Motor_MoveSpinAngle(501,0,180,60) == MOTOR_TURN_INVALID);
+  assert(Motor_MoveSpinAngle(0,90,360,60) == MOTOR_TURN_RUNNING);
+  test_imu.yaw_mdeg=-360000;
+  for (unsigned i=0;i<20;++i) update();
+  assert(spin_move.angle_status == MOTOR_TURN_DONE);
+  reset(); assert(Motor_MoveSpinAngle(300,0,180,60) == MOTOR_TURN_RUNNING);
+  test_ms=APP_MOTOR_TURN_TIMEOUT_MS; update();
+  assert(spin_move.angle_status == MOTOR_TURN_FAULT);
+  Motor_Stop(); assert(!spin_move.active);
+}
+
 int main(void)
 {
-#if defined(MOTOR_HEADING_CHECK_ONLY)
+#if defined(MOTOR_SPIN_CHECK_ONLY)
+  test_finite_spin_angle();
+  puts("Finite combined turn: signs, unwrapped angles, repeat, settle, stop, limits, timeout PASS");
+#elif defined(MOTOR_HEADING_CHECK_ONLY)
   test_delivery_heading_reference();
   puts("Delivery heading: absolute goal, feedback sign, repeated command, wrap, stop and uncertain IMU PASS");
 #elif defined(MOTOR_TURN_PROFILE_CHECK_ONLY)

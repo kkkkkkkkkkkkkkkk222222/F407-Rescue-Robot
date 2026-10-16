@@ -138,22 +138,29 @@
 /* Fixed-floor-direction translation plus simultaneous high-speed rotation. */
 #define APP_MOVE_SPIN_TEST_SPEED_MM_S     350.0f
 #define APP_MOVE_SPIN_TEST_ANGLE_DEG       90.0f
-#define APP_MOVE_SPIN_TEST_YAW_MM_S       380.0f
-#define APP_MOVE_SPIN_TEST_TIME_MS       5000U
+#define APP_MOVE_SPIN_TEST_TURN_DEG      180.0f
+#define APP_MOVE_SPIN_TEST_RATE_DPS       60.0f
+#define APP_MOVE_SPIN_TEST_TIME_MS      10000U
 #define APP_MOVE_SPIN_TEST_CONTROL_MS      10U
 /* Location-assisted cross-track controller used by Motor_MoveSpin(). */
-#define APP_MOVE_SPIN_LINE_KP               1.8f
-#define APP_MOVE_SPIN_LINE_MAX_MM_S       120.0f
-#define APP_MOVE_SPIN_ACCEL_MM_S2        1800.0f
-#define APP_MOVE_SPIN_YAW_ACCEL_MM_S2    1950.0f
+#define APP_MOVE_SPIN_LINE_KP               1.0f
+#define APP_MOVE_SPIN_LINE_MAX_MM_S        60.0f
+#define APP_MOVE_SPIN_ACCEL_MM_S2         900.0f
+#define APP_MOVE_SPIN_YAW_ACCEL_MM_S2     270.0f
 #define APP_MOVE_SPIN_WHEEL_MARGIN_MM_S    10.0f
 #define APP_MOVE_SPIN_MAX_UPDATE_MS         50U
 /* Both paths use voltage-scaled feed-forward and the same hard PWM cap. */
-#define APP_MOVE_SPIN_FF_STATIC_PWM          80.0f
+#define APP_MOVE_SPIN_FF_STATIC_PWM          APP_MOTOR_BASE_PWM
 /* MG310 uses the same speed-loop correction scale in combined motion. */
 #define APP_MOVE_SPIN_PID_BOOST               1.0f
 #define APP_MOVE_SPIN_OUTPUT_LIMIT_PWM APP_MOTOR_PWM_MAX_PERMILLE
-#define APP_MOVE_SPIN_HEADING_LEAD_MS         55.0f
+#define APP_MOVE_SPIN_HEADING_LEAD_MS          0.0f
+#define APP_MOVE_SPIN_MAX_LINEAR_MM_S       500.0f
+#define APP_MOVE_SPIN_MAX_RATE_DPS           90.0f
+#define APP_MOVE_SPIN_ANGLE_KP                2.5f
+#define APP_MOVE_SPIN_DECEL_DPS2            120.0f
+#define APP_MOVE_SPIN_ANGLE_TOL_DEG           1.0f
+#define APP_MOVE_SPIN_SETTLE_MS              150U
 
 #if (APP_ENABLE_MOTION_TEST + APP_ENABLE_LOCATION_DEMO + \
      APP_ENABLE_MOVE_SPIN_TEST + APP_ENABLE_AUTOMATIC_MOTOR_TEST + \

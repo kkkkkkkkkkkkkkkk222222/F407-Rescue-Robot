@@ -98,6 +98,13 @@ typedef struct {
   float current_speed_mm_s;
   float current_yaw_mm_s;
   uint32_t last_update_ms;
+  MotorTurnStatus angle_status;
+  int64_t start_raw_yaw_mdeg;
+  float turn_deg, max_rate_dps, requested_speed_mm_s;
+  uint32_t started_ms;
+  uint32_t last_sample_count, last_sample_ms;
+  uint16_t settled_ms;
+  bool settling;
 } SpinMove;
 
 static const MotorPwm motors[MOTOR_COUNT] = {
@@ -123,6 +130,7 @@ static volatile DistanceMove distance_move;
 static volatile AngleTurn angle_turn;
 static volatile DirectionMove direction_move;
 static volatile SpinMove spin_move;
+static void motor_update_spin_angle(void);
 static volatile bool finite_motion_paused;
 static uint32_t finite_pause_started_ms;
 static uint8_t brake_cycles_remaining;
@@ -500,6 +508,9 @@ static void motor_clear_direction_move(void)
 
 static void motor_clear_spin_move(void)
 {
+  spin_move.angle_status = MOTOR_TURN_IDLE;
+  spin_move.settled_ms = 0U;
+  spin_move.settling = false;
   spin_move.active = false;
   spin_move.start_x_mm = 0.0f;
   spin_move.start_y_mm = 0.0f;
@@ -1305,13 +1316,16 @@ void Motor_Update(void)
 #endif
   const IMUData control_imu = IMU_GetData();
   if (!control_imu.ready || control_imu.heading_uncertain) {
+    const bool spin_interrupted = spin_move.angle_status == MOTOR_TURN_RUNNING;
     Motor_Stop();
+    if (spin_interrupted) { spin_move.angle_status = MOTOR_TURN_FAULT; }
     return;
   }
   if (!finite_motion_paused) {
     motor_update_distance_move(encoder);
     motor_update_angle_turn();
     motor_update_direction_move();
+    motor_update_spin_angle();
   }
 
 #if APP_ENABLE_MOTION_DEBUG_TASK
@@ -1323,6 +1337,10 @@ void Motor_Update(void)
     return;
   }
 #endif
+  if (spin_move.angle_status == MOTOR_TURN_RUNNING && spin_move.settling) {
+    for (uint8_t id = 1U; id <= MOTOR_COUNT; ++id) { motor_apply_brake(id); }
+    return;
+  }
 
   if (brake_cycles_remaining > 0U) {
     for (uint8_t id = 1U; id <= MOTOR_COUNT; ++id) {
@@ -1878,8 +1896,8 @@ void Motor_Move(float forward_mm_s, float lateral_mm_s,
   motor_leave_critical(primask);
 }
 
-bool Motor_MoveSpin(float speed_mm_s, float direction_deg,
-                    float yaw_tangent_mm_s)
+static bool motor_move_spin_output(float speed_mm_s, float direction_deg,
+                                   float yaw_tangent_mm_s)
 {
   if (!isfinite(speed_mm_s) || !isfinite(direction_deg) ||
       !isfinite(yaw_tangent_mm_s)) {
@@ -1889,7 +1907,7 @@ bool Motor_MoveSpin(float speed_mm_s, float direction_deg,
   const uint32_t primask = motor_enter_critical();
   const LocationPose pose = Location_GetPose();
   const IMUData imu = IMU_GetData();
-  if (motor_has_fault() || !pose.valid || !imu.ready) {
+  if (motor_has_fault() || !pose.valid || !imu.ready || imu.heading_uncertain) {
     motor_stop_outputs(true);
     motor_leave_critical(primask);
     return false;
@@ -1983,25 +2001,22 @@ bool Motor_MoveSpin(float speed_mm_s, float direction_deg,
   float field_y_mm_s = spin_move.current_speed_mm_s * line_sin +
                        correction_mm_s * line_normal_y;
 
-  /* Preserve the requested high spin rate when translation and correction
-   * compete for wheel-speed headroom. The generic mixer still performs the
-   * final exact per-wheel limit. */
+  /* Scale translation and rotation together; never starve translation just
+   * to preserve yaw speed. This keeps the commanded velocity ratio. */
   const float maximum_wheel_speed =
       motor_counts_to_mm_s((float)APP_MOTOR_MAX_COUNT_10MS);
   const float yaw_limit = maximum_wheel_speed -
                           APP_MOVE_SPIN_WHEEL_MARGIN_MM_S;
-  const float yaw_mm_s = motor_clamp_float(
+  float yaw_mm_s = motor_clamp_float(
       spin_move.current_yaw_mm_s, -yaw_limit, yaw_limit);
-  float translation_limit = yaw_limit - motor_abs_float(yaw_mm_s);
-  if (translation_limit < 0.0f) {
-    translation_limit = 0.0f;
-  }
   const float field_speed = sqrtf(field_x_mm_s * field_x_mm_s +
                                   field_y_mm_s * field_y_mm_s);
-  if ((field_speed > translation_limit) && (field_speed > 0.0f)) {
-    const float scale = translation_limit / field_speed;
+  const float demand = field_speed + motor_abs_float(yaw_mm_s);
+  if (demand > yaw_limit) {
+    const float scale = yaw_limit / demand;
     field_x_mm_s *= scale;
     field_y_mm_s *= scale;
+    yaw_mm_s *= scale;
   }
 
   /* Predict the heading at which the geared wheels will realize this target.
@@ -2127,6 +2142,121 @@ bool Motor_MoveHeading(float forward_mm_s, float field_heading_deg)
   }
   motor_leave_critical(mask);
   return true;
+}
+
+bool Motor_MoveSpin(float speed_mm_s, float direction_deg, float yaw_tangent_mm_s)
+{
+  const uint32_t mask = motor_enter_critical();
+  spin_move.angle_status = MOTOR_TURN_IDLE;
+  spin_move.settling = false;
+  const float max_yaw = APP_MOVE_SPIN_MAX_RATE_DPS * MOTOR_DEG_TO_RAD *
+                        APP_MOTION_DEBUG_TURN_RADIUS_MM;
+  const bool ok = motor_move_spin_output(
+      motor_clamp_float(speed_mm_s, -APP_MOVE_SPIN_MAX_LINEAR_MM_S, APP_MOVE_SPIN_MAX_LINEAR_MM_S),
+      direction_deg, motor_clamp_float(yaw_tangent_mm_s, -max_yaw, max_yaw));
+  motor_leave_critical(mask);
+  return ok;
+}
+
+static void motor_finish_spin_angle(MotorTurnStatus status)
+{
+  motor_stop_outputs(true);
+  spin_move.angle_status = status;
+}
+
+MotorTurnStatus Motor_MoveSpinAngle(float speed_mm_s, float direction_deg,
+                                   float turn_deg, float max_rate_dps)
+{
+  const uint32_t mask = motor_enter_critical();
+  if (spin_move.angle_status != MOTOR_TURN_IDLE) {
+    const MotorTurnStatus status = spin_move.angle_status;
+    motor_leave_critical(mask);
+    return status;
+  }
+  if (!isfinite(speed_mm_s) || !isfinite(direction_deg) || !isfinite(turn_deg) ||
+      !isfinite(max_rate_dps) || motor_abs_float(speed_mm_s) > APP_MOVE_SPIN_MAX_LINEAR_MM_S ||
+      motor_abs_float(turn_deg) > 360.0f || max_rate_dps < 20.0f ||
+      max_rate_dps > APP_MOVE_SPIN_MAX_RATE_DPS) {
+    motor_leave_critical(mask); return MOTOR_TURN_INVALID;
+  }
+  Motor_Stop();
+  if (motor_abs_float(turn_deg) <= APP_MOVE_SPIN_ANGLE_TOL_DEG) {
+    spin_move.angle_status = MOTOR_TURN_DONE;
+  } else if (!motor_move_spin_output(speed_mm_s, direction_deg,
+              (turn_deg < 0 ? -0.1f : 0.1f) * APP_OMNI_FIELD_YAW_TO_DRIVE_SIGN)) {
+    spin_move.angle_status = MOTOR_TURN_FAULT;
+  } else {
+    spin_move.angle_status = MOTOR_TURN_RUNNING;
+    spin_move.start_raw_yaw_mdeg = IMU_GetData().yaw_mdeg;
+    spin_move.turn_deg = turn_deg;
+    spin_move.max_rate_dps = max_rate_dps;
+    spin_move.requested_speed_mm_s = motor_abs_float(speed_mm_s);
+    spin_move.started_ms = HAL_GetTick();
+    spin_move.last_sample_count = IMU_GetData().sample_count;
+    spin_move.last_sample_ms = spin_move.started_ms;
+  }
+  const MotorTurnStatus status = spin_move.angle_status;
+  motor_leave_critical(mask);
+  return status;
+}
+
+static void motor_update_spin_angle(void)
+{
+  if (spin_move.angle_status != MOTOR_TURN_RUNNING) { return; }
+  const IMUData imu = IMU_GetData();
+  const bool fresh = imu.sample_count != spin_move.last_sample_count;
+  if (fresh) {
+    spin_move.last_sample_count = imu.sample_count;
+    spin_move.last_sample_ms = HAL_GetTick();
+  }
+  if (!imu.ready || imu.heading_uncertain || !Location_GetPose().valid ||
+      HAL_GetTick() - spin_move.last_sample_ms >= APP_DEBUG_TURN_IMU_STALE_MS ||
+      HAL_GetTick() - spin_move.started_ms >= APP_MOTOR_TURN_TIMEOUT_MS) {
+    motor_finish_spin_angle(MOTOR_TURN_FAULT); return;
+  }
+  const float travelled = (float)(imu.yaw_mdeg - spin_move.start_raw_yaw_mdeg) *
+                           0.001f * APP_LOCATION_IMU_YAW_SIGN;
+  const float error = spin_move.turn_deg - travelled;
+  const float remaining = motor_abs_float(error);
+  const float rate = imu.gyro_mdps[2] * 0.001f * APP_LOCATION_IMU_YAW_SIGN;
+  if (remaining <= APP_MOVE_SPIN_ANGLE_TOL_DEG) {
+    spin_move.settling = true;
+    spin_move.current_speed_mm_s = spin_move.current_yaw_mm_s = 0.0f;
+    motor_set_omni_speed(0, 0, 0);
+    bool wheels_stopped = true;
+    for (uint8_t i = 0U; i < MOTOR_COUNT; ++i) {
+      wheels_stopped = wheels_stopped && measured_speeds_mm_s[i] == 0;
+    }
+    if (motor_abs_float(rate) <= 3.0f && wheels_stopped) {
+      if (fresh) { spin_move.settled_ms += APP_MOTOR_CONTROL_PERIOD_MS; }
+      if (spin_move.settled_ms >= APP_MOVE_SPIN_SETTLE_MS) {
+        motor_finish_spin_angle(MOTOR_TURN_DONE);
+      }
+    } else { spin_move.settled_ms = 0U; }
+    return;
+  }
+  spin_move.settling = false;
+  spin_move.settled_ms = 0U;
+  float command_rate = fminf(spin_move.max_rate_dps,
+      fminf(APP_MOVE_SPIN_ANGLE_KP * remaining,
+            sqrtf(2.0f * APP_MOVE_SPIN_DECEL_DPS2 * remaining)));
+  command_rate = fmaxf(8.0f, command_rate) * (error < 0 ? -1.0f : 1.0f);
+  /* Do not reverse the requested yaw while the body is still turning fast. */
+  if (error * rate < 0 && motor_abs_float(rate) > 3.0f) { command_rate = 0.0f; }
+  const bool overshot = error * spin_move.turn_deg < 0.0f;
+  const float translation = overshot || remaining < 10.0f ? 0.0f :
+      spin_move.requested_speed_mm_s * fminf(1.0f, remaining / 30.0f);
+  if (translation == 0.0f && command_rate == 0.0f) {
+    spin_move.settling = true;
+    spin_move.current_speed_mm_s = spin_move.current_yaw_mm_s = 0.0f;
+    motor_set_omni_speed(0, 0, 0);
+    return;
+  }
+  if (!motor_move_spin_output(translation, spin_move.direction_deg,
+          command_rate * MOTOR_DEG_TO_RAD * APP_MOTION_DEBUG_TURN_RADIUS_MM *
+          APP_OMNI_FIELD_YAW_TO_DRIVE_SIGN)) {
+    motor_finish_spin_angle(MOTOR_TURN_FAULT);
+  }
 }
 
 MotorStatus Motor_GetStatus(uint8_t id)
