@@ -415,7 +415,11 @@ int main(void)
   command_visual_new=true; task_accept_mission_legacy(&c,100);
   c.audit_id=2; c.vision_frame=3; task_accept_mission_legacy(&c,200);
   assert(audit_consistent_count == 2 && !audit_received);
-  assert(APP_SEPARATION_MAX_ATTEMPTS == 2 && !task_escape_allowed());
+  assert(APP_SEPARATION_MAX_ATTEMPTS == 2);
+  command_accepted=false;
+  VisionMissionCommand retired={.received=true,.flags=VISION_CMD_VALID,.command=VISION_CMD_ESCAPE_MANEUVER};
+  task_accept_mission_legacy(&retired,300);
+  assert(!command_accepted);
   prepare();
   separation_total_attempts=1; audit_received=true; audit_valid=false;
   audit_consistent_count=APP_AUDIT_REQUIRED_SAMPLES;

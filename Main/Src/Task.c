@@ -52,7 +52,6 @@ typedef enum {
 typedef enum {
   REMOTE_ACTION_NONE = 0,
   REMOTE_ACTION_YIELD,
-  REMOTE_ACTION_ESCAPE,
   REMOTE_ACTION_RELEASE_LEFT,
   REMOTE_ACTION_RELEASE_RIGHT,
   REMOTE_ACTION_RELEASE_BOTH,
@@ -572,12 +571,6 @@ static bool task_yield_allowed(void)
           (remote_action.type == REMOTE_ACTION_RELEASE_RIGHT));
 }
 
-static bool task_escape_allowed(void)
-{
-  /* Automatic spin/side-step recovery is disabled, including stale host requests. */
-  return false;
-}
-
 static bool task_lane_allowed(void)
 {
   /* Legacy danger avoidance is intentionally disabled. SEARCH/APPROACH and
@@ -646,7 +639,6 @@ static uint8_t task_protocol_mode(void)
     if ((state == TASK_REMOTE_ACTION) && remote_action.done) {
       switch (remote_action.type) {
         case REMOTE_ACTION_YIELD:        return 30U;
-        case REMOTE_ACTION_ESCAPE:       return 31U;
         case REMOTE_ACTION_RELEASE_LEFT: return 32U;
         case REMOTE_ACTION_RELEASE_RIGHT:return 33U;
         case REMOTE_ACTION_RELEASE_BOTH: return 34U;
@@ -4935,21 +4927,6 @@ static void task_process_remote_action(const VisionMissionCommand *command,
       }
       return;
 
-    case REMOTE_ACTION_ESCAPE:
-      /* Recovery may be requested after an interrupted mechanism sequence.
-       * Always restore the large lift to its travel clearance before moving. */
-      Lift_SetTravelPosition();
-      if (remote_action.phase == 0U) {
-        (void)task_remote_turn((float)remote_action.arg_a, now_ms);
-      } else if (remote_action.phase == 1U) {
-        if (task_remote_lateral(remote_action.arg_b,
-                                APP_REMOTE_ESCAPE_LATERAL_SPEED_MM_S,
-                                now_ms)) {
-          task_remote_action_finish();
-        }
-      }
-      return;
-
     case REMOTE_ACTION_LANE:
       if (remote_action.phase == 0U) {
         (void)task_remote_lateral(remote_action.arg_a,
@@ -5655,11 +5632,6 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
     task_start_remote_action(REMOTE_ACTION_YIELD, command, now_ms);
-  } else if ((command->command == VISION_CMD_ESCAPE_MANEUVER) &&
-             task_escape_allowed()) {
-    task_status.acknowledged_sequence = command->sequence;
-    command_accepted = true;
-    task_start_remote_action(REMOTE_ACTION_ESCAPE, command, now_ms);
   } else if ((command->command == VISION_CMD_CHANGE_LANE) &&
              task_lane_allowed()) {
     task_status.acknowledged_sequence = command->sequence;
@@ -5785,7 +5757,7 @@ static bool task_context_complete(void)
       return state == TASK_SAFE_SWEEP_DONE;
     case VISION_CMD_RELEASE_LEFT: case VISION_CMD_RELEASE_RIGHT:
     case VISION_CMD_RELEASE_BOTH: case VISION_CMD_DISPERSE_PILE:
-    case VISION_CMD_YIELD_BACKOFF: case VISION_CMD_ESCAPE_MANEUVER:
+    case VISION_CMD_YIELD_BACKOFF:
     case VISION_CMD_CHANGE_LANE:
       return state == TASK_REMOTE_ACTION && remote_action.done &&
              remote_action.command == accepted_context.opcode;
@@ -5831,6 +5803,8 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
   }
   command_generation_seen = incoming.generation;
   if (!incoming.payload_valid) goto rejected;
+  /* Retired opcode remains reserved on the wire, never executable. */
+  if (incoming.command == VISION_CMD_ESCAPE_MANEUVER) goto rejected;
   const bool abort = incoming.command == VISION_CMD_ABORT;
   const bool overlay = incoming.command == VISION_CMD_HOLD ||
                        incoming.command == VISION_CMD_PAUSE;
