@@ -208,6 +208,11 @@ static void gamepad_accept_command(const VisionData *vision)
   command.camera = vision->teleop_camera;
   command.buttons = vision->teleop_buttons;
   command.speed_percent = vision->teleop_speed_percent;
+  if (command.forward == 0 && command.left == 0 && command.yaw == 0 &&
+      (vision->motion_flags & VISION_MOTION_TELEOP_ENABLE) == 0U &&
+      IMU_GetData().ready) {
+    IMU_ConfirmHeadingReference();
+  }
   gamepad_status.buttons = command.buttons;
   gamepad_status.armed =
       (vision->motion_flags & VISION_MOTION_TELEOP_ENABLE) != 0U;
@@ -262,7 +267,7 @@ void Gamepad_Process(uint32_t now_ms)
       ((uint32_t)(now_ms - last_command_ms) >
        APP_GAMEPAD_COMMAND_TIMEOUT_MS)) {
     gamepad_stop(gamepad_status.received ? GAMEPAD_TIMEOUT : GAMEPAD_IDLE);
-  } else if (gamepad_motor_fault() || !IMU_GetData().ready) {
+  } else if (gamepad_motor_fault() || !IMU_GetData().ready || IMU_GetData().heading_uncertain) {
     gamepad_stop(GAMEPAD_FAULT);
   } else if (!gamepad_status.armed) {
     gamepad_stop(GAMEPAD_IDLE);

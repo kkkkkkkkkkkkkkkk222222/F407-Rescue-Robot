@@ -376,8 +376,31 @@ static void test_third_failure_recloses_and_reopens_at_center(void)
   assert(state == TASK_SEARCH && !task_status.gripper_closed && !capture_return_closed);
 }
 
+static void test_recoverable_wait(void)
+{
+  prepare();
+  separation_total_attempts = 2;
+  task_stop(TASK_FAULT_MOTOR, 100U);
+  assert(state == TASK_RECOVERY_WAIT && task_status.fault == TASK_FAULT_NONE);
+  assert(task_status.gripper_closed && separation_total_attempts == 2);
+  assert(!task_status.claw_visible);
+  VisionData v = {.fused_pose={.received=true, .status=VISION_POSE_VALID | VISION_POSE_T265_GOOD,
+      .tracker_confidence=3, .heading_cdeg=9000, .x_mm=100, .y_mm=200}};
+  for (unsigned t=700;t<=740;t+=20) {
+    v.fused_pose.tick_ms=t;
+    task_recover_reference(&v,t);
+  }
+  assert(recovery_reference_ready && task_status.claw_visible && state == TASK_RECOVERY_WAIT);
+  audit_at(1,800); audit_at(2,900); audit_at(3,1000);
+  assert(audit_received && audit_valid && state == TASK_RECOVERY_WAIT);
+  VisionMissionCommand grab={.received=true,.flags=VISION_CMD_VALID,.command=VISION_CMD_GRAB_CONFIRMED};
+  task_accept_mission_legacy(&grab,1010);
+  assert(state == TASK_CLOSE_CLAW && !grab_core_advance_required);
+}
+
 int main(void)
 {
+  test_recoverable_wait();
   test_receipt_cadence_cannot_outrun_host();
   test_stable_does_not_skip_three_real_frames();
   test_same_frame_confirmation_has_no_new_sample_or_freshness();
@@ -392,6 +415,6 @@ int main(void)
   test_curve_mirrors_limits_and_pause();
   test_separation_retransmission_is_one_round();
   test_third_failure_recloses_and_reopens_at_center();
-  puts("audit/separation handshake: 14 scenario groups PASS");
+  puts("audit/separation handshake: 15 scenario groups PASS");
   return 0;
 }

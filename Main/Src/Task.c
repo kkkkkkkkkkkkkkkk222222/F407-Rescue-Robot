@@ -201,6 +201,11 @@ static bool audit_frame_floor_valid;
 static bool app_visual_valid;
 static int16_t last_app_x, last_app_y;
 static bool task_context_complete(void);
+static bool recovery_reference_ready;
+static uint32_t recovery_started_ms, recovery_pose_tick;
+static uint8_t recovery_pose_hits;
+static VisionFusedPose recovery_previous_pose;
+static void task_clear_audit_result(void);
 static void task_sweep_fail(uint32_t now_ms);
 static void task_sweep_sample(uint32_t now_ms);
 
@@ -492,6 +497,23 @@ static void task_pause_final_push(uint32_t now_ms)
 
 static void task_stop(TaskFault fault, uint32_t now_ms)
 {
+  if (fault == TASK_FAULT_POSE_TIMEOUT || fault == TASK_FAULT_MOTOR ||
+      fault == TASK_FAULT_START_TIMEOUT || fault == TASK_FAULT_COMMAND_TIMEOUT ||
+      fault == TASK_FAULT_RAM) {
+    if (state != TASK_RECOVERY_WAIT) {
+      task_enter(TASK_RECOVERY_WAIT, now_ms);
+      recovery_reference_ready = false;
+      recovery_started_ms = now_ms;
+      recovery_pose_tick = 0U;
+      recovery_pose_hits = 0U;
+      accepted_context.completed = false;
+      accepted_context.cancelled = true;
+      task_clear_audit_result();
+      Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
+    }
+    task_status.fault = TASK_FAULT_NONE;
+    return;
+  }
   if (fault == TASK_FAULT_REMOTE_STOP) {
     /* A new confirmed TYPE=0x11 configuration is the only supported restart
      * request after an operator ABORT/STOP. Hardware faults remain latched. */
@@ -1138,6 +1160,10 @@ static void task_enter(TaskState next, uint32_t now_ms)
   if (state == TASK_FACE_FIELD_CENTER && next == TASK_SEARCH &&
       accepted_context.opcode == VISION_CMD_RETURN_CENTER) {
     accepted_context.completed = true;
+    separation_total_attempts = separation_side_attempts = 0U;
+    progressive_keep_side = 0;
+    progressive_close_deg = 0U;
+    Claw_SetSeparationHold(0U);
   }
   if (accepted_context.valid &&
       (((next == TASK_APPROACH_RECOVER) && cluster_target_active &&
@@ -1389,6 +1415,8 @@ static void task_enter(TaskState next, uint32_t now_ms)
 
 static void task_initialize(uint32_t now_ms)
 {
+  recovery_reference_ready = false;
+  recovery_pose_hits = 0U;
   accepted_context = (TaskContext){0};
   active_mission = (VisionMissionCommand){0};
   command_generation_seen = 0U;
@@ -5029,6 +5057,39 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
     task_stop(TASK_FAULT_REMOTE_STOP, now_ms);
+  } else if (state == TASK_RECOVERY_WAIT &&
+             command->command != VISION_CMD_STOP &&
+             command->command != VISION_CMD_PAUSE &&
+             command->command != VISION_CMD_HOLD) {
+    if (!recovery_reference_ready) { return; }
+    if (command->command == VISION_CMD_CARGO_AUDIT) {
+      command_accepted = true;
+      task_status.acknowledged_sequence = command->sequence;
+      task_latch_audit(command, now_ms);
+    } else if (command->command == VISION_CMD_GRAB_CONFIRMED && audit_received && audit_valid) {
+      command_accepted = true;
+      task_status.acknowledged_sequence = command->sequence;
+      task_begin_close_claw(now_ms);
+      /* Recovery must not repeat the interrupted CORE approach stroke. */
+      grab_core_advance_required = false;
+    } else if (command->command == VISION_CMD_RELEASE_BOTH && audit_received && !audit_valid) {
+      command_accepted = true;
+      task_status.acknowledged_sequence = command->sequence;
+      task_begin_capture_escape(now_ms);
+      capture_escape_return_center = true;
+      capture_escape_reclose = true;
+    } else if (command->command == VISION_CMD_RETURN_CENTER && audit_received &&
+               audit_last_total_count == 0U &&
+               task_distance_command_valid(command, VISION_CMD_RETURN_CENTER)) {
+      command_accepted = true;
+      task_status.acknowledged_sequence = command->sequence;
+      capture_return_closed = true;
+      cargo_recheck_pending = false;
+      stash_backoff_pending = false;
+      task_enter(TASK_FACE_FIELD_CENTER, now_ms);
+    }
+    /* No blind replay of an interrupted sweep, release, or navigation. */
+    if (command_accepted) { accepted_context.cancelled = false; }
   } else if (command->command == VISION_CMD_PAUSE) {
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
@@ -5720,7 +5781,8 @@ static bool task_context_complete(void)
 
 static bool task_audit_state(void)
 {
-  return ((state >= TASK_GRAB_OBSERVE) && (state <= TASK_GRAB_ROTATE)) ||
+  return state == TASK_RECOVERY_WAIT ||
+         ((state >= TASK_GRAB_OBSERVE) && (state <= TASK_GRAB_ROTATE)) ||
          state == TASK_DISPERSE_READY ||
          state == TASK_POST_GRAB_AUDIT || state == TASK_TRANSPORT_AUDIT ||
          state == TASK_SAFE_SWEEP_AUDIT ||
@@ -5796,6 +5858,12 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
       accepted_context.action_id == UINT16_MAX && incoming.action_id == 0U;
   const bool new_target = new_task && !task_rollover;
   const bool new_action = new_task || incoming.action_id != accepted_context.action_id;
+  if (state == TASK_RECOVERY_WAIT && !overlay && !new_action &&
+      (incoming.command != VISION_CMD_CARGO_AUDIT ||
+       accepted_context.opcode != VISION_CMD_CARGO_AUDIT)) goto rejected;
+  /* An action epoch may change; an unfinished pile budget cannot be reset by
+   * allocating another task. RETURN_CENTER completion rearms this budget. */
+  if (new_target && separation_total_attempts > 0U) goto rejected;
   if (overlay && accepted_context.valid && new_action) goto rejected;
   if (incoming.command == VISION_CMD_CARGO_AUDIT && state == TASK_NAVIGATE &&
       (new_target || !new_action)) goto rejected;
@@ -5817,6 +5885,7 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
       goto rejected;
     }
     if (!new_target && accepted_context.cancelled && !overlay &&
+        !(state == TASK_RECOVERY_WAIT && new_action) &&
         incoming.command != VISION_CMD_RETURN_CENTER &&
         incoming.command != VISION_CMD_STOP) goto rejected;
   }
@@ -6124,6 +6193,52 @@ static void task_process_transport_audit(uint32_t now_ms)
   camera_angle = (float)Camera_GetAngle();
 }
 
+static void task_recover_reference(const VisionData *vision, uint32_t now_ms)
+{
+  Motor_Stop();
+  task_status.motors_active = false;
+  const IMUData imu = IMU_GetData();
+  if (!imu.ready) {
+    recovery_reference_ready = false;
+    recovery_pose_hits = 0U;
+    task_status.claw_visible = false;
+    return;
+  }
+  if (recovery_reference_ready) { return; }
+  const VisionFusedPose *pose = &vision->fused_pose;
+  if (!Vision_FusedPoseIsFresh(pose, now_ms, 250U) ||
+      !(pose->status & VISION_POSE_T265_GOOD) ||
+      (pose->status & VISION_POSE_T265_UPDATE_REJECTED) ||
+      pose->tracker_confidence < 2U ||
+      (int32_t)(pose->tick_ms - recovery_started_ms) <= 0) {
+    recovery_pose_hits = 0U;
+    return;
+  }
+  if (pose->tick_ms == recovery_pose_tick) { return; }
+  EncoderStatus wheels[3];
+  Encoder_GetAll(wheels);
+  for (uint8_t i = 0U; i < 3U; ++i) {
+    if (wheels[i].delta_10ms != 0) { recovery_pose_hits = 0U; return; }
+  }
+  if (recovery_pose_hits > 0U &&
+      (pose->tick_ms - recovery_pose_tick > 250U ||
+       task_abs((float)pose->x_mm - recovery_previous_pose.x_mm) > 20.0f ||
+       task_abs((float)pose->y_mm - recovery_previous_pose.y_mm) > 20.0f ||
+       task_abs(task_wrap_angle(((float)pose->heading_cdeg -
+           recovery_previous_pose.heading_cdeg) * 0.01f)) > 2.0f)) {
+    recovery_pose_hits = 0U;
+  }
+  recovery_previous_pose = *pose;
+  recovery_pose_tick = pose->tick_ms;
+  if (++recovery_pose_hits >= 3U && now_ms - recovery_started_ms >= 600U) {
+    Location_Reanchor(pose->x_mm, pose->y_mm, (int32_t)pose->heading_cdeg * 10);
+    IMU_ConfirmHeadingReference();
+    recovery_reference_ready = true;
+    task_clear_audit_result();
+    task_status.claw_visible = Camera_GetAngle() == APP_GRAB_VIEW_ANGLE;
+  }
+}
+
 void Task_Process(uint32_t now_ms)
 {
   if (!initialized) {
@@ -6140,6 +6255,13 @@ void Task_Process(uint32_t now_ms)
   }
 
   VisionData vision = Vision_GetSnapshot();
+  const IMUData task_imu = IMU_GetData();
+  if ((!task_imu.ready || task_imu.heading_uncertain) && state != TASK_STOPPED) {
+    task_stop(TASK_FAULT_POSE_TIMEOUT, now_ms);
+  }
+  if (state == TASK_RECOVERY_WAIT && !mission_paused) {
+    task_recover_reference(&vision, now_ms);
+  }
   task_account_manual_pause(now_ms);
   task_capture_budget_sample();
   task_sweep_sample(now_ms);
@@ -6231,6 +6353,10 @@ void Task_Process(uint32_t now_ms)
   }
 
   switch (state) {
+    case TASK_RECOVERY_WAIT:
+      Motor_Stop();
+      task_status.motors_active = false;
+      break;
     case TASK_WAIT_CONFIG:
       Motor_Stop();
       if (vision.config_ready) {

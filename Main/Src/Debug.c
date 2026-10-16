@@ -247,7 +247,7 @@ static void debug_start_command(const VisionData *vision, uint32_t now_ms,
   }
 
   const IMUData imu = IMU_GetData();
-  if (!imu.ready) {
+  if (!imu.ready || imu.heading_uncertain) {
     debug_finish(DEBUG_MOTION_FAULT, DEBUG_MOTION_FAULT_IMU, now_ms);
     return;
   }
@@ -385,7 +385,7 @@ static bool debug_circle_wait(uint32_t now_ms, const IMUData *imu)
 static void debug_update_turn(uint32_t now_ms)
 {
   const IMUData imu = IMU_GetData();
-  if (!imu.ready) {
+  if (!imu.ready || imu.heading_uncertain) {
     debug_finish(DEBUG_MOTION_FAULT, DEBUG_MOTION_FAULT_IMU, now_ms);
     return;
   }
@@ -808,7 +808,7 @@ DebugConsoleResult Debug_SubmitConsoleCircles(int8_t count, uint16_t rate_dps,
   }
   const uint32_t primask = debug_enter_critical();
   const IMUData imu = IMU_GetData();
-  if (!imu.ready) {
+  if (!imu.ready || imu.heading_uncertain) {
     debug_leave_critical(primask);
     return DEBUG_CONSOLE_INVALID;
   }

@@ -101,7 +101,14 @@ int main(void)
   IMU_Update(++ms); assert(!imu_data.ready);
   reset_test(); push_gyro(1); push_gyro(2); IMU_Update(++ms);
   assert(!imu_data.ready);
-  reset_test(); spi_failure=true; IMU_Update(++ms); assert(!imu_data.ready);
+  reset_test(); spi_failure=true; IMU_Update(++ms); assert(imu_data.ready);
+  IMU_Update(251); assert(!imu_data.ready && imu_data.recovering);
+  spi_failure=false; IMU_Update(351);
+  for (unsigned i=0;i<60;++i) {
+    push_gyro(0); push_time(i*46); IMU_Update(352+i);
+  }
+  assert(imu_data.ready && !imu_data.recovering && imu_data.heading_uncertain);
+  IMU_ConfirmHeadingReference(); assert(!imu_data.heading_uncertain);
   reset_test(); push_gyro(1000); push_time(46); IMU_ZeroYaw(); IMU_Update(++ms);
   assert(head == tail && imu_data.yaw_mdeg == 0 && !sample_time_valid);
   reset_test(); IMU_Update(251); assert(!imu_data.ready);

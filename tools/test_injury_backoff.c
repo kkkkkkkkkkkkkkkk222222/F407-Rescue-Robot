@@ -27,6 +27,13 @@ void Vision_ClearAbort(void) {}
 void Vision_RequestConfigAck(void) {}
 void Vision_QueueStmStatus(const VisionStmStatus *value) { (void)value; }
 IMUData IMU_GetData(void) { return (IMUData){.ready = true}; }
+void IMU_ConfirmHeadingReference(void) {}
+void Encoder_GetAll(EncoderStatus out[3])
+{ for (uint8_t i=0;i<3;++i) out[i]=(EncoderStatus){0}; }
+bool Vision_FusedPoseIsFresh(const VisionFusedPose *p, uint32_t now, uint32_t timeout)
+{ return p && p->received && (p->status & VISION_POSE_VALID) && now-p->tick_ms <= timeout; }
+void Location_Reanchor(int32_t x, int32_t y, int32_t heading)
+{ test_pose.x_mm=x; test_pose.y_mm=y; test_pose.heading_mdeg=heading; }
 MotorDistanceStatus Motor_MoveDistance(float distance, float speed)
 { (void)distance; (void)speed; return MOTOR_DISTANCE_DONE; }
 MotorDistanceStatus Motor_MoveDistanceLinear(float distance, float speed, float slow, float end)

@@ -737,6 +737,9 @@ static void wheel_execute(void)
         (unsigned long)imu.fifo_fault_count, (unsigned long)imu.max_poll_interval_ms,
         (long)imu.temperature_mdeg_c);
     wheel_send(text);
+    (void)snprintf(text, sizeof(text), "IMU_RECOVERY ACTIVE=%u UNCERTAIN=%u COUNT=%lu\r\n",
+        imu.recovering, imu.heading_uncertain, (unsigned long)imu.recovery_count);
+    wheel_send(text);
     return;
   }
   if (strcmp(command, "WHEELS") != 0) {

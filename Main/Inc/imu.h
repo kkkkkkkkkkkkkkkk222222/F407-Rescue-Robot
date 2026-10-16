@@ -33,11 +33,16 @@ typedef struct {
   uint32_t fifo_fault_count;
   uint32_t max_poll_interval_ms;
   int32_t temperature_mdeg_c;
+  bool recovering;
+  bool heading_uncertain;
+  uint32_t recovery_count;
 } IMUData;
 
 bool IMU_Init(void);
 void IMU_Update(uint32_t now_ms);
 void IMU_ZeroYaw(void);
+/* Only after an independent stationary heading reference has been accepted. */
+void IMU_ConfirmHeadingReference(void);
 IMUData IMU_GetData(void);
 
 #endif

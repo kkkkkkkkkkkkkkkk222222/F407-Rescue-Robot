@@ -951,12 +951,6 @@ static void motor_update_angle_turn(void)
       (APP_MOTOR_HEADING_OUTPUT_SIGN > 0.0f ? 1LL : -1LL) *
       angle_turn.direction;
   angle_turn.travelled_mdeg = yaw_mdeg;
-  if (yaw_mdeg < -APP_MOTOR_TURN_WRONG_WAY_MDEG) {
-    angle_turn.status = MOTOR_TURN_FAULT;
-    angle_turn.slowing = false;
-    motor_stop_outputs(true);
-    return;
-  }
   const int64_t remaining_mdeg =
       (int64_t)angle_turn.target_mdeg - yaw_mdeg;
 
@@ -1305,6 +1299,11 @@ void Motor_Update(void)
     }
   }
 #endif
+  const IMUData control_imu = IMU_GetData();
+  if (!control_imu.ready || control_imu.heading_uncertain) {
+    Motor_Stop();
+    return;
+  }
   if (!finite_motion_paused) {
     motor_update_distance_move(encoder);
     motor_update_angle_turn();

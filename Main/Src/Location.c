@@ -132,6 +132,7 @@ void Location_Init(LocationStart start)
 
 void Location_ResetReference(int32_t x_mm, int32_t y_mm, int32_t heading_mdeg)
 {
+  IMU_ConfirmHeadingReference();
   const IMUData imu = IMU_GetData();
   const uint32_t primask = location_enter_critical();
   location.x_mm = (float)x_mm;
@@ -164,7 +165,7 @@ void Location_Update10ms(void)
     return;
   }
 
-  if (!imu.ready) {
+  if (!imu.ready || imu.heading_uncertain) {
     location.valid = false;
     location.imu_sample_valid = false;
     return;
@@ -216,6 +217,18 @@ void Location_Update10ms(void)
   location.y_mm += forward_mm * sine + left_mm * cosine;
   location.path_mm += sqrtf(forward_mm * forward_mm + left_mm * left_mm);
   location.valid = true;
+}
+
+void Location_Reanchor(int32_t x_mm, int32_t y_mm, int32_t heading_mdeg)
+{
+  const uint32_t mask = location_enter_critical();
+  location.x_mm = (float)x_mm;
+  location.y_mm = (float)y_mm;
+  location.heading_unwrapped_mdeg = heading_mdeg;
+  location.previous_imu_yaw_mdeg = IMU_GetData().yaw_mdeg;
+  location.imu_sample_valid = false;
+  location.valid = false;
+  location_leave_critical(mask);
 }
 
 LocationPose Location_GetPose(void)

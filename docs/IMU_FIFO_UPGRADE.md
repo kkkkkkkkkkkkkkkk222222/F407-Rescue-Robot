@@ -1,5 +1,9 @@
 # IMU660RC FIFO acquisition (2026-10-15)
 
+Update 2026-10-16: runtime fault/recovery behavior below is historical.
+See UPPER_RECOVERY_MODE51.md for the current retry, heading-reference recovery,
+mode51 handshake and diagnostics format 5. FIFO parsing/integration remain shared.
+
 ## Scope
 
 All modes share Main/Src/imu.c. Preserve gyro polarity, 500 dps full scale,
