@@ -400,6 +400,36 @@ static void test_recoverable_wait(void)
 
 int main(void)
 {
+#ifdef TWO_FRAME_REVIEW_CHECK
+  prepare();
+  task_enter(TASK_GRAB_OBSERVE, 0U);
+  audit_at(1, 100);
+  assert(!audit_received && audit_consistent_count == 1);
+  audit_at(1, 150);
+  assert(!audit_received && audit_consistent_count == 1);
+  audit_at(2, 200);
+  assert(audit_received && audit_valid && audit_consistent_count == 2);
+  prepare(); task_enter(TASK_GRAB_OBSERVE, 0U);
+  VisionMissionCommand c=injury_audit(1);
+  c.audit_flags &= (uint8_t)~VISION_AUDIT_STABLE;
+  command_visual_new=true; task_accept_mission_legacy(&c,100);
+  c.audit_id=2; c.vision_frame=3; task_accept_mission_legacy(&c,200);
+  assert(audit_consistent_count == 2 && !audit_received);
+  assert(APP_SEPARATION_MAX_ATTEMPTS == 2 && !task_escape_allowed());
+  prepare();
+  separation_total_attempts=1; audit_received=true; audit_valid=false;
+  audit_consistent_count=APP_AUDIT_REQUIRED_SAMPLES;
+  audit_last_left_class=VISION_CARGO_GREEN; audit_last_counts=1;
+  audit_last_total_count=2;
+  capture_wait_active=true; capture_wait_started_ms=0;
+  assert(task_capture_observe(5000));
+  assert(state == TASK_POST_GRAB_AUDIT);
+  separation_total_attempts=2;
+  task_capture_observe(5100);
+  assert(state == TASK_APPROACH_RECOVER && capture_escape_return_center);
+  puts("two-frame cadence/STABLE, disabled escape, two separation attempts PASS");
+  return 0;
+#endif
   test_recoverable_wait();
   test_receipt_cadence_cannot_outrun_host();
   test_stable_does_not_skip_three_real_frames();

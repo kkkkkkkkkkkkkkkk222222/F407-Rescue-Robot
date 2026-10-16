@@ -9,8 +9,8 @@
 
 #define IMU_SPI_MAX_DATA            12U
 #define IMU_SPI_TIMEOUT_MS          2U
-#define IMU_BOOT_TIME_MS            10U
-#define IMU_RESET_TIMEOUT_MS        10U
+#define IMU_BOOT_TIME_MS            20U
+#define IMU_RESET_TIMEOUT_MS       100U
 #define IMU_SETTLING_TIME_MS        250U
 #define IMU_CALIBRATION_DISCARD     32U
 #define IMU_CALIBRATION_SAMPLES     2048U
@@ -171,15 +171,14 @@ static bool spi_read(uint8_t reg, uint8_t *data, uint16_t length)
 
 static bool spi_write_checked(uint8_t reg, uint8_t value, uint8_t mask)
 {
-  uint8_t readback = 0U;
-  if (!spi_write(reg, value) || !spi_read(reg, &readback, 1U)) {
-    return false;
+  for (uint8_t attempt = 0; attempt < 3U; ++attempt) {
+    uint8_t readback = 0U;
+    if (spi_write(reg, value) && spi_read(reg, &readback, 1U) &&
+        (readback & mask) == (value & mask)) { return true; }
+    if (attempt < 2U) { HAL_Delay(1U); }
   }
-  if ((readback & mask) != (value & mask)) {
-    ++imu_data.error_count;
-    return false;
-  }
-  return true;
+  ++imu_data.error_count;
+  return false;
 }
 
 static bool read_raw(int16_t gyro[3], int16_t accel[3])
@@ -218,11 +217,10 @@ static bool read_calibration_sample(int16_t gyro[3], int16_t accel[3],
 {
   while ((int32_t)(HAL_GetTick() - deadline) < 0) {
     uint8_t status = 0U;
-    if (!spi_read(LSM6DSV16X_STATUS_REG, &status, 1U)) {
-      return false;
-    }
-    if ((status & LSM6DSV16X_DATA_READY) == LSM6DSV16X_DATA_READY) {
-      return read_raw(gyro, accel);
+    if (spi_read(LSM6DSV16X_STATUS_REG, &status, 1U) &&
+        (status & LSM6DSV16X_DATA_READY) == LSM6DSV16X_DATA_READY &&
+        read_raw(gyro, accel)) {
+      return true;
     }
     HAL_Delay(1U);
   }
@@ -246,7 +244,8 @@ static bool calibrate_gyro(void)
   while ((int32_t)(HAL_GetTick() - deadline) < 0) {
     int64_t sum[3] = {0LL, 0LL, 0LL};
     int64_t sum_squares[3] = {0LL, 0LL, 0LL};
-    bool gravity_valid = true;
+    uint16_t gravity_good = 0U;
+    int64_t gravity_norm_sum = 0LL;
 
     for (uint16_t sample = 0U; sample < IMU_CALIBRATION_SAMPLES; ++sample) {
       int16_t gyro[3];
@@ -266,11 +265,15 @@ static bool calibrate_gyro(void)
             IMU_ACCEL_SCALE_NUMERATOR, IMU_ACCEL_SCALE_DENOMINATOR);
         norm_sq += mg * mg;
       }
-      gravity_valid = gravity_valid && norm_sq >= 900LL * 900LL &&
-                      norm_sq <= 1100LL * 1100LL;
+      gravity_norm_sum += norm_sq;
+      if (norm_sq >= 900LL * 900LL && norm_sq <= 1100LL * 1100LL) { ++gravity_good; }
     }
 
-    bool stationary = gravity_valid;
+    /* A single acceleration spike must not discard an otherwise stationary
+     * two-second window. Gyro variance still rejects actual rotation/shaking. */
+    const int64_t mean_norm = gravity_norm_sum / IMU_CALIBRATION_SAMPLES;
+    bool stationary = (uint32_t)gravity_good * 100U >= IMU_CALIBRATION_SAMPLES * 95U &&
+                      mean_norm >= 900LL * 900LL && mean_norm <= 1100LL * 1100LL;
     for (uint8_t axis = 0U; axis < 3U; ++axis) {
       const int64_t variance_numerator =
           sum_squares[axis] * IMU_CALIBRATION_SAMPLES -
@@ -300,7 +303,7 @@ static bool calibrate_gyro(void)
   return false;
 }
 
-bool IMU_Init(void)
+static bool imu_init_once(void)
 {
   memset(&imu_data, 0, sizeof(imu_data));
   imu_data.init_result = IMU_INIT_ID_ERROR;
@@ -392,6 +395,17 @@ bool IMU_Init(void)
   imu_data.ready = true;
   imu_data.init_result = IMU_INIT_OK;
   return true;
+}
+
+bool IMU_Init(void)
+{
+  for (uint8_t attempt = 0U; attempt < 3U; ++attempt) {
+    if (imu_init_once()) { return true; }
+    /* A moving calibration is not a bus glitch; do not accept a false zero. */
+    if (imu_data.init_result == IMU_INIT_CALIBRATION_ERROR) { return false; }
+    HAL_Delay(20U);
+  }
+  return false;
 }
 
 static void imu_latch_runtime_fault(void)

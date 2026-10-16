@@ -328,7 +328,7 @@ static bool cluster_claws_ready;
 /* +1 keeps the left cargo, -1 keeps the right cargo. */
 static int8_t separation_keep_side;
 static uint8_t audit_consistent_count;
-static uint8_t audit_seen_ids[3];
+static uint8_t audit_seen_ids[APP_AUDIT_REQUIRED_SAMPLES];
 static uint8_t audit_single_side_mask;
 static uint32_t audit_sample_ms, audit_evidence_ms;
 static uint32_t sweep_audit_sample_ms, sweep_audit_evidence_ms;
@@ -376,7 +376,7 @@ static int32_t safe_sweep_center_y_mm;
 static SweepPickupPhase sweep_pickup_phase;
 static bool sweep_pickup_target_active;
 static uint8_t sweep_audit_consistent_count;
-static uint8_t sweep_seen_ids[3];
+static uint8_t sweep_seen_ids[APP_AUDIT_REQUIRED_SAMPLES];
 static uint8_t sweep_audit_last_id;
 static bool sweep_audit_last_id_valid;
 static bool sweep_audit_valid;
@@ -468,6 +468,10 @@ static void task_move_body(float forward_mm_s, float lateral_mm_s,
 
 static MotorTurnStatus task_motor_turn(float field_angle_deg)
 {
+  if (state == TASK_FACE_FIELD_CENTER || state == TASK_APPROACH_RECOVER) {
+    return Motor_TurnAngleSpeed(field_angle_deg * APP_OMNI_FIELD_YAW_TO_DRIVE_SIGN,
+                               APP_RETURN_TURN_SPEED_MM_S);
+  }
   return Motor_TurnAngle(field_angle_deg * APP_OMNI_FIELD_YAW_TO_DRIVE_SIGN);
 }
 
@@ -570,10 +574,8 @@ static bool task_yield_allowed(void)
 
 static bool task_escape_allowed(void)
 {
-  return (state == TASK_APPROACH) || (state == TASK_NAVIGATE) ||
-         (state == TASK_FACE_FIELD_CENTER) ||
-         ((state == TASK_REMOTE_ACTION) && remote_action.done &&
-          (remote_action.type == REMOTE_ACTION_YIELD));
+  /* Automatic spin/side-step recovery is disabled, including stale host requests. */
+  return false;
 }
 
 static bool task_lane_allowed(void)
@@ -902,7 +904,7 @@ static void task_latch_audit(const VisionMissionCommand *command, uint32_t now_m
     if (command->vision_frame != 0U && accepted_context.visual_valid &&
         command->vision_frame == accepted_context.vision_frame &&
         (command->audit_flags & VISION_AUDIT_STABLE) != 0U &&
-        audit_consistent_count >= 3U &&
+        audit_consistent_count >= APP_AUDIT_REQUIRED_SAMPLES &&
         now_ms - audit_evidence_ms <= APP_AUDIT_EVIDENCE_MAX_GAP_MS &&
         command->audit_id == audit_last_id &&
         command->audit_left_class == audit_last_left_class &&
@@ -967,12 +969,12 @@ static void task_latch_audit(const VisionMissionCommand *command, uint32_t now_m
     /* The upper computer may retransmit one camera result with many UART
      * SEQs. Count only a changed audit_id as another visual frame. */
     bool seen = false;
-    for (uint8_t i = 0U; i < audit_consistent_count && i < 3U; ++i) {
+    for (uint8_t i = 0U; i < audit_consistent_count && i < APP_AUDIT_REQUIRED_SAMPLES; ++i) {
       seen = seen || (audit_seen_ids[i] == command->audit_id);
     }
     if (!seen) {
       audit_evidence_ms = now_ms;
-      if (audit_consistent_count < 3U &&
+      if (audit_consistent_count < APP_AUDIT_REQUIRED_SAMPLES &&
           now_ms - audit_sample_ms >= APP_AUDIT_SAMPLE_INTERVAL_MS) {
         audit_seen_ids[audit_consistent_count++] = command->audit_id;
         audit_sample_ms = now_ms;
@@ -1007,10 +1009,10 @@ static void task_latch_audit(const VisionMissionCommand *command, uint32_t now_m
   task_status.audit_left_class = command->audit_left_class;
   task_status.audit_right_class = command->audit_right_class;
   task_status.audit_total_count = command->audit_total_count;
-  /* Both controllers must agree: host STABLE never skips local three-frame
+  /* Both controllers must agree: host STABLE never skips local two-frame
    * cadence, and local receipt timing alone never authorizes transport. */
   audit_host_stable = (command->audit_flags & VISION_AUDIT_STABLE) != 0U;
-  audit_received = audit_consistent_count >= 3U && audit_host_stable;
+  audit_received = audit_consistent_count >= APP_AUDIT_REQUIRED_SAMPLES && audit_host_stable;
   audit_valid = audit_received &&
       (semantic != AUDIT_SEMANTIC_INVALID);
   task_status.audit_ready = audit_received;
@@ -2079,7 +2081,7 @@ static bool task_capture_has_eligible(void)
 
 static void task_begin_capture_escape(uint32_t now_ms)
 {
-  /* Only a completed THIRD illegal re-audit selects return-to-centre.
+  /* Only a completed final illegal re-audit selects return-to-centre.
    * Other abandonment reasons retain their existing 90-degree SEARCH path. */
   const bool third_illegal = audit_received && !audit_valid &&
       separation_total_attempts >= APP_SEPARATION_MAX_ATTEMPTS;
@@ -2180,7 +2182,7 @@ static bool task_capture_observe(uint32_t now_ms)
 {
   const bool limit = capture_budget_active &&
       capture_forward_used_mm >= APP_CAPTURE_FORWARD_BUDGET_MM;
-  const bool stationary = limit || audit_consistent_count >= 3U || cargo_recheck_pending ||
+  const bool stationary = limit || audit_consistent_count >= APP_AUDIT_REQUIRED_SAMPLES || cargo_recheck_pending ||
                           state == TASK_DISPERSE_READY;
   if (!stationary) return false;
   Motor_Stop();
@@ -2195,12 +2197,17 @@ static bool task_capture_observe(uint32_t now_ms)
     return !(state == TASK_APPROACH && approach_phase == APPROACH_CLUSTER_CAPTURE);
   }
   if (!audit_received && separation_total_attempts >= APP_SEPARATION_MAX_ATTEMPTS) {
-    /* Three physical attempts are not three completed visual audits. */
+    /* Physical attempts are not completed visual audits. */
     return true;
   }
   const bool ambiguous_multi = audit_last_total_count > 1U &&
       (((audit_last_counts & 0x03U) > 1U) || (((audit_last_counts >> 2) & 0x03U) > 1U) ||
        ((audit_last_flags & (VISION_AUDIT_UNKNOWN_PRESENT | VISION_AUDIT_INJURY_MIXED)) != 0U));
+  /* A fresh, separable first failure gets another decision; the broad audit
+   * watchdog still handles a host that never sends its next action. */
+  if (audit_received && separation_total_attempts > 0U &&
+      separation_total_attempts < APP_SEPARATION_MAX_ATTEMPTS &&
+      (task_capture_has_eligible() || ambiguous_multi)) { return true; }
   if ((audit_received && ((!task_capture_has_eligible() && !ambiguous_multi) ||
                            separation_total_attempts >= APP_SEPARATION_MAX_ATTEMPTS)) ||
       (uint32_t)(now_ms - capture_wait_started_ms) >= APP_CAPTURE_DECISION_WAIT_MS) {
@@ -2213,12 +2220,12 @@ static bool task_capture_observe(uint32_t now_ms)
 
 static bool task_prepare_separation(int8_t keep_side, uint32_t now_ms)
 {
-  if (!audit_received || !audit_host_stable || audit_consistent_count < 3U ||
+  if (!audit_received || !audit_host_stable || audit_consistent_count < APP_AUDIT_REQUIRED_SAMPLES ||
       now_ms - audit_evidence_ms > APP_AUDIT_EVIDENCE_MAX_GAP_MS) {
     task_status.command_reject_reason = TASK_COMMAND_REJECT_AUDIT;
     return false;
   }
-  /* A fourth request cannot evade the third-failure decision by changing side. */
+  /* A further request cannot evade the final-failure decision by changing side. */
   if (audit_received && !audit_valid &&
       separation_total_attempts >= APP_SEPARATION_MAX_ATTEMPTS) {
     task_begin_capture_escape(now_ms);
@@ -2381,7 +2388,7 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
       Camera_SetAngle(APP_DISPERSE_CAPTURE_ANGLE);
       camera_angle = (float)APP_DISPERSE_CAPTURE_ANGLE;
       if (task_capture_observe(now_ms)) return;
-      if (audit_consistent_count >= 3U && audit_last_total_count > 0U) {
+      if (audit_consistent_count >= APP_AUDIT_REQUIRED_SAMPLES && audit_last_total_count > 0U) {
         Motor_Stop();
         task_status.motors_active = false;
         if (audit_received) { task_enter(TASK_DISPERSE_READY, now_ms); }
@@ -2517,7 +2524,7 @@ static void task_process_grab_observe(const VisionData *vision,
     if (task_capture_observe(now_ms)) return;
     const bool three_frame_cargo_audit = task_mission_valid(command) &&
         (command->command == VISION_CMD_CARGO_AUDIT) &&
-        (audit_consistent_count >= 3U) &&
+        (audit_consistent_count >= APP_AUDIT_REQUIRED_SAMPLES) &&
         (command->audit_total_count > 0U);
 
     /* A post-release re-audit must remain stationary.  During an ordinary
@@ -3184,7 +3191,7 @@ static RemoteRouteStatus nav_follow(
   }
   if ((expected_command == VISION_CMD_RETURN_CENTER) &&
       ((command->target_x_mm <=
-        (int16_t)APP_NAV_REMOTE_STOP_DISTANCE_MM) ||
+        (int16_t)APP_RETURN_CENTER_ARRIVAL_MM) ||
        (distance_command_done &&
         (command->target_x_mm <=
          (int16_t)APP_NAV_REMOTE_RESUME_DISTANCE_MM)))) {
@@ -4586,7 +4593,7 @@ static void task_latch_sweep_audit(const VisionMissionCommand *command,
         command->vision_frame == accepted_context.vision_frame &&
         command->vision_frame == sweep_last_evidence.vision_frame &&
         (command->audit_flags & VISION_AUDIT_STABLE) != 0U &&
-        sweep_audit_consistent_count >= 3U && sweep_audit_last_id_valid &&
+        sweep_audit_consistent_count >= APP_AUDIT_REQUIRED_SAMPLES && sweep_audit_last_id_valid &&
         now_ms - sweep_audit_evidence_ms <= APP_AUDIT_EVIDENCE_MAX_GAP_MS &&
         command->audit_id == sweep_audit_last_id &&
         command->audit_left_class == sweep_last_evidence.audit_left_class &&
@@ -4625,12 +4632,12 @@ static void task_latch_sweep_audit(const VisionMissionCommand *command,
   }
   sweep_audit_nonempty = nonempty;
   bool seen = false;
-  for (uint8_t i = 0U; i < sweep_audit_consistent_count && i < 3U; ++i) {
+  for (uint8_t i = 0U; i < sweep_audit_consistent_count && i < APP_AUDIT_REQUIRED_SAMPLES; ++i) {
     seen = seen || (sweep_seen_ids[i] == command->audit_id);
   }
   if (!seen) {
     sweep_audit_evidence_ms = now_ms;
-    if (sweep_audit_consistent_count < 3U &&
+    if (sweep_audit_consistent_count < APP_AUDIT_REQUIRED_SAMPLES &&
         (sweep_audit_consistent_count == 0U ||
          now_ms - sweep_audit_sample_ms >= APP_AUDIT_SAMPLE_INTERVAL_MS)) {
       sweep_seen_ids[sweep_audit_consistent_count++] = command->audit_id;
@@ -4640,7 +4647,7 @@ static void task_latch_sweep_audit(const VisionMissionCommand *command,
     sweep_audit_last_id_valid = true;
   }
   sweep_audit_host_stable = (command->audit_flags & VISION_AUDIT_STABLE) != 0U;
-  sweep_audit_ready = sweep_audit_consistent_count >= 3U && sweep_audit_host_stable;
+  sweep_audit_ready = sweep_audit_consistent_count >= APP_AUDIT_REQUIRED_SAMPLES && sweep_audit_host_stable;
   sweep_audit_valid = sweep_audit_ready && nonempty;
   sweep_last_evidence = *command;
   task_status.audit_ready = sweep_audit_ready;
@@ -5349,7 +5356,7 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
   } else if ((command->command == VISION_CMD_GRAB_CONFIRMED) &&
              (state == TASK_SAFE_SWEEP_RETRIEVE_AUDIT) &&
              !task_sweep_retrieve_expired(now_ms) &&
-             audit_received && audit_valid && (audit_consistent_count >= 3U)) {
+             audit_received && audit_valid && (audit_consistent_count >= APP_AUDIT_REQUIRED_SAMPLES)) {
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
     task_begin_sweep_obstacle_grab(now_ms);
@@ -5370,7 +5377,7 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
   } else if ((command->command == VISION_CMD_GRAB_CONFIRMED) &&
              (state == TASK_DISPERSE_READY) &&
              audit_received && audit_valid &&
-             (audit_consistent_count >= 3U)) {
+             (audit_consistent_count >= APP_AUDIT_REQUIRED_SAMPLES)) {
     /* A clustered target that proves to contain one legal retained cargo no
      * longer needs separation. Close normally and continue to navigation. */
     task_status.acknowledged_sequence = command->sequence;
@@ -5382,7 +5389,7 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
              (state <= TASK_GRAB_ROTATE) &&
              (!complete_flow_active ||
               (audit_received && audit_valid &&
-               (audit_consistent_count >= 3U)))) {
+               (audit_consistent_count >= APP_AUDIT_REQUIRED_SAMPLES)))) {
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
     if (cargo_recheck_pending) {

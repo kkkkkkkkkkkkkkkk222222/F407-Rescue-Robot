@@ -1,0 +1,257 @@
+From 3e92cfcdcdc1a121960c1ba87b76fa8ee87a163a Mon Sep 17 00:00:00 2001
+From: WW <2945944173@qq.com>
+Date: Fri, 16 Oct 2026 18:06:20 +0800
+Subject: [PATCH] fix: remove automatic escape and use two-frame two-attempt
+ capture flow
+
+---
+ competition_rescue/run_competition_rescue.py | 12 ++---
+ competition_rescue/state_machine.py          | 56 +++++++++++---------
+ 2 files changed, 37 insertions(+), 31 deletions(-)
+
+diff --git a/competition_rescue/run_competition_rescue.py b/competition_rescue/run_competition_rescue.py
+index ae09baa..c9021c2 100755
+--- a/competition_rescue/run_competition_rescue.py
++++ b/competition_rescue/run_competition_rescue.py
+@@ -642,11 +642,9 @@ def make_vision_snapshot(
+                 capture_observation_valid = False
+                 capture_quality_reason = "claw_target_truncated"
+                 target_quality[item.track_id] = capture_quality_reason
+-            capture_overlap = (
+-                0.60
+-                if stm.mode == STM_MODE_TRANSPORT_AUDIT or item.class_name in {"core_black", "injured_orange"}
+-                else 0.80
+-            )
++            # Keep the ROI/edge checks, but use the same moderate inclusion
++            # threshold for green cargo as for the other transport classes.
++            capture_overlap = 0.60
+             if not bbox_in_capture_roi(
+                 item.bbox,
+                 rois.overall,
+@@ -669,8 +667,8 @@ def make_vision_snapshot(
+     capture = tuple(capture_items)
+     for index, item in enumerate(capture):
+         for other in capture[index + 1:]:
+-            if (bbox_overlap_ratio(item.bbox, other.bbox) >= 0.60 or
+-                    bbox_overlap_ratio(other.bbox, item.bbox) >= 0.60):
++            if (bbox_overlap_ratio(item.bbox, other.bbox) >= 0.85 or
++                    bbox_overlap_ratio(other.bbox, item.bbox) >= 0.85):
+                 capture_observation_valid = False
+                 capture_quality_reason = "claw_targets_occluded"
+                 target_quality[item.track_id] = capture_quality_reason
+diff --git a/competition_rescue/state_machine.py b/competition_rescue/state_machine.py
+index 935d212..5326347 100755
+--- a/competition_rescue/state_machine.py
++++ b/competition_rescue/state_machine.py
+@@ -471,21 +471,21 @@ class CompetitionSettings:
+     side: str
+     start_zone: int = 1
+     initial_stash_enabled: bool = True
+-    audit_stable_frames: int = 3
+-    normal_grab_audit_frames: int = 3
+-    cluster_grab_audit_frames: int = 3
+-    post_grab_audit_frames: int = 3
++    audit_stable_frames: int = 2
++    normal_grab_audit_frames: int = 2
++    cluster_grab_audit_frames: int = 2
++    post_grab_audit_frames: int = 2
+     delivery_visual_frames: int = 5
+     batch_radius_m: float = 0.55
+     near_material_max_distance_m: float = 0.85
+     capture_clearance_m: float = 0.16
+     max_batch_count: int = 1
+     center_stop_radius_m: float = 0.0
+-    return_zero_tolerance_m: float = 0.025
++    return_zero_tolerance_m: float = 0.080
+     vision_stale_s: float = 0.30
+     search_min_turn_deg: float = 720.0
+     search_target_confirm_frames: int = 1
+-    disperse_limit: int = 3
++    disperse_limit: int = 2
+     approach_missing_hold_min_s: float = 0.30
+     approach_missing_frame_multiplier: float = 2.5
+     yield_distance_m: float = 0.25
+@@ -501,7 +501,7 @@ class CompetitionSettings:
+     safe_zone_acquire_timeout_s: float = 5.0
+     safe_sweep_capture_offset_mm: float = 150.0  # Legacy config; visual sweep ignores it.
+     audit_min_interframe_s: float = 0.100
+-    audit_min_span_s: float = 0.200
++    audit_min_span_s: float = 0.100
+     audit_evidence_timeout_s: float = 0.500
+     audit_handoff_timeout_s: float = 17.0
+     push_plate_offset_m: float = 0.105
+@@ -710,6 +710,7 @@ class CompetitionMission:
+         self.return_command_accepted = False
+         self.return_search_frame_floor: int | None = None
+         self.return_search_mode_seen = False
++        self.return_arrival_latched = False
+         self.stash_zero_initial_ack: int | None = None
+         self.stash_handoff_initial_ack: int | None = None
+         self.cargo_recheck_pending = False
+@@ -791,7 +792,7 @@ class CompetitionMission:
+         self.cluster_keep_side_count = 0
+         self.cluster_audit_active = False
+         self.disperse_side_votes: deque[tuple[int, str | None, int]] = deque(
+-            maxlen=3
++            maxlen=2
+         )
+         self.disperse_side_vote_last_frame_sequence: int | None = None
+         self.disperse_side_vote_last_sample_s: float | None = None
+@@ -1853,12 +1854,12 @@ class CompetitionMission:
+                 self.audit_camera_floor = vision.frame_sequence
+                 self._invalidate_audit_evidence()
+             if (not ready or self.audit_camera_ready_since is None or
+-                    now - self.audit_camera_ready_since + 1e-6 < 0.5):
++                    now - self.audit_camera_ready_since + 1e-6 < 0.25):
+                 self.audit_camera_floor = vision.frame_sequence
+                 return self._audit_placeholder("audit_camera_settling")
+             if (vision.frame_sequence <= self.audit_camera_floor or
+                     (vision.observed_monotonic_s is not None and
+-                     vision.observed_monotonic_s + 1e-6 < self.audit_camera_ready_since + 0.5)):
++                     vision.observed_monotonic_s + 1e-6 < self.audit_camera_ready_since + 0.25)):
+                 return self._audit_placeholder("audit_camera_frame_floor")
+         else:
+             self.audit_camera_key = None
+@@ -3075,7 +3076,7 @@ class CompetitionMission:
+         )
+ 
+     def _disperse_side_vote_result(self) -> tuple[str | None, int, bool]:
+-        if len(self.disperse_side_votes) < 3:
++        if len(self.disperse_side_votes) < 2:
+             return None, 0, False
+         _, side, keep_count = self.disperse_side_votes[-1]
+         if side is not None and keep_count > 0:
+@@ -3164,6 +3165,7 @@ class CompetitionMission:
+             self.cargo_recheck_context in {
+                 "disperse_observe",
+                 "disperse_selective",
++                "single_side",
+             }
+         )
+         normal_grab_audit = (
+@@ -3203,7 +3205,7 @@ class CompetitionMission:
+             audit,
+             stable=(
+             new_frame and
+-                self.audit_hits >= max(3, required_audit_frames) and
++                self.audit_hits >= max(2, required_audit_frames) and
+                 self._audit_stability_span_sufficient(observed_s)
+             ),
+         )
+@@ -3228,6 +3230,7 @@ class CompetitionMission:
+                 self.cargo_recheck_context in {
+                     "disperse_observe",
+                     "disperse_selective",
++                    "single_side",
+                 }
+             )
+         )
+@@ -3253,7 +3256,7 @@ class CompetitionMission:
+                         CMD_VALID,
+                         audit=unstable_payload,
+                     ),
+-                    f"等待保留侧连续三帧稳定（间隔至少100ms）：{vote_summary}",
++                    f"等待保留侧连续两帧稳定（间隔至少100ms）：{vote_summary}",
+                     self.selected_batch,
+                     unstable,
+                     "disperse_side_vote_wait",
+@@ -3371,7 +3374,7 @@ class CompetitionMission:
+         if self.invalid_release_context == "separate_then_search":
+             message = "首次无法判断左右归属，发送无侧DISPERSE执行20°观察转向"
+         elif self.invalid_release_context == "third_separation_failed":
+-            message = "第三次复审已就绪且仍非法，双开并等待mode24后退、mode47返中交接"
++            message = "第二次复审已就绪且仍非法，双开并等待mode24后退、mode47返中交接"
+         elif self.invalid_release_context in {
+             "final_release",
+             "disperse_final_release",
+@@ -3797,7 +3800,7 @@ class CompetitionMission:
+                 context.audit_hits += 1
+                 context.audit_last_sample_s = observed
+             context.audit_signature = signature
+-            audit = replace(audit, stable=(context.audit_hits >= max(3, self.settings.audit_stable_frames) and
++            audit = replace(audit, stable=(context.audit_hits >= max(2, self.settings.audit_stable_frames) and
+                             context.audit_first_sample_s is not None and
+                             observed - context.audit_first_sample_s + 1e-6 >= self.settings.audit_min_span_s))
+             # Host stability is computed before READY. The MCU independently
+@@ -4184,7 +4187,11 @@ class CompetitionMission:
+             )
+         distance = math.hypot(pose.x_m, pose.y_m)
+         heading = math.degrees(math.atan2(-pose.y_m, -pose.x_m)) % 360.0
+-        remaining = 0.0 if distance <= self.settings.return_zero_tolerance_m else distance
++        self.return_arrival_latched = (self.return_arrival_latched or
++                                       distance <= self.settings.return_zero_tolerance_m)
++        remaining = 0.0 if self.return_arrival_latched else distance
++        if self.return_arrival_latched:
++            heading = pose.yaw_deg % 360.0
+         return CompetitionOutput(
+             self.state,
+             CommandRequest(
+@@ -4199,6 +4206,7 @@ class CompetitionMission:
+         )
+ 
+     def _begin_return(self, stm: StmSnapshot, now: float) -> None:
++        self.return_arrival_latched = False
+         self.return_initial_ack = (
+             stm.acknowledged_sequence if stm.fresh else None
+         )
+@@ -4474,7 +4482,7 @@ class CompetitionMission:
+                 return CompetitionOutput(
+                     self.state,
+                     self._hold(),
+-                    "当前聚集目标已完成3次带侧分离，不再请求第四次",
++                    "当前聚集目标已完成2次带侧分离，不再请求第三次",
+                     tx_policy="hold",
+                     reason="cluster_disperse_limit_reached",
+                 )
+@@ -5132,7 +5140,7 @@ class CompetitionMission:
+             self.transport_audit_value = replace(
+                 audit,
+                 stable=(
+-                    self.audit_hits >= max(3, self.settings.audit_stable_frames) and
++                    self.audit_hits >= max(2, self.settings.audit_stable_frames) and
+                     self._audit_stability_span_sufficient(observed_s)
+                 ),
+             )
+@@ -5613,7 +5621,7 @@ class CompetitionMission:
+         if vision.frame_sequence > (self.audit_last_frame_sequence or 0):
+             self._record_audit_frame(signature, vision.frame_sequence, observed_s)
+             self.audit_id = (self.audit_id + 1) & 0xFF
+-        stable = self.audit_hits >= 3 and self._audit_stability_span_sufficient(observed_s)
++        stable = self.audit_hits >= 2 and self._audit_stability_span_sufficient(observed_s)
+         audit = replace(audit, stable=stable)
+         payload = replace(payload, stable=stable, audit_id=self.audit_id)
+         if not stable:
+@@ -5665,7 +5673,7 @@ class CompetitionMission:
+             self.state, CommandRequest(CMD_CARGO_AUDIT, CMD_VALID, audit=payload,
+                                        audit_vision_frame=self.audit_last_frame_sequence or 0),
+             waiting + ("；非法非空，保留载荷继续观察，放弃须明确请求" if confirmed else
+-                       f"；新审核{self.audit_hits}/3，等待STABLE/READY/VALID握手"),
++                       f"；新审核{self.audit_hits}/2，等待STABLE/READY/VALID握手"),
+             self.selected_batch, audit, reason="recovery_audit_wait",
+             tx_policy="audit_stable_publish" if stable else "audit_unstable_publish",
+         )
+@@ -5868,9 +5876,9 @@ class CompetitionMission:
+                 expected_stm_modes=(STM_MODE_BOUNDARY_RECOVER, STM_MODE_SEARCH),
+             )
+ 
+-        stuck_output = self._stuck_recovery_output(pose, stm, now)
+-        if stuck_output is not None:
+-            return stuck_output
++        # No automatic ESCAPE on stalled/stopped navigation. Wait for fresh
++        # navigation evidence instead of rotating and side-stepping cargo.
++        self._reset_motion_watch()
+ 
+         if self.state == CompetitionState.WAIT_START:
+             if self._start_ready(pose, stm):
+@@ -5932,7 +5940,7 @@ class CompetitionMission:
+             return self._transport_audit_output(vision, pose, stm, now)
+ 
+         if self.state == CompetitionState.SEARCH:
+-            if self.disperse_attempts > 0 or self.recovery_task_locked:
++            if self.disperse_attempts >= self.settings.disperse_limit or self.recovery_task_locked:
+                 self._begin_return(stm, now)
+                 return self._return_center_output(pose, now, "旧任务预算待清理，先返中心再寻找")
+             if self.settings.initial_stash_enabled and not self.initial_stash_done:
+-- 
+2.55.0.windows.3
+

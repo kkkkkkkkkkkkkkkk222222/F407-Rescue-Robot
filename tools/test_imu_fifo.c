@@ -9,6 +9,8 @@ static uint8_t entries[256][7], regs[128];
 static unsigned head, tail;
 static uint32_t ms;
 static bool overrun, spi_failure;
+static bool calibration_mode, continuous_vibration;
+static unsigned calibration_reads;
 uint32_t HAL_GetTick(void) { return ms; }
 void HAL_Delay(uint32_t delay) { ms += delay; }
 void Encoder_GetAll(EncoderStatus out[3]) { memset(out, 0, 3 * sizeof(*out)); }
@@ -24,6 +26,14 @@ HAL_StatusTypeDef HAL_SPI_TransmitReceive(SPI_HandleTypeDef *spi, uint8_t *tx,
   if (!(tx[0] & 0x80)) {
     regs[reg] = tx[1];
     if (reg == LSM6DSV16X_FIFO_CTRL4 && tx[1] == 0) head = tail = 0;
+  } else if (calibration_mode && reg == LSM6DSV16X_STATUS_REG) {
+    rx[1] = 3;
+  } else if (calibration_mode && reg == LSM6DSV16X_OUTX_L_G) {
+    ++ms;
+    ++calibration_reads;
+    if (!continuous_vibration && calibration_reads != 100U) {
+      rx[11] = 0x05; rx[12] = 0x20;
+    }
   } else if (reg == LSM6DSV16X_FIFO_STATUS1) {
     unsigned count = tail - head;
     rx[1] = count & 255;
@@ -51,6 +61,8 @@ static void reset_test(void)
   sample_time_valid = fifo_gyro_valid = fifo_tick_valid = false;
   identity_check_started = runtime_poll_started = poll_valid = false;
   overrun = spi_failure = false;
+  calibration_mode = continuous_vibration = false;
+  calibration_reads = 0;
   fifo_restart_pending = true;
   head = tail = ms = stationary_time_us = 0;
   IMU_Update(ms);
@@ -112,6 +124,10 @@ int main(void)
   reset_test(); push_gyro(1000); push_time(46); IMU_ZeroYaw(); IMU_Update(++ms);
   assert(head == tail && imu_data.yaw_mdeg == 0 && !sample_time_valid);
   reset_test(); IMU_Update(251); assert(!imu_data.ready);
+  reset_test(); calibration_mode=true;
+  assert(calibrate_gyro());
+  reset_test(); calibration_mode=continuous_vibration=true;
+  assert(!calibrate_gyro());
   puts("PASS: batch equivalence, signs, timestamp wrap, partial pair, gap, overrun, backlog, duplicate, SPI fault, zero, timeout");
   return 0;
 }
