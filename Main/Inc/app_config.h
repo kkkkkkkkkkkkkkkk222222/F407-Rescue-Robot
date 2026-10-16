@@ -247,7 +247,7 @@
 
 /* IMU heading hold shared by Motor_MoveAngle() and Motor_MoveDistance(). */
 /* Heading-hold trial is separate from the shared wheel-speed PI tuning. */
-#define APP_MOTOR_HEADING_KP              2.0f
+#define APP_MOTOR_HEADING_KP              2.2f
 #define APP_MOTOR_HEADING_KI              0.005f
 #define APP_MOTOR_HEADING_KD              0.0f
 #define APP_MOTOR_HEADING_LIMIT_MM_S      150.0f
