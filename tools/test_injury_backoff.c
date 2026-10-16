@@ -18,6 +18,8 @@ void Motor_PauseFiniteMotion(void) { Motor_Stop(); }
 void Motor_ResumeFiniteMotion(void) {}
 void Motor_Move(float forward, float lateral, float yaw)
 { lateral_output = lateral; yaw_output = yaw; reverse_output = forward; }
+bool Motor_MoveHeading(float forward, float heading)
+{ (void)heading; reverse_output=forward; lateral_output=yaw_output=0.0f; return true; }
 MotorStatus Motor_GetStatus(uint8_t id)
 { (void)id; return (MotorStatus){.stall_fault = motor_fault}; }
 LocationPose Location_GetPose(void) { return test_pose; }

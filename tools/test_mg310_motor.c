@@ -1159,9 +1159,36 @@ static void test_profile_fixed_anchor_circles_and_stop(void)
 }
 #endif
 
+static void test_delivery_heading_reference(void)
+{
+  reset();
+  test_pose.heading_mdeg = 80000;
+  test_imu.yaw_mdeg = 10000;
+  assert(Motor_MoveHeading(330.0f, 90.0f));
+  assert(direction_move.target_yaw_mdeg == 0);
+  update();
+  assert(target_speeds_mm_s[2] < 0);
+  test_pose.heading_mdeg = 79000;
+  test_imu.yaw_mdeg = 11000;
+  assert(Motor_MoveHeading(330.0f, 90.0f));
+  assert(direction_move.target_yaw_mdeg == 0);
+  Motor_Stop();
+  test_pose.heading_mdeg = 359000;
+  test_imu.yaw_mdeg = 0;
+  assert(Motor_MoveHeading(200.0f, 1.0f));
+  assert(direction_move.target_yaw_mdeg == -2000);
+  assert(Motor_MoveHeading(0.0f, 1.0f));
+  assert(!direction_move.active);
+  test_imu.heading_uncertain = true;
+  assert(!Motor_MoveHeading(200.0f, 1.0f));
+}
+
 int main(void)
 {
-#if defined(MOTOR_TURN_PROFILE_CHECK_ONLY)
+#if defined(MOTOR_HEADING_CHECK_ONLY)
+  test_delivery_heading_reference();
+  puts("Delivery heading: absolute goal, feedback sign, repeated command, wrap, stop and uncertain IMU PASS");
+#elif defined(MOTOR_TURN_PROFILE_CHECK_ONLY)
   test_profile_signed_unwrapped_targets();
   test_profile_stopped_fresh_samples_required();
   test_profile_reverse_requires_stop_and_is_bounded();

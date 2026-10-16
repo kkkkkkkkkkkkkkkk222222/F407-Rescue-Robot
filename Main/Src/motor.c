@@ -78,6 +78,8 @@ typedef struct {
 typedef struct {
   bool active;
   bool reversing;
+  bool absolute_heading;
+  float field_heading_deg;
   float target_forward_mm_s;
   float target_lateral_mm_s;
   float current_forward_mm_s;
@@ -485,6 +487,8 @@ static void motor_clear_direction_move(void)
 {
   direction_move.active = false;
   direction_move.reversing = false;
+  direction_move.absolute_heading = false;
+  direction_move.field_heading_deg = 0.0f;
   direction_move.target_forward_mm_s = 0.0f;
   direction_move.target_lateral_mm_s = 0.0f;
   direction_move.current_forward_mm_s = 0.0f;
@@ -2024,6 +2028,7 @@ bool Motor_MoveAngle(float speed_mm_s, float angle_deg)
   }
 
   const uint32_t primask = motor_enter_critical();
+  direction_move.absolute_heading = false;
   const IMUData imu = IMU_GetData();
   if (motor_has_fault() || !imu.ready) {
     motor_stop_outputs(true);
@@ -2089,6 +2094,39 @@ bool Motor_MoveAngle(float speed_mm_s, float angle_deg)
                        direction_move.target_lateral_mm_s) <= 0.5f);
   motor_leave_critical(primask);
   return ready;
+}
+
+bool Motor_MoveHeading(float forward_mm_s, float field_heading_deg)
+{
+  if (!isfinite(forward_mm_s) || !isfinite(field_heading_deg) ||
+      motor_abs_float(forward_mm_s) > MOTOR_MAX_SPEED) { return false; }
+  const uint32_t mask = motor_enter_critical();
+  const LocationPose pose = Location_GetPose();
+  const IMUData imu = IMU_GetData();
+  if (!pose.valid || !imu.ready || imu.heading_uncertain || motor_has_fault()) {
+    motor_stop_outputs(true);
+    motor_leave_critical(mask);
+    return false;
+  }
+  const float heading = motor_wrap_angle_deg(field_heading_deg);
+  const bool new_goal = !direction_move.active || !direction_move.absolute_heading ||
+      motor_abs_float(motor_wrap_angle_deg(heading - direction_move.field_heading_deg)) > 0.05f;
+  /* MoveAngle owns ramping and the same 10 ms heading PI as distance moves.
+   * Its return value means ramp-complete, not command-accepted. */
+  (void)Motor_MoveAngle(forward_mm_s, 0.0f);
+  if (direction_move.active) {
+    if (new_goal) {
+      const float error_deg = motor_wrap_angle_deg(heading - pose.heading_mdeg * 0.001f);
+      const float raw_delta_mdeg = error_deg * 1000.0f * APP_LOCATION_IMU_YAW_SIGN;
+      direction_move.target_yaw_mdeg = imu.yaw_mdeg +
+          (int64_t)(raw_delta_mdeg >= 0.0f ? raw_delta_mdeg + 0.5f : raw_delta_mdeg - 0.5f);
+      Pid_Reset(&heading_pid);
+    }
+    direction_move.absolute_heading = true;
+    direction_move.field_heading_deg = heading;
+  }
+  motor_leave_critical(mask);
+  return true;
 }
 
 MotorStatus Motor_GetStatus(uint8_t id)

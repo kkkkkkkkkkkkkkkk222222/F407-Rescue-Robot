@@ -3101,8 +3101,10 @@ static RemoteRouteStatus nav_push(uint32_t now_ms)
     return REMOTE_ROUTE_REACHED;
   }
 
-  const float yaw_mm_s = nav_yaw(heading_error_deg);
-  task_move_body(APP_NAV_FINAL_PUSH_SPEED_MM_S, 0.0f, yaw_mm_s);
+  if (!Motor_MoveHeading(APP_NAV_FINAL_PUSH_SPEED_MM_S, nav_locked_heading_deg)) {
+    task_pause_final_push(now_ms);
+    return REMOTE_ROUTE_MOTOR_FAULT;
+  }
   task_status.motors_active = true;
   return REMOTE_ROUTE_RUNNING;
 }
@@ -3443,11 +3445,6 @@ static RemoteRouteStatus safe_enter_follow(
     safe_enter_path_valid = true;
   }
 
-  const float current_heading_deg = (float)pose.heading_mdeg * 0.001f;
-  const float heading_error_deg = task_wrap_angle(
-      nav_locked_heading_deg - current_heading_deg);
-  const float yaw_mm_s = nav_yaw(heading_error_deg);
-
   const uint32_t contact_start_mm =
       APP_SAFE_ENTER_TOTAL_DISTANCE_MM -
       APP_SAFE_FINAL_PUSH_DISTANCE_MM;
@@ -3485,7 +3482,10 @@ static RemoteRouteStatus safe_enter_follow(
       nav_stop_output();
       return REMOTE_ROUTE_REACHED;
     }
-    task_move_body(APP_SAFE_FINAL_PUSH_SPEED_MM_S, 0.0f, yaw_mm_s);
+    if (!Motor_MoveHeading(APP_SAFE_FINAL_PUSH_SPEED_MM_S, nav_locked_heading_deg)) {
+      task_pause_final_push(now_ms);
+      return REMOTE_ROUTE_MOTOR_FAULT;
+    }
     task_status.motors_active = true;
     return REMOTE_ROUTE_RUNNING;
   }
@@ -3503,7 +3503,9 @@ static RemoteRouteStatus safe_enter_follow(
   remote_speed_mm_s = task_step_toward(
       remote_speed_mm_s, target_speed_mm_s,
       speed_rate_mm_s2 * APP_TASK_PERIOD_MS * 0.001f);
-  task_move_body(remote_speed_mm_s, 0.0f, yaw_mm_s);
+  if (!Motor_MoveHeading(remote_speed_mm_s, nav_locked_heading_deg)) {
+    return REMOTE_ROUTE_MOTOR_FAULT;
+  }
   task_status.motors_active = true;
   return REMOTE_ROUTE_RUNNING;
 }

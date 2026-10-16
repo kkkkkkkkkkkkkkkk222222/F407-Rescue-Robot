@@ -60,6 +60,9 @@ bool Motor_MoveSpin(float speed_mm_s, float direction_deg,
                     float yaw_tangent_mm_s);
 /* 0 deg=forward, 90 deg=left, 180 deg=backward, 270 deg=right. */
 bool Motor_MoveAngle(float speed_mm_s, float angle_deg);
+/* Continuous signed forward speed with an absolute Location heading.
+ * Completion/time/distance remain owned by the caller; false means rejected. */
+bool Motor_MoveHeading(float forward_mm_s, float field_heading_deg);
 void Motor_Stop(void);
 /* Suspend an existing finite move without changing its encoder/yaw origin.
  * Only an explicit resume continues it; Stop still cancels it completely. */
