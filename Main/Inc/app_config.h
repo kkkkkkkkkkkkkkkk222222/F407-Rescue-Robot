@@ -358,9 +358,9 @@
 #define APP_APPROACH_LOSS_HOLD_MS         500U
 #define APP_STEERING_EXIT_DEAD_ZONE       8
 #define APP_STEERING_ENTER_DEAD_ZONE     16
-#define APP_STEERING_KP_MM_S             0.20f
+#define APP_STEERING_KP_MM_S             0.18f
 /* Derivative uses seconds, not frames; softened together with visual P. */
-#define APP_STEERING_KD_MM                0.0030f
+#define APP_STEERING_KD_MM                0.0025f
 #define APP_STEERING_MIN_MM_S             10.0f
 #define APP_STEERING_LIMIT_MM_S           90.0f
 #define APP_STEERING_RATE_MM_S2          400.0f
