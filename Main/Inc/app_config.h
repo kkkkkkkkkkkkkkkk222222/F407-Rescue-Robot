@@ -68,7 +68,7 @@
 /* Non-blocking IMU angle turn used by Motor_TurnAngle(). */
 #define APP_MOTOR_TURN_TOLERANCE_MDEG    1000L
 #define APP_MOTOR_TURN_SLOWDOWN_MDEG     30000L
-#define APP_MOTOR_TURN_FAST_MM_S         500.0f
+#define APP_MOTOR_TURN_FAST_MM_S         250.0f
 #define APP_MOTOR_TURN_SLOW_MM_S         120.0f
 #define APP_MOTOR_TURN_TIMEOUT_MS        10000U
 #define APP_MOTOR_TURN_MAX_DEG           360.0f
@@ -358,9 +358,9 @@
 #define APP_APPROACH_LOSS_HOLD_MS         500U
 #define APP_STEERING_EXIT_DEAD_ZONE       8
 #define APP_STEERING_ENTER_DEAD_ZONE     16
-#define APP_STEERING_KP_MM_S             0.25f
+#define APP_STEERING_KP_MM_S             0.20f
 /* Derivative uses seconds, not frames; softened together with visual P. */
-#define APP_STEERING_KD_MM                0.0040f
+#define APP_STEERING_KD_MM                0.0030f
 #define APP_STEERING_MIN_MM_S             10.0f
 #define APP_STEERING_LIMIT_MM_S           90.0f
 #define APP_STEERING_RATE_MM_S2          400.0f
