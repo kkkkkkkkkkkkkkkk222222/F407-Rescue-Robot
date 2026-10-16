@@ -1173,6 +1173,18 @@ static void test_delivery_heading_reference(void)
   assert(Motor_MoveHeading(330.0f, 90.0f));
   assert(direction_move.target_yaw_mdeg == 0);
   Motor_Stop();
+  test_pose.heading_mdeg = 80000;
+  test_imu.yaw_mdeg = 10000;
+  assert(Motor_MoveHeading(-150.0f,90.0f));
+  update();
+  assert(direction_move.current_forward_mm_s < 0.0f);
+  assert(direction_move.target_yaw_mdeg == 0 && target_speeds_mm_s[2] < 0);
+  const float integral = heading_pid.integral;
+  assert(Motor_MoveHeading(-140.0f,90.0f));
+  assert(heading_pid.integral == integral && direction_move.target_yaw_mdeg == 0);
+  update();
+  assert(heading_pid.integral < integral);
+  Motor_Stop();
   test_pose.heading_mdeg = 359000;
   test_imu.yaw_mdeg = 0;
   assert(Motor_MoveHeading(200.0f, 1.0f));

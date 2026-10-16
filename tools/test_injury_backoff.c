@@ -12,6 +12,9 @@ static float lateral_output, yaw_output;
 static VisionData test_vision;
 static LocationPose test_pose = {.valid = true, .heading_mdeg = 90000};
 static bool motor_fault;
+static bool heading_rejected;
+static float heading_output;
+static unsigned heading_calls;
 void Servo_SetAngle(uint8_t id, uint8_t angle) { servo_angles[id - 1U] = angle; }
 void Motor_Stop(void) { reverse_output = lateral_output = yaw_output = 0.0f; }
 void Motor_PauseFiniteMotion(void) { Motor_Stop(); }
@@ -19,7 +22,12 @@ void Motor_ResumeFiniteMotion(void) {}
 void Motor_Move(float forward, float lateral, float yaw)
 { lateral_output = lateral; yaw_output = yaw; reverse_output = forward; }
 bool Motor_MoveHeading(float forward, float heading)
-{ (void)heading; reverse_output=forward; lateral_output=yaw_output=0.0f; return true; }
+{
+  ++heading_calls;
+  heading_output = heading;
+  if (heading_rejected) { return false; }
+  reverse_output=forward; lateral_output=yaw_output=0.0f; return true;
+}
 MotorStatus Motor_GetStatus(uint8_t id)
 { (void)id; return (MotorStatus){.stall_fault = motor_fault}; }
 LocationPose Location_GetPose(void) { return test_pose; }
@@ -69,6 +77,9 @@ static void prepare(void)
   test_pose = (LocationPose){.valid = true, .heading_mdeg = 90000};
   test_vision = (VisionData){0};
   motor_fault = false;
+  heading_rejected = false;
+  heading_calls = 0U;
+  heading_output = 0.0f;
   complete_flow_active = true;
   task_status.gripper_closed = true;
   Camera_SetAngle(APP_GRAB_VIEW_ANGLE);

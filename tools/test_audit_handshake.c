@@ -398,8 +398,80 @@ static void test_recoverable_wait(void)
   assert(state == TASK_CLOSE_CLAW && !grab_core_advance_required);
 }
 
+static void test_initial_empty_capture_and_heading(void)
+{
+  for (unsigned cluster = 0; cluster < 2; ++cluster) {
+    prepare();
+    task_enter(cluster ? TASK_APPROACH : TASK_GRAB_OBSERVE, 0U);
+    if (cluster) { approach_phase = APPROACH_CLUSTER_CAPTURE; }
+    task_status.claw_visible = true;
+    approach_locked_heading_deg = 90.0f;
+    task_capture_budget_begin();
+    VisionMissionCommand empty = {.received=true, .flags=VISION_CMD_VALID,
+        .command=VISION_CMD_CARGO_AUDIT, .audit_flags=VISION_AUDIT_STABLE};
+    for (unsigned id=1; id<=2; ++id) {
+      empty.audit_id=id; empty.vision_frame=id;
+      command_visual_new=true;
+      task_accept_mission_legacy(&empty, id*100U);
+    }
+    assert(audit_received && !audit_valid);
+    assert(!task_capture_observe(220U));
+    assert(!capture_wait_active && capture_forward_used_mm == 0U);
+    test_vision.mission=empty;
+    if (cluster) { task_process_approach(&test_vision, 240U); }
+    else { task_process_grab_observe(&test_vision, 240U); }
+    assert(heading_calls == 1U && heading_output == 90.0f && reverse_output > 0.0f);
+    task_audit_watchdog(240U);
+    assert(!task_capture_observe(6000U)); /* Empty reports do not renew the total watchdog. */
+    task_audit_watchdog(240U+APP_AUDIT_STATE_TIMEOUT_MS);
+    assert(state == TASK_APPROACH_RECOVER && capture_escape_active);
+  }
+  prepare(); task_enter(TASK_GRAB_OBSERVE, 0U);
+  task_capture_budget_begin();
+  capture_forward_used_mm=APP_CAPTURE_FORWARD_BUDGET_MM;
+  assert(task_capture_observe(100U) && capture_wait_active);
+  task_capture_observe(100U+APP_CAPTURE_DECISION_WAIT_MS);
+  assert(state == TASK_APPROACH_RECOVER);
+  for (unsigned post=0; post<2; ++post) {
+    prepare();
+    if (!post) { task_enter(TASK_GRAB_OBSERVE, 0U); cargo_recheck_pending=true; }
+    VisionMissionCommand empty = {.received=true, .flags=VISION_CMD_VALID,
+        .command=VISION_CMD_CARGO_AUDIT, .audit_flags=VISION_AUDIT_STABLE};
+    for (unsigned id=1; id<=2; ++id) {
+      empty.audit_id=id; empty.vision_frame=id;
+      command_visual_new=true; task_accept_mission_legacy(&empty,id*100U);
+    }
+    assert(state == TASK_OPEN_CLAW && reverse_output == 0.0f);
+  }
+  prepare(); task_enter(TASK_GRAB_OBSERVE,0U); task_capture_budget_begin();
+  audit_at(1,100); audit_at(2,200);
+  assert(task_capture_observe(220U) && reverse_output == 0.0f);
+  prepare();
+  assert(task_move_heading(-150.0f,270.0f,100U));
+  assert(reverse_output == -150.0f && heading_output == 270.0f);
+  heading_rejected=true;
+  assert(!task_move_heading(200.0f,90.0f,120U));
+  assert(state == TASK_RECOVERY_WAIT && task_status.fault == TASK_FAULT_NONE);
+  assert(!task_status.motors_active && reverse_output == 0.0f);
+  prepare();
+  task_enter(TASK_INJURY_BACKOFF, 0U);
+  tick(0U); tick(APP_INJURY_CLAW_SETTLE_MS);
+  assert(reverse_output == -APP_INJURY_BACKOFF_SPEED_MM_S && fabsf(heading_output - 90.0f) < 0.01f);
+  tick(APP_INJURY_CLAW_SETTLE_MS + APP_INJURY_BACKOFF_TIME_MS);
+  assert(reverse_output == 0.0f && injury_backoff_phase == 2U);
+  tick(APP_INJURY_CLAW_SETTLE_MS + APP_INJURY_BACKOFF_TIME_MS + APP_GRAB_CAMERA_SETTLE_MS);
+  assert(state == TASK_POST_GRAB_AUDIT && injury_recheck_pending);
+  audit_at(1, 3000U); audit_at(2, 3100U);
+  assert(state == TASK_INJURY_RECLOSE);
+}
+
 int main(void)
 {
+#ifdef CAPTURE_HEADING_REVIEW_CHECK
+  test_initial_empty_capture_and_heading();
+  puts("initial empty ordinary/cluster crawl, budgets, nonempty stop, loss and heading recovery PASS");
+  return 0;
+#endif
 #ifdef TWO_FRAME_REVIEW_CHECK
   prepare();
   task_enter(TASK_GRAB_OBSERVE, 0U);

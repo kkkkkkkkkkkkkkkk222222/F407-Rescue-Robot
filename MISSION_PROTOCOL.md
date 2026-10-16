@@ -1,5 +1,7 @@
 # 连续物资抓取与分区投送流程
 
+最新第1/2/3项增量见[初次空爪、ROI及固定航向交接](docs/UPPER_CAPTURE_ROI_HEADING_FIX_20261016.md)。初次mode21/38的纯空爪可以在原300mm预算和15秒总期限内继续慢爬，抓后/分离后空爪处理不变；上位机必须同步补丁，不能把初次空爪提前变成放弃。
+
 当前上位机已核对至`danmo-teng/shijue_fangan codex/gamepad-teleop@81879e0`，但仍有ROI和选侧差异待修改，不能视作已经完全匹配。最新总交接以[UPPER_TOTAL_SYNC_20261016.md](docs/UPPER_TOTAL_SYNC_20261016.md)为准；旧补丁和日期较早的交接文档仅供历史参考，不得覆盖当前两帧、两次分离和10°夹紧规则。
 
 正式运输首件恰好1件GREEN，之后单件普通或单件核心、伤员单独1件；INITIAL_STASH仍按任意真实非空处理。正式运行选择NormalRun配置。RDK X5与F407使用USART3（PD8 TX、PD9 RX）、115200 8N1、3.3 V TTL和公共15字节帧；必须使用1D/18与1E/17同SEQ帧对，旧裸18除ABORT外不再接受，详见`docs/UPPER_B0F954F_CONTEXT_READY.md`。

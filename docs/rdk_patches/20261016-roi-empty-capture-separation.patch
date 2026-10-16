@@ -1,0 +1,230 @@
+diff --git a/competition_rescue/capture_roi.py b/competition_rescue/capture_roi.py
+index ac2cc3f..e341910 100644
+--- a/competition_rescue/capture_roi.py
++++ b/competition_rescue/capture_roi.py
+@@ -27,6 +27,7 @@ class CaptureRois:
+     overall: tuple[tuple[int, int], ...]
+     left: tuple[tuple[int, int], ...]
+     right: tuple[tuple[int, int], ...]
++    calibrated: bool = True
+ 
+ 
+ def _clip_polygon_x(
+@@ -90,7 +91,7 @@ def load_capture_rois(path: Path) -> CaptureRois:
+         data = json.loads(path.read_text(encoding="utf-8"))
+     except FileNotFoundError:
+         left, right = split_capture_roi(DEFAULT_CAPTURE_POLYGON)
+-        return CaptureRois(DEFAULT_CAPTURE_POLYGON, left, right)
++        return CaptureRois(DEFAULT_CAPTURE_POLYGON, left, right, calibrated=False)
+     if int(data.get("image_width", 0)) != IMAGE_WIDTH or int(
+         data.get("image_height", 0)
+     ) != IMAGE_HEIGHT:
+diff --git a/competition_rescue/run_competition_rescue.py b/competition_rescue/run_competition_rescue.py
+index c47f99e..ca09b0d 100755
+--- a/competition_rescue/run_competition_rescue.py
++++ b/competition_rescue/run_competition_rescue.py
+@@ -390,6 +390,8 @@ def audit_from_cargo(
+     )
+     return CargoAudit(
+         class_counts=tuple(sorted(Counter(item.class_name for item in visible).items())),
++        left_class_counts=tuple(sorted(Counter(item.class_name for item in left).items())),
++        right_class_counts=tuple(sorted(Counter(item.class_name for item in right).items())),
+         left_class=left_name,
+         right_class=right_name,
+         left_count=len(left),
+@@ -620,12 +622,15 @@ def make_vision_snapshot(
+     capture_items: list[TrackedCargo] = []
+     capture_side_by_track: dict[int, str] = {}
+     capture_enabled = (
++        rois.calibrated and
+         stm.fresh and
+         stm.claw_visible and
+         stm.camera_pitch_cdeg == 14000
+     )
+     capture_observation_valid = (capture_enabled and frame_sequence > 0 and
+                                  not capture_quality_reason)
++    if not rois.calibrated and not capture_quality_reason:
++        capture_quality_reason = "capture_roi_uncalibrated"
+     image_observation_valid = capture_observation_valid
+     image_quality_reason = capture_quality_reason
+     target_quality: dict[int, str] = {}
+@@ -633,28 +638,20 @@ def make_vision_snapshot(
+         for item in tracked_cargo(tracks, None):
+             if not item.visible:
+                 continue
+-            x, y, width, height = item.bbox
+-            if (
+-                x <= 0 or y <= 0 or
+-                x + width >= IMAGE_WIDTH - 1 or
+-                y + height >= IMAGE_HEIGHT - 1
+-            ) and bbox_capture_roi_overlap_ratio(item.bbox, rois.overall) > 0.0:
+-                capture_observation_valid = False
+-                capture_quality_reason = "claw_target_truncated"
+-                target_quality[item.track_id] = capture_quality_reason
+-            # Keep the ROI/edge checks, but use the same moderate inclusion
+-            # threshold for green cargo as for the other transport classes.
++            # Excluded boxes cannot invalidate other cargo inside the claws.
+             capture_overlap = 0.60
+             if not bbox_in_capture_roi(
+                 item.bbox,
+                 rois.overall,
+                 minimum_overlap_ratio=capture_overlap,
+             ):
+-                if bbox_capture_roi_overlap_ratio(item.bbox, rois.overall) >= 0.20:
+-                    capture_observation_valid = False
+-                    capture_quality_reason = "claw_target_partial_roi"
+-                    target_quality[item.track_id] = capture_quality_reason
+                 continue
++            x, y, width, height = item.bbox
++            if (x <= 0 or y <= 0 or x + width >= IMAGE_WIDTH - 1 or
++                    y + height >= IMAGE_HEIGHT - 1):
++                capture_observation_valid = False
++                capture_quality_reason = "claw_target_truncated"
++                target_quality[item.track_id] = capture_quality_reason
+             capture_items.append(item)
+             capture_side = capture_side_for_bbox(
+                 item.bbox,
+@@ -671,9 +668,18 @@ def make_vision_snapshot(
+                     bbox_overlap_ratio(other.bbox, item.bbox) >= 0.85):
+                 capture_observation_valid = False
+                 capture_quality_reason = "claw_targets_occluded"
+-                target_quality[item.track_id] = capture_quality_reason
+-                target_quality[other.track_id] = capture_quality_reason
++                target_quality.setdefault(item.track_id, capture_quality_reason)
++                target_quality.setdefault(other.track_id, capture_quality_reason)
+     selected = mission.selected_batch
++    sorting_view = stm.mode in {21, 35, 37, 38} and not mission.post_grab_audit_active
++    known_pile = len(capture) > 1 and all(
++        item.class_name in {"green_supply", "core_black", "injured_orange"} and
++        target_quality.get(item.track_id) != "claw_target_truncated"
++        for item in capture
++    )
++    if sorting_view and known_pile and image_observation_valid:
++        capture_observation_valid = True
++        capture_quality_reason = ""
+     if selected is not None and selected.initial_stash and capture and image_observation_valid:
+         # A detected nonempty pile is enough for opening relocation. Object
+         # overlap/mixture is expected; image/ROI/camera validity still applies.
+diff --git a/competition_rescue/state_machine.py b/competition_rescue/state_machine.py
+index 455f4e6..e0f7850 100755
+--- a/competition_rescue/state_machine.py
++++ b/competition_rescue/state_machine.py
+@@ -258,6 +258,9 @@ class CargoAudit:
+     right_stable_track_id: int | None = None
+     # Full ROI class counts, independent of left/right assignment and tracks.
+     class_counts: tuple[tuple[str, int], ...] = ()
++    # Local separation evidence only; never rewrites the wire category.
++    left_class_counts: tuple[tuple[str, int], ...] = ()
++    right_class_counts: tuple[tuple[str, int], ...] = ()
+ 
+     @property
+     def signature(self) -> tuple:
+@@ -2898,6 +2901,24 @@ class CompetitionMission:
+         count = audit.left_count if side == "left" else audit.right_count
+         green = audit.left_green_count if side == "left" else audit.right_green_count
+         invalid = audit.left_invalid if side == "left" else audit.right_invalid
++        if category == "unknown":
++            entries = audit.left_class_counts if side == "left" else audit.right_class_counts
++            counts = dict(entries)
++            full = dict(audit.class_counts)
++            if (count < 2 or len(counts) < 2 or len(counts) != len(entries) or
++                    not set(counts).issubset(MATERIAL_CLASSES | {"injured_orange"}) or
++                    any(n <= 0 for n in counts.values()) or sum(counts.values()) != count or
++                    counts.get("green_supply", 0) != green or
++                    sum(full.values()) != audit.total_count or
++                    any(full.get(name, 0) < n for name, n in counts.items())):
++                return False
++            if self.selected_batch.initial_stash:
++                return True
++            if not self.first_common_delivered:
++                return green > 0
++            if self.selected_batch.destination == "injury":
++                return counts.get("injured_orange", 0) > 0
++            return any(counts.get(name, 0) > 0 for name in MATERIAL_CLASSES)
+         if count <= 0 or invalid or category not in MATERIAL_CLASSES | {"mixed_material", "injured_orange"}:
+             return False
+         if category == "mixed_material":
+@@ -2931,8 +2952,11 @@ class CompetitionMission:
+             return "right"
+         if left_green > 0 and right_green > 0:
+             if left_green != right_green:
+-                return "left" if left_green < right_green else "right"
+-            return "left"
++                return "left" if left_green > right_green else "right"
++            previous = self.cluster_keep_side or self.separation_keep_side
++            if previous in {"left", "right"}:
++                return previous
++            return "left" if audit.left_count <= audit.right_count else "right"
+         if left_nonempty:
+             return "left"
+         if right_nonempty:
+@@ -2940,6 +2964,8 @@ class CompetitionMission:
+         return None
+ 
+     def _should_first_green_bump(self, audit: CargoAudit) -> bool:
++        if self._preferred_keep_side(audit) is not None:
++            return False
+         if (
+             self.first_common_delivered or
+             self.first_green_bump_used or
+@@ -3134,6 +3160,14 @@ class CompetitionMission:
+             not cluster_screening and
+             not self.cargo_recheck_pending
+         )
++        initial_empty_approach = (
++            audit.total_count == 0 and audit.left_count == 0 and audit.right_count == 0 and
++            audit.left_class in {"", "none"} and audit.right_class in {"", "none"} and
++            not (audit.danger_present or audit.unknown_present or audit.injury_mixed) and
++            not self.cargo_recheck_pending and not self.post_grab_audit_active and
++            self.disperse_attempts == 0 and
++            stm.mode in {STM_MODE_CAPTURE_AUDIT, STM_MODE_CLUSTER_CAPTURE_AUDIT}
++        )
+         audit_valid = (
+             self._cluster_audit_valid(audit)
+             if cluster_screening else
+@@ -3171,6 +3205,19 @@ class CompetitionMission:
+                 self._audit_stability_span_sufficient(observed_s)
+             ),
+         )
++        if initial_empty_approach:
++            # Empty evidence is real, but the MCU owns the remaining crawl
++            # distance and timeout. Do not request SEARCH before it reaches cargo.
++            return CompetitionOutput(
++                self.state,
++                CommandRequest(CMD_CARGO_AUDIT, CMD_VALID, audit=self._audit_payload(stable),
++                               audit_vision_frame=vision.frame_sequence),
++                "抓前尚未入爪，继续本地限距慢爬",
++                self.selected_batch, stable, reason="capture_empty_approach",
++                tx_policy="audit_stable_publish" if stable.stable else "audit_unstable_publish",
++                expected_stm_modes=(STM_MODE_CAPTURE_AUDIT, STM_MODE_CLUSTER_CAPTURE_AUDIT,
++                                    STM_MODE_APPROACH_RECOVER, STM_MODE_SEARCH),
++            )
+         if stable.stable and audit.total_count == 0:
+             self._begin_audit_confirmation(
+                 stable, self._audit_payload(stable), False, "both", False,
+@@ -3189,6 +3236,8 @@ class CompetitionMission:
+             not audit_valid and
+             (
+                 self.cluster_audit_active or
++                (not self.post_grab_audit_active and audit.total_count > 1 and
++                 self._preferred_keep_side(audit) is not None) or
+                 self.cargo_recheck_context in {
+                     "disperse_observe",
+                     "disperse_selective",
+@@ -3270,7 +3319,7 @@ class CompetitionMission:
+                     now,
+                 )
+                 return self._audit_confirmation_output(vision, stm, now)
+-            if self.cargo_recheck_context in {
++            if disperse_vote_context or self.cargo_recheck_context in {
+                 "disperse_observe",
+                 "disperse_selective",
+                 "single_side",
+@@ -4664,6 +4713,7 @@ class CompetitionMission:
+             side = self.cluster_keep_side
+             if not self._side_is_disperse_candidate(audit, side):
+                 return self._start_capture_abandon(audit, stm, now)
++            self.cluster_keep_side_count = audit.left_count if side == "left" else audit.right_count
+         self._set_state(CompetitionState.DISPERSE, now)
+         self._arm_disperse(stm, self.cluster_keep_side)
+         return CompetitionOutput(

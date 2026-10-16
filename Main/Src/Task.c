@@ -559,6 +559,19 @@ static void task_reset_tracking(void)
   Pid_Reset(&camera_pid);
 }
 
+static bool task_move_heading(float forward_mm_s, float heading_deg,
+                              uint32_t now_ms)
+{
+  if (!Motor_MoveHeading(forward_mm_s, heading_deg)) {
+    Motor_Stop();
+    task_status.motors_active = false;
+    task_stop(TASK_FAULT_MOTOR, now_ms);
+    return false;
+  }
+  task_status.motors_active = task_abs(forward_mm_s) > 0.5f;
+  return true;
+}
+
 static bool task_yield_allowed(void)
 {
   /* YIELD is the physical separation step after a confirmed unilateral
@@ -2127,9 +2140,7 @@ static void task_process_capture_escape(uint32_t now_ms)
       }
       const float speed = fminf(APP_CAPTURE_ESCAPE_SPEED_MM_S,
           fmaxf(40.0f, (APP_CAPTURE_ESCAPE_DISTANCE_MM - used) * 4.0f));
-      task_move_body(-speed, 0.0f, nav_yaw(task_wrap_angle(
-          capture_escape_heading_deg - pose.heading_mdeg * 0.001f)));
-      task_status.motors_active = true;
+      (void)task_move_heading(-speed, capture_escape_heading_deg, now_ms);
       return;
     }
     case 2U: {
@@ -2174,6 +2185,19 @@ static bool task_capture_observe(uint32_t now_ms)
 {
   const bool limit = capture_budget_active &&
       capture_forward_used_mm >= APP_CAPTURE_FORWARD_BUDGET_MM;
+  const bool initial_capture = !cargo_recheck_pending && separation_total_attempts == 0U &&
+      (state == TASK_GRAB_OBSERVE ||
+       (state == TASK_APPROACH && approach_phase == APPROACH_CLUSTER_CAPTURE));
+  const bool empty = audit_last_total_count == 0U && audit_last_counts == 0U &&
+      audit_last_left_class == VISION_CARGO_NONE && audit_last_right_class == VISION_CARGO_NONE &&
+      (audit_last_flags & (VISION_AUDIT_DANGER_PRESENT | VISION_AUDIT_UNKNOWN_PRESENT |
+                           VISION_AUDIT_INJURY_MIXED)) == 0U;
+  /* An initially empty claw has not reached its target yet. Keep the shared
+   * path/time budgets; post-grab and post-separation emptiness still means loss. */
+  if (initial_capture && capture_budget_active && !limit && empty) {
+    capture_wait_active = false;
+    return false;
+  }
   const bool stationary = limit || audit_consistent_count >= APP_AUDIT_REQUIRED_SAMPLES || cargo_recheck_pending ||
                           state == TASK_DISPERSE_READY;
   if (!stationary) return false;
@@ -2391,12 +2415,8 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
         if (!task_get_location_pose(&pose, now_ms)) {
           return;
         }
-        const float heading_deg = (float)pose.heading_mdeg * 0.001f;
-        const float heading_error = task_wrap_angle(
-            approach_locked_heading_deg - heading_deg);
-        task_move_body(APP_DISPERSE_CAPTURE_SPEED_MM_S, 0.0f,
-                   nav_yaw(heading_error));
-        task_status.motors_active = true;
+        (void)task_move_heading(APP_DISPERSE_CAPTURE_SPEED_MM_S,
+                                approach_locked_heading_deg, now_ms);
       }
       return;
 
@@ -2533,12 +2553,8 @@ static void task_process_grab_observe(const VisionData *vision,
     if (!task_get_location_pose(&pose, now_ms)) {
       return;
     }
-    const float heading_deg = (float)pose.heading_mdeg * 0.001f;
-    const float heading_error = task_wrap_angle(
-        approach_locked_heading_deg - heading_deg);
-    task_move_body(APP_GRAB_WATCH_CRAWL_SPEED_MM_S, 0.0f,
-               nav_yaw(heading_error));
-    task_status.motors_active = true;
+    (void)task_move_heading(APP_GRAB_WATCH_CRAWL_SPEED_MM_S,
+                            approach_locked_heading_deg, now_ms);
     return;
   }
   task_status.found = task_target_matches_lock(vision);
@@ -2747,10 +2763,8 @@ static void task_process_injury_backoff(uint32_t now_ms)
       }
       LocationPose pose;
       if (!task_get_location_pose(&pose, now_ms)) { return; }
-      task_move_body(-APP_INJURY_BACKOFF_SPEED_MM_S, 0.0f,
-                 nav_yaw(task_wrap_angle(injury_backoff_heading_deg -
-                     (float)pose.heading_mdeg * 0.001f)));
-      task_status.motors_active = true;
+      (void)task_move_heading(-APP_INJURY_BACKOFF_SPEED_MM_S,
+                              injury_backoff_heading_deg, now_ms);
       return;
     }
   }
@@ -3691,12 +3705,8 @@ static void task_process_face_center(const VisionData *vision,
       step_started_ms = now_ms;
       return;
     }
-    const float current_heading_deg = (float)pose.heading_mdeg * 0.001f;
-    const float heading_error_deg = task_wrap_angle(
-        nav_locked_heading_deg - current_heading_deg);
-    task_move_body(-APP_STASH_RETURN_BACKOFF_SPEED_MM_S, 0.0f,
-               nav_yaw(heading_error_deg));
-    task_status.motors_active = true;
+    (void)task_move_heading(-APP_STASH_RETURN_BACKOFF_SPEED_MM_S,
+                            nav_locked_heading_deg, now_ms);
     return;
   }
 
@@ -4014,6 +4024,10 @@ static bool task_safe_sweep_move(float forward_mm_s, float lateral_mm_s,
   if (travelled_mm >= distance_mm) {
     task_safe_sweep_advance(now_ms);
     return true;
+  }
+  if (lateral_mm_s == 0.0f) {
+    (void)task_move_heading(forward_mm_s, safe_sweep_heading_deg, now_ms);
+    return false;
   }
   const float current_heading_deg = (float)pose.heading_mdeg * 0.001f;
   const float heading_error = task_wrap_angle(
@@ -6410,12 +6424,8 @@ void Task_Process(uint32_t now_ms)
         const uint32_t travelled_mm =
             pose.path_mm - grab_core_advance_start_path_mm;
         if (travelled_mm < APP_CORE_GRAB_ADVANCE_DISTANCE_MM) {
-          const float heading_deg = (float)pose.heading_mdeg * 0.001f;
-          const float heading_error = task_wrap_angle(
-              grab_core_advance_heading_deg - heading_deg);
-          task_move_body(APP_GRAB_WATCH_CRAWL_SPEED_MM_S, 0.0f,
-                     nav_yaw(heading_error));
-          task_status.motors_active = true;
+          (void)task_move_heading(APP_GRAB_WATCH_CRAWL_SPEED_MM_S,
+                                  grab_core_advance_heading_deg, now_ms);
           break;
         }
         Motor_Stop();
