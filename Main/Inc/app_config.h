@@ -317,9 +317,9 @@
 #define APP_VISION_TARGET_Y              512U
 #define APP_VISION_MAX_X                1279U
 #define APP_VISION_MAX_Y                1023U
-#define APP_SEARCH_ROTATE_SPEED_MM_S      75.0f
-#define APP_SEARCH_WAIT_RETURN_SPEED_MM_S 60.0f
-#define APP_RETURN_TURN_SPEED_MM_S        80.0f
+#define APP_SEARCH_ROTATE_SPEED_MM_S     200.0f
+#define APP_SEARCH_WAIT_RETURN_SPEED_MM_S 200.0f
+#define APP_RETURN_TURN_SPEED_MM_S       200.0f
 #define APP_RETURN_CENTER_ARRIVAL_MM      80U
 #define APP_APPROACH_SPEED_MM_S          350.0f
 #define APP_GRAB_MID_SPEED_MM_S          350.0f
