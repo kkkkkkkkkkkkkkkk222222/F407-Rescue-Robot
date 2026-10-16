@@ -242,7 +242,6 @@ static uint32_t approach_report_generation;
 static uint32_t approach_phase_path_mm;
 static uint32_t tracking_report_generation;
 static uint8_t mission_sequence;
-static uint32_t start_reverse_path_mm;
 static float start_target_heading_deg;
 static uint32_t scan_entry_report_generation;
 static uint32_t nav_final_push_start_path_mm;
@@ -290,7 +289,10 @@ static bool steering_active;
 static bool nav_ready;
 static bool scan_report_gate_open;
 static bool pose_invalid_pending;
-static bool start_clearance_done;
+typedef enum {
+  START_REVERSE, START_REVERSE_SETTLE, START_TURN, START_TURN_SETTLE, START_FORWARD
+} StartMotionPhase;
+static StartMotionPhase start_motion_phase;
 static bool distance_command_done;
 static bool nav_terminal_candidate;
 static bool nav_terminal_latched;
@@ -1245,10 +1247,9 @@ static void task_enter(TaskState next, uint32_t now_ms)
 
   if (next == TASK_START) {
     const LocationPose pose = Location_GetPose();
-    start_reverse_path_mm = pose.path_mm;
     start_target_heading_deg = task_wrap_angle(
         (float)pose.heading_mdeg * 0.001f + APP_START_TURN_DEG);
-    start_clearance_done = false;
+    start_motion_phase = START_REVERSE;
   } else if (next == TASK_SEARCH) {
     cluster_recovery_latched = false;
     cluster_recovery_hold_seen = false;
@@ -1480,7 +1481,6 @@ static void task_initialize(uint32_t now_ms)
   approach_report_generation = 0U;
   approach_phase_path_mm = 0U;
   mission_sequence = 0U;
-  start_reverse_path_mm = 0U;
   start_target_heading_deg = 0.0f;
   scan_entry_report_generation = 0U;
   nav_final_push_start_path_mm = 0U;
@@ -1499,7 +1499,7 @@ static void task_initialize(uint32_t now_ms)
   nav_ready = false;
   scan_report_gate_open = false;
   pose_invalid_pending = false;
-  start_clearance_done = false;
+  start_motion_phase = START_REVERSE;
   distance_command_done = false;
   nav_reset_progress(now_ms);
   nav_terminal_candidate = false;
@@ -1774,31 +1774,19 @@ static void task_process_start(uint32_t now_ms)
     return;
   }
 
-  const uint32_t travelled_mm = pose.path_mm - start_reverse_path_mm;
-  if (travelled_mm + APP_START_REVERSE_TOLERANCE_MM >=
-      APP_START_REVERSE_DISTANCE_MM) {
-    Motor_Stop();
-    task_status.motors_active = false;
-    task_enter(TASK_OPEN_CLAW, now_ms);
-    return;
-  }
-
-  const uint32_t remaining_mm = APP_START_REVERSE_DISTANCE_MM - travelled_mm;
-  const float speed_mm_s =
-      (remaining_mm <= APP_START_REVERSE_SLOW_REMAINING_MM) ?
-      APP_START_REVERSE_SLOW_SPEED_MM_S : APP_START_REVERSE_SPEED_MM_S;
-
-  /* The first 0.60 m is a true encoder-distance move with IMU heading hold.
-   * Keep every mechanism folded until that obstacle clearance is complete. */
-  if (!start_clearance_done) {
+  /* Separate translation and rotation. Each leg has its own signed encoder
+   * origin; wheel slip/rotation cannot consume a shared 1700 mm path budget. */
+  if (start_motion_phase == START_REVERSE) {
     const MotorDistanceStatus result = Motor_MoveDistance(
         -APP_START_CLEARANCE_DISTANCE_M,
         APP_START_CLEARANCE_SPEED_MM_S);
     task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
     if (result == MOTOR_DISTANCE_DONE) {
-      start_clearance_done = true;
+      Motor_Stop();
+      task_status.motors_active = false;
+      start_motion_phase = START_REVERSE_SETTLE;
+      step_started_ms = now_ms;
       Lift_SetTravelPosition();
-      (void)Claw_Open(now_ms);
     } else if (distance_failed(result)) {
       task_stop(TASK_FAULT_MOTOR, now_ms);
     }
@@ -1806,29 +1794,46 @@ static void task_process_start(uint32_t now_ms)
   }
 
   Lift_SetTravelPosition();
-  (void)Claw_Open(now_ms);
-  const float heading_deg = (float)pose.heading_mdeg * 0.001f;
-  float heading_error = task_wrap_angle(start_target_heading_deg - heading_deg);
-  if (heading_error <= -179.9f) {
-    heading_error = 180.0f;
-  }
-  float yaw_mm_s = heading_error * APP_START_TURN_KP_MM_S_PER_DEG;
-  if (yaw_mm_s > APP_START_TURN_MAX_MM_S) {
-    yaw_mm_s = APP_START_TURN_MAX_MM_S;
-  } else if (yaw_mm_s < -APP_START_TURN_MAX_MM_S) {
-    yaw_mm_s = -APP_START_TURN_MAX_MM_S;
-  } else if (task_abs(heading_error) <= APP_START_TURN_TOLERANCE_DEG) {
-    yaw_mm_s = 0.0f;
-  }
-
-  /* Outside the obstacle zone, keep the remaining path straight on the floor
-   * while rotating toward the final heading and opening both claws. */
-  if (!Motor_MoveSpin(speed_mm_s, 180.0f,
-                     yaw_mm_s * APP_OMNI_FIELD_YAW_TO_DRIVE_SIGN)) {
-    task_stop(TASK_FAULT_MOTOR, now_ms);
+  if (start_motion_phase == START_REVERSE_SETTLE) {
+    Motor_Stop();
+    task_status.motors_active = false;
+    if (now_ms - step_started_ms >= APP_START_SETTLE_MS) {
+      start_motion_phase = START_TURN;
+    }
     return;
   }
-  task_status.motors_active = true;
+  if (start_motion_phase == START_TURN) {
+    float angle = task_wrap_angle(start_target_heading_deg - pose.heading_mdeg * 0.001f);
+    if (angle <= -179.9f) { angle = 180.0f; }
+    const MotorTurnStatus result = Motor_TurnAngleSpeed(
+        angle * APP_OMNI_FIELD_YAW_TO_DRIVE_SIGN, APP_START_TURN_SPEED_MM_S);
+    task_status.motors_active = result == MOTOR_TURN_RUNNING;
+    if (result == MOTOR_TURN_DONE) {
+      Motor_Stop();
+      start_motion_phase = START_TURN_SETTLE;
+      step_started_ms = now_ms;
+    } else if (result == MOTOR_TURN_FAULT || result == MOTOR_TURN_INVALID) {
+      task_stop(TASK_FAULT_MOTOR, now_ms);
+    }
+    return;
+  }
+  if (start_motion_phase == START_TURN_SETTLE) {
+    Motor_Stop();
+    task_status.motors_active = false;
+    if (now_ms - step_started_ms >= APP_START_SETTLE_MS && Claw_Open(now_ms)) {
+      start_motion_phase = START_FORWARD;
+    }
+    return;
+  }
+  const MotorDistanceStatus result = Motor_MoveDistance(
+      APP_START_FORWARD_DISTANCE_M, APP_START_FORWARD_SPEED_MM_S);
+  task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
+  if (result == MOTOR_DISTANCE_DONE) {
+    Motor_Stop();
+    task_enter(TASK_OPEN_CLAW, now_ms);
+  } else if (distance_failed(result)) {
+    task_stop(TASK_FAULT_MOTOR, now_ms);
+  }
 }
 
 static void task_process_search(const VisionData *vision, uint32_t now_ms)

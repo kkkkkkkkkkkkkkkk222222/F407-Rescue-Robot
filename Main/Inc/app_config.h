@@ -150,7 +150,8 @@
 #define APP_MOVE_SPIN_MAX_UPDATE_MS         50U
 /* Both paths use voltage-scaled feed-forward and the same hard PWM cap. */
 #define APP_MOVE_SPIN_FF_STATIC_PWM          80.0f
-#define APP_MOVE_SPIN_PID_BOOST               1.8f
+/* MG310 uses the same speed-loop correction scale in combined motion. */
+#define APP_MOVE_SPIN_PID_BOOST               1.0f
 #define APP_MOVE_SPIN_OUTPUT_LIMIT_PWM APP_MOTOR_PWM_MAX_PERMILLE
 #define APP_MOVE_SPIN_HEADING_LEAD_MS         55.0f
 
@@ -289,17 +290,13 @@
 #define APP_TASK_STATUS_PERIOD_MS        50U
 #define APP_MATCH_TIME_S                 180U
 #define APP_MATCH_TIME_MS                (APP_MATCH_TIME_S * 1000U)
-#define APP_START_REVERSE_DISTANCE_MM  1700U
+#define APP_START_FORWARD_DISTANCE_M    1.10f
 #define APP_START_CLEARANCE_DISTANCE_M   0.60f
-#define APP_START_CLEARANCE_SPEED_MM_S 1000.0f
-#define APP_START_REVERSE_SPEED_MM_S   1000.0f
-#define APP_START_REVERSE_SLOW_SPEED_MM_S 160.0f
-#define APP_START_REVERSE_SLOW_REMAINING_MM 100U
-#define APP_START_REVERSE_TOLERANCE_MM   10U
+#define APP_START_CLEARANCE_SPEED_MM_S  600.0f
+#define APP_START_FORWARD_SPEED_MM_S    800.0f
+#define APP_START_TURN_SPEED_MM_S       250.0f
+#define APP_START_SETTLE_MS              250U
 #define APP_START_TURN_DEG               180.0f
-#define APP_START_TURN_KP_MM_S_PER_DEG     2.2f
-#define APP_START_TURN_MAX_MM_S          380.0f
-#define APP_START_TURN_TOLERANCE_DEG       3.0f
 #define APP_START_TIMEOUT_MS           30000U
 #define APP_SEARCH_LOW_CAMERA_ANGLE       90U
 #define APP_SEARCH_HIGH_CAMERA_ANGLE     120U
@@ -351,12 +348,12 @@
 #define APP_APPROACH_LOSS_HOLD_MS         500U
 #define APP_STEERING_EXIT_DEAD_ZONE       8
 #define APP_STEERING_ENTER_DEAD_ZONE     16
-#define APP_STEERING_KP_MM_S             0.45f
+#define APP_STEERING_KP_MM_S             0.25f
 /* Derivative uses seconds, not frames; softened together with visual P. */
-#define APP_STEERING_KD_MM                0.0100f
-#define APP_STEERING_MIN_MM_S             20.0f
-#define APP_STEERING_LIMIT_MM_S          175.0f
-#define APP_STEERING_RATE_MM_S2         1000.0f
+#define APP_STEERING_KD_MM                0.0040f
+#define APP_STEERING_MIN_MM_S             10.0f
+#define APP_STEERING_LIMIT_MM_S           90.0f
+#define APP_STEERING_RATE_MM_S2          400.0f
 #define APP_STEERING_DIRECTION           1.0f
 #define APP_CAMERA_DEAD_ZONE              12
 #define APP_CAMERA_KP_DEG_PER_PX          0.0350f
