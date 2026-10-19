@@ -404,6 +404,7 @@ static void test_initial_empty_capture_and_heading(void)
     prepare();
     task_enter(cluster ? TASK_APPROACH : TASK_GRAB_OBSERVE, 0U);
     if (cluster) { approach_phase = APPROACH_CLUSTER_CAPTURE; }
+    Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
     task_status.claw_visible = true;
     approach_locked_heading_deg = 90.0f;
     task_capture_budget_begin();
@@ -465,8 +466,184 @@ static void test_initial_empty_capture_and_heading(void)
   assert(state == TASK_INJURY_RECLOSE);
 }
 
+static void test_distance_search_accumulation_and_transport_sort(void)
+{
+  assert(APP_SEARCH_LOW_CAMERA_ANGLE == 105U && APP_CAPTURE_FORWARD_BUDGET_MM == 200U);
+  prepare(); task_enter(TASK_APPROACH,1000U);locked_cargo_counts=1U;
+  VisionData stale={.x=640,.y=512,.found=true,.classification_valid=true,
+      .cargo_counts=1,.valid=true,.report_generation=1,.tick_ms=900};
+  task_process_approach(&stale,1300U);
+  assert(approach_phase==APPROACH_TRACK && !tracking_filter_valid);
+  for (unsigned cluster=0; cluster<2; ++cluster) {
+    wire_prepare(TASK_APPROACH,0U);
+    Camera_SetAngle(cluster ? 120U : 105U); task_enter(TASK_APPROACH,0U);
+    cluster_target_active=cluster; cluster_claws_ready=true; locked_cargo_counts=1U;
+    VisionData v={.x=640,.y=512,.found=true,.classification_valid=true,
+        .cargo_counts=1,.valid=true,.report_generation=9,.tick_ms=300};
+    task_process_approach(&v,300);
+    assert(approach_phase == APPROACH_RANGE_WAIT && task_protocol_mode() == 52);
+    const uint8_t pitch=Camera_GetAngle();
+    VisionMissionCommand range={.command=VISION_CMD_APPROACH_TARGET,
+        .flags=VISION_CMD_VALID|VISION_CMD_DISTANCE_VALID|VISION_CMD_APPROACH_RANGE|
+               (cluster ? VISION_CMD_CLUSTER_TARGET : 0),
+        .target_x_mm=700,.target_y_mm=pitch*100,.vision_frame=10};
+    wire_send(range,350,1);
+    assert(command_accepted && approach_phase == APPROACH_RANGE_MOVE && task_protocol_mode() == 53);
+    const uint32_t deadline=approach_deadline_ms;
+    wire_send(range,380,2);
+    assert(command_accepted && approach_deadline_ms == deadline);
+    range.target_x_mm=900; wire_send(range,400,3);
+    assert(!command_accepted && approach_range_mm == 700);
+    VisionMissionCommand old_pixel={.command=VISION_CMD_APPROACH_TARGET,.flags=VISION_CMD_VALID,
+        .target_x_mm=640,.target_y_mm=512,.vision_frame=11};
+    wire_send(old_pixel,410,4);
+    assert(!command_accepted && approach_range_mm==700 && approach_phase==APPROACH_RANGE_MOVE);
+    distance_result=MOTOR_DISTANCE_RUNNING;
+    task_process_approach(&v,420);
+    assert(distance_calls == 1 && fabsf(distance_request-.7f)<.001f);
+    mission_paused=true; task_pause_runtime(450);
+    assert(finite_pauses == 1 && approach_range_mm == 700);
+    mission_paused=false;
+    task_process_approach(&v,480);
+    assert(distance_calls == 2 && finite_resumes >= 2);
+    distance_result=MOTOR_DISTANCE_DONE;
+    task_process_approach(&v,500);
+    assert(approach_phase == (cluster ? APPROACH_CLUSTER_CAMERA_TO_140 : APPROACH_CAMERA_TO_140));
+    for (uint32_t t=520;t<=1600;t+=20) task_process_approach(&v,t);
+    assert(Camera_GetAngle()==140 && capture_budget_active);
+    assert(cluster ? task_protocol_mode()==38 : state==TASK_GRAB_OBSERVE);
+  }
+  prepare(); task_enter(TASK_APPROACH,0U);
+  task_approach_watchdog(APP_APPROACH_ALIGN_TIMEOUT_MS);
+  assert(state==TASK_APPROACH_RECOVER && task_status.fault==TASK_FAULT_NONE);
+  prepare(); task_enter(TASK_APPROACH,0U); approach_phase=APPROACH_RANGE_WAIT;
+  task_approach_watchdog(APP_APPROACH_RANGE_WAIT_MS);
+  assert(state==TASK_APPROACH_RECOVER);
+  prepare();task_enter(TASK_APPROACH,0U);approach_phase=APPROACH_RANGE_MOVE;
+  accepted_context.last_command_rx_ms=APP_APPROACH_RANGE_TIMEOUT_MS;
+  task_approach_watchdog(APP_APPROACH_RANGE_TIMEOUT_MS);
+  assert(state==TASK_APPROACH_RECOVER); /* Fresh heartbeats cannot extend the travel deadline. */
+  prepare(); task_enter(TASK_APPROACH,0U); approach_phase=APPROACH_RANGE_MOVE;
+  accepted_context.last_command_rx_ms=0;
+  task_process_approach(&test_vision,600);
+  assert(finite_pauses==1 && distance_calls==0);
+  task_approach_watchdog(APP_APPROACH_LINK_RECOVER_MS);
+  assert(state==TASK_APPROACH_RECOVER);
+
+  prepare(); injury_recheck_pending=true;
+  VisionMissionCommand c=injury_audit(1);
+  command_visual_new=true; task_latch_audit(&c,100);
+  const uint32_t evidence=audit_evidence_ms;
+  VisionMissionCommand gap=placeholder(); command_visual_new=false;
+  task_accept_mission_legacy(&gap,180);
+  assert(audit_consistent_count==1 && !audit_received && audit_evidence_ms==evidence);
+  c.audit_id=2;c.vision_frame=3;command_visual_new=true;task_latch_audit(&c,250);
+  assert(audit_valid && audit_consistent_count==2);
+  task_accept_mission_legacy(&gap,270);
+  command_visual_new=false; accepted_context.visual_valid=true;accepted_context.vision_frame=3;
+  task_latch_audit(&c,290); assert(!audit_received); /* Cached STABLE cannot bridge the gap. */
+  c.audit_id=3;c.vision_frame=4;command_visual_new=true;task_latch_audit(&c,310);
+  assert(audit_valid);
+  c.audit_id=4;c.audit_total_count=2;c.audit_counts=2;task_latch_audit(&c,350);
+  assert(audit_consistent_count==1 && !audit_valid);
+  prepare();c=injury_audit(1);command_visual_new=true;task_latch_audit(&c,100);
+  c.audit_id=2;c.vision_frame=3;task_latch_audit(&c,601);
+  assert(audit_consistent_count==1);
+
+  prepare();task_enter(TASK_GRAB_OBSERVE,0);task_capture_budget_begin();
+  capture_forward_used_mm=200; audit_received=true;
+  task_capture_observe(300);
+  assert(state==TASK_SEARCH && !capture_budget_active);
+
+  prepare();task_enter(TASK_TRANSPORT_AUDIT,0);task_process_transport_audit(250);
+  c=injury_audit(1);c.audit_left_class=VISION_CARGO_GREEN;c.audit_flags=VISION_AUDIT_STABLE;
+  c.audit_counts=c.audit_total_count=2;
+  command_visual_new=true;task_latch_audit(&c,300);
+  c.audit_id=2;c.vision_frame=3;task_latch_audit(&c,400);
+  VisionMissionCommand split={.received=true,.command=VISION_CMD_DISPERSE_PILE,
+      .flags=VISION_CMD_VALID|VISION_CMD_SIDE_VALID};
+  task_accept_mission_legacy(&split,420);
+  assert(command_accepted && state==TASK_REMOTE_ACTION && transport_sort_active);
+  assert(separation_total_attempts==1 && separation_keep_side==1 && !task_status.gripper_closed);
+  remote_action.done=true;cargo_recheck_pending=true;task_status.claw_visible=true;
+  c=injury_audit(3);c.audit_left_class=VISION_CARGO_GREEN;c.audit_flags=VISION_AUDIT_STABLE;
+  command_visual_new=true;task_accept_mission_legacy(&c,600);
+  c.audit_id=4;c.vision_frame=5;task_accept_mission_legacy(&c,700);
+  assert(state==TASK_GRAB_OBSERVE && audit_valid);
+  VisionMissionCommand grab={.received=true,.command=VISION_CMD_GRAB_CONFIRMED,.flags=VISION_CMD_VALID};
+  task_accept_mission_legacy(&grab,720);
+  assert(command_accepted && state==TASK_CLOSE_CLAW);
+  initial_claw_ready=true;
+  Task_Process(740);Task_Process(2740);
+  assert(state==TASK_POST_GRAB_AUDIT);
+  c.audit_id=5;c.vision_frame=6;command_visual_new=true;task_accept_mission_legacy(&c,2800);
+  c.audit_id=6;c.vision_frame=7;task_accept_mission_legacy(&c,2900);
+  assert(state==TASK_WAIT_NAVIGATION && task_status.gripper_closed);
+}
+
+static void test_new_curve_targets_and_bounded_exit(void)
+{
+  for (int side=-1;side<=1;side+=2) for(unsigned retry=1;retry<=2;++retry) {
+    prepare(); separation_keep_side=side;separation_total_attempts=retry;
+    task_start_remote_action(REMOTE_ACTION_DISPERSE,&(VisionMissionCommand){.command=VISION_CMD_DISPERSE_PILE},0);
+    remote_action.phase=1;
+    assert(!task_remote_separation_curve(APP_SELECTIVE_DISPERSE_CURVE_MM,0));
+    assert(separation_motion.stage==SEPARATION_PREPULL);
+    assert(!task_remote_separation_curve(APP_SELECTIVE_DISPERSE_CURVE_MM,20));
+    assert(reverse_output<0 && lateral_output==0 && yaw_output==0);
+    test_pose.path_mm=60;test_pose.y_mm=-60;
+    assert(!task_remote_separation_curve(APP_SELECTIVE_DISPERSE_CURVE_MM,200));
+    assert(side*yaw_output*APP_OMNI_FIELD_YAW_TO_DRIVE_SIGN<0 && lateral_output==0);
+    const float wanted=retry==1?30.0f:45.0f;
+    assert(fabsf(task_wrap_angle(separation_motion.target_heading_deg-90.0f)+side*wanted)<.01f);
+    test_pose.path_mm=150;test_pose.heading_mdeg=90000-side*(int)(wanted*1000);
+    for(unsigned t=220;t<700;t+=20) (void)task_remote_separation_curve(APP_SELECTIVE_DISPERSE_CURVE_MM,t);
+    assert(separation_motion.stage==SEPARATION_PULL);
+    test_pose.path_mm=220;
+    assert(task_remote_separation_curve(APP_SELECTIVE_DISPERSE_CURVE_MM,720));
+    assert(remote_action.phase==2 && reverse_output==0);
+  }
+  prepare();separation_keep_side=1;separation_total_attempts=1;
+  remote_action.phase=1;
+  task_remote_separation_curve(APP_SELECTIVE_DISPERSE_CURVE_MM,0);
+  assert(task_remote_separation_curve(APP_SELECTIVE_DISPERSE_CURVE_MM,APP_CARGO_SEPARATE_NO_PROGRESS_MS));
+  assert(remote_action.phase==2);
+  prepare();separation_keep_side=1;separation_total_attempts=1;
+  task_start_remote_action(REMOTE_ACTION_DISPERSE,&(VisionMissionCommand){.command=VISION_CMD_DISPERSE_PILE},0);
+  remote_action.phase=1;
+  task_remote_separation_curve(APP_SELECTIVE_DISPERSE_CURVE_MM,0);
+  task_pause_action(100,false);
+  VisionMissionCommand repeat={.received=true,.command=VISION_CMD_DISPERSE_PILE,.flags=VISION_CMD_VALID};
+  task_process_remote_action(&repeat,5100);
+  assert(separation_motion.active && separation_motion.started_ms==5000 && remote_action.phase==1);
+  assert(separation_total_attempts==1);
+  for(int side=-1;side<=1;side+=2) for(unsigned retry=1;retry<=2;++retry) {
+    prepare(); separation_keep_side=side;separation_total_attempts=retry;remote_action.phase=1;
+    float x=0,y=0,heading=90,path=0;
+    bool done=false;
+    for(unsigned t=0;t<=8000 && !done;t+=20) {
+      test_pose.x_mm=(int32_t)lroundf(x);test_pose.y_mm=(int32_t)lroundf(y);
+      test_pose.heading_mdeg=(int32_t)lroundf(heading*1000);test_pose.path_mm=(uint32_t)path;
+      done=task_remote_separation_curve(APP_SELECTIVE_DISPERSE_CURVE_MM,t);
+      const float rad=heading*3.14159265f/180;
+      x+=reverse_output*cosf(rad)*.02f;y+=reverse_output*sinf(rad)*.02f;
+      path+=fabsf(reverse_output)*.02f;
+      heading+=yaw_output*APP_OMNI_FIELD_YAW_TO_DRIVE_SIGN/APP_MOTION_DEBUG_TURN_RADIUS_MM*.02f*180/3.14159265f;
+    }
+    assert(done && reverse_output==0 && path<=APP_SELECTIVE_DISPERSE_CURVE_MM+5);
+    assert(side*(90-heading)>=(retry==1?26.0f:41.0f));
+    assert(fabsf(x)<=APP_CARGO_SEPARATE_SIDE_BUDGET_MM+5);
+  }
+}
+
 int main(void)
 {
+#ifdef FLOW_20261019_CHECK
+  test_distance_search_accumulation_and_transport_sort();
+  test_new_curve_targets_and_bounded_exit();
+  puts("105/120 range handoff, cumulative audits, mode48 sort/resume, mirrored 30/45 curves and finite exits PASS");
+  return 0;
+#endif
 #ifdef CAPTURE_HEADING_REVIEW_CHECK
   test_initial_empty_capture_and_heading();
   puts("initial empty ordinary/cluster crawl, budgets, nonempty stop, loss and heading recovery PASS");

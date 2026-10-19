@@ -66,6 +66,9 @@ CMD_USE_FINAL_HEADING = 0x04
 CMD_RED_SIDE = 0x08
 CMD_DISTANCE_VALID = 0x10
 CMD_CLUSTER_TARGET = 0x20
+CMD_APPROACH_RANGE = 0x40
+MODE_APPROACH_RANGE_WAIT = 52
+MODE_APPROACH_RANGE_MOVE = 53
 CMD_FIRST_GREEN_BUMP = 0x20
 CMD_STAGE_ONLY = 0x40
 CMD_VISUAL_CORRECTION_VALID = 0x40
@@ -298,7 +301,7 @@ def mission_frame(
         raise ValueError("invalid mission command")
     allowed_flags = 0x1F
     if command == CMD_APPROACH_TARGET:
-        allowed_flags |= CMD_CLUSTER_TARGET
+        allowed_flags |= CMD_CLUSTER_TARGET | CMD_APPROACH_RANGE
     if command in (
             CMD_NAVIGATE_WAYPOINT, CMD_ALIGN_SAFE_ZONE,
             CMD_ENTER_SAFE_ZONE):
@@ -309,6 +312,14 @@ def mission_frame(
         )
     if not flags & CMD_VALID or flags & ~allowed_flags:
         raise ValueError("invalid mission flags")
+    if command == CMD_APPROACH_TARGET:
+        if flags & CMD_APPROACH_RANGE:
+            permitted = CMD_VALID | CMD_RED_SIDE | CMD_CLUSTER_TARGET | CMD_APPROACH_RANGE | CMD_DISTANCE_VALID
+            if (not flags & CMD_DISTANCE_VALID or flags & ~permitted or
+                    not 0 <= target_x_mm <= 2500 or target_y_mm not in (10500,12000) or heading_cdeg):
+                raise ValueError("invalid calibrated approach distance/pitch")
+        elif flags & CMD_DISTANCE_VALID or not 0 <= target_x_mm < IMAGE_WIDTH or not 0 <= target_y_mm < IMAGE_HEIGHT:
+            raise ValueError("invalid approach pixels")
     if (command == CMD_DISPERSE_PILE and
             flags & CMD_TARGET_RIGHT and not flags & CMD_SIDE_VALID):
         raise ValueError("TARGET_RIGHT requires SIDE_VALID")

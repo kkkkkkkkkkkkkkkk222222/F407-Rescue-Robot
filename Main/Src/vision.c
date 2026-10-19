@@ -221,7 +221,7 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
       VISION_CMD_USE_FINAL_HEADING | VISION_CMD_RED_SIDE |
       VISION_CMD_DISTANCE_VALID |
       ((code == VISION_CMD_APPROACH_TARGET) ?
-          VISION_CMD_CLUSTER_TARGET : 0U) |
+          (VISION_CMD_CLUSTER_TARGET | VISION_CMD_APPROACH_RANGE) : 0U) |
       (((code == VISION_CMD_NAVIGATE_WAYPOINT) ||
         (code == VISION_CMD_ALIGN_SAFE_ZONE) ||
         (code == VISION_CMD_ENTER_SAFE_ZONE)) ?
@@ -237,10 +237,19 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
 
   const int16_t arg_a = (int16_t)vision_u16_be(&payload[2]);
   const int16_t arg_b = (int16_t)vision_u16_be(&payload[4]);
-  if ((code == VISION_CMD_APPROACH_TARGET) &&
-      ((arg_a < 0) || (arg_a > (int16_t)APP_VISION_MAX_X) ||
-       (arg_b < 0) || (arg_b > (int16_t)APP_VISION_MAX_Y))) {
-    goto rejected_payload;
+  if (code == VISION_CMD_APPROACH_TARGET) {
+    if ((flags & VISION_CMD_APPROACH_RANGE) != 0U) {
+      const uint8_t permitted = VISION_CMD_VALID | VISION_CMD_RED_SIDE |
+          VISION_CMD_CLUSTER_TARGET | VISION_CMD_APPROACH_RANGE | VISION_CMD_DISTANCE_VALID;
+      if ((flags & VISION_CMD_DISTANCE_VALID) == 0U || (flags & (uint8_t)~permitted) != 0U ||
+          arg_a < 0 || arg_a > (int16_t)APP_APPROACH_RANGE_MAX_MM || heading != 0U ||
+          (arg_b != APP_SEARCH_LOW_CAMERA_ANGLE * 100 &&
+           arg_b != APP_SEARCH_HIGH_CAMERA_ANGLE * 100)) goto rejected_payload;
+    } else if ((flags & VISION_CMD_DISTANCE_VALID) != 0U ||
+               arg_a < 0 || arg_a > (int16_t)APP_VISION_MAX_X ||
+               arg_b < 0 || arg_b > (int16_t)APP_VISION_MAX_Y) {
+      goto rejected_payload;
+    }
   }
   if ((code == VISION_CMD_NAVIGATE_WAYPOINT) ||
       (code == VISION_CMD_RETURN_CENTER)) {

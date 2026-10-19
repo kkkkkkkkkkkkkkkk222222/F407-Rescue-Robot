@@ -106,6 +106,11 @@
 /* APPROACH_TARGET describes the centre of a pile that must be approached
  * before the upper computer requests visual selective separation. */
 #define VISION_CMD_CLUSTER_TARGET    0x20U
+/* APPROACH bit6 + DISTANCE_VALID: P2/P3=latched travel mm,
+ * P4/P5=fixed measuring pitch cdeg (10500/12000), P6/P7=0. */
+#define VISION_CMD_APPROACH_RANGE     0x40U
+#define VISION_MODE_APPROACH_RANGE_WAIT 52U
+#define VISION_MODE_APPROACH_RANGE_MOVE 53U
 /* DISPERSE_PILE bit5: first formal green only. Execute the short local
  * backoff/Touch/forward/back/open bump, then return directly to SEARCH. */
 #define VISION_CMD_FIRST_GREEN_BUMP  0x20U
@@ -149,7 +154,7 @@ typedef enum {
 #define VISION_AUDIT_DANGER_PRESENT     0x02U
 #define VISION_AUDIT_UNKNOWN_PRESENT    0x04U
 #define VISION_AUDIT_INJURY_MIXED       0x08U
-/* Host confirmation; READY/VALID also require the MCU's own three-frame gate. */
+/* Host confirmation; READY/VALID also require the MCU's own two-frame gate. */
 #define VISION_AUDIT_STABLE             0x10U
 #define VISION_AUDIT_DESTINATION_INJURY 0x20U
 #define VISION_AUDIT_SWEEP_PICKUP       0x40U

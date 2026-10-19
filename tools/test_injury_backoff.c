@@ -15,10 +15,13 @@ static bool motor_fault;
 static bool heading_rejected;
 static float heading_output;
 static unsigned heading_calls;
+static MotorDistanceStatus distance_result;
+static float distance_request;
+static unsigned distance_calls, finite_pauses, finite_resumes;
 void Servo_SetAngle(uint8_t id, uint8_t angle) { servo_angles[id - 1U] = angle; }
 void Motor_Stop(void) { reverse_output = lateral_output = yaw_output = 0.0f; }
-void Motor_PauseFiniteMotion(void) { Motor_Stop(); }
-void Motor_ResumeFiniteMotion(void) {}
+void Motor_PauseFiniteMotion(void) { ++finite_pauses; Motor_Stop(); }
+void Motor_ResumeFiniteMotion(void) { ++finite_resumes; }
 void Motor_Move(float forward, float lateral, float yaw)
 { lateral_output = lateral; yaw_output = yaw; reverse_output = forward; }
 bool Motor_MoveHeading(float forward, float heading)
@@ -47,7 +50,11 @@ void Location_Reanchor(int32_t x, int32_t y, int32_t heading)
 MotorDistanceStatus Motor_MoveDistance(float distance, float speed)
 { (void)distance; (void)speed; return MOTOR_DISTANCE_DONE; }
 MotorDistanceStatus Motor_MoveDistanceLinear(float distance, float speed, float slow, float end)
-{ (void)distance; (void)speed; (void)slow; (void)end; return MOTOR_DISTANCE_DONE; }
+{
+  distance_request=distance; ++distance_calls;
+  (void)speed; (void)slow; (void)end;
+  return distance_result;
+}
 MotorDistanceStatus Motor_MoveDistanceConstant(float distance, float speed)
 { (void)distance; (void)speed; return MOTOR_DISTANCE_DONE; }
 MotorTurnStatus Motor_TurnAngle(float angle) { (void)angle; return MOTOR_TURN_DONE; }
@@ -80,6 +87,9 @@ static void prepare(void)
   heading_rejected = false;
   heading_calls = 0U;
   heading_output = 0.0f;
+  distance_result = MOTOR_DISTANCE_DONE;
+  distance_request=0.0f;
+  distance_calls=finite_pauses=finite_resumes=0U;
   complete_flow_active = true;
   task_status.gripper_closed = true;
   Camera_SetAngle(APP_GRAB_VIEW_ANGLE);

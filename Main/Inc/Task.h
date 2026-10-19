@@ -43,7 +43,7 @@ typedef enum {
   TASK_SAFE_SWEEP_RETRIEVE = 44,
   TASK_SAFE_SWEEP_RETRIEVE_AUDIT = 45,
   TASK_SAFE_SWEEP_RETRIEVE_FAILED = 46,
-  /* Third separation re-audit failed; claws open and 300 mm backoff done. */
+  /* Final separation re-audit failed; 300 mm backoff and reclosure complete. */
   TASK_CAPTURE_RETURN_WAIT = 47,
   TASK_TRANSPORT_AUDIT = 48,
   TASK_INJURY_BACKOFF = 49,
