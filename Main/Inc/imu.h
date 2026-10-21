@@ -38,6 +38,7 @@ typedef struct {
   bool heading_uncertain;
   uint32_t recovery_count;
   /* UART backend only; legacy SPI diagnostics above stay source compatible. */
+  uint32_t uart_baud;
   uint32_t uart_rx_bytes;
   uint32_t uart_checksum_errors;
   uint32_t uart_rx_errors;

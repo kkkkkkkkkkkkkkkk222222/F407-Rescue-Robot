@@ -330,7 +330,15 @@
 #if APP_IMU_UART_YAW_SIGN != 1 && APP_IMU_UART_YAW_SIGN != -1
 #error "UART IMU yaw sign must be +1 or -1 (applied to angle AND rate)"
 #endif
+#if APP_BOARD_F405_ROBO
+#define APP_IMU_UART_BAUD                230400U
+#define APP_IMU_UART_RATE_REGISTER       0x0EU /* 1000 Hz */
+#define APP_IMU_UART_PERIOD_LIMIT_MS     1U
+#else
 #define APP_IMU_UART_BAUD                115200U
+#define APP_IMU_UART_RATE_REGISTER       0x0BU /* 200 Hz */
+#define APP_IMU_UART_PERIOD_LIMIT_MS     7U
+#endif
 #define APP_IMU_UART_START_TIMEOUT_MS    2000U
 #define APP_IMU_UART_STALE_MS            150U
 /* Below half a turn even at 500 dps (module rated range: +/-400 dps). */

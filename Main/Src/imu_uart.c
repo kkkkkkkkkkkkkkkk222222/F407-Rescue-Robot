@@ -5,7 +5,7 @@
 #include "main.h"
 #include <string.h>
 
-/* Vendor STM32F103 Gyro.c protocol: 5A AA/BB low high sum8, 115200 8N1. */
+/* Vendor protocol: 5A AA/BB low high sum8, 8N1; F405 negotiates 230400/1 kHz. */
 static UART_HandleTypeDef gyro_uart;
 static volatile IMUData data;
 static uint8_t packet[5], packet_length;
@@ -15,10 +15,14 @@ static int64_t angle_counts, origin_counts;
 static uint32_t angle_ms, rate_ms, last_poll_ms, good_samples;
 static uint32_t period_sum, period_samples;
 static uint32_t config_due_ms;
+#if APP_BOARD_F405_ROBO
+static uint32_t baud_probe_due_ms;
+#endif
 
 enum {
   CONFIG_OBSERVE, CONFIG_UNLOCK_WAIT, CONFIG_RATE_WAIT,
-  CONFIG_SAVE_WAIT, CONFIG_VERIFY, CONFIG_DONE, CONFIG_FAILED
+  CONFIG_SAVE_WAIT, CONFIG_VERIFY, CONFIG_DONE, CONFIG_FAILED,
+  CONFIG_BAUD_UNLOCK_WAIT, CONFIG_BAUD_SETTLE
 };
 
 static uint32_t lock(void)
@@ -163,14 +167,59 @@ static bool send_command(uint8_t reg, uint8_t low, uint8_t high)
   return false;
 }
 
+#if APP_BOARD_F405_ROBO
+static bool select_baud(uint32_t baud)
+{
+  HAL_NVIC_DisableIRQ(APP_IMU_UART_IRQn);
+  gyro_uart.Init.BaudRate = baud;
+  const HAL_StatusTypeDef result = HAL_UART_Init(&gyro_uart);
+  __HAL_UART_CLEAR_OREFLAG(&gyro_uart);
+  packet_length = 0U;
+  period_sum = period_samples = 0U;
+  data.uart_output_period_ms = 0U;
+  good_samples = 0U;
+  data.ready = false;
+  data.uart_baud = baud;
+  HAL_NVIC_ClearPendingIRQ(APP_IMU_UART_IRQn);
+  __HAL_UART_ENABLE_IT(&gyro_uart, UART_IT_RXNE);
+  __HAL_UART_ENABLE_IT(&gyro_uart, UART_IT_ERR);
+  __HAL_UART_ENABLE_IT(&gyro_uart, UART_IT_PE);
+  HAL_NVIC_EnableIRQ(APP_IMU_UART_IRQn);
+  if (result != HAL_OK) {
+    ++data.uart_config_errors;
+    data.uart_config_state = CONFIG_FAILED;
+  }
+  return result == HAL_OK;
+}
+#endif
+
 static void configure_output_rate(uint32_t now)
 {
 #if APP_IMU_UART_AUTO_RATE
   const IMUData snapshot = IMU_GetData();
   switch (snapshot.uart_config_state) {
     case CONFIG_OBSERVE:
+#if APP_BOARD_F405_ROBO
+      /* Only discover baud before the first healthy stream, never in motion.
+       * Supports both factory/old 115200 and the saved 230400 configuration. */
+      if (!ever_ready && (int32_t)(now - baud_probe_due_ms) >= 0) {
+        (void)select_baud(gyro_uart.Init.BaudRate == 115200U ?
+                         APP_IMU_UART_BAUD : 115200U);
+        baud_probe_due_ms = now + 250U;
+        return;
+      }
+#endif
       if (!snapshot.ready || snapshot.uart_output_period_ms == 0U) { return; }
-      if (snapshot.uart_output_period_ms <= 7U) {
+#if APP_BOARD_F405_ROBO
+      if (gyro_uart.Init.BaudRate != APP_IMU_UART_BAUD) {
+        if (send_command(0x13U, 0x8EU, 0x5FU)) {
+          data.uart_config_state = CONFIG_BAUD_UNLOCK_WAIT;
+          config_due_ms = now + 100U;
+        }
+        break;
+      }
+#endif
+      if (snapshot.uart_output_period_ms <= APP_IMU_UART_PERIOD_LIMIT_MS) {
         data.uart_config_state = CONFIG_DONE;
       } else if (send_command(0x13U, 0x8EU, 0x5FU)) {
         data.uart_config_state = CONFIG_UNLOCK_WAIT;
@@ -179,7 +228,7 @@ static void configure_output_rate(uint32_t now)
       break;
     case CONFIG_UNLOCK_WAIT:
       if ((int32_t)(now - config_due_ms) < 0) { return; }
-      if (send_command(0x02U, 0x0BU, 0x00U)) { /* RRATE = 200 Hz */
+      if (send_command(0x02U, APP_IMU_UART_RATE_REGISTER, 0x00U)) {
         data.uart_config_state = CONFIG_RATE_WAIT;
         config_due_ms = now + 100U;
       }
@@ -203,7 +252,7 @@ static void configure_output_rate(uint32_t now)
     }
     case CONFIG_VERIFY:
       if (snapshot.ready && snapshot.uart_output_period_ms > 0U &&
-          snapshot.uart_output_period_ms <= 7U) {
+          snapshot.uart_output_period_ms <= APP_IMU_UART_PERIOD_LIMIT_MS) {
         data.uart_config_state = CONFIG_DONE;
       } else if ((int32_t)(now - config_due_ms) >= 0) {
         const uint32_t mask = lock();
@@ -212,6 +261,24 @@ static void configure_output_rate(uint32_t now)
         unlock(mask);
       }
       break;
+#if APP_BOARD_F405_ROBO
+    case CONFIG_BAUD_UNLOCK_WAIT:
+      if ((int32_t)(now - config_due_ms) < 0) { return; }
+      /* HAL transmit waits for TC: finish the old-baud command before switching. */
+      if (send_command(0x03U, 0x07U, 0x00U) && select_baud(APP_IMU_UART_BAUD)) {
+        data.uart_config_state = CONFIG_BAUD_SETTLE;
+        config_due_ms = now + 100U;
+      }
+      break;
+    case CONFIG_BAUD_SETTLE:
+      if ((int32_t)(now - config_due_ms) < 0) { return; }
+      /* Write rate even if already fast: the SAVE must also persist new baud. */
+      if (send_command(0x13U, 0x8EU, 0x5FU)) {
+        data.uart_config_state = CONFIG_UNLOCK_WAIT;
+        config_due_ms = now + 100U;
+      }
+      break;
+#endif
     default: break;
   }
 #else
@@ -233,6 +300,10 @@ bool IMU_Init(void)
   data.recovering = true;
   gyro_uart.Instance = APP_IMU_UART_INSTANCE;
   gyro_uart.Init.BaudRate = APP_IMU_UART_BAUD;
+  data.uart_baud = APP_IMU_UART_BAUD;
+#if APP_BOARD_F405_ROBO
+  baud_probe_due_ms = HAL_GetTick() + 250U;
+#endif
   gyro_uart.Init.WordLength = UART_WORDLENGTH_8B;
   gyro_uart.Init.StopBits = UART_STOPBITS_1;
   gyro_uart.Init.Parity = UART_PARITY_NONE;

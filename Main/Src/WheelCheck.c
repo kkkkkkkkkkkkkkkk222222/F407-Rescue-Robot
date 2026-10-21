@@ -757,7 +757,7 @@ static void wheel_execute(void)
         "BAUD=%lu SIGN=%d RX_BYTES=%lu "
         "CRC_ERRORS=%lu RX_ERRORS=%lu RATE_FRAMES=%lu ANGLE_AGE_MS=%lu "
         "RATE_AGE_MS=%lu PERIOD_MS=%lu CFG=%u CFG_ERRORS=%lu\r\n",
-        (unsigned long)APP_IMU_UART_BAUD, APP_IMU_UART_YAW_SIGN,
+        (unsigned long)imu.uart_baud, APP_IMU_UART_YAW_SIGN,
         (unsigned long)imu.uart_rx_bytes, (unsigned long)imu.uart_checksum_errors,
         (unsigned long)imu.uart_rx_errors, (unsigned long)imu.uart_rate_frames,
         (unsigned long)imu.uart_angle_age_ms, (unsigned long)imu.uart_rate_age_ms,
