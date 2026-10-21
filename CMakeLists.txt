@@ -23,6 +23,11 @@ set(CMAKE_PROJECT_NAME WWW)
 
 # Enable compile command to ease indexing with e.g. clangd
 set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
+set(APP_BOARD "F407_LEGACY" CACHE STRING "Board: F407_LEGACY or F405_ROBO")
+set_property(CACHE APP_BOARD PROPERTY STRINGS F407_LEGACY F405_ROBO)
+if(NOT APP_BOARD STREQUAL "F407_LEGACY" AND NOT APP_BOARD STREQUAL "F405_ROBO")
+    message(FATAL_ERROR "Unsupported APP_BOARD=${APP_BOARD}")
+endif()
 
 # Core project settings
 project(${CMAKE_PROJECT_NAME})
@@ -50,10 +55,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Main/Src/Gamepad.c
     Main/Src/DebugConsole.c
     Main/Src/Robot.c
-    Main/Src/encoder.c
     Main/Src/imu.c
     Main/Src/imu_uart.c
-    Main/Src/Lcd.c
     Main/Src/Location.c
     Main/Src/mechanism.c
     Main/Src/motor.c
@@ -62,10 +65,20 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Main/Src/route_demo.c
     Main/Src/Task.c
     Main/Src/Uart.c
-    Main/Src/servo.c
     Main/Src/vision.c
     Main/Src/WheelCheck.c
 )
+if(APP_BOARD STREQUAL "F405_ROBO")
+    target_sources(WWW PRIVATE
+        Boards/F405/Src/encoder_f405.c
+        Boards/F405/Src/diagnostics_f405.c
+        Boards/F405/Src/motor_f405.c
+        Boards/F405/Src/servo_f405.c
+        Boards/F405/Src/lcd_none.c
+    )
+else()
+    target_sources(WWW PRIVATE Main/Src/encoder.c Main/Src/servo.c Main/Src/Lcd.c)
+endif()
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE

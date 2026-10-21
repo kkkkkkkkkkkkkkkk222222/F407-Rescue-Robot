@@ -31,6 +31,7 @@ extern "C" {
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "app_config.h"
 
 /* USER CODE END Includes */
 
@@ -59,6 +60,9 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#if APP_BOARD_F405_ROBO
+#include "board_f405.h"
+#else
 #define MOTOR_PWM_KEY_Pin GPIO_PIN_0
 #define MOTOR_PWM_KEY_GPIO_Port GPIOA
 #define BIN1_Pin GPIO_PIN_5
@@ -105,6 +109,7 @@ void Error_Handler(void);
 #define PWM3_GPIO_Port GPIOC
 #define PWM4_Pin GPIO_PIN_9
 #define PWM4_GPIO_Port GPIOC
+#endif
 /* USER CODE BEGIN Private defines */
 
 /* USER CODE END Private defines */

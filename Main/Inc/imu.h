@@ -55,7 +55,7 @@ void IMU_ZeroYaw(void);
 /* Only after an independent stationary heading reference has been accepted. */
 void IMU_ConfirmHeadingReference(void);
 IMUData IMU_GetData(void);
-/* Dedicated USART2 RXNE/error handler; does not share console HAL callbacks. */
+/* Dedicated gyro UART RXNE/error handler; independent of console callbacks. */
 void IMU_UART_IRQHandler(void);
 
 #endif

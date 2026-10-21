@@ -136,10 +136,10 @@ static void receive_byte(uint8_t value, uint32_t now)
 void IMU_UART_IRQHandler(void)
 {
   /* SR then DR clears ORE/FE/NE/PE. RX stays enabled: no HAL one-shot rearm. */
-  const uint32_t status = USART2->SR;
+  const uint32_t status = APP_IMU_UART_INSTANCE->SR;
   if ((status & (USART_SR_RXNE | USART_SR_ORE | USART_SR_FE |
                  USART_SR_NE | USART_SR_PE)) == 0U) { return; }
-  const uint8_t value = (uint8_t)USART2->DR;
+  const uint8_t value = (uint8_t)APP_IMU_UART_INSTANCE->DR;
   if (status & (USART_SR_ORE | USART_SR_FE | USART_SR_NE | USART_SR_PE)) {
     ++data.error_count;
     ++data.uart_rx_errors;
@@ -221,7 +221,7 @@ static void configure_output_rate(uint32_t now)
 
 bool IMU_Init(void)
 {
-  HAL_NVIC_DisableIRQ(USART2_IRQn);
+  HAL_NVIC_DisableIRQ(APP_IMU_UART_IRQn);
   memset((void *)&data, 0, sizeof(data));
   memset(&gyro_uart, 0, sizeof(gyro_uart));
   packet_length = 0U;
@@ -231,7 +231,7 @@ bool IMU_Init(void)
   last_poll_ms = HAL_GetTick();
   data.init_result = IMU_INIT_RX_TIMEOUT;
   data.recovering = true;
-  gyro_uart.Instance = USART2;
+  gyro_uart.Instance = APP_IMU_UART_INSTANCE;
   gyro_uart.Init.BaudRate = APP_IMU_UART_BAUD;
   gyro_uart.Init.WordLength = UART_WORDLENGTH_8B;
   gyro_uart.Init.StopBits = UART_STOPBITS_1;
@@ -245,13 +245,13 @@ bool IMU_Init(void)
   }
   __HAL_UART_CLEAR_OREFLAG(&gyro_uart);
   /* Above TIM6, with bounded parsing only; never transmit or delay in IRQ. */
-  HAL_NVIC_SetPriority(USART2_IRQn, 3U, 0U);
-  HAL_NVIC_ClearPendingIRQ(USART2_IRQn);
+  HAL_NVIC_SetPriority(APP_IMU_UART_IRQn, 3U, 0U);
+  HAL_NVIC_ClearPendingIRQ(APP_IMU_UART_IRQn);
   uart_started = true;
   __HAL_UART_ENABLE_IT(&gyro_uart, UART_IT_RXNE);
   __HAL_UART_ENABLE_IT(&gyro_uart, UART_IT_ERR);
   __HAL_UART_ENABLE_IT(&gyro_uart, UART_IT_PE);
-  HAL_NVIC_EnableIRQ(USART2_IRQn);
+  HAL_NVIC_EnableIRQ(APP_IMU_UART_IRQn);
   const uint32_t start = HAL_GetTick();
   while (HAL_GetTick() - start < APP_IMU_UART_START_TIMEOUT_MS) {
     IMU_Update(0U);

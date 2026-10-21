@@ -83,6 +83,21 @@ static void debug_execute(char *command)
     }
   }
 
+#if APP_BOARD_F405_ROBO
+  if (strcmp(command, "PING") == 0) {
+    debug_send("PONG NORMALDEBUG F405\r\n");
+    return;
+  }
+  if (strcmp(command, "HELP") == 0) {
+    debug_send("NORMALDEBUG: PING / STAT / IMU / ENC / MOTOR / DEBUG / S id deg / RUN\r\n");
+    return;
+  }
+  if (strcmp(command, "STAT") == 0 || strcmp(command, "IMU") == 0 ||
+      strcmp(command, "ENC") == 0 || strcmp(command, "MOTOR") == 0) {
+    BoardF405_Report();
+    return;
+  }
+#endif
   if (strcmp(command, "DEBUG") == 0) {
     status.active = true;
     __DMB();

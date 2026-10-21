@@ -40,6 +40,15 @@
             }
         },
         {
+            "name": "NormalDebug",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "APP_BOARD": "F405_ROBO",
+                "APP_ACTIVE_MODE_OVERRIDE": "APP_MODE_NORMAL_DEBUG"
+            }
+        },
+        {
             "name": "Gamepad",
             "inherits": "default",
             "cacheVariables": {
@@ -64,6 +73,10 @@
         {
             "name": "NormalRun",
             "configurePreset": "NormalRun"
+        },
+        {
+            "name": "NormalDebug",
+            "configurePreset": "NormalDebug"
         },
         {
             "name": "Gamepad",

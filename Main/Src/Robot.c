@@ -388,10 +388,10 @@ void Robot_Init(void)
   uart_active = Uart_Init();
   HAL_NVIC_SetPriority(TIM6_DAC_IRQn, 4U, 0U);
   HAL_NVIC_EnableIRQ(TIM6_DAC_IRQn);
-  HAL_NVIC_SetPriority(USART3_IRQn, 7U, 0U);
+  HAL_NVIC_SetPriority(APP_UPPER_UART_IRQn, 7U, 0U);
   /* RX DMA and USART share HAL state/parser; neither may preempt the other. */
-  HAL_NVIC_SetPriority(DMA1_Stream1_IRQn, 7U, 0U);
-  HAL_NVIC_EnableIRQ(USART3_IRQn);
+  HAL_NVIC_SetPriority(APP_UPPER_RX_DMA_IRQn, 7U, 0U);
+  HAL_NVIC_EnableIRQ(APP_UPPER_UART_IRQn);
 #if APP_ENABLE_RUNTIME_SERVO_DEBUG || APP_ENABLE_MOTION_DEBUG_TASK
   HAL_NVIC_SetPriority(USART1_IRQn, 7U, 0U);
   HAL_NVIC_EnableIRQ(USART1_IRQn);
@@ -458,7 +458,7 @@ void Robot_Init(void)
 #if APP_IMU_USE_UART
     LCD_DrawText(7U, 48U, imu_ready ? "UART GYRO: OK" : "UART GYRO: WAIT",
                  imu_ready ? LCD_GREEN : LCD_YELLOW, LCD_BLACK);
-    LCD_DrawText(7U, 68U, "USART2 PD5/PD6", LCD_CYAN, LCD_BLACK);
+    LCD_DrawText(7U, 68U, APP_IMU_UART_LABEL, LCD_CYAN, LCD_BLACK);
 #else
     LCD_DrawText(imu_ready ? 25U : 19U, 48U,
                  imu_ready ? "IMU660RC: OK" : "IMU660RC: ERROR",

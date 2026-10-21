@@ -9,9 +9,11 @@
 #include "main.h"
 #include "pid.h"
 
+#if !APP_BOARD_F405_ROBO
 extern TIM_HandleTypeDef htim2;
 extern TIM_HandleTypeDef htim5;
 extern TIM_HandleTypeDef htim9;
+#endif
 
 #define MOTOR_COUNT 3U
 #define MOTOR_MAX_SPEED 1000
@@ -22,12 +24,14 @@ extern TIM_HandleTypeDef htim9;
 #define MOTOR_API_LEFT_TO_BODY_Y -1.0f
 #define MOTOR_DEFAULT_OUTPUT_LIMIT APP_MOTOR_PWM_MAX_PERMILLE
 
+#if !APP_BOARD_F405_ROBO
 typedef struct {
   TIM_HandleTypeDef *in1_timer;
   uint32_t in1_channel;
   TIM_HandleTypeDef *in2_timer;
   uint32_t in2_channel;
 } MotorPwm;
+#endif
 
 typedef struct {
   MotorDistanceStatus status;
@@ -107,11 +111,13 @@ typedef struct {
   bool settling;
 } SpinMove;
 
+#if !APP_BOARD_F405_ROBO
 static const MotorPwm motors[MOTOR_COUNT] = {
   {&htim5, TIM_CHANNEL_3, &htim5, TIM_CHANNEL_4},
   {&htim9, TIM_CHANNEL_1, &htim9, TIM_CHANNEL_2},
   {&htim2, TIM_CHANNEL_3, &htim2, TIM_CHANNEL_4},
 };
+#endif
 
 static volatile int16_t commands[MOTOR_COUNT];
 static volatile int16_t targets[MOTOR_COUNT];
@@ -335,6 +341,7 @@ static void motor_set_target_counts(uint8_t id, float target_counts)
       motor_round_to_int16(motor_counts_to_mm_s(limited_counts));
 }
 
+#if !APP_BOARD_F405_ROBO
 static uint32_t speed_to_compare(TIM_HandleTypeDef *timer, int16_t speed)
 {
   uint32_t magnitude = (speed < 0) ? (uint32_t)(-speed) : (uint32_t)speed;
@@ -343,6 +350,7 @@ static uint32_t speed_to_compare(TIM_HandleTypeDef *timer, int16_t speed)
   }
   return ((timer->Init.Period + 1U) * magnitude) / 1000U;
 }
+#endif
 
 static float motor_wheel_circumference_mm(void)
 {
@@ -419,6 +427,7 @@ static void motor_set_omni_speed(float forward_mm_s, float lateral_mm_s,
   }
 }
 
+#if !APP_BOARD_F405_ROBO
 static void motor_write_pwm_pair(const MotorPwm *motor,
                                 uint32_t in1, uint32_t in2)
 {
@@ -434,6 +443,7 @@ static void motor_write_pwm_pair(const MotorPwm *motor,
   }
   motor_leave_critical(primask);
 }
+#endif
 
 static void motor_apply_pwm(uint8_t id, int16_t speed)
 {
@@ -447,6 +457,9 @@ static void motor_apply_pwm(uint8_t id, int16_t speed)
     speed = -APP_MOTOR_PWM_MAX_PERMILLE;
   }
 
+#if APP_BOARD_F405_ROBO
+  BoardF405_MotorWrite(id, speed, false);
+#else
   const MotorPwm *motor = &motors[id - 1U];
   uint32_t in1 = 0U;
   uint32_t in2 = 0U;
@@ -462,6 +475,7 @@ static void motor_apply_pwm(uint8_t id, int16_t speed)
     in2 = speed_to_compare(motor->in2_timer, MOTOR_MAX_SPEED);
   }
   motor_write_pwm_pair(motor, in1, in2);
+#endif
   commands[id - 1U] = speed;
 }
 
@@ -470,10 +484,14 @@ static void motor_apply_brake(uint8_t id)
   if ((id < 1U) || (id > MOTOR_COUNT)) {
     return;
   }
+#if APP_BOARD_F405_ROBO
+  BoardF405_MotorWrite(id, 0, true);
+#else
   const MotorPwm *motor = &motors[id - 1U];
   const uint32_t in1 = speed_to_compare(motor->in1_timer, MOTOR_MAX_SPEED);
   const uint32_t in2 = speed_to_compare(motor->in2_timer, MOTOR_MAX_SPEED);
   motor_write_pwm_pair(motor, in1, in2);
+#endif
   commands[id - 1U] = 0;
 }
 
@@ -1139,7 +1157,11 @@ void Motor_Init(void)
   }
 #endif
   brake_cycles_remaining = 0U;
+#if APP_BOARD_F405_ROBO
+  BoardF405_MotorStart();
+#endif
   for (uint32_t i = 0U; i < MOTOR_COUNT; ++i) {
+#if !APP_BOARD_F405_ROBO
     motor_write_pwm_pair(&motors[i], 0U, 0U);
     if (HAL_TIM_PWM_Start(motors[i].in1_timer, motors[i].in1_channel) != HAL_OK) {
       Error_Handler();
@@ -1147,6 +1169,7 @@ void Motor_Init(void)
     if (HAL_TIM_PWM_Start(motors[i].in2_timer, motors[i].in2_channel) != HAL_OK) {
       Error_Handler();
     }
+#endif
     Pid_Init(&speed_pids[i],
              APP_MOTOR_SPEED_KP,
              APP_MOTOR_SPEED_KI,

@@ -2,9 +2,14 @@ cmake_minimum_required(VERSION 3.22)
 # Enable CMake support for ASM and C languages
 enable_language(C ASM)
 # STM32CubeMX generated symbols (macros)
+if(APP_BOARD STREQUAL "F405_ROBO")
+    set(APP_DEVICE_DEFINE STM32F405xx APP_BOARD_F405_ROBO=1)
+else()
+    set(APP_DEVICE_DEFINE STM32F407xx)
+endif()
 set(MX_Defines_Syms 
 	USE_HAL_DRIVER 
-	STM32F407xx
+    ${APP_DEVICE_DEFINE}
     $<$<CONFIG:Debug>:DEBUG>
 )
 
@@ -26,6 +31,16 @@ set(MX_Application_Src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/syscalls.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../startup_stm32f407xx.s
 )
+if(APP_BOARD STREQUAL "F405_ROBO")
+    set(MX_Application_Src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../Boards/F405/Src/board_f405.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../Boards/F405/Src/interrupts_f405.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/sysmem.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/syscalls.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../startup_stm32f405xx.s
+    )
+    list(PREPEND MX_Include_Dirs ${CMAKE_CURRENT_SOURCE_DIR}/../../Boards/F405/Inc)
+endif()
 
 # STM32 HAL/LL Drivers
 set(STM32_Drivers_Src
