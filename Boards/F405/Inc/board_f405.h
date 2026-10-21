@@ -14,7 +14,7 @@
 #define F405_SERVO_PINS (GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_13)
 
 /* Logical roles retain the existing application handle names. */
-extern UART_HandleTypeDef huart1; /* USART1: PA9 TX, PB7 RX, service console. */
+extern UART_HandleTypeDef huart1; /* USART1: PB6 TX, PB7 RX, service console. */
 extern UART_HandleTypeDef huart3; /* UART4: PC10 TX, PC11 RX, RDK. */
 extern DMA_HandleTypeDef hdma_usart3_rx; /* UART4 RX: DMA1 Stream2 Channel4. */
 extern TIM_HandleTypeDef htim6;

@@ -800,7 +800,12 @@ void WheelCheck_Init(void)
   Motor_Stop();
   wheel_start_rx();
   wheel_report_version();
+#if APP_BOARD_F405_ROBO
+  wheel_send("USART1 PB6_TX/PB7_RX 115200 8N1; SEND HELP; NO AUTOMATIC MOTION\r\n"
+             "NOTICE: ONBOARD_IMU_I2C=SHARED_NOT_DISABLED; REQUEST/REPLY CHECK FIRST\r\n");
+#else
   wheel_send("USART1 115200 8N1; SEND HELP; NO AUTOMATIC MOTION\r\n");
+#endif
   MotionDiag_PrintPrevious(wheel_send);
 }
 

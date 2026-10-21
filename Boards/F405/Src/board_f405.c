@@ -77,10 +77,9 @@ static void board_gpio(void)
        GPIO_MODE_OUTPUT_PP, GPIO_NOPULL, 0U);
   gpio(GPIOB, GPIO_PIN_10 | GPIO_PIN_11 | GPIO_PIN_12 | GPIO_PIN_13,
        GPIO_MODE_INPUT, GPIO_PULLUP, 0U);
-  /* No I2C in this profile: keep the onboard IMU's SCL high and clock-free.
-   * PB7 can then receive console UART data without an I2C slave ACK driving it. */
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
-  gpio(GPIOB, GPIO_PIN_6, GPIO_MODE_OUTPUT_OD, GPIO_PULLUP, 0U);
+  /* Console uses this whole connector. Do NOT bit-bang I2C here: the attached
+   * programmer TX actively drives PB7. The onboard IMU remains physically shared. */
+  gpio(GPIOB, GPIO_PIN_6 | GPIO_PIN_7, GPIO_MODE_INPUT, GPIO_PULLUP, 0U);
 }
 
 static void motor_timer(TIM_HandleTypeDef *timer, TIM_TypeDef *instance)
@@ -152,8 +151,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef *uart)
 {
   if (uart->Instance == USART1) {
     __HAL_RCC_USART1_CLK_ENABLE();
-    gpio(GPIOA, GPIO_PIN_9, GPIO_MODE_AF_PP, GPIO_PULLUP, GPIO_AF7_USART1);
-    gpio(GPIOB, GPIO_PIN_7, GPIO_MODE_AF_PP, GPIO_PULLUP, GPIO_AF7_USART1);
+    gpio(GPIOB, GPIO_PIN_6 | GPIO_PIN_7, GPIO_MODE_AF_PP, GPIO_PULLUP, GPIO_AF7_USART1);
   } else if (uart->Instance == UART4) {
     __HAL_RCC_UART4_CLK_ENABLE();
     __HAL_RCC_DMA1_CLK_ENABLE();
