@@ -324,13 +324,6 @@ static void motor_set_target_counts(uint8_t id, float target_counts)
   if (angle_turn.status == MOTOR_TURN_RUNNING) {
     zero_limit_mm_s = 0.5f;
   }
-#if APP_BOARD_F405_ROBO
-  /* MOVE trial only: let the rear wheel execute small heading corrections.
-   * Exact zero still stops; other wheels, turns and rescue mode keep hysteresis. */
-  if (id == 3U && distance_move.status == MOTOR_DISTANCE_RUNNING) {
-    zero_limit_mm_s = 0.0f;
-  }
-#endif
 #endif
   if (motor_abs_float(motor_counts_to_mm_s(limited_counts)) <= zero_limit_mm_s) {
     limited_counts = 0.0f;
