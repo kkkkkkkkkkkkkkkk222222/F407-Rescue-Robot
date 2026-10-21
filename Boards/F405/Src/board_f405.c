@@ -8,8 +8,9 @@
 
 UART_HandleTypeDef huart1, huart3;
 DMA_HandleTypeDef hdma_usart3_rx;
-TIM_HandleTypeDef htim6, htim8, htim12;
+TIM_HandleTypeDef htim6, htim8, htim1;
 TIM_HandleTypeDef board_motor_timers[3];
+const uint32_t board_motor_channels[3] = {TIM_CHANNEL_4, TIM_CHANNEL_1, TIM_CHANNEL_1};
 
 static void check(HAL_StatusTypeDef result)
 {
@@ -70,7 +71,7 @@ static void board_gpio(void)
                            GPIO_PIN_4 | GPIO_PIN_7 | GPIO_PIN_10, GPIO_PIN_RESET);
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0 | GPIO_PIN_1, GPIO_PIN_RESET);
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_4 | GPIO_PIN_5 | F405_SERVO_PINS, GPIO_PIN_RESET);
-  gpio(GPIOA, GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_3 | GPIO_PIN_4 |
+  gpio(GPIOA, GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_3 | GPIO_PIN_4 |
               GPIO_PIN_7 | GPIO_PIN_10, GPIO_MODE_OUTPUT_PP, GPIO_NOPULL, 0U);
   gpio(GPIOB, GPIO_PIN_0 | GPIO_PIN_1, GPIO_MODE_OUTPUT_PP, GPIO_NOPULL, 0U);
   gpio(GPIOC, GPIO_PIN_4 | GPIO_PIN_5 | F405_SERVO_PINS,
@@ -82,7 +83,7 @@ static void board_gpio(void)
   gpio(GPIOB, GPIO_PIN_6 | GPIO_PIN_7, GPIO_MODE_INPUT, GPIO_PULLUP, 0U);
 }
 
-static void motor_timer(TIM_HandleTypeDef *timer, TIM_TypeDef *instance)
+static void motor_timer(TIM_HandleTypeDef *timer, TIM_TypeDef *instance, uint32_t channel)
 {
   TIM_OC_InitTypeDef pwm = {0};
   timer->Instance = instance;
@@ -96,7 +97,7 @@ static void motor_timer(TIM_HandleTypeDef *timer, TIM_TypeDef *instance)
   pwm.Pulse = 0U;
   pwm.OCPolarity = TIM_OCPOLARITY_HIGH;
   pwm.OCFastMode = TIM_OCFAST_DISABLE;
-  check(HAL_TIM_PWM_ConfigChannel(timer, &pwm, TIM_CHANNEL_1));
+  check(HAL_TIM_PWM_ConfigChannel(timer, &pwm, channel));
 }
 
 static void encoder_timer(TIM_HandleTypeDef *timer, TIM_TypeDef *instance)
@@ -121,20 +122,22 @@ static void board_timers(void)
   __HAL_RCC_TIM2_CLK_ENABLE();
   __HAL_RCC_TIM3_CLK_ENABLE();
   __HAL_RCC_TIM4_CLK_ENABLE();
-  __HAL_RCC_TIM5_CLK_ENABLE();
   __HAL_RCC_TIM6_CLK_ENABLE();
   __HAL_RCC_TIM8_CLK_ENABLE();
-  __HAL_RCC_TIM12_CLK_ENABLE();
-  /* PA0 has TIM5_CH1 as well as TIM2_CH1. PA5 keeps TIM2_CH1. */
-  motor_timer(&board_motor_timers[0], TIM5);
-  motor_timer(&board_motor_timers[1], TIM2);
-  motor_timer(&board_motor_timers[2], TIM3);
-  gpio(GPIOA, GPIO_PIN_0, GPIO_MODE_AF_PP, GPIO_PULLDOWN, GPIO_AF2_TIM5);
+  __HAL_RCC_TIM1_CLK_ENABLE();
+  __HAL_RCC_TIM13_CLK_ENABLE();
+  /* Logical wheels use physical sockets 4, 2, 3. Separate PWM timers avoid
+   * resetting another motor's PWM phase when committing a direction change. */
+  motor_timer(&board_motor_timers[0], TIM3, board_motor_channels[0]);
+  motor_timer(&board_motor_timers[1], TIM2, board_motor_channels[1]);
+  motor_timer(&board_motor_timers[2], TIM13, board_motor_channels[2]);
+  gpio(GPIOB, GPIO_PIN_1, GPIO_MODE_AF_PP, GPIO_PULLDOWN, GPIO_AF2_TIM3);
   gpio(GPIOA, GPIO_PIN_5, GPIO_MODE_AF_PP, GPIO_PULLDOWN, GPIO_AF1_TIM2);
-  gpio(GPIOA, GPIO_PIN_6, GPIO_MODE_AF_PP, GPIO_PULLDOWN, GPIO_AF2_TIM3);
-  gpio(GPIOB, GPIO_PIN_14 | GPIO_PIN_15, GPIO_MODE_AF_PP, GPIO_PULLUP, GPIO_AF9_TIM12);
+  gpio(GPIOA, GPIO_PIN_6, GPIO_MODE_AF_PP, GPIO_PULLDOWN, GPIO_AF9_TIM13);
+  gpio(GPIOA, GPIO_PIN_8 | GPIO_PIN_9, GPIO_MODE_AF_PP, GPIO_PULLUP, GPIO_AF1_TIM1);
+  gpio(GPIOB, GPIO_PIN_14 | GPIO_PIN_15, GPIO_MODE_INPUT, GPIO_PULLUP, 0U);
   gpio(GPIOC, GPIO_PIN_6 | GPIO_PIN_7, GPIO_MODE_AF_PP, GPIO_PULLUP, GPIO_AF3_TIM8);
-  encoder_timer(&htim12, TIM12);
+  encoder_timer(&htim1, TIM1);
   encoder_timer(&htim8, TIM8);
   /* TIM8 CH3/CH4 cannot be another independent quadrature encoder. */
   gpio(GPIOC, GPIO_PIN_8 | GPIO_PIN_9, GPIO_MODE_IT_RISING_FALLING, GPIO_PULLUP, 0U);
@@ -211,8 +214,9 @@ void Error_Handler(void)
   /* Initialization failure, same fatal path as the original board. */
   __disable_irq();
   GPIOA->BSRR = (GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_3 | GPIO_PIN_4 | GPIO_PIN_7) << 16U;
-  GPIOC->BSRR = (GPIO_PIN_4 | F405_SERVO_PINS) << 16U;
-  TIM2->CCER = TIM3->CCER = TIM5->CCER = 0U;
+  GPIOB->BSRR = GPIO_PIN_0 << 16U;
+  GPIOC->BSRR = (GPIO_PIN_4 | GPIO_PIN_5 | F405_SERVO_PINS) << 16U;
+  TIM2->CCER = TIM3->CCER = TIM13->CCER = 0U;
   while (1) {}
 #endif
 }

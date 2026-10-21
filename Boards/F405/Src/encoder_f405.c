@@ -1,7 +1,7 @@
 #include "encoder.h"
 #include "main.h"
 
-static TIM_HandleTypeDef *const hardware[2] = {&htim12, &htim8};
+static TIM_HandleTypeDef *const hardware[2] = {&htim1, &htim8};
 static uint16_t previous_hw[2];
 static volatile uint32_t third_count, invalid_transitions;
 static uint32_t previous_third;

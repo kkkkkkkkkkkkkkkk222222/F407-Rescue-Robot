@@ -19,8 +19,9 @@ extern UART_HandleTypeDef huart3; /* UART4: PC10 TX, PC11 RX, RDK. */
 extern DMA_HandleTypeDef hdma_usart3_rx; /* UART4 RX: DMA1 Stream2 Channel4. */
 extern TIM_HandleTypeDef htim6;
 extern TIM_HandleTypeDef htim8;
-extern TIM_HandleTypeDef htim12;
+extern TIM_HandleTypeDef htim1;
 extern TIM_HandleTypeDef board_motor_timers[3];
+extern const uint32_t board_motor_channels[3];
 
 void BoardF405_MotorStart(void);
 void BoardF405_MotorWrite(uint8_t id, int16_t pwm, bool brake);

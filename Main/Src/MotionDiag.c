@@ -192,12 +192,12 @@ void MotionDiag_PrintPrevious(void (*send)(const char *))
 static void emergency_outputs_off(void)
 {
 #if APP_BOARD_F405_ROBO
-  /* The F405 board uses TB6612 PWM PA0/PA5/PA6 and GPIO directions, not GPIOE. */
+  /* F405 TB6612 PWM: PB1/PA5/PA6; bypass timer alternate functions. */
   RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN | RCC_AHB1ENR_GPIOBEN | RCC_AHB1ENR_GPIOCEN;
   __DSB();
   GPIOA->BSRR = 0x00FF0000UL;
   GPIOB->BSRR = (GPIO_PIN_0 | GPIO_PIN_1) << 16U;
-  GPIOC->BSRR = (GPIO_PIN_4 | F405_SERVO_PINS) << 16U;
+  GPIOC->BSRR = (GPIO_PIN_4 | GPIO_PIN_5 | F405_SERVO_PINS) << 16U;
   GPIOA->MODER = (GPIOA->MODER & ~0x0000FFFFUL) | 0x00005555UL;
   GPIOB->MODER = (GPIOB->MODER & ~0x0000000FUL) | 0x00000005UL;
 #else
