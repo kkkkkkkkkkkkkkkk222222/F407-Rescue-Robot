@@ -199,9 +199,13 @@
 /* Coarse field localization and start-zone-4 demonstration. */
 #define APP_LOCATION_FIELD_HALF_MM       1500.0f
 #define APP_LOCATION_START_CENTER_MM     1350.0f
-/* Installed IMU Z yaw is negative for a positive (counter-clockwise) field
- * heading change, so localization must invert the measured yaw increment. */
+/* F405 UART gyro was physically verified: clockwise decreases yaw.
+ * Preserve the older F407 installation's field mapping. */
+#if APP_BOARD_F405_ROBO
+#define APP_LOCATION_IMU_YAW_SIGN        1.0f
+#else
 #define APP_LOCATION_IMU_YAW_SIGN       -1.0f
+#endif
 #define APP_LOCATION_MAX_YAW_STEP_MDEG   30000LL
 #define APP_LOCATION_DEMO_START_ZONE     4U
 #define APP_LOCATION_DEMO_SPEED_MM_S     750.0f
@@ -279,9 +283,13 @@
 #define APP_MOTOR_HEADING_KD              0.0f
 #define APP_MOTOR_HEADING_LIMIT_MM_S      150.0f
 #define APP_MOTOR_HEADING_INTEGRAL_LIMIT  1500.0f
-/* Measured: positive wheel yaw increases raw IMU yaw. With reference-current
- * error, positive PID polarity is required for negative feedback. */
+/* F405 WIRING=423: positive wheel yaw decreases UART gyro yaw (TURN log).
+ * This sign maps BOTH feedback and heading-hold output into wheel-yaw space. */
+#if APP_BOARD_F405_ROBO
+#define APP_MOTOR_HEADING_OUTPUT_SIGN    -1.0f
+#else
 #define APP_MOTOR_HEADING_OUTPUT_SIGN     1.0f
+#endif
 /* Location/teleop yaw is positive counter-clockwise; wheel yaw follows raw
  * IMU polarity. Convert at mode boundaries, not again inside the mixer. */
 #define APP_OMNI_FIELD_YAW_TO_DRIVE_SIGN \
