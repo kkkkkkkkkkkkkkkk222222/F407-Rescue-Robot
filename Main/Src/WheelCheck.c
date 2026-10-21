@@ -402,7 +402,12 @@ static void wheel_report_version(void)
 {
   char text[320];
   (void)snprintf(text, sizeof(text),
-      "MOTIONDEBUG SERIAL_V3 RX_GUARD=1 DIAG=1 TURN_PROFILE=2 UART_FIX=1 CAL=1 MODE=%u FORWARD_SIGN=%d HEADING_SIGN=%d "
+#if APP_BOARD_F405_ROBO
+      "NORMALDEBUG BOARD=F405_ROBO SERVICE=MOTIONDEBUG "
+#else
+      "MOTIONDEBUG "
+#endif
+      "SERIAL_V3 RX_GUARD=1 DIAG=1 TURN_PROFILE=2 UART_FIX=1 CAL=1 MODE=%u FORWARD_SIGN=%d HEADING_SIGN=%d "
       "HOLD_P_X100=%ld HOLD_I_X10000=%ld STEER_P_X1000=%ld STEER_D_X10000=%ld BUILT="
       __DATE__ " " __TIME__ "\r\n", (unsigned int)APP_ACTIVE_MODE,
       APP_OMNI_FORWARD_SIGN, (int)APP_MOTOR_HEADING_OUTPUT_SIGN,
@@ -688,7 +693,12 @@ static void wheel_execute(void)
     wheel_send(text);
     const UartLinkStatus link = Uart_GetLinkStatus();
     (void)snprintf(text, sizeof(text),
-        "UART3 RX_ERRORS=%lu LAST_RX_ERROR=0x%08lX RX_RESTARTS=%lu TX_DROPS=%lu TX_LEFT=%u TX_SIZE=%u RX_ACTIVE=%u RECOVERY=%u\r\n",
+#if APP_BOARD_F405_ROBO
+        "UART4 "
+#else
+        "UART3 "
+#endif
+        "RX_ERRORS=%lu LAST_RX_ERROR=0x%08lX RX_RESTARTS=%lu TX_DROPS=%lu TX_LEFT=%u TX_SIZE=%u RX_ACTIVE=%u RECOVERY=%u\r\n",
         (unsigned long)link.rx_errors, (unsigned long)link.last_rx_error,
         (unsigned long)link.rx_restarts, (unsigned long)link.tx_dropped,
         link.tx_remaining, link.tx_size, link.rx_active, link.rx_pending);
@@ -739,7 +749,12 @@ static void wheel_execute(void)
     wheel_send(text);
 #if APP_IMU_USE_UART
     (void)snprintf(text, sizeof(text),
-        "IMU_UART USART=2 TX=PD5 RX=PD6 BAUD=%lu SIGN=%d RX_BYTES=%lu "
+#if APP_BOARD_F405_ROBO
+        "IMU_UART USART=5 TX=PC12 RX=PD2 "
+#else
+        "IMU_UART USART=2 TX=PD5 RX=PD6 "
+#endif
+        "BAUD=%lu SIGN=%d RX_BYTES=%lu "
         "CRC_ERRORS=%lu RX_ERRORS=%lu RATE_FRAMES=%lu ANGLE_AGE_MS=%lu "
         "RATE_AGE_MS=%lu PERIOD_MS=%lu CFG=%u CFG_ERRORS=%lu\r\n",
         (unsigned long)APP_IMU_UART_BAUD, APP_IMU_UART_YAW_SIGN,

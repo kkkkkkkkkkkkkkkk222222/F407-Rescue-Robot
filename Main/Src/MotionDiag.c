@@ -134,11 +134,22 @@ static void print_record(void (*send)(const char *), const char *prefix, const M
       (unsigned long)r->imu.integration_gap_count, (unsigned long)r->imu.error_count,
       (long)r->imu.gyro_bias_mdps[2]);
   send(text);
+#if APP_IMU_USE_UART
+  (void)snprintf(text, sizeof(text),
+      "%s IMU_UART LINK=%s RX_BYTES=%lu CRC_ERRORS=%lu RX_ERRORS=%lu "
+      "ANGLE_AGE_MS=%lu RATE_AGE_MS=%lu PERIOD_MS=%lu CFG=%u CFG_ERRORS=%lu\r\n",
+      prefix, APP_IMU_UART_LABEL, (unsigned long)r->imu.uart_rx_bytes,
+      (unsigned long)r->imu.uart_checksum_errors, (unsigned long)r->imu.uart_rx_errors,
+      (unsigned long)r->imu.uart_angle_age_ms, (unsigned long)r->imu.uart_rate_age_ms,
+      (unsigned long)r->imu.uart_output_period_ms, r->imu.uart_config_state,
+      (unsigned long)r->imu.uart_config_errors);
+#else
   (void)snprintf(text, sizeof(text),
       "%s IMU_FIFO PEAK=%u OVERRUN=%lu FAULTS=%lu MAX_POLL_MS=%lu TEMP_MC=%ld\r\n",
       prefix, (unsigned int)r->imu.fifo_peak_words,
       (unsigned long)r->imu.fifo_overrun_count, (unsigned long)r->imu.fifo_fault_count,
       (unsigned long)r->imu.max_poll_interval_ms, (long)r->imu.temperature_mdeg_c);
+#endif
   send(text);
   (void)snprintf(text, sizeof(text), "%s IMU_RECOVERY ACTIVE=%u UNCERTAIN=%u COUNT=%lu\r\n",
       prefix, r->imu.recovering, r->imu.heading_uncertain, (unsigned long)r->imu.recovery_count);
@@ -180,6 +191,16 @@ void MotionDiag_PrintPrevious(void (*send)(const char *))
 
 static void emergency_outputs_off(void)
 {
+#if APP_BOARD_F405_ROBO
+  /* The F405 board uses TB6612 PWM PA0/PA5/PA6 and GPIO directions, not GPIOE. */
+  RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN | RCC_AHB1ENR_GPIOBEN | RCC_AHB1ENR_GPIOCEN;
+  __DSB();
+  GPIOA->BSRR = 0x00FF0000UL;
+  GPIOB->BSRR = (GPIO_PIN_0 | GPIO_PIN_1) << 16U;
+  GPIOC->BSRR = (GPIO_PIN_4 | F405_SERVO_PINS) << 16U;
+  GPIOA->MODER = (GPIOA->MODER & ~0x0000FFFFUL) | 0x00005555UL;
+  GPIOB->MODER = (GPIOB->MODER & ~0x0000000FUL) | 0x00000005UL;
+#else
   /* Bypass HAL, locks and floating-point state even if the interrupted stack
    * is corrupt. Force all six AT8236 inputs low as GPIO outputs. */
   RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN | RCC_AHB1ENR_GPIOBEN | RCC_AHB1ENR_GPIOEEN;
@@ -190,6 +211,7 @@ static void emergency_outputs_off(void)
   GPIOA->MODER = (GPIOA->MODER & ~0x000000F0UL) | 0x00000050UL;
   GPIOB->MODER = (GPIOB->MODER & ~0x00F00000UL) | 0x00500000UL;
   GPIOE->MODER = (GPIOE->MODER & ~0x00003C00UL) | 0x00001400UL;
+#endif
 }
 
 static void fault_save(uint32_t *stack, uint32_t exc_return, uint32_t exception,

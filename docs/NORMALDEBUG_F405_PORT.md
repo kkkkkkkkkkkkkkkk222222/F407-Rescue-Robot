@@ -16,10 +16,21 @@ cmake --build --preset NormalDebug
 OpenOCD `dap.cfg` 的通用 `stm32f4x.cfg` 也支持该系列。不要使用旧 Ozone 工程中
 固定的 STM32F407VE 和 `build/Debug/WWW.elf`，也不要把 NormalDebug 烧到旧 F407 板。
 
-NormalDebug 是新的应用模式 5 + 独立 `F405_ROBO` 板级构建，直接执行现有 `Task.c`。
-它**不是 MotionDebug 的 MOVE/TURN 测试模式**。抓取、曲线分离、累计两帧审核、
-橙色物块复核、运输前审核、投送、返中及上位机协议均复用 NormalRun。
-后续修改共享任务会同步生效，不维护任务代码的第二份副本。
+NormalDebug 是应用模式 5 + 独立 `F405_ROBO` 板级构建。
+**现默认运行与旧MotionDebug共享的 `Debug.c` / `WheelCheck.c`，不执行比赛Task，
+不会因收到比赛配置启动搜寻/抓取，也不自动启动舵机。** 两个串口可以分别用于程序器
+文本测试和上位机运动测试；上位机0x19命令、0x1A状态、0x15原始编码器累计计数均不变。
+
+先前移植的F405比赛入口保留为编译开关：
+
+```powershell
+cmake --preset NormalDebug -DAPP_NORMALDEBUG_MOTION_TEST=OFF
+cmake --build --preset NormalDebug
+```
+
+此时才直接执行共享 `Task.c` 的抓取、分离、审核、投送、返中流程。
+再次配置 `cmake --preset NormalDebug` 会恢复预设的运动测试ON，重新编译并烧录后才生效。
+不做运行中热切换，避免测试指令误启动比赛程序。
 
 保留 MG310 每转 1061.268 计数、70mm 轮径、当前 PID/运动极性、60%驱动占空比上限、
 关闭堵转联停的配置；本次不加运行故障锁存。三轮仍为 M1 右前、M2 左前、M3 后轮。
@@ -103,8 +114,34 @@ USART1_TX用PA9，而不是会给板载IMU产生I2C时钟的PB6；USART1_RX用PB
 
 ## 无LCD检查方法
 
-上电串口显示 `NORMALDEBUG BOARD=F405_ROBO MCU=STM32F405RG MODE=5 LCD=0`。
-每条命令需要回车/换行：
+默认运动测试配置上电显示 `NORMALDEBUG BOARD=F405_ROBO SERVICE=MOTIONDEBUG`、
+`MODE=5` 及 `NO AUTOMATIC MOTION`。串口115200 8N1，每条命令需要回车/换行。
+命令解析、接收恢复、异步发送、DIAG和FINAL回执复用旧MotionDebug：
+
+| 命令 | 含义 |
+| --- | --- |
+| `PING` / `STAT` | 串口健康、当前运动状态及三轮目标/实际速度 |
+| `IMU` / `GYRO` / `ENC` / `MOTOR` | UART5陀螺仪、累计角度及三轮反馈 |
+| `MOVE 200 150` | 前进200mm，目标速度150mm/s |
+| `MOVE -200 150` | 后退200mm，目标速度150mm/s |
+| `TURN 60 30` / `TURN -60 30` | 正/负向60度，目标角速度30度/秒 |
+| `TURN 180 60` / `TURN 360 60` | 单次相对旋转180/360度 |
+| `CIRCLES 3 60` | 固定参考连续三圈，圈间静止等待 |
+| `BODY 200 100 150` | 车体坐标前200mm、左100mm的定距测试 |
+| `FIELD 200 0 150` | 场地坐标方向的位移测试，非比赛导航 |
+| `WHEELS` | 架空后依次M1右前、M2左前、M3后轮，25%各400ms |
+| `CAL 1 100 500` | 架空后M1用正10%测试500ms；沿用原CAL租约上限 |
+| `DIAG` / `TRACE 0` / `TRACE 1` / `CRASH` | 控制/循环/串口陀螺仪诊断、跟踪及异常记录 |
+| `STOP` / `HOLD` / `RESET` | 停车取消、保持、静止重设里程计参考 |
+
+先架空验证WHEELS与反馈极性，再落地短距离测试。每条运动命令等 `FINAL` 再发送下一条。
+STOP可以随时取消；参数范围和超时仍与旧MotionDebug一致。测试模式下不支持
+`DEBUG` / `S` / `RUN`，不会为了运动调试将全部舵机突然驱动到90度。
+
+`IMU_UART`显示UART5 PC12/PD2，PING中的上位机链路显示UART4，而不是旧板UART3。
+CPU异常记录也使用F405实际电机引脚，不访问旧GPIOE驱动引脚。
+
+如果编译开关设为OFF恢复比赛入口，仍使用以下原维护命令：
 
 ```text
 PING
@@ -117,9 +154,9 @@ S 3 105
 RUN
 ```
 
-PING不运动；STAT/IMU/ENC/MOTOR均返回任务、陀螺仪、编码器与电机快照，不改变任务。
+此OFF配置下，PING不运动；STAT/IMU/ENC/MOTOR返回任务和传感器快照。
 DEBUG停车并暂停自动任务，随后S 3 105设置摄像头105度；RUN沿用原行为，复位主控，
-需要上位机重新配置。没有新增自动运动、WHEELS、MOVE或TURN指令。
+需要上位机重新配置。这些舵机命令仅适用于OFF比赛配置，不适用于默认运动测试。
 
 ## 尚需硬件核对
 

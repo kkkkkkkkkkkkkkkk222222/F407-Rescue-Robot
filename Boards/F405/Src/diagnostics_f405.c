@@ -17,9 +17,14 @@ void BoardF405_ReportVersion(void)
 {
   send("NORMALDEBUG BOARD=F405_ROBO MCU=STM32F405RG MODE=5 LCD=0\r\n"
        "RDK=UART4 PC10/PC11 GYRO=UART5 PC12/PD2 CONSOLE=USART1 PA9/PB7 115200 8N1\r\n"
+#if APP_ENABLE_MOTION_DEBUG_TASK
+       "SERVICE=MOTIONDEBUG SEND HELP; NO AUTOMATIC MOTION\r\n");
+#else
        "SEND HELP; AUTOMATIC TASK REQUIRES UPPER CONFIG\r\n");
+#endif
 }
 
+#if !APP_ENABLE_MOTION_DEBUG_TASK
 void BoardF405_Report(void)
 {
   const IMUData imu = IMU_GetData();
@@ -56,3 +61,4 @@ void BoardF405_Report(void)
     send(text);
   }
 }
+#endif

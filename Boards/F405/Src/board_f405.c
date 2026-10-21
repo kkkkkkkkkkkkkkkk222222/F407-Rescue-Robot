@@ -1,5 +1,6 @@
 #include "main.h"
 #include "Robot.h"
+#include "MotionDiag.h"
 
 #if !APP_IMU_USE_UART
 #error "NormalDebug uses the external UART gyro, not the old SPI IMU660RC"
@@ -206,10 +207,14 @@ int main(void)
 
 void Error_Handler(void)
 {
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  MotionDiag_Error((uint32_t)__builtin_return_address(0));
+#else
   /* Initialization failure, same fatal path as the original board. */
   __disable_irq();
   GPIOA->BSRR = (GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_3 | GPIO_PIN_4 | GPIO_PIN_7) << 16U;
   GPIOC->BSRR = (GPIO_PIN_4 | F405_SERVO_PINS) << 16U;
   TIM2->CCER = TIM3->CCER = TIM5->CCER = 0U;
   while (1) {}
+#endif
 }

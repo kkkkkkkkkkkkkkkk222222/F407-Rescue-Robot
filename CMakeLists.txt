@@ -25,6 +25,7 @@ set(CMAKE_PROJECT_NAME WWW)
 set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
 set(APP_BOARD "F407_LEGACY" CACHE STRING "Board: F407_LEGACY or F405_ROBO")
 set_property(CACHE APP_BOARD PROPERTY STRINGS F407_LEGACY F405_ROBO)
+option(APP_NORMALDEBUG_MOTION_TEST "NormalDebug runs the MotionDebug test task" ON)
 if(NOT APP_BOARD STREQUAL "F407_LEGACY" AND NOT APP_BOARD STREQUAL "F405_ROBO")
     message(FATAL_ERROR "Unsupported APP_BOARD=${APP_BOARD}")
 endif()
@@ -93,6 +94,10 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
 set(APP_ACTIVE_MODE_OVERRIDE "" CACHE STRING "Firmware mode override")
 if(NOT APP_ACTIVE_MODE_OVERRIDE STREQUAL "")
     target_compile_definitions(WWW PRIVATE APP_ACTIVE_MODE=${APP_ACTIVE_MODE_OVERRIDE})
+endif()
+if(APP_BOARD STREQUAL "F405_ROBO")
+    target_compile_definitions(WWW PRIVATE
+        APP_NORMALDEBUG_MOTION_TEST=$<BOOL:${APP_NORMALDEBUG_MOTION_TEST}>)
 endif()
 
 # Remove wrong libob.a library dependency when using cpp files

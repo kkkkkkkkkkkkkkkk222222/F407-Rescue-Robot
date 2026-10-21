@@ -1,12 +1,23 @@
 #include "main.h"
 #include "Robot.h"
 #include "imu.h"
+#include "MotionDiag.h"
 
+#if APP_ENABLE_MOTION_DEBUG_TASK
+#define MOTION_FAULT_HANDLER(name) \
+  __attribute__((naked)) void name(void) { __asm volatile("b MotionDiag_FaultEntry"); }
+MOTION_FAULT_HANDLER(NMI_Handler)
+MOTION_FAULT_HANDLER(HardFault_Handler)
+MOTION_FAULT_HANDLER(MemManage_Handler)
+MOTION_FAULT_HANDLER(BusFault_Handler)
+MOTION_FAULT_HANDLER(UsageFault_Handler)
+#else
 void NMI_Handler(void) { while (1) {} }
 void HardFault_Handler(void) { Error_Handler(); }
 void MemManage_Handler(void) { Error_Handler(); }
 void BusFault_Handler(void) { Error_Handler(); }
 void UsageFault_Handler(void) { Error_Handler(); }
+#endif
 void SVC_Handler(void) {}
 void DebugMon_Handler(void) {}
 void PendSV_Handler(void) { Robot_RunDeferredTask(); }

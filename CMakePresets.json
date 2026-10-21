@@ -45,6 +45,7 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
                 "APP_BOARD": "F405_ROBO",
+                "APP_NORMALDEBUG_MOTION_TEST": "ON",
                 "APP_ACTIVE_MODE_OVERRIDE": "APP_MODE_NORMAL_DEBUG"
             }
         },

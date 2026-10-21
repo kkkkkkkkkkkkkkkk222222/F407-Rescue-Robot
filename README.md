@@ -1,6 +1,6 @@
 # 快速切换：正常跑图 / UART运动调试 / 手柄遥控
 
-2026-10-21：新增 **NormalDebug** 配置，专用于工训ROBO **STM32F405RGT6** 新板，运行与NormalRun共享的救援Task，保留单轴串口陀螺仪、不接LCD。烧录 `build/NormalDebug/WWW.elf`；电机/舵机/串口接线与待核对问题见[新板移植说明](docs/NORMALDEBUG_F405_PORT.md)。旧NormalRun/MotionDebug/Gamepad仍为F407，不能混烧。
+2026-10-21：**NormalDebug** 专用于工训ROBO **STM32F405RGT6** 新板，现默认运行移植后的MotionDebug运动测试，支持程序器串口及上位机0x19/0x1A调试，不运行比赛任务、不自动启动舵机。保留单轴串口陀螺仪、不接LCD。烧录 `build/NormalDebug/WWW.elf`；设 `APP_NORMALDEBUG_MOTION_TEST=OFF` 可恢复共享NormalRun任务。接线和使用见[新板移植说明](docs/NORMALDEBUG_F405_PORT.md)。旧NormalRun/MotionDebug/Gamepad仍为F407，不能混烧。
 
 2026-10-21：默认陀螺仪已切换为单轴串口模块，使用空闲 USART2 的 PD5 TX / PD6 RX（115200 8N1），不是 PCB 原有“串口2”接口。三个运行模式共用新驱动，旧 IMU660RC SPI 驱动保留为可选备份。新接线、输出速率及首次检查见[单轴串口陀螺仪移植](docs/UART_SINGLE_AXIS_IMU.md)；下文 IMU660RC 的硬件/积分说明仅适用于切回旧驱动时。
 
