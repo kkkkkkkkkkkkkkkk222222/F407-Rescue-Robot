@@ -9,7 +9,8 @@ typedef enum {
   IMU_INIT_RESET_ERROR,
   IMU_INIT_CONFIG_ERROR,
   IMU_INIT_CALIBRATION_ERROR,
-  IMU_INIT_OK
+  IMU_INIT_OK,
+  IMU_INIT_RX_TIMEOUT
 } IMUInitResult;
 
 typedef struct {
@@ -36,6 +37,16 @@ typedef struct {
   bool recovering;
   bool heading_uncertain;
   uint32_t recovery_count;
+  /* UART backend only; legacy SPI diagnostics above stay source compatible. */
+  uint32_t uart_rx_bytes;
+  uint32_t uart_checksum_errors;
+  uint32_t uart_rx_errors;
+  uint32_t uart_rate_frames;
+  uint32_t uart_angle_age_ms;
+  uint32_t uart_rate_age_ms;
+  uint32_t uart_config_errors;
+  uint32_t uart_output_period_ms;
+  uint8_t uart_config_state;
 } IMUData;
 
 bool IMU_Init(void);
@@ -44,5 +55,7 @@ void IMU_ZeroYaw(void);
 /* Only after an independent stationary heading reference has been accepted. */
 void IMU_ConfirmHeadingReference(void);
 IMUData IMU_GetData(void);
+/* Dedicated USART2 RXNE/error handler; does not share console HAL callbacks. */
+void IMU_UART_IRQHandler(void);
 
 #endif

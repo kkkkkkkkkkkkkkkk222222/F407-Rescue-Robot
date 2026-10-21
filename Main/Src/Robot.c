@@ -89,8 +89,10 @@ static const char *imu_init_result_text(IMUInitResult result)
       return "FAIL: CALIB";
     case IMU_INIT_OK:
       return "READY";
+    case IMU_INIT_RX_TIMEOUT:
+      return "WAIT: UART DATA";
     default:
-      return "FAIL: SPI ID";
+      return "FAIL: IMU ID";
   }
 }
 
@@ -453,12 +455,18 @@ void Robot_Init(void)
     format_hex_byte(device_id_text, imu.device_id);
 
     LCD_FillScreen(LCD_BLACK);
+#if APP_IMU_USE_UART
+    LCD_DrawText(7U, 48U, imu_ready ? "UART GYRO: OK" : "UART GYRO: WAIT",
+                 imu_ready ? LCD_GREEN : LCD_YELLOW, LCD_BLACK);
+    LCD_DrawText(7U, 68U, "USART2 PD5/PD6", LCD_CYAN, LCD_BLACK);
+#else
     LCD_DrawText(imu_ready ? 25U : 19U, 48U,
                  imu_ready ? "IMU660RC: OK" : "IMU660RC: ERROR",
                  imu_ready ? LCD_GREEN : LCD_RED, LCD_BLACK);
     LCD_DrawText(13U, 68U, "WHO_AM_I:", LCD_CYAN, LCD_BLACK);
     LCD_DrawText(79U, 68U, device_id_text,
                  (imu.device_id == 0x70U) ? LCD_GREEN : LCD_RED, LCD_BLACK);
+#endif
     LCD_DrawText(31U, 88U, imu_init_result_text(imu.init_result),
                  imu_ready ? LCD_GREEN : LCD_RED, LCD_BLACK);
     HAL_Delay(imu_ready ? 1000U : 3000U);
@@ -481,6 +489,21 @@ static void robot_sample_imu(void)
     imu_consumed_sequence = released;
     IMU_Update(app_milliseconds);
   }
+#if APP_IMU_USE_UART
+  /* A module powered later must not leave the application disabled forever. */
+  const IMUData imu = IMU_GetData();
+  if (!application_ready && imu.ready && !imu.recovering && !imu.heading_uncertain) {
+#if !APP_ENABLE_MOTION_DEBUG_TASK
+    Servo_Init();
+#endif
+#if APP_ENABLE_GAMEPAD_TASK
+    Gamepad_Init(app_milliseconds);
+#elif APP_ENABLE_CENTERING_TASK
+    CenteringTask_Init(app_milliseconds);
+#endif
+    application_ready = true;
+  }
+#endif
 }
 
 void Robot_Process(void)

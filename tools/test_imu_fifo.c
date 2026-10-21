@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#define APP_IMU_USE_UART 0
 #include "../Main/Src/imu.c"
 
 SPI_HandleTypeDef hspi3;

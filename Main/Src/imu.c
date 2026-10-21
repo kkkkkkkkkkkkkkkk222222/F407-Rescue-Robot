@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "app_config.h"
+#if !APP_IMU_USE_UART
 #include "encoder.h"
 #include "main.h"
 #include "motor.h"
@@ -710,3 +711,4 @@ IMUData IMU_GetData(void)
   imu_leave_critical(primask);
   return snapshot;
 }
+#endif /* !APP_IMU_USE_UART */

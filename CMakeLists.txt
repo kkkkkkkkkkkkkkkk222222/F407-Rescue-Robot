@@ -52,6 +52,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Main/Src/Robot.c
     Main/Src/encoder.c
     Main/Src/imu.c
+    Main/Src/imu_uart.c
     Main/Src/Lcd.c
     Main/Src/Location.c
     Main/Src/mechanism.c

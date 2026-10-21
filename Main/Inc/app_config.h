@@ -285,6 +285,23 @@
 
 /* IMU polls at 1 kHz; motor feedback runs at 10 ms; task remains at 20 ms. */
 #define APP_IMU_UPDATE_PERIOD_MS         1U
+/* UART single-axis module on USART2 PD5(TX)/PD6(RX). Set 0 for IMU660RC SPI. */
+#ifndef APP_IMU_USE_UART
+#define APP_IMU_USE_UART                 1
+#endif
+#ifndef APP_IMU_UART_YAW_SIGN
+#define APP_IMU_UART_YAW_SIGN            1
+#endif
+#if APP_IMU_UART_YAW_SIGN != 1 && APP_IMU_UART_YAW_SIGN != -1
+#error "UART IMU yaw sign must be +1 or -1 (applied to angle AND rate)"
+#endif
+#define APP_IMU_UART_BAUD                115200U
+#define APP_IMU_UART_START_TIMEOUT_MS    2000U
+#define APP_IMU_UART_STALE_MS            150U
+/* Below half a turn even at 500 dps (module rated range: +/-400 dps). */
+#define APP_IMU_UART_UNWRAP_MAX_GAP_MS   300U
+#define APP_IMU_UART_RECOVERY_SAMPLES    3U
+#define APP_IMU_UART_AUTO_RATE           1
 /* Identity until measured against a known external rotation, not TURN output. */
 #define APP_IMU_GYRO_Z_SCALE_PPM         1000000L
 #if APP_IMU_GYRO_Z_SCALE_PPM < 900000L || APP_IMU_GYRO_Z_SCALE_PPM > 1100000L

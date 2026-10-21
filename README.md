@@ -1,5 +1,7 @@
 # 快速切换：正常跑图 / UART运动调试 / 手柄遥控
 
+2026-10-21：默认陀螺仪已切换为单轴串口模块，使用空闲 USART2 的 PD5 TX / PD6 RX（115200 8N1），不是 PCB 原有“串口2”接口。三个运行模式共用新驱动，旧 IMU660RC SPI 驱动保留为可选备份。新接线、输出速率及首次检查见[单轴串口陀螺仪移植](docs/UART_SINGLE_AXIS_IMU.md)；下文 IMU660RC 的硬件/积分说明仅适用于切回旧驱动时。
+
 新增`Gamepad` CMake配置用于飞智冰原狼4遥控扫图和机构安装调试：它执行`Main/Src/Gamepad.c`，不执行自动任务`Task.c`。选择`Gamepad`编译并烧录`build/Gamepad/WWW.elf`；切回`NormalRun`即可恢复完整自动流程。手柄通过2.4 GHz USB接收器连接RDK X5，由`tools/flydigi_vader4_remote.py`读取并经USART3发送，完整接线、按键映射、安全保护和扫图进程接法见[手柄遥控交接](docs/gamepad_teleop_handoff.md)。
 
 ## 普通 Debug - Debug

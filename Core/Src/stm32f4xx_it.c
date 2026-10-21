@@ -24,6 +24,7 @@
 /* USER CODE BEGIN Includes */
 #include "Robot.h"
 #include "MotionDiag.h"
+#include "imu.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -255,5 +256,11 @@ void USART3_IRQHandler(void)
 }
 
 /* USER CODE BEGIN 1 */
+#if APP_IMU_USE_UART
+void USART2_IRQHandler(void)
+{
+  IMU_UART_IRQHandler();
+}
+#endif
 
 /* USER CODE END 1 */
