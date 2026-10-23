@@ -771,7 +771,13 @@ static bool motor_turn_update_boost(const IMUData *imu, bool fresh, bool wheels_
     if (travel >= APP_DEBUG_TURN_BOOST_TRAVEL_MDEG ||
         travel <= -APP_DEBUG_TURN_BOOST_TRAVEL_MDEG) {
       motor_turn_end_boost(2U);
-    } else if (!wheels_still || motor_abs_float(rate) >= 2.0f) {
+    } else if (angle_turn.boost_ms >= APP_DEBUG_TURN_BOOST_MIN_MS &&
+#if APP_BOARD_F405_ROBO
+               /* One encoder edge is not proof the whole chassis broke away. */
+               motor_abs_float(rate) >= APP_DEBUG_TURN_MIN_RATE_DPS * 0.75f) {
+#else
+               (!wheels_still || motor_abs_float(rate) >= 2.0f)) {
+#endif
       motor_turn_end_boost(1U);
     } else if (angle_turn.boost_ms >= APP_DEBUG_TURN_BOOST_MAX_MS) {
       motor_turn_end_boost(3U);
