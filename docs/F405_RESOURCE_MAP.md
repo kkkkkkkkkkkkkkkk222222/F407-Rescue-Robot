@@ -77,6 +77,7 @@ RDK 的软件句柄仍叫 huart3/hdma_usart3_rx，实际外设是 UART4。
 | TIM6 | PSC83/ARR999，1ms节拍；电机10ms，任务20ms | 4 |
 | USART1 / UART4 | 文本调试 / RDK | 7 |
 | DMA1 Stream2 Channel4 | UART4 RX，循环字节缓冲 | 7 |
+| DMA2 Stream2 Channel4 | USART1 调试 RX，512字节循环DMA + IDLE/HT/TC事件；仅运动测试配置 | 7 |
 | PendSV / SysTick | 延后任务 / HAL时基 | 15 |
 
 TIM5/TIM12 不分配。TIM13 虽与 TIM8 更新共用向量，但此处二者均不启用该中断。
@@ -195,3 +196,22 @@ Motor_MoveDistance 运行期间的逻辑 W3 后轮零速死区改为0。
 第一次发送转角时调试串口出现ERR RX，未进入有效测试；清理接收后重发成功。
 串口共享I2C电气风险仍未解决，不将本次成功作为通信完全可靠的证明。
 日志：本地 build/turn90_boost8_retry_20261023.log。测试后STOP，升降85度、双爪闭合、摄像头90度。
+
+## 2026-10-23 调试串口 ORE 修复
+
+实机PING确认 LAST_RX_ERROR=0x00000008，即HAL_UART_ERROR_ORE，软件环形缓冲
+OVERFLOWS=0、REARM_FAIL=0。明确是USART接收寄存器未及时取走字节，不是换行问题；
+尚未测出造成延迟的具体ISR/临界区。115200 8N1字节间隔约86.8us，原方案逐字节IT重装。
+
+仅F405运动测试的USART1改为DMA2 Stream2 Channel4循环接收，DMA缓冲512字节，
+解析环形缓冲1024字节。IDLE/半满/满事件从实时NDTR获取进度，避免延迟事件的旧Size
+导致重复投递。正常接收不再每字节重装、不停止DMA；真实UART错误/缓冲溢出仍丢弃
+受损行、停车并恢复接收，不静默放行损坏指令，也不自动重试运动。
+启动/STAT增加 CONSOLE_RX=DMA_IDLE 标识。旧F407接收方式、F405比赛OFF入口、
+串口引脚/波特率、运动参数不变。PB6/PB7与板载I2C共线的电气隐患仍保留，不因ORE修复消失。
+
+NormalDebug和旧MotionDebug构建通过，已烧录验证。静止实机测试：20批、每批12条ENC，
+240/240回执，无重复或缺失；COM18关闭重开30次，首条PING 30/30成功。
+最后PING：RX_BYTES=1425、LINES=276、RX_ERRORS=0、OVERFLOWS=0、REARM_FAIL=0、
+TX_TIMEOUTS=0、TX_DROPS=0。陀螺仪1kHz及四路舵机保持脉冲同时运行，未驱动底盘。
+这些测试覆盖DMA缓冲回绕和首包收发，不保证所有电磁环境或长时间运动下零错误。

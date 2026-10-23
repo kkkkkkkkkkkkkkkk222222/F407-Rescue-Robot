@@ -20,16 +20,23 @@
 
 extern UART_HandleTypeDef huart1;
 
+#if APP_BOARD_F405_ROBO
+#define RX_SIZE 1024U
+#define RX_DMA_SIZE 512U
+static uint8_t rx_dma[RX_DMA_SIZE];
+static uint16_t rx_dma_cursor;
+#else
 #define RX_SIZE 128U
+static uint8_t rx_byte;
+#endif
 #define TX_SIZE 4096U
 #define LINE_SIZE 64U
 #define TX_TIMEOUT_MS 250U
 #define LINE_TIMEOUT_MS 1000U
 
-static uint8_t rx_byte;
 static volatile uint8_t rx_ring[RX_SIZE];
-static volatile uint8_t rx_head;
-static volatile uint8_t rx_tail;
+static volatile uint16_t rx_head;
+static volatile uint16_t rx_tail;
 static volatile bool rx_overflow;
 static volatile uint32_t rx_error_pending;
 static volatile bool rx_recovery_pending;
@@ -107,11 +114,44 @@ static void wheel_start_rx(void)
     return;
   }
   if (huart1.RxState == HAL_UART_STATE_READY) {
+#if APP_BOARD_F405_ROBO
+    rx_dma_cursor = 0U;
+    if (HAL_UARTEx_ReceiveToIdle_DMA(&huart1, rx_dma, RX_DMA_SIZE) != HAL_OK) {
+#else
     if (HAL_UART_Receive_IT(&huart1, &rx_byte, 1U) != HAL_OK) {
+#endif
       ++rx_start_failures;
     }
   }
   if (mask == 0U) { __enable_irq(); }
+}
+
+static void wheel_rx_byte(uint8_t value)
+{
+  ++rx_bytes;
+  last_rx_byte_ms = HAL_GetTick();
+  const uint16_t next = (uint16_t)((rx_head + 1U) % RX_SIZE);
+  if (next == rx_tail) { rx_overflow = true; }
+  else { rx_ring[rx_head] = value; rx_head = next; }
+}
+
+void WheelCheck_OnRxEvent(void)
+{
+#if APP_BOARD_F405_ROBO
+  if (rx_recovery_pending || rx_overflow) { return; }
+  if (huart1.ErrorCode != HAL_UART_ERROR_NONE) {
+    WheelCheck_OnUartError(huart1.ErrorCode);
+    return;
+  }
+  /* HT/TC/IDLE can be pending together. Read the live cursor instead of an
+   * older callback Size, so delayed events never duplicate a command. */
+  const uint16_t end = (uint16_t)((RX_DMA_SIZE -
+      __HAL_DMA_GET_COUNTER(huart1.hdmarx)) % RX_DMA_SIZE);
+  while (rx_dma_cursor != end) {
+    wheel_rx_byte(rx_dma[rx_dma_cursor]);
+    rx_dma_cursor = (uint16_t)((rx_dma_cursor + 1U) % RX_DMA_SIZE);
+  }
+#endif
 }
 
 void WheelCheck_OnUartError(uint32_t error)
@@ -120,8 +160,11 @@ void WheelCheck_OnUartError(uint32_t error)
   rx_recovery_pending = true;
   /* AbortReceive alone does not clear F4 SR error flags. Quiesce RX now to
    * avoid an interrupt storm; defer parser reset and rearming to main. */
-  ATOMIC_CLEAR_BIT(huart1.Instance->CR1, USART_CR1_RXNEIE | USART_CR1_PEIE);
+  ATOMIC_CLEAR_BIT(huart1.Instance->CR1, USART_CR1_RXNEIE | USART_CR1_PEIE | USART_CR1_IDLEIE);
   ATOMIC_CLEAR_BIT(huart1.Instance->CR3, USART_CR3_EIE);
+#if APP_BOARD_F405_ROBO
+  ATOMIC_CLEAR_BIT(huart1.Instance->CR3, USART_CR3_DMAR);
+#endif
   __HAL_UART_CLEAR_OREFLAG(&huart1);
 }
 
@@ -416,6 +459,9 @@ static void wheel_report_version(void)
       (long)(APP_STEERING_KP_MM_S * 1000.0f + 0.5f),
       (long)(APP_STEERING_KD_MM * 10000.0f + 0.5f));
   wheel_send(text);
+#if APP_BOARD_F405_ROBO
+  wheel_send("CONSOLE_RX=DMA_IDLE DMA_BYTES=512 RING_BYTES=1024\r\n");
+#endif
   (void)snprintf(text, sizeof(text),
       "DIAG_CFG TRACE=%u PERIOD_MS=250 POST_MS=2000 SPEED_P100=%ld SPEED_I10000=%ld TURN_TIMEOUT_MS=%lu\r\n",
       trace_enabled, (long)(APP_MOTOR_SPEED_KP * 100.0f),
@@ -874,7 +920,7 @@ void WheelCheck_Process(void)
   wheel_start_rx();
   while (rx_tail != rx_head) {
     char value = (char)rx_ring[rx_tail];
-    rx_tail = (uint8_t)((rx_tail + 1U) % RX_SIZE);
+    rx_tail = (uint16_t)((rx_tail + 1U) % RX_SIZE);
     if (value == '\t') {
       value = ' ';
     }
@@ -969,6 +1015,9 @@ void WheelCheck_Process(void)
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *uart)
 {
+#if APP_BOARD_F405_ROBO
+  (void)uart; /* Circular RX uses HAL_UARTEx_RxEventCallback, not byte rearming. */
+#else
   if (uart == &huart1) {
     /* HAL calls RxCplt before its error callback. Rearming here would erase
      * ErrorCode and admit a damaged byte as a valid command character. */
@@ -976,17 +1025,10 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *uart)
       WheelCheck_OnUartError(uart->ErrorCode);
       return;
     }
-    ++rx_bytes;
-    last_rx_byte_ms = HAL_GetTick();
-    const uint8_t next = (uint8_t)((rx_head + 1U) % RX_SIZE);
-    if (next == rx_tail) {
-      rx_overflow = true;
-    } else {
-      rx_ring[rx_head] = rx_byte;
-      rx_head = next;
-    }
+    wheel_rx_byte(rx_byte);
     wheel_start_rx();
   }
+#endif
 }
 
 #endif

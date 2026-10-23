@@ -27,5 +27,6 @@ void USART1_IRQHandler(void) { HAL_UART_IRQHandler(&huart1); }
 void UART4_IRQHandler(void) { HAL_UART_IRQHandler(&huart3); }
 void UART5_IRQHandler(void) { IMU_UART_IRQHandler(); }
 void DMA1_Stream2_IRQHandler(void) { HAL_DMA_IRQHandler(&hdma_usart3_rx); }
+void DMA2_Stream2_IRQHandler(void) { HAL_DMA_IRQHandler(&hdma_console_rx); }
 void EXTI9_5_IRQHandler(void) { BoardF405_EncoderIRQ(); }
 void TIM4_IRQHandler(void) { BoardF405_ServoIRQ(); }

@@ -273,6 +273,12 @@ UartLinkStatus Uart_GetLinkStatus(void)
 
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *uart, uint16_t size)
 {
+#if APP_ENABLE_MOTION_DEBUG_TASK && APP_BOARD_F405_ROBO
+  if (uart == &huart1) {
+    WheelCheck_OnRxEvent();
+    return;
+  }
+#endif
   if (uart == &huart3) {
     (void)Uart_Receive(size);
   }

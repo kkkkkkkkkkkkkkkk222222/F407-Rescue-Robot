@@ -8,6 +8,7 @@
 
 UART_HandleTypeDef huart1, huart3;
 DMA_HandleTypeDef hdma_usart3_rx;
+DMA_HandleTypeDef hdma_console_rx;
 TIM_HandleTypeDef htim6, htim8, htim1;
 TIM_HandleTypeDef board_motor_timers[3];
 const uint32_t board_motor_channels[3] = {TIM_CHANNEL_4, TIM_CHANNEL_1, TIM_CHANNEL_1};
@@ -155,6 +156,23 @@ void HAL_UART_MspInit(UART_HandleTypeDef *uart)
   if (uart->Instance == USART1) {
     __HAL_RCC_USART1_CLK_ENABLE();
     gpio(GPIOB, GPIO_PIN_6 | GPIO_PIN_7, GPIO_MODE_AF_PP, GPIO_PULLUP, GPIO_AF7_USART1);
+#if APP_ENABLE_MOTION_DEBUG_TASK
+    __HAL_RCC_DMA2_CLK_ENABLE();
+    hdma_console_rx.Instance = DMA2_Stream2;
+    hdma_console_rx.Init.Channel = DMA_CHANNEL_4;
+    hdma_console_rx.Init.Direction = DMA_PERIPH_TO_MEMORY;
+    hdma_console_rx.Init.PeriphInc = DMA_PINC_DISABLE;
+    hdma_console_rx.Init.MemInc = DMA_MINC_ENABLE;
+    hdma_console_rx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
+    hdma_console_rx.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
+    hdma_console_rx.Init.Mode = DMA_CIRCULAR;
+    hdma_console_rx.Init.Priority = DMA_PRIORITY_HIGH;
+    hdma_console_rx.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
+    check(HAL_DMA_Init(&hdma_console_rx));
+    __HAL_LINKDMA(uart, hdmarx, hdma_console_rx);
+    HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 7U, 0U);
+    HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);
+#endif
   } else if (uart->Instance == UART4) {
     __HAL_RCC_UART4_CLK_ENABLE();
     __HAL_RCC_DMA1_CLK_ENABLE();

@@ -17,6 +17,7 @@
 extern UART_HandleTypeDef huart1; /* USART1: PB6 TX, PB7 RX, service console. */
 extern UART_HandleTypeDef huart3; /* UART4: PC10 TX, PC11 RX, RDK. */
 extern DMA_HandleTypeDef hdma_usart3_rx; /* UART4 RX: DMA1 Stream2 Channel4. */
+extern DMA_HandleTypeDef hdma_console_rx; /* USART1 RX: DMA2 Stream2 Channel4. */
 extern TIM_HandleTypeDef htim6;
 extern TIM_HandleTypeDef htim8;
 extern TIM_HandleTypeDef htim1;
