@@ -50,6 +50,9 @@ typedef struct {
   uint16_t no_progress_cycles;
   uint16_t zero_wait_cycles;
   uint8_t zero_confirm_cycles;
+  bool yaw_correction_active, path_reference_valid;
+  float yaw_correction_mm_s;
+  float start_x_mm, start_y_mm, start_heading_rad;
 } DistanceMove;
 
 typedef struct {
@@ -324,6 +327,13 @@ static void motor_set_target_counts(uint8_t id, float target_counts)
   if (angle_turn.status == MOTOR_TURN_RUNNING) {
     zero_limit_mm_s = 0.5f;
   }
+#if APP_BOARD_F405_ROBO
+  /* MOVE applies hysteresis to the shared yaw command before mixing.
+   * Do not remove only the rear wheel's part of the resulting vector. */
+  if (distance_move.status == MOTOR_DISTANCE_RUNNING) {
+    zero_limit_mm_s = 0.0f;
+  }
+#endif
 #endif
   if (motor_abs_float(motor_counts_to_mm_s(limited_counts)) <= zero_limit_mm_s) {
     limited_counts = 0.0f;
@@ -556,6 +566,8 @@ static void motor_stop_outputs(bool use_brake)
   motor_clear_direction_move();
   motor_clear_spin_move();
   Pid_Reset(&heading_pid);
+  distance_move.yaw_correction_active = false;
+  distance_move.yaw_correction_mm_s = 0.0f;
   motor_reset_targets();
 
   if (use_brake && was_moving && (brake_cycles_remaining == 0U) &&
@@ -644,6 +656,11 @@ static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
     distance_move.start_m1_count = encoder[0].position;
     distance_move.start_m2_count = encoder[1].position;
     distance_move.target_yaw_mdeg = imu.yaw_mdeg;
+    const LocationPose start_pose = Location_GetPose();
+    distance_move.start_x_mm = (float)start_pose.x_mm;
+    distance_move.start_y_mm = (float)start_pose.y_mm;
+    distance_move.start_heading_rad = (float)start_pose.heading_mdeg * 0.001f * MOTOR_DEG_TO_RAD;
+    distance_move.path_reference_valid = start_pose.valid;
     distance_move.waiting_for_stop = false;
     distance_move.zero_wait_cycles = 0U;
     distance_move.zero_confirm_cycles = 0U;
@@ -718,9 +735,24 @@ static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
 
   const int32_t heading_error_mdeg = motor_wrap_heading_error(
       distance_move.target_yaw_mdeg - imu.yaw_mdeg);
-  const float rotate_correction =
+  float rotate_correction =
       Pid_Update(&heading_pid, (float)heading_error_mdeg / 1000.0f, 0.0f) *
       APP_MOTOR_HEADING_OUTPUT_SIGN;
+#if APP_BOARD_F405_ROBO && APP_ENABLE_MOTION_DEBUG_TASK
+  const float magnitude = motor_abs_float(rotate_correction);
+  if (distance_move.yaw_correction_active) {
+    if (magnitude <= APP_MOTOR_ZERO_ENTER_MM_S) {
+      distance_move.yaw_correction_active = false;
+    }
+  } else if (magnitude > APP_MOTOR_ZERO_EXIT_MM_S) {
+    distance_move.yaw_correction_active = true;
+  }
+  if (!distance_move.yaw_correction_active) { rotate_correction = 0.0f; }
+  distance_move.yaw_correction_mm_s = motor_step_toward(
+      distance_move.yaw_correction_mm_s, rotate_correction,
+      APP_DEBUG_MOVE_YAW_SLEW_MM_S2 * APP_MOTOR_CONTROL_PERIOD_MS * 0.001f);
+  rotate_correction = distance_move.yaw_correction_mm_s;
+#endif
   motor_set_omni_speed(distance_move.current_speed_mm_s * direction,
                        0.0f, rotate_correction);
 }
@@ -1457,6 +1489,14 @@ void Motor_Update(void)
     if (angle_turn.status == MOTOR_TURN_RUNNING) {
       static_pwm = APP_DEBUG_TURN_STATIC_PWM;
     }
+#if APP_BOARD_F405_ROBO
+    if (id == 3U && distance_move.status == MOTOR_DISTANCE_RUNNING) {
+      /* No fixed friction step for arbitrarily small MOVE yaw corrections. */
+      const float rear_speed = motor_abs_float(
+          motor_counts_to_mm_s(target_counts_per_update[index]));
+      static_pwm *= fminf(1.0f, rear_speed / APP_DEBUG_MOVE_REAR_FF_FULL_MM_S);
+    }
+#endif
 #endif
     const float feedforward = static_pwm + rpm / APP_MOTOR_NO_LOAD_RPM *
         (float)APP_MOTOR_RATED_VOLTAGE_MV / APP_MOTOR_SUPPLY_VOLTAGE_MV * 1000.0f;
@@ -1538,7 +1578,17 @@ MotorDebugTrace Motor_GetDebugTrace(void)
   trace.brake_cycles = brake_cycles_remaining;
   trace.paused = finite_motion_paused;
   trace.pi_active_mask = debug_pi_active_mask;
+  const LocationPose pose = Location_GetPose();
+  trace.move_path_valid = distance_move.path_reference_valid && pose.valid;
+  trace.move_state = (uint8_t)distance_move.status;
+  trace.move_yaw_active = distance_move.yaw_correction_active;
+  trace.move_yaw_c100 = (int32_t)(distance_move.yaw_correction_mm_s * 100.0f);
+  const float path_dx = (float)pose.x_mm - distance_move.start_x_mm;
+  const float path_dy = (float)pose.y_mm - distance_move.start_y_mm;
+  const float path_heading = distance_move.start_heading_rad;
   motor_leave_critical(primask);
+  trace.move_cross_mm = trace.move_path_valid ? (int32_t)(
+      -path_dx * sinf(path_heading) + path_dy * cosf(path_heading)) : 0;
   return trace;
 }
 
@@ -1691,6 +1741,9 @@ static MotorDistanceStatus motor_move_distance(float distance_m,
   motor_stop_outputs(false);
   distance_move.target_mm = distance_mm;
   distance_move.travelled_mm = 0.0f;
+  distance_move.yaw_correction_active = false;
+  distance_move.yaw_correction_mm_s = 0.0f;
+  distance_move.path_reference_valid = false;
   if ((distance_mm >= -APP_GO_DISTANCE_TOLERANCE_MM) &&
       (distance_mm <= APP_GO_DISTANCE_TOLERANCE_MM)) {
     distance_move.status = MOTOR_DISTANCE_DONE;

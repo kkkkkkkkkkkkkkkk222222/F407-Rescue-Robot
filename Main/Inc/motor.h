@@ -103,6 +103,8 @@ typedef struct {
   uint8_t turn_boost_active, turn_boost_count, turn_boost_exit;
   uint8_t turn_phase, turn_corrections, turn_failure;
   uint8_t turn_state, slowing, brake_cycles, paused, pi_active_mask;
+  int32_t move_cross_mm, move_yaw_c100;
+  uint8_t move_path_valid, move_state, move_yaw_active;
 } MotorDebugTrace;
 MotorDebugTrace Motor_GetDebugTrace(void);
 /* Logical wheel polarity, open loop; bounded by the 10 ms motor scheduler. */
