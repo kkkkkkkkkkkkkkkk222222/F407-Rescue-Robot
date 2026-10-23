@@ -5,13 +5,19 @@
 static const uint16_t pins[4] = {GPIO_PIN_13, GPIO_PIN_0, GPIO_PIN_1, GPIO_PIN_2};
 static volatile uint8_t angles[4];
 static bool started;
+static volatile uint16_t enabled_pins, pending_pins;
 
 void BoardF405_ServoIRQ(void)
 {
   const uint32_t events = TIM4->SR & TIM4->DIER &
       (TIM_SR_UIF | TIM_SR_CC1IF | TIM_SR_CC2IF | TIM_SR_CC3IF | TIM_SR_CC4IF);
   TIM4->SR = ~events;
-  uint32_t set = (events & TIM_SR_UIF) ? F405_SERVO_PINS : 0U;
+  uint32_t set = (events & TIM_SR_UIF) ? enabled_pins : 0U;
+  if (events & TIM_SR_UIF) {
+    /* Delay a newly enabled output until its preloaded compare is active. */
+    enabled_pins |= pending_pins;
+    pending_pins = 0U;
+  }
   uint32_t clear = 0U;
   for (uint8_t i = 0; i < 4U; ++i) {
     if (events & (TIM_SR_CC1IF << i)) { clear |= pins[i]; }
@@ -20,9 +26,11 @@ void BoardF405_ServoIRQ(void)
   GPIOC->BSRR = (set & ~clear) | (clear << 16U);
 }
 
-void Servo_Init(void)
+static void servo_start(uint16_t outputs)
 {
   HAL_NVIC_DisableIRQ(TIM4_IRQn);
+  enabled_pins = outputs;
+  pending_pins = 0U;
   TIM4->CR1 = 0U;
   TIM4->DIER = 0U;
   TIM4->PSC = 83U; /* APB1 timer 84 MHz -> 1 us per tick. */
@@ -40,9 +48,36 @@ void Servo_Init(void)
   HAL_NVIC_ClearPendingIRQ(TIM4_IRQn);
   TIM4->DIER = TIM_DIER_UIE | TIM_DIER_CC1IE | TIM_DIER_CC2IE |
                TIM_DIER_CC3IE | TIM_DIER_CC4IE;
-  GPIOC->BSRR = F405_SERVO_PINS;
+  GPIOC->BSRR = outputs | ((uint32_t)(F405_SERVO_PINS & ~outputs) << 16U);
   TIM4->CR1 = TIM_CR1_ARPE | TIM_CR1_CEN;
   HAL_NVIC_EnableIRQ(TIM4_IRQn);
+}
+
+void Servo_Init(void) { servo_start(F405_SERVO_PINS); }
+
+void BoardF405_ServoTestSet(uint8_t id, uint8_t angle)
+{
+  if (id < 1U || id > 4U || angle > 180U) { return; }
+  const uint32_t mask = __get_PRIMASK();
+  __disable_irq();
+  if (!started) { servo_start(0U); }
+  enabled_pins &= (uint16_t)~pins[id - 1U];
+  GPIOC->BSRR = (uint32_t)pins[id - 1U] << 16U;
+  Servo_SetAngle(id, angle);
+  pending_pins |= pins[id - 1U];
+  __set_PRIMASK(mask);
+}
+
+void BoardF405_ServoTestOff(uint8_t id)
+{
+  if (id > 4U) { return; }
+  const uint16_t off = id == 0U ? F405_SERVO_PINS : pins[id - 1U];
+  const uint32_t mask = __get_PRIMASK();
+  __disable_irq();
+  enabled_pins &= (uint16_t)~off;
+  pending_pins &= (uint16_t)~off;
+  GPIOC->BSRR = (uint32_t)off << 16U;
+  __set_PRIMASK(mask);
 }
 
 void Servo_SetAngle(uint8_t id, uint8_t angle)

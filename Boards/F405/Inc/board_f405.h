@@ -28,6 +28,8 @@ void BoardF405_MotorWrite(uint8_t id, int16_t pwm, bool brake);
 void BoardF405_EncoderIRQ(void);
 uint32_t BoardF405_EncoderInvalidTransitions(void);
 void BoardF405_ServoIRQ(void);
+void BoardF405_ServoTestSet(uint8_t id, uint8_t angle);
+void BoardF405_ServoTestOff(uint8_t id);
 void BoardF405_Report(void);
 void BoardF405_ReportVersion(void);
 

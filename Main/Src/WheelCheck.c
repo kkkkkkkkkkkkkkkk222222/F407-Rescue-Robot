@@ -557,6 +557,34 @@ static void wheel_execute(void)
     wheel_send("ERR ARGUMENTS; SEND HELP\r\n");
     return;
   }
+#if APP_BOARD_F405_ROBO
+  if (strcmp(command, "S") == 0) {
+    if (count != 2U || args[0] < 1 || args[0] > 4 || args[1] < 0 || args[1] > 180) {
+      wheel_send("ERR S: ID 1..4 ANGLE 0..180\r\n"); return;
+    }
+    const uint32_t mask = __get_PRIMASK();
+    __disable_irq();
+    const DebugStatus status = Debug_GetStatus();
+    if (sequence_active || calibration_active || status.console_pending ||
+        status.state == DEBUG_MOTION_RUNNING || Motor_WheelCheckRunning()) {
+      __set_PRIMASK(mask);
+      wheel_send("BUSY: STOP BEFORE SERVO\r\n"); return;
+    }
+    BoardF405_ServoTestSet((uint8_t)args[0], (uint8_t)args[1]);
+    __set_PRIMASK(mask);
+    char reply[80];
+    (void)snprintf(reply, sizeof(reply), "SERVO ID=%ld TARGET_DEG=%ld PWM=ON\r\n",
+                   (long)args[0], (long)args[1]);
+    wheel_send(reply); return;
+  }
+  if (strcmp(command, "SOFF") == 0) {
+    if (count > 1U || (count == 1U && (args[0] < 1 || args[0] > 4))) {
+      wheel_send("ERR SOFF: OPTIONAL ID 1..4\r\n"); return;
+    }
+    BoardF405_ServoTestOff(count == 0U ? 0U : (uint8_t)args[0]);
+    wheel_send("SERVO PWM OFF\r\n"); return;
+  }
+#endif
   if (strcmp(command, "CAL") == 0) {
     if (count != 3U || args[0] < 1 || args[0] > 3 || args[1] == 0 ||
         args[1] < -250 || args[1] > 250 || args[2] < 100 || args[2] > 1500) {
@@ -655,6 +683,10 @@ static void wheel_execute(void)
   }
   if ((strcmp(command, "STAT") == 0) || (strcmp(command, "STATE") == 0)) {
     wheel_report_version();
+#if APP_BOARD_F405_ROBO
+    wheel_send("S id deg: SERVO 1..4 0..180; SOFF [id]: DISABLE PULSES\r\n"
+               "SERVO 1=LIFT 2=RIGHT_CLAW 3=CAMERA 4=LEFT_CLAW; NO AUTO SWEEP\r\n");
+#endif
     wheel_report_state("STATUS");
     wheel_report_motors();
     return;
