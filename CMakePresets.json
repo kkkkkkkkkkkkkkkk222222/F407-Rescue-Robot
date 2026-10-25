@@ -50,6 +50,14 @@
             }
         },
         {
+            "name": "NormalDebugTask",
+            "displayName": "F405 NormalDebug - full rescue task",
+            "inherits": "NormalDebug",
+            "cacheVariables": {
+                "APP_NORMALDEBUG_MOTION_TEST": "OFF"
+            }
+        },
+        {
             "name": "Gamepad",
             "inherits": "default",
             "cacheVariables": {
@@ -78,6 +86,10 @@
         {
             "name": "NormalDebug",
             "configurePreset": "NormalDebug"
+        },
+        {
+            "name": "NormalDebugTask",
+            "configurePreset": "NormalDebugTask"
         },
         {
             "name": "Gamepad",

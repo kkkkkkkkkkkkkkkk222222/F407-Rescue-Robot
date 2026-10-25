@@ -6,6 +6,40 @@
 
 ## 配置与保留范围
 
+2026-10-25核对：NormalDebug与NormalRun直接共用Task.c、mechanism.c、vision.c、
+Uart.c、Location.c及motor.c，不是复制或精简的另一套比赛状态机。
+新增明确的比赛构建预设NormalDebugTask（仍为APP_MODE_NORMAL_DEBUG=5，不增加运行模式）：
+
+```powershell
+cmake --preset NormalDebugTask
+cmake --build --preset NormalDebugTask
+```
+
+比赛固件为 `build/NormalDebugTask/WWW.elf`。此预设继承新板NormalDebug引脚，
+固定APP_NORMALDEBUG_MOTION_TEST=OFF，独立构建目录，不覆盖已有运动测试ELF。
+原 `NormalDebug` 预设仍是运动测试ON，两个配置不可混淆。
+比赛启动标识为 `SERVICE=RESCUE_TASK SHARED=NormalRun`，调试版为SERVICE=MOTIONDEBUG。
+比赛版会初始化舵机和机构，待有效上位机配置启动任务；本次只构建，没有烧录比赛版。
+
+| 内容 | 新板比赛配置 |
+| --- | --- |
+| 开局、搜索、接近、摄像头/爪/升降 | 同一份NormalRun任务及机构代码 |
+| 抓取、分离、审核、橙色后退复核 | 同一份Task状态机 |
+| 运输、半区选择、放置、返中、扫障 | 同一份Task状态机 |
+| 上位机命令、上下文/回执、任务计数与超时 | 同一份vision/Uart/Task |
+| 电机/编码器/舵机/单轴陀螺仪 | F405适配层及板级极性，1kHz UART5 |
+| LCD | 无屏桩函数，不显示，不替换任务逻辑 |
+| 程序器维护 | PING/STAT/IMU/ENC/MOTOR/DEBUG/S/RUN |
+| MOVE/TURN/BODY/WHEELS/MLOG、调试串口DMA | 运动测试配置专用，比赛OFF入口不启用 |
+
+注意：共用Task不表示每个运动编译分支相同。APP_ENABLE_MOTION_DEBUG_TASK下的
+分段转角、MOVE统一死区/后轮前馈、平移起步同步等试验仍只在运动测试配置启用，
+没有直接复制到比赛控制分支。比赛版沿用NormalRun既有任务调用和对应控制分支；
+若要将试验策略用于比赛，需要独立同步和联调，而不是声称已经全部一致。
+2026-10-25构建验证：125840B Flash、11984B RAM，ELF存在Task_Process、Mechanism_Init、
+Servo_Init、Vision_GetSnapshot，未链接调试任务Debug_Process/WheelCheck_Process。
+本次只确认构建与链接，不等于新板全比赛流程已经实车验收。
+
 ```powershell
 cmake --preset NormalDebug
 cmake --build --preset NormalDebug
