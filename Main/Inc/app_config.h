@@ -139,8 +139,14 @@
 #define APP_DEBUG_TURN_IMU_STALE_MS      100U
 #define APP_DEBUG_TURN_OVERRUN_MDEG      8000L
 #define APP_DEBUG_TURN_WRONG_WAY_MDEG    APP_MOTOR_TURN_WRONG_WAY_MDEG
+#if APP_BOARD_F405_ROBO
+/* Competition tradeoff: accept only after settling within +/-1 degree. */
+#define APP_DEBUG_TURN_ENTER_MDEG        1000L
+#define APP_DEBUG_TURN_EXIT_MDEG         1000L
+#else
 #define APP_DEBUG_TURN_ENTER_MDEG        300L
 #define APP_DEBUG_TURN_EXIT_MDEG         500L
+#endif
 #define APP_DEBUG_TURN_BRAKE_DELAY_S     0.08f
 #define APP_DEBUG_TURN_BRAKE_MARGIN_DPS  3.0f
 #define APP_DEBUG_TURN_BRAKE_RELEASE     0.75f
