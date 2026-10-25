@@ -287,6 +287,14 @@
 /* F405 debug MOVE trial: gate yaw before mixing, not individual wheels. */
 #define APP_DEBUG_MOVE_YAW_SLEW_MM_S2     80.0f
 #define APP_DEBUG_MOVE_REAR_FF_FULL_MM_S  12.0f
+/* Bounded F405 debug lateral startup; these do not change ordinary MOVE/TURN. */
+#define APP_DEBUG_LATERAL_SYNC_MS         600U
+#define APP_DEBUG_LATERAL_START_MM_S      150.0f
+#define APP_DEBUG_LATERAL_ACCEL_MM_S2    1000.0f
+#define APP_DEBUG_LATERAL_DECEL_MM_S2     800.0f
+#define APP_DEBUG_LATERAL_BRAKE_DELAY_S   0.15f
+#define APP_DEBUG_LATERAL_BOOST_PWM       250
+#define APP_DEBUG_LATERAL_BOOST_MS        80U
 #define APP_MOTOR_MAX_COUNT_10MS \
   (APP_ENCODER_COUNTS_PER_WHEEL_REV * APP_MOTOR_MAX_WHEEL_RPM / 60.0f * \
    APP_MOTOR_CONTROL_PERIOD_MS / 1000.0f)

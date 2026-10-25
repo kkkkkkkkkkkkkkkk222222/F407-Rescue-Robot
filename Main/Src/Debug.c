@@ -518,6 +518,13 @@ static void debug_update_move(uint32_t now_ms)
   }
 
   float speed_mm_s = active_move_speed_mm_s;
+#if APP_BOARD_F405_ROBO
+  const float brake_a = APP_DEBUG_LATERAL_DECEL_MM_S2;
+  const float delay_rate = brake_a * APP_DEBUG_LATERAL_BRAKE_DELAY_S;
+  const float usable = fmaxf(0.0f, remaining_mm - APP_MOTION_DEBUG_DISTANCE_TOLERANCE_MM);
+  speed_mm_s = fminf(speed_mm_s, fmaxf(fminf(active_move_speed_mm_s, 60.0f),
+      sqrtf(delay_rate * delay_rate + 2.0f * brake_a * usable) - delay_rate));
+#else
   if (remaining_mm < APP_MOTION_DEBUG_SLOWDOWN_MM) {
     float ratio = (remaining_mm - APP_MOTION_DEBUG_DISTANCE_TOLERANCE_MM) /
         (APP_MOTION_DEBUG_SLOWDOWN_MM -
@@ -533,10 +540,17 @@ static void debug_update_move(uint32_t now_ms)
     speed_mm_s = minimum_speed +
         (active_move_speed_mm_s - minimum_speed) * ratio;
   }
+#endif
 
+#if APP_BOARD_F405_ROBO
+  /* BODY defines a vector at command start, not a line rotating with yaw drift. */
+  const float body_angle_deg = debug_wrap_degrees(
+      active_move_field_angle_rad / DEBUG_DEG_RAD - pose.heading_mdeg * 0.001f);
+#else
   const float body_angle_deg = active_command == VISION_MOTION_CMD_MOVE_FIELD ?
       debug_wrap_degrees(active_move_field_angle_rad / DEBUG_DEG_RAD -
                          (float)pose.heading_mdeg * 0.001f) : active_move_body_angle_deg;
+#endif
   (void)Motor_MoveAngle(speed_mm_s, body_angle_deg);
 }
 
