@@ -962,8 +962,12 @@ static void motor_update_debug_turn(const IMUData *imu)
   const float delay_rate = APP_DEBUG_TURN_DECEL_DPS2 * APP_DEBUG_TURN_BRAKE_DELAY_S;
   const float stopping_rate = sqrtf(delay_rate * delay_rate +
       2.0f * APP_DEBUG_TURN_DECEL_DPS2 * abs_error) - delay_rate;
+  float minimum_rate = APP_DEBUG_TURN_MIN_RATE_DPS;
+#if APP_BOARD_F405_ROBO
+  if (angle_turn.final_trim) { minimum_rate = APP_DEBUG_TURN_FINAL_MIN_DPS; }
+#endif
   const float requested_rate = fminf(limit, fminf(stopping_rate,
-      fmaxf(APP_DEBUG_TURN_MIN_RATE_DPS, APP_DEBUG_TURN_POSITION_KP * abs_error)));
+      fmaxf(minimum_rate, APP_DEBUG_TURN_POSITION_KP * abs_error)));
   angle_turn.slowing = requested_rate < angle_turn.speed_mm_s / mm_s_per_dps;
   if (brake_cycles_remaining > 0U) {
     angle_turn.reference_rate_dps = 0.0f;
@@ -1520,6 +1524,9 @@ void Motor_Update(void)
 #if APP_ENABLE_MOTION_DEBUG_TASK
     if (angle_turn.status == MOTOR_TURN_RUNNING) {
       static_pwm = APP_DEBUG_TURN_STATIC_PWM;
+#if APP_BOARD_F405_ROBO
+      if (angle_turn.final_trim) { static_pwm = APP_DEBUG_TURN_FINAL_STATIC_PWM; }
+#endif
     }
 #if APP_BOARD_F405_ROBO
     if (id == 3U && distance_move.status == MOTOR_DISTANCE_RUNNING) {

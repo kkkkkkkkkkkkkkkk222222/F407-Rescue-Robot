@@ -502,6 +502,11 @@ static void wheel_report_version(void)
 #if APP_BOARD_F405_ROBO
   wheel_send("CONSOLE_RX=DMA_IDLE DMA_BYTES=512 RING_BYTES=1024\r\n");
   wheel_send("AXIS=LEFT_POSITIVE TURN_MODE=MAIN_THEN_TRIM FINAL_ENTRY_MDEG=3000\r\n");
+  (void)snprintf(text, sizeof(text),
+      "TURN_END MAX_DPS=%ld MIN_DPS=%ld STATIC_PWM=%ld MAX_REVERSALS=%u\r\n",
+      (long)APP_DEBUG_TURN_TRIM_RATE_DPS, (long)APP_DEBUG_TURN_FINAL_MIN_DPS,
+      (long)APP_DEBUG_TURN_FINAL_STATIC_PWM, APP_DEBUG_TURN_MAX_CORRECTIONS);
+  wheel_send(text);
 #endif
   (void)snprintf(text, sizeof(text),
       "DIAG_CFG TRACE=%u PERIOD_MS=250 POST_MS=2000 SPEED_P100=%ld SPEED_I10000=%ld TURN_TIMEOUT_MS=%lu\r\n",
