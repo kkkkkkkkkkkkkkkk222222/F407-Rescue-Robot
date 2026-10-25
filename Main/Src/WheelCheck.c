@@ -77,6 +77,11 @@ static uint8_t tracked_sequence;
 static int64_t motion_start_yaw_mdeg;
 static uint32_t last_motion_report_ms;
 static bool trace_enabled = true;
+#if APP_BOARD_F405_ROBO
+static bool move_log_enabled, move_log_saved_trace;
+static uint32_t move_log_last_ms, move_log_index;
+static int64_t move_log_yaw_origin;
+#endif
 static bool post_motion_trace;
 static uint32_t post_motion_started_ms;
 static bool calibration_active;
@@ -104,6 +109,41 @@ static void wheel_send(const char *text)
     tx_head = (uint16_t)((tx_head + 1U) % TX_SIZE);
   }
 }
+
+#if APP_BOARD_F405_ROBO
+static void wheel_report_move_log(void)
+{
+  const uint32_t now = HAL_GetTick();
+  const DebugStatus status = Debug_GetStatus();
+  const MotorDebugTrace motor = Motor_GetDebugTrace();
+  EncoderStatus enc[3];
+  Encoder_GetAll(enc);
+  const IMUData imu = IMU_GetData();
+  const LocationPose pose = Location_GetPose();
+  const int64_t yaw = imu.yaw_mdeg - move_log_yaw_origin;
+  char text[512];
+  (void)snprintf(text, sizeof(text),
+      "MOVE_LOG N=%lu MS=%lu SEQ=%u CMD=%u STATE=%u PENDING=%u FAULT=%u "
+      "RAW32=%ld,%ld,%ld TARGET=%d,%d,%d ACTUAL=%d,%d,%d PWM=%d,%d,%d "
+      "FF=%d,%d,%d YAW_MDEG=%ld RATE_MDPS=%ld XY=%ld,%ld CROSS=%ld VALID=%u "
+      "YAW_CMD100=%ld IMU=%u AGE=%lu UERR=%lu ENC_BAD=%lu DROP=%lu\r\n",
+      (unsigned long)++move_log_index, (unsigned long)now, status.command_sequence,
+      status.command, status.state, status.console_pending, status.fault,
+      (long)(int32_t)enc[0].position, (long)(int32_t)enc[1].position, (long)(int32_t)enc[2].position,
+      motor.target_mm_s[0], motor.target_mm_s[1], motor.target_mm_s[2],
+      motor.actual_mm_s[0], motor.actual_mm_s[1], motor.actual_mm_s[2],
+      motor.output[0], motor.output[1], motor.output[2],
+      motor.feedforward[0], motor.feedforward[1], motor.feedforward[2],
+      (long)(yaw > INT32_MAX ? INT32_MAX : yaw < INT32_MIN ? INT32_MIN : yaw),
+      (long)imu.gyro_mdps[2], (long)pose.x_mm, (long)pose.y_mm,
+      (long)motor.move_cross_mm, motor.move_path_valid,
+      (long)motor.move_yaw_c100, imu.ready, (unsigned long)imu.uart_angle_age_ms,
+      (unsigned long)imu.uart_rx_errors,
+      (unsigned long)BoardF405_EncoderInvalidTransitions(), (unsigned long)tx_dropped);
+  wheel_send(text);
+  move_log_last_ms = now;
+}
+#endif
 
 static void wheel_start_rx(void)
 {
@@ -708,6 +748,24 @@ static void wheel_execute(void)
     return;
   }
   if (count != 0U) {
+#if APP_BOARD_F405_ROBO
+    if (strcmp(command, "MLOG") == 0 && count == 1U && (args[0] == 0 || args[0] == 1)) {
+      if (args[0] == 1) {
+        if (!move_log_enabled) { move_log_saved_trace = trace_enabled; }
+        trace_enabled = false;
+        move_log_enabled = true;
+        move_log_index = 0U;
+        move_log_yaw_origin = IMU_GetData().yaw_mdeg;
+        wheel_send("MLOG ON PERIOD_MS=100; ORDER=RIGHT,LEFT,REAR; SPEED=MM/S PWM=PERMILLE; NO MOTION\r\n");
+        wheel_report_move_log();
+      } else {
+        if (move_log_enabled) { trace_enabled = move_log_saved_trace; }
+        move_log_enabled = false;
+        wheel_send("MLOG OFF\r\n");
+      }
+      return;
+    }
+#endif
     if (strcmp(command, "TRACE") == 0 && count == 1U && (args[0] == 0 || args[0] == 1)) {
       trace_enabled = args[0] != 0;
       wheel_send(trace_enabled ? "TRACE ON\r\n" : "TRACE OFF\r\n");
@@ -747,6 +805,9 @@ static void wheel_execute(void)
   }
   if ((strcmp(command, "HELP") == 0) || (strcmp(command, "VER") == 0)) {
     wheel_report_version();
+#if APP_BOARD_F405_ROBO
+    wheel_send("MLOG 1/0: COMPACT 100ms DRIVE LOG, NO MOTION, CONTINUES AFTER STOP\r\n");
+#endif
     wheel_send("DIAG CRASH TRACE 0/1; MOTION TRACE + 2s POST-STOP; NO AUTO MOTION\r\n");
     wheel_send("TURN deg [deg/s=30]; MOVE mm [mm/s=150]\r\n"
                "CIRCLES signed_count [deg/s=60]: 1..10 LAPS, RATE 60..120, 1s DWELL\r\n"
@@ -1010,6 +1071,11 @@ void WheelCheck_Process(void)
     last_motion_report_ms = now_ms;
     if ((uint32_t)(now_ms - post_motion_started_ms) >= 2000U) { post_motion_trace = false; }
   }
+#if APP_BOARD_F405_ROBO
+  if (move_log_enabled && (uint32_t)(now_ms - move_log_last_ms) >= 100U) {
+    wheel_report_move_log();
+  }
+#endif
   wheel_pump_tx();
 }
 
