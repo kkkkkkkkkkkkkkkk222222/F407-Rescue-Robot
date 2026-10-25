@@ -201,12 +201,12 @@ void Location_Update10ms(void)
   const float m2_mm = location_counts_to_mm(m2_counts);
   const float m3_mm = location_counts_to_mm(m3_counts);
 
-  /* Forward kinematics matched to motor.c: M1=v3, M2=v2, M3=v1.
-   * The second equation is physical left, hence the sign is opposite to the
-   * mathematical Vy used by Motor_Move(). Common wheel rotation cancels. */
+  /* Invert the mixer, then apply the same board-specific left-axis mapping
+   * used by Motor_MoveAngle. Common wheel rotation cancels. */
   const float forward_mm = APP_OMNI_FORWARD_SIGN *
                           (m1_mm - m2_mm) / LOCATION_SQRT3;
-  const float left_mm = (m1_mm + m2_mm - 2.0f * m3_mm) / 3.0f;
+  const float left_mm = APP_OMNI_LATERAL_API_SIGN *
+                       (2.0f * m3_mm - m1_mm - m2_mm) / 3.0f;
   const float middle_heading_rad =
       ((float)previous_heading_mdeg + 0.5f * (float)yaw_step_mdeg) *
       0.001f * LOCATION_DEG_RAD;

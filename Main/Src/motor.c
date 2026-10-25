@@ -20,8 +20,8 @@ extern TIM_HandleTypeDef htim9;
 #define MOTOR_DEG_TO_RAD 0.01745329252f
 #define MOTOR_SQRT3_OVER_2 0.86602540378f
 #define MOTOR_ONE_HALF 0.5f
-/* Calibrated on the real chassis: API +90 deg is physical left. */
-#define MOTOR_API_LEFT_TO_BODY_Y -1.0f
+/* API +90 degrees is physical left, paired with Location's inverse mapping. */
+#define MOTOR_API_LEFT_TO_BODY_Y APP_OMNI_LATERAL_API_SIGN
 #define MOTOR_DEFAULT_OUTPUT_LIMIT APP_MOTOR_PWM_MAX_PERMILLE
 
 #if !APP_BOARD_F405_ROBO
@@ -79,6 +79,7 @@ typedef struct {
   MotorTurnPhase phase;
   MotorTurnFailure failure;
   bool holding, waiting_for_stop, settle_latched, rate_braking, boosting;
+  bool final_trim, main_braking;
 #endif
 } AngleTurn;
 
@@ -886,6 +887,21 @@ static void motor_update_debug_turn(const IMUData *imu)
   } else if (fresh && angle_turn.rest_ms < APP_DEBUG_TURN_SETTLE_MS) {
     angle_turn.rest_ms += APP_MOTOR_CONTROL_PERIOD_MS;
   }
+#if APP_BOARD_F405_ROBO
+  /* One continuous main stroke, one latched stop, then endpoint corrections.
+   * No rate-feedback brake/restart cycles during the main stroke. */
+  if (!angle_turn.final_trim && (angle_turn.main_braking ||
+      abs_error <= APP_DEBUG_TURN_FINAL_ENTRY_MDEG * 0.001f ||
+      error * angle_turn.direction <= 0LL)) {
+    angle_turn.main_braking = true;
+    angle_turn.reference_rate_dps = 0.0f;
+    motor_turn_hold(MOTOR_TURN_PHASE_BRAKE);
+    if (angle_turn.rest_ms < APP_DEBUG_TURN_SETTLE_MS) { return; }
+    angle_turn.main_braking = false;
+    angle_turn.final_trim = true;
+    angle_turn.no_progress_ms = 0U;
+  }
+#endif
   if (abs_error > APP_DEBUG_TURN_EXIT_MDEG * 0.001f) {
     angle_turn.settle_latched = false;
   } else if (abs_error <= APP_DEBUG_TURN_ENTER_MDEG * 0.001f) {
@@ -934,7 +950,11 @@ static void motor_update_debug_turn(const IMUData *imu)
 
   const float mm_s_per_dps = MOTOR_DEG_TO_RAD * APP_MOTION_DEBUG_TURN_RADIUS_MM;
   float limit = angle_turn.speed_mm_s / mm_s_per_dps;
-  if (angle_turn.corrections > 0U) {
+  if (angle_turn.corrections > 0U
+#if APP_BOARD_F405_ROBO
+      || angle_turn.final_trim
+#endif
+     ) {
     limit = fminf(limit, APP_DEBUG_TURN_TRIM_RATE_DPS);
   }
   /* Position envelope plus a braking-distance bound, then rate feedback.
@@ -954,6 +974,17 @@ static void motor_update_debug_turn(const IMUData *imu)
   angle_turn.reference_rate_dps = requested_direction * fminf(requested_rate,
       motor_abs_float(angle_turn.reference_rate_dps) +
       APP_DEBUG_TURN_ACCEL_DPS2 * APP_MOTOR_CONTROL_PERIOD_MS * 0.001f);
+#if APP_BOARD_F405_ROBO
+  if (!angle_turn.final_trim) {
+    angle_turn.rate_braking = false;
+    angle_turn.brake_distance_mdeg = 0;
+    angle_turn.holding = false;
+    angle_turn.command_rate_dps = angle_turn.reference_rate_dps;
+    angle_turn.phase = MOTOR_TURN_PHASE_DRIVE;
+    motor_set_rotate_speed(angle_turn.reference_rate_dps * mm_s_per_dps);
+    return;
+  }
+#endif
   const float toward_rate = fmaxf(0.0f, rate * requested_direction);
   const float stop_distance = toward_rate * APP_DEBUG_TURN_BRAKE_DELAY_S +
       toward_rate * toward_rate / (2.0f * APP_DEBUG_TURN_DECEL_DPS2);
@@ -978,7 +1009,8 @@ static void motor_update_debug_turn(const IMUData *imu)
   }
   angle_turn.holding = false;
   angle_turn.command_rate_dps = command;
-  angle_turn.phase = angle_turn.corrections > 0U ? MOTOR_TURN_PHASE_TRIM : MOTOR_TURN_PHASE_DRIVE;
+  angle_turn.phase = (angle_turn.corrections > 0U || angle_turn.final_trim) ?
+      MOTOR_TURN_PHASE_TRIM : MOTOR_TURN_PHASE_DRIVE;
   motor_set_rotate_speed(command * mm_s_per_dps);
   (void)motor_turn_update_boost(imu, fresh, wheels_still, rate, abs_error);
 }
@@ -1883,6 +1915,8 @@ static MotorTurnStatus motor_start_turn(float angle_deg, float speed_mm_s, float
   angle_turn.boost_exit = 0U;
   angle_turn.boosting = false;
   angle_turn.settle_latched = false;
+  angle_turn.final_trim = false;
+  angle_turn.main_braking = false;
   angle_turn.rate_braking = false;
   angle_turn.last_direction = angle_turn.direction;
   angle_turn.corrections = 0U;
