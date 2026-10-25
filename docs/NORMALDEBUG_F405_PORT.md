@@ -6,6 +6,10 @@
 
 ## 配置与保留范围
 
+比赛任务诊断已加入，默认输出TD_TASK/TD_AUDIT等摘要及关键事件。
+使用方法和字段表见 [NORMALDEBUG_TASK_LOG.md](NORMALDEBUG_TASK_LOG.md)。
+此功能只在NormalDebugTask比赛入口生效，不更改比赛判断条件。
+
 2026-10-25核对：NormalDebug与NormalRun直接共用Task.c、mechanism.c、vision.c、
 Uart.c、Location.c及motor.c，不是复制或精简的另一套比赛状态机。
 新增明确的比赛构建预设NormalDebugTask（仍为APP_MODE_NORMAL_DEBUG=5，不增加运行模式）：

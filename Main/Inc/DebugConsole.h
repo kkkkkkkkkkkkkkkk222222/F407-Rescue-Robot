@@ -14,5 +14,6 @@ void DebugConsole_Init(void);
 void DebugConsole_Process(void);
 bool DebugConsole_IsActive(void);
 DebugConsoleStatus DebugConsole_GetStatus(void);
+void DebugConsole_OnUartError(uint32_t error);
 
 #endif

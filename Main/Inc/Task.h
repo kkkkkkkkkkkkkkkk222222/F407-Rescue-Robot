@@ -136,4 +136,21 @@ typedef struct {
 void Task_Process(uint32_t now_ms);
 TaskStatus Task_GetStatus(void);
 
+/* Local diagnostic snapshot only; never serialized into the competition protocol. */
+typedef struct {
+  uint32_t now_ms, state_age_ms, step_age_ms, command_age_ms, visual_age_ms;
+  uint32_t audit_age_ms, sample_age_ms, frame, rx_count, accept_count, reject_count;
+  uint32_t capture_used_mm;
+  uint16_t task_id, action_id, rejected_action_id;
+  uint8_t initialized, context_valid, paused, command, flags, reject_stage;
+  uint8_t search_phase, approach_phase, post_audit_phase, transport_phase;
+  uint8_t injury_phase, separation_stage, separation_attempts;
+  uint8_t audit_samples, audit_stable, audit_received, audit_semantic;
+  uint8_t audit_id, audit_flags, audit_left, audit_right, audit_total;
+  uint8_t sweep_samples, sweep_stable, sweep_ready, sweep_valid;
+  uint8_t transport_camera_ready, visual_new, audit_state;
+  int16_t target_x, target_y;
+} TaskDiagnostic;
+TaskDiagnostic Task_GetDiagnostic(uint32_t now_ms);
+
 #endif

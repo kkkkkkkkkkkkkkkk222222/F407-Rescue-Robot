@@ -1,4 +1,5 @@
 #include "DebugConsole.h"
+#include "TaskDiag.h"
 
 #include <string.h>
 
@@ -23,15 +24,35 @@ static char line[DEBUG_LINE_SIZE];
 static uint8_t line_length;
 static bool line_overflow;
 static volatile DebugConsoleStatus status;
+#if APP_BOARD_F405_ROBO && APP_ENABLE_TASK
+static volatile uint32_t rx_error;
+static volatile bool rx_recover;
+
+void DebugConsole_OnUartError(uint32_t error)
+{
+  rx_error |= error;
+  rx_recover = true;
+  ATOMIC_CLEAR_BIT(huart1.Instance->CR1, USART_CR1_RXNEIE | USART_CR1_PEIE);
+  ATOMIC_CLEAR_BIT(huart1.Instance->CR3, USART_CR3_EIE);
+  __HAL_UART_CLEAR_OREFLAG(&huart1);
+}
+#endif
 
 static void debug_send(const char *text)
 {
+#if APP_BOARD_F405_ROBO && APP_ENABLE_TASK
+  TaskDiag_Send(text);
+#else
   (void)HAL_UART_Transmit(&huart1, (uint8_t *)text,
                           (uint16_t)strlen(text), 20U);
+#endif
 }
 
 static void debug_start_rx(void)
 {
+#if APP_BOARD_F405_ROBO && APP_ENABLE_TASK
+  if (rx_recover) return;
+#endif
   if (huart1.RxState == HAL_UART_STATE_READY) {
     (void)HAL_UART_Receive_IT(&huart1, (uint8_t *)&rx_byte, 1U);
   }
@@ -84,12 +105,20 @@ static void debug_execute(char *command)
   }
 
 #if APP_BOARD_F405_ROBO
+#if APP_ENABLE_TASK
+  if (strcmp(command, "TLOG 1") == 0 || strcmp(command, "TLOG 0") == 0) {
+    TaskDiag_Enable(command[5] == '1'); debug_send("TLOG OK\r\n"); return;
+  }
+  if (strcmp(command, "TSTAT") == 0) { TaskDiag_RequestStatus(); return; }
+  if (strcmp(command, "TDUMP") == 0) { TaskDiag_Dump(); return; }
+#endif
   if (strcmp(command, "PING") == 0) {
     debug_send("PONG NORMALDEBUG F405\r\n");
     return;
   }
   if (strcmp(command, "HELP") == 0) {
     debug_send("NORMALDEBUG: PING / STAT / IMU / ENC / MOTOR / DEBUG / S id deg / RUN\r\n");
+    debug_send("TASK LOG: TLOG 1 / TLOG 0 / TSTAT / TDUMP; NO MOTION\r\n");
     return;
   }
   if (strcmp(command, "STAT") == 0 || strcmp(command, "IMU") == 0 ||
@@ -143,6 +172,20 @@ void DebugConsole_Init(void)
 void DebugConsole_Process(void)
 {
 #if APP_ENABLE_RUNTIME_SERVO_DEBUG
+#if APP_BOARD_F405_ROBO && APP_ENABLE_TASK
+  if (rx_recover) {
+    (void)HAL_UART_AbortReceive(&huart1);
+    const uint32_t mask=__get_PRIMASK(); __disable_irq();
+    const uint32_t error=rx_error;
+    __HAL_UART_CLEAR_OREFLAG(&huart1);
+    huart1.ErrorCode=HAL_UART_ERROR_NONE;
+    rx_tail=rx_head; line_length=0U; line_overflow=true;
+    rx_error=0U; rx_recover=false;
+    __set_PRIMASK(mask);
+    TaskDiag_Event("CONSOLE_RX_ERROR",error,0,0,0,0,0);
+    debug_send("ERR CONSOLE RX; SEND NEWLINE THEN RETRY; TASK UNCHANGED\r\n");
+  }
+#endif
   debug_start_rx();
   while (rx_tail != rx_head) {
     const char value = (char)rx_ring[rx_tail];
@@ -191,11 +234,19 @@ DebugConsoleStatus DebugConsole_GetStatus(void)
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *uart)
 {
   if (uart == &huart1) {
+#if APP_BOARD_F405_ROBO && APP_ENABLE_TASK
+    if (uart->ErrorCode != HAL_UART_ERROR_NONE) {
+      DebugConsole_OnUartError(uart->ErrorCode); return;
+    }
+#endif
     const uint8_t next = (uint8_t)((rx_head + 1U) % DEBUG_RX_RING_SIZE);
     if (next != rx_tail) {
       rx_ring[rx_head] = rx_byte;
       rx_head = next;
     }
+#if APP_BOARD_F405_ROBO && APP_ENABLE_TASK
+    else { DebugConsole_OnUartError(0x80000000UL); } /* Software ring full, not hardware ORE. */
+#endif
     debug_start_rx();
   }
 }

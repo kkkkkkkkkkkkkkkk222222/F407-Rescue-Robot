@@ -1,4 +1,7 @@
 #include "vision.h"
+#include "TaskDiag.h"
+
+static volatile VisionDiagnostic link_diag;
 
 #include "app_config.h"
 #include "main.h"
@@ -574,9 +577,14 @@ static void vision_parse_byte(uint8_t value, uint32_t tick_ms)
   frame[frame_index++] = value;
   if (frame_index == VISION_FRAME_SIZE) {
     if (vision_frame_valid()) {
+      ++link_diag.valid_frames;
+      link_diag.last_valid_ms = tick_ms;
+      link_diag.last_type = frame[FRAME_TYPE_INDEX];
+      link_diag.last_sequence = frame[FRAME_SEQUENCE_INDEX];
       vision_save_frame(tick_ms);
       frame_index = 0U;
     } else {
+      ++link_diag.invalid_frames;
       context_pending = false;
       vision_resync_frame();
     }
@@ -585,6 +593,7 @@ static void vision_parse_byte(uint8_t value, uint32_t tick_ms)
 
 void Vision_Init(void)
 {
+  link_diag = (VisionDiagnostic){0};
   latest_data = (VisionData){0};
   abort_pending = false;
   mission_generation = 0U;
@@ -633,9 +642,18 @@ void Vision_ParseBytes(const uint8_t *data, size_t size, uint32_t tick_ms)
   if (data == 0) {
     return;
   }
+  link_diag.rx_bytes += (uint32_t)size;
+  if (size != 0U) link_diag.last_rx_ms = tick_ms;
   for (size_t i = 0U; i < size; ++i) {
     vision_parse_byte(data[i], tick_ms);
   }
+}
+
+VisionDiagnostic Vision_GetDiagnostic(void)
+{
+  const uint32_t mask=__get_PRIMASK(); __disable_irq();
+  const VisionDiagnostic d=link_diag;
+  __set_PRIMASK(mask); return d;
 }
 
 VisionData Vision_GetSnapshot(void)
@@ -690,6 +708,10 @@ void Vision_QueueStmStatus(const VisionStmStatus *status)
   if (status == 0) {
     return;
   }
+  ++link_diag.status_queued;
+  TaskDiag_Event("STATUS_QUEUED", status->task_id, status->action_id,
+      ((uint32_t)status->mode << 16U) | ((uint32_t)status->flags << 8U) | status->action_status,
+      status->acknowledged_sequence, status->rejected_action_id, status->fault_code);
   const uint8_t payload[VISION_PAYLOAD_SIZE] = {
     status->flags,
     status->mode,

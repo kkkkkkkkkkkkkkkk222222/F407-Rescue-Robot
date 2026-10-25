@@ -65,6 +65,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Main/Src/Rescue.c
     Main/Src/route_demo.c
     Main/Src/Task.c
+    Main/Src/TaskDiag.c
     Main/Src/Uart.c
     Main/Src/vision.c
     Main/Src/WheelCheck.c

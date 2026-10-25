@@ -1,5 +1,6 @@
 #include "servo.h"
 #include "main.h"
+#include "TaskDiag.h"
 
 /* Lift/right claw/camera/left claw -> JP304/JP307/JP308/JP309. */
 static const uint16_t pins[4] = {GPIO_PIN_13, GPIO_PIN_0, GPIO_PIN_1, GPIO_PIN_2};
@@ -84,6 +85,7 @@ void Servo_SetAngle(uint8_t id, uint8_t angle)
 {
   if (id < 1U || id > 4U) { return; }
   if (angle > 180U) { angle = 180U; }
+  TaskDiag_Event("SERVO_TARGET", id, angle, 0, 0, 0, 0);
   const uint32_t pulse = 500U + (uint32_t)angle * 2000U / 180U;
   const uint32_t mask = __get_PRIMASK();
   __disable_irq();

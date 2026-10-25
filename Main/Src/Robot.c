@@ -16,6 +16,7 @@
 #include "route_demo.h"
 #include "servo.h"
 #include "Task.h"
+#include "TaskDiag.h"
 #include "Uart.h"
 #include "vision.h"
 #include "WheelCheck.h"
@@ -539,6 +540,7 @@ void Robot_Process(void)
 
   ROBOT_TRACE_STAGE(MOTION_DIAG_VISION);
   Vision_Process();
+  TaskDiag_Process();
 
 #if APP_ENABLE_AUTOMATIC_MOTOR_TEST && !APP_ENABLE_TASK && \
     !APP_ENABLE_CENTERING_TASK
@@ -621,6 +623,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *timer)
   if (++motor_control_period_ms >= APP_MOTOR_CONTROL_PERIOD_MS) {
     motor_control_period_ms = 0U;
     Encoder_Sample10ms();
+    TaskDiag_MotorTick();
     ++odom_release_sequence;
 #if APP_ENABLE_LOCATION_DEMO || APP_ENABLE_MOVE_SPIN_TEST || APP_ENABLE_TASK || \
     APP_ENABLE_MOTION_DEBUG_TASK || APP_ENABLE_GAMEPAD_TASK

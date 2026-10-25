@@ -287,5 +287,11 @@ void Vision_RequestConfigAck(void);
 void Vision_QueueStmStatus(const VisionStmStatus *status);
 void Vision_QueueOdom(const VisionOdom *odom);
 void Vision_Process(void);
+typedef struct {
+  uint32_t rx_bytes, valid_frames, invalid_frames, last_rx_ms, last_valid_ms;
+  uint32_t status_queued;
+  uint8_t last_type, last_sequence;
+} VisionDiagnostic;
+VisionDiagnostic Vision_GetDiagnostic(void);
 
 #endif

@@ -1,4 +1,6 @@
 #include "Uart.h"
+#include "TaskDiag.h"
+#include "DebugConsole.h"
 
 #include <string.h>
 
@@ -286,6 +288,9 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *uart, uint16_t size)
 
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *uart)
 {
+#if APP_BOARD_F405_ROBO && APP_ENABLE_TASK
+  if (uart == &huart1) { TaskDiag_TxComplete(); return; }
+#endif
 #if APP_ENABLE_MOTION_DEBUG_TASK
   if (uart->Instance == USART1) {
     WheelCheck_OnTxComplete();
@@ -308,6 +313,9 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *uart)
 
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *uart)
 {
+#if APP_BOARD_F405_ROBO && APP_ENABLE_TASK
+  if (uart == &huart1) { DebugConsole_OnUartError(uart->ErrorCode); return; }
+#endif
 #if APP_ENABLE_MOTION_DEBUG_TASK
   if (uart->Instance == USART1) {
     WheelCheck_OnUartError(uart->ErrorCode);

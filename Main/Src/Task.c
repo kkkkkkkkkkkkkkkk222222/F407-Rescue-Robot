@@ -1,4 +1,5 @@
 #include "Task.h"
+#include "TaskDiag.h"
 
 #include <math.h>
 
@@ -198,6 +199,8 @@ static TaskContext accepted_context;
 static VisionMissionCommand active_mission;
 static uint32_t command_generation_seen, context_session_generation;
 static bool command_accepted, command_visual_new;
+static uint32_t diag_rx_count, diag_accept_count, diag_reject_count;
+static uint8_t diag_reject_stage;
 static bool sweep_audit_ready;
 static bool sweep_audit_nonempty;
 static uint32_t audit_frame_floor;
@@ -914,9 +917,18 @@ static TaskCommandReject task_disperse_reject_reason(
 
 static void task_latch_audit(const VisionMissionCommand *command, uint32_t now_ms)
 {
-  if (Camera_GetAngle() != APP_GRAB_VIEW_ANGLE) { return; }
-  if (!task_status.claw_visible) { return; }
-  if (state == TASK_TRANSPORT_AUDIT && !transport_audit_camera_ready) { return; }
+  if (Camera_GetAngle() != APP_GRAB_VIEW_ANGLE) {
+    TaskDiag_Event("AUDIT_GATE", 1, accepted_context.task_id, accepted_context.action_id,
+                   Camera_GetAngle(), APP_GRAB_VIEW_ANGLE, command->vision_frame); return;
+  }
+  if (!task_status.claw_visible) {
+    TaskDiag_Event("AUDIT_GATE", 2, accepted_context.task_id, accepted_context.action_id,
+                   0, 0, command->vision_frame); return;
+  }
+  if (state == TASK_TRANSPORT_AUDIT && !transport_audit_camera_ready) {
+    TaskDiag_Event("AUDIT_GATE", 3, accepted_context.task_id, accepted_context.action_id,
+                   0, 0, command->vision_frame); return;
+  }
   if (!command_visual_new) {
     /* A same-picture STABLE confirmation may acknowledge existing evidence,
      * but cannot add a sample or renew its freshness. */
@@ -937,6 +949,8 @@ static void task_latch_audit(const VisionMissionCommand *command, uint32_t now_m
       task_status.audit_ready = true;
       task_status.audit_valid = audit_valid;
     }
+    TaskDiag_Event("AUDIT_SAME_FRAME", audit_received, accepted_context.task_id,
+                   accepted_context.action_id, command->vision_frame, audit_consistent_count, audit_host_stable);
     return;
   }
   if (accepted_context.opcode == VISION_CMD_CARGO_AUDIT) {
@@ -981,6 +995,8 @@ static void task_latch_audit(const VisionMissionCommand *command, uint32_t now_m
       (now_ms - audit_evidence_ms > APP_AUDIT_EVIDENCE_MAX_GAP_MS ||
        (audit_consistent_count < APP_AUDIT_REQUIRED_SAMPLES &&
         now_ms - audit_sample_ms > APP_AUDIT_ACCUMULATE_WINDOW_MS))) {
+    TaskDiag_Event("AUDIT_EXPIRED", accepted_context.task_id, accepted_context.action_id,
+        audit_consistent_count, now_ms-audit_evidence_ms, now_ms-audit_sample_ms, command->vision_frame);
     same = false;
   }
   /* Side-normalized audit legality does not prove a stable physical side.
@@ -993,6 +1009,10 @@ static void task_latch_audit(const VisionMissionCommand *command, uint32_t now_m
     for (uint8_t i = 0U; i < audit_consistent_count && i < APP_AUDIT_REQUIRED_SAMPLES; ++i) {
       seen = seen || (audit_seen_ids[i] == command->audit_id);
     }
+    TaskDiag_Event("AUDIT_SAMPLE", seen ? 1U :
+        (now_ms-audit_sample_ms < APP_AUDIT_SAMPLE_INTERVAL_MS ? 2U : 0U),
+        accepted_context.task_id, accepted_context.action_id, command->vision_frame,
+        now_ms-audit_sample_ms, command->audit_id);
     if (!seen) {
       audit_evidence_ms = now_ms;
       if (audit_consistent_count < APP_AUDIT_REQUIRED_SAMPLES &&
@@ -1039,6 +1059,10 @@ static void task_latch_audit(const VisionMissionCommand *command, uint32_t now_m
       (semantic != AUDIT_SEMANTIC_INVALID);
   task_status.audit_ready = audit_received;
   task_status.audit_valid = audit_valid;
+  TaskDiag_Event("AUDIT_RESULT", audit_consistent_count,
+      (uint32_t)audit_host_stable | ((uint32_t)audit_valid << 1U), semantic,
+      command->vision_frame, command->audit_id,
+      (uint32_t)command->audit_total_count | ((uint32_t)command->audit_flags << 8U));
 }
 
 static void task_clear_audit_result(void)
@@ -1185,6 +1209,8 @@ static void task_update_match_time(uint32_t now_ms)
 
 static void task_enter(TaskState next, uint32_t now_ms)
 {
+  TaskDiag_Event("STATE", state, next, task_status.fault,
+      accepted_context.task_id, accepted_context.action_id, now_ms - state_started_ms);
   if (state == TASK_FACE_FIELD_CENTER && next == TASK_SEARCH &&
       accepted_context.opcode == VISION_CMD_RETURN_CENTER) {
     accepted_context.completed = true;
@@ -4681,7 +4707,10 @@ static void task_reset_sweep_audit(uint32_t now_ms)
 static void task_latch_sweep_audit(const VisionMissionCommand *command,
                                    uint32_t now_ms)
 {
-  if (Camera_GetAngle() != APP_GRAB_VIEW_ANGLE || !task_status.claw_visible) { return; }
+  if (Camera_GetAngle() != APP_GRAB_VIEW_ANGLE || !task_status.claw_visible) {
+    TaskDiag_Event("SWEEP_GATE", accepted_context.task_id, accepted_context.action_id,
+        task_status.claw_visible, Camera_GetAngle(), APP_GRAB_VIEW_ANGLE, command->vision_frame); return;
+  }
   if (!command_visual_new) {
     if (!sweep_observation_gap && command->vision_frame != 0U && accepted_context.visual_valid &&
         command->vision_frame == accepted_context.vision_frame &&
@@ -4749,6 +4778,8 @@ static void task_latch_sweep_audit(const VisionMissionCommand *command,
   sweep_last_evidence = *command;
   task_status.audit_ready = sweep_audit_ready;
   task_status.audit_valid = sweep_audit_valid;
+  TaskDiag_Event("SWEEP_AUDIT", sweep_audit_consistent_count, sweep_audit_host_stable,
+      sweep_audit_valid, command->vision_frame, command->audit_id, command->audit_total_count);
   task_status.audit_left_class = command->audit_left_class;
   task_status.audit_right_class = command->audit_right_class;
   task_status.audit_total_count = command->audit_total_count;
@@ -5930,6 +5961,8 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
 {
   const VisionMissionCommand incoming = vision->mission;
   if (context_session_generation != vision->session_generation) {
+    TaskDiag_Event("SESSION", context_session_generation, vision->session_generation,
+                   state, accepted_context.task_id, accepted_context.action_id, 0);
     context_session_generation = vision->session_generation;
     accepted_context = (TaskContext){0};
     active_mission = (VisionMissionCommand){0};
@@ -5945,8 +5978,17 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     return;
   }
   command_generation_seen = incoming.generation;
+  ++diag_rx_count;
+  TaskDiag_Event("RX_COMMAND", incoming.task_id, incoming.action_id, incoming.command,
+      incoming.vision_frame,
+      (uint32_t)incoming.flags | ((uint32_t)incoming.audit_flags << 8U) |
+      ((uint32_t)incoming.sequence << 16U) | ((uint32_t)incoming.audit_id << 24U),
+      (uint32_t)incoming.audit_left_class | ((uint32_t)incoming.audit_right_class << 8U) |
+      ((uint32_t)incoming.audit_counts << 16U) | ((uint32_t)incoming.audit_total_count << 24U));
+  uint8_t reject_stage = 1U;
   if (!incoming.payload_valid) goto rejected;
   /* Retired opcode remains reserved on the wire, never executable. */
+  reject_stage = 2U;
   if (incoming.command == VISION_CMD_ESCAPE_MANEUVER) goto rejected;
   const bool abort = incoming.command == VISION_CMD_ABORT;
   const bool overlay = incoming.command == VISION_CMD_HOLD ||
@@ -5975,8 +6017,12 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     active_mission = incoming;
     Vision_ClearAbort();
     vision->mission = active_mission;
+    ++diag_accept_count;
+    TaskDiag_Event("ABORT", incoming.task_id, incoming.action_id, abort_owned,
+                   incoming.command, incoming.sequence, incoming.vision_frame);
     return;
   }
+  reject_stage = 3U;
   if (!incoming.context_valid || !vision->config_ready ||
       !task_mission_valid(&incoming)) { goto rejected; }
 
@@ -5991,6 +6037,7 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
   const bool new_action = new_task || incoming.action_id != accepted_context.action_id;
   const bool range_request = incoming.command == VISION_CMD_APPROACH_TARGET &&
       (incoming.flags & VISION_CMD_APPROACH_RANGE) != 0U;
+  reject_stage = 4U;
   if (state == TASK_RECOVERY_WAIT && !overlay && !new_action &&
       (incoming.command != VISION_CMD_CARGO_AUDIT ||
        accepted_context.opcode != VISION_CMD_CARGO_AUDIT)) goto rejected;
@@ -6000,6 +6047,7 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
   if (overlay && accepted_context.valid && new_action) goto rejected;
   if (incoming.command == VISION_CMD_CARGO_AUDIT && state == TASK_NAVIGATE &&
       (new_target || !new_action)) goto rejected;
+  reject_stage = 5U;
   if (accepted_context.valid) {
     if (new_task) {
       if (!task_serial16_newer(incoming.task_id, accepted_context.task_id)) goto rejected;
@@ -6024,6 +6072,7 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
   }
   const bool visual = incoming.command == VISION_CMD_APPROACH_TARGET ||
                       incoming.command == VISION_CMD_CARGO_AUDIT;
+  reject_stage = 6U;
   if (visual && !new_target && incoming.vision_frame != 0U &&
       accepted_context.visual_valid &&
       incoming.vision_frame != accepted_context.vision_frame &&
@@ -6037,6 +6086,7 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     command_visual_new = false;
   }
 
+  reject_stage = 7U;
   if (range_request) {
     if (new_target || state != TASK_APPROACH ||
         (incoming.flags & VISION_CMD_DISTANCE_VALID) == 0U ||
@@ -6052,6 +6102,7 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
              approach_phase == APPROACH_RANGE_MOVE) goto rejected;
 
   /* Do not erase a valid audit on an out-of-state/rejected request. */
+  reject_stage = 8U;
   if (incoming.command == VISION_CMD_CARGO_AUDIT) {
     const bool placeholder = task_audit_is_placeholder(&incoming);
     if (incoming.vision_frame == 0U && !placeholder) goto rejected;
@@ -6077,6 +6128,7 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     cluster_target_active = (incoming.flags & VISION_CMD_CLUSTER_TARGET) != 0U;
   }
   command_accepted = false;
+  reject_stage = 9U;
   if (!new_action && !overlay && !task_dynamic_opcode(incoming.command)) {
     /* A finite action is an epoch, not a pulse repeated at 100 Hz. */
     task_status.acknowledged_sequence = incoming.sequence;
@@ -6091,6 +6143,9 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     task_accept_mission_legacy(&incoming, now_ms);
   }
   if (!command_accepted) goto rejected;
+  ++diag_accept_count;
+  TaskDiag_Event("ACCEPT", incoming.task_id, incoming.action_id, incoming.command,
+                 incoming.sequence, incoming.vision_frame, incoming.flags);
 
   if (new_target) {
     capture_budget_active = capture_wait_active = false;
@@ -6149,6 +6204,12 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
   return;
 
 rejected:
+  ++diag_reject_count;
+  diag_reject_stage = reject_stage;
+  TaskDiag_Event("REJECT", incoming.task_id, incoming.action_id, reject_stage,
+                 incoming.command, incoming.vision_frame, task_status.command_reject_reason);
+  TaskDiag_Event("REJECT_META", incoming.task_id, incoming.action_id, reject_stage,
+                 incoming.flags, incoming.audit_flags, state);
   if (incoming.context_valid && accepted_context.valid &&
       incoming.task_id == accepted_context.task_id) {
     accepted_context.rejection_valid = true;
@@ -6407,6 +6468,7 @@ static void task_recover_reference(const VisionData *vision, uint32_t now_ms)
 
 void Task_Process(uint32_t now_ms)
 {
+  TaskDiag_TaskTick();
   if (!initialized) {
     task_initialize(now_ms);
   }
@@ -6772,6 +6834,39 @@ void Task_Process(uint32_t now_ms)
   task_status.state = state;
   task_status.camera_angle = Camera_GetAngle();
   task_publish_status(now_ms);
+}
+
+TaskDiagnostic Task_GetDiagnostic(uint32_t now_ms)
+{
+  const uint32_t mask = __get_PRIMASK();
+  __disable_irq();
+  TaskDiagnostic d = {
+    .now_ms=now_ms, .state_age_ms=now_ms-state_started_ms, .step_age_ms=now_ms-step_started_ms,
+    .command_age_ms=accepted_context.valid ? now_ms-accepted_context.last_command_rx_ms : UINT32_MAX,
+    .visual_age_ms=accepted_context.visual_valid ? now_ms-accepted_context.last_visual_update_ms : UINT32_MAX,
+    .audit_age_ms=audit_consistent_count ? now_ms-audit_evidence_ms : UINT32_MAX,
+    .sample_age_ms=audit_consistent_count ? now_ms-audit_sample_ms : UINT32_MAX,
+    .frame=accepted_context.vision_frame, .rx_count=diag_rx_count,
+    .accept_count=diag_accept_count, .reject_count=diag_reject_count,
+    .capture_used_mm=capture_forward_used_mm,
+    .task_id=accepted_context.task_id, .action_id=accepted_context.action_id,
+    .rejected_action_id=accepted_context.rejected_action_id,
+    .initialized=initialized, .context_valid=accepted_context.valid,
+    .paused=mission_paused, .command=active_mission.command, .flags=active_mission.flags,
+    .reject_stage=diag_reject_stage, .search_phase=search_phase, .approach_phase=approach_phase,
+    .post_audit_phase=post_grab_audit_phase, .transport_phase=transport_audit_phase,
+    .injury_phase=injury_backoff_phase, .separation_stage=separation_motion.stage,
+    .separation_attempts=separation_total_attempts, .audit_samples=audit_consistent_count,
+    .audit_stable=audit_host_stable, .audit_received=audit_received, .audit_semantic=audit_last_semantic,
+    .audit_id=audit_last_id, .audit_flags=audit_last_flags, .audit_left=audit_last_left_class,
+    .audit_right=audit_last_right_class, .audit_total=audit_last_total_count,
+    .sweep_samples=sweep_audit_consistent_count, .sweep_stable=sweep_audit_host_stable,
+    .sweep_ready=sweep_audit_ready, .sweep_valid=sweep_audit_valid,
+    .transport_camera_ready=transport_audit_camera_ready, .visual_new=command_visual_new,
+    .audit_state=task_audit_state(), .target_x=last_app_x, .target_y=last_app_y
+  };
+  __set_PRIMASK(mask);
+  return d;
 }
 
 TaskStatus Task_GetStatus(void)

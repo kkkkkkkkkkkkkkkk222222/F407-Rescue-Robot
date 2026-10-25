@@ -5,12 +5,17 @@
 #include "Task.h"
 #include "Robot.h"
 #include "DebugConsole.h"
+#include "TaskDiag.h"
 #include <stdio.h>
 #include <string.h>
 
 static void send(const char *line)
 {
+#if APP_ENABLE_TASK
+  TaskDiag_Send(line);
+#else
   (void)HAL_UART_Transmit(&huart1, (uint8_t *)line, (uint16_t)strlen(line), 30U);
+#endif
 }
 
 void BoardF405_ReportVersion(void)
