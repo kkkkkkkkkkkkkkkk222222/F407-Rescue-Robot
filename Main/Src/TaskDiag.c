@@ -36,10 +36,13 @@ static uint16_t free_bytes(void) { return (uint16_t)((tail + TX_CAP - head - 1U)
 static void enqueue(const char *s, bool remember)
 {
   const size_t n = strlen(s);
-  const uint32_t m = lock();
-  if (n > free_bytes()) { ++tx_drops; unlock(m); return; }
-  for (size_t i=0; i<n; ++i) { tx[head]=s[i]; head=(uint16_t)((head+1U)%TX_CAP); }
-  unlock(m);
+  /* Main is the sole text producer and TX-tail owner. IRQs only finish TX
+   * or append events, so copying a line must not mask the 1 kHz gyro RX. */
+  if (n > free_bytes()) { ++tx_drops; return; }
+  const size_t first=n < TX_CAP-head ? n : TX_CAP-head;
+  memcpy(tx+head,s,first);
+  if(n>first)memcpy(tx,s+first,n-first);
+  head=(uint16_t)((head+n)%TX_CAP);
   /* Text producers run in main; task/IRQ producers only enqueue small events. */
   if (remember && dump_left == 0U && n < LINE_CAP) {
     memcpy(history[history_head], s, n+1U);
