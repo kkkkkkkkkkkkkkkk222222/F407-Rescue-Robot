@@ -24,6 +24,9 @@ static bool config_sequence_valid;
 static volatile uint8_t ack_remaining;
 static volatile bool status_pending;
 static volatile bool odom_pending;
+static volatile bool imu_pending;
+static uint8_t imu_sequence;
+static uint8_t imu_frame[VISION_FRAME_SIZE];
 static volatile bool motion_status_pending;
 static uint8_t motion_status_sequence;
 static uint8_t motion_status_frame[VISION_FRAME_SIZE];
@@ -603,6 +606,8 @@ void Vision_Init(void)
   ack_remaining = 0U;
   status_pending = false;
   odom_pending = false;
+  imu_pending = false;
+  imu_sequence = 0U;
   motion_status_pending = false;
   motion_status_sequence = 0U;
   status_sequence = 0U;
@@ -770,6 +775,25 @@ void Vision_QueueOdom(const VisionOdom *odom)
   }
 }
 
+void Vision_QueueImu(const VisionImu *imu)
+{
+  if (imu == 0) { return; }
+  const uint32_t yaw = (uint32_t)imu->yaw_mdeg;
+  const uint16_t rate = (uint16_t)imu->rate_ddeg_s;
+  const uint8_t payload[VISION_PAYLOAD_SIZE] = {
+    (uint8_t)(yaw >> 24), (uint8_t)(yaw >> 16), (uint8_t)(yaw >> 8), (uint8_t)yaw,
+    (uint8_t)(rate >> 8), (uint8_t)rate, imu->age_ms, imu->status
+  };
+  uint8_t pending[VISION_FRAME_SIZE];
+  vision_build_frame(pending, VISION_MSG_IMU,
+                     vision_next_sequence(&imu_sequence), payload);
+  const uint32_t mask = __get_PRIMASK();
+  __disable_irq();
+  for (uint8_t i = 0U; i < VISION_FRAME_SIZE; ++i) { imu_frame[i] = pending[i]; }
+  imu_pending = true;
+  if (mask == 0U) { __enable_irq(); }
+}
+
 void Vision_QueueMotionStatus(const VisionMotionStatus *status);
 void Vision_QueueMotionStatus(const VisionMotionStatus *status)
 {
@@ -831,5 +855,7 @@ void Vision_Process(void)
     vision_send_pending(&motion_status_pending, motion_status_frame, VISION_FRAME_SIZE);
   } else if (odom_pending) {
     vision_send_pending(&odom_pending, odom_frame, VISION_FRAME_SIZE);
+  } else if (imu_pending) {
+    vision_send_pending(&imu_pending, imu_frame, VISION_FRAME_SIZE);
   }
 }

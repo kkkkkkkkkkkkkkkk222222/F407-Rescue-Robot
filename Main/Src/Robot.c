@@ -40,6 +40,7 @@ static uint32_t imu_consumed_sequence;
 static volatile uint32_t odom_release_sequence;
 static uint32_t odom_consumed_sequence;
 static bool odom_reset_pending;
+static uint32_t imu_telemetry_ms, imu_telemetry_sample, imu_telemetry_sample_ms;
 static uint8_t imu_period_ms;
 static uint8_t motor_control_period_ms;
 static uint8_t lcd_period_ms;
@@ -354,6 +355,7 @@ void Robot_Init(void)
   odom_release_sequence = 0U;
   odom_consumed_sequence = 0U;
   odom_reset_pending = true;
+  imu_telemetry_ms = imu_telemetry_sample = imu_telemetry_sample_ms = 0U;
   imu_period_ms = 0U;
   motor_control_period_ms = 0U;
   lcd_period_ms = 0U;
@@ -536,6 +538,43 @@ void Robot_Process(void)
     odom_consumed_sequence = odom_released;
     Vision_QueueOdom(&odom);
     odom_reset_pending = false;
+
+    const uint32_t now = Robot_GetMilliseconds();
+    const IMUData imu = IMU_GetData();
+    if (imu.sample_count != imu_telemetry_sample) {
+      imu_telemetry_sample = imu.sample_count;
+      imu_telemetry_sample_ms = now;
+    }
+    if ((uint32_t)(now - imu_telemetry_ms) >= APP_IMU_TELEMETRY_PERIOD_MS) {
+      imu_telemetry_ms = now;
+      uint32_t age = imu.sample_count ? now - imu_telemetry_sample_ms : UINT32_MAX;
+#if APP_IMU_USE_UART
+      age = imu.uart_angle_age_ms > imu.uart_rate_age_ms ?
+          imu.uart_angle_age_ms : imu.uart_rate_age_ms;
+#endif
+      VisionImu report = {0};
+      if (imu.ready) { report.status |= VISION_IMU_READY; }
+      if (imu.recovering) { report.status |= VISION_IMU_RECOVERING; }
+      if (imu.heading_uncertain) { report.status |= VISION_IMU_UNCERTAIN; }
+      if (age >= APP_IMU_UART_STALE_MS || imu.sample_count == 0U) {
+        report.status |= VISION_IMU_STALE;
+      }
+      int64_t yaw = imu.yaw_mdeg;
+      if (yaw > INT32_MAX || yaw < INT32_MIN) {
+        report.status |= VISION_IMU_YAW_CLAMPED;
+        yaw = yaw > INT32_MAX ? INT32_MAX : INT32_MIN;
+      }
+      int32_t rate = imu.gyro_mdps[2] / 100;
+      if (rate > INT16_MAX || rate < INT16_MIN) {
+        report.status |= VISION_IMU_RATE_CLAMPED;
+        rate = rate > INT16_MAX ? INT16_MAX : INT16_MIN;
+      }
+      if (report.status == VISION_IMU_READY) { report.status |= VISION_IMU_VALID; }
+      report.yaw_mdeg = (int32_t)yaw;
+      report.rate_ddeg_s = (int16_t)rate;
+      report.age_ms = age > UINT8_MAX ? UINT8_MAX : (uint8_t)age;
+      Vision_QueueImu(&report);
+    }
   }
 
   ROBOT_TRACE_STAGE(MOTION_DIAG_VISION);

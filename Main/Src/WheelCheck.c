@@ -863,10 +863,11 @@ static void wheel_execute(void)
 #else
         "UART3 "
 #endif
-        "RX_ERRORS=%lu LAST_RX_ERROR=0x%08lX RX_RESTARTS=%lu TX_DROPS=%lu TX_LEFT=%u TX_SIZE=%u RX_ACTIVE=%u RECOVERY=%u\r\n",
+        "RX_ERRORS=%lu LAST_RX_ERROR=0x%08lX RX_RESTARTS=%lu TX_DROPS=%lu TX_LEFT=%u TX_SIZE=%u RX_ACTIVE=%u RECOVERY=%u ODOM_TX=%lu IMU_TX=%lu\r\n",
         (unsigned long)link.rx_errors, (unsigned long)link.last_rx_error,
         (unsigned long)link.rx_restarts, (unsigned long)link.tx_dropped,
-        link.tx_remaining, link.tx_size, link.rx_active, link.rx_pending);
+        link.tx_remaining, link.tx_size, link.rx_active, link.rx_pending,
+        (unsigned long)link.odom_tx_frames, (unsigned long)link.imu_tx_frames);
     wheel_send(text);
     return;
   }

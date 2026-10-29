@@ -20,6 +20,15 @@ MSG_MOTION_STATUS = 0x1C
 MSG_MISSION = 0x18
 MSG_COMMAND_CONTEXT = 0x1D
 MSG_STATUS_CONTEXT = 0x1E
+MSG_IMU = 0x1F
+
+IMU_VALID = 0x01
+IMU_READY = 0x02
+IMU_RECOVERING = 0x04
+IMU_UNCERTAIN = 0x08
+IMU_STALE = 0x10
+IMU_YAW_CLAMPED = 0x20
+IMU_RATE_CLAMPED = 0x40
 CONFIG_ACK = bytes((0xA3, 0xB3, 0x01, 0xC3))
 
 IMAGE_WIDTH = 1280
@@ -103,7 +112,7 @@ def crc16_modbus(data: bytes) -> int:
 
 def build_frame(message_type: int, sequence: int, payload: bytes) -> bytes:
     if message_type not in (
-        MSG_CONFIG, MSG_REPORT, MSG_ODOM, MSG_FUSED_POSE,
+        MSG_CONFIG, MSG_REPORT, MSG_ODOM, MSG_IMU, MSG_FUSED_POSE,
         MSG_STM_STATUS, MSG_MISSION, MSG_MOTION_COMMAND, MSG_MOTION_STATUS,
     ):
         raise ValueError("unsupported message type")
@@ -124,7 +133,7 @@ def parse_frame(frame: bytes) -> tuple[int, int, bytes]:
     if crc16_modbus(frame[2:12]) != int.from_bytes(frame[12:14], "little"):
         raise ValueError("invalid frame CRC")
     if frame[2] not in (
-        MSG_CONFIG, MSG_REPORT, MSG_ODOM, MSG_FUSED_POSE,
+        MSG_CONFIG, MSG_REPORT, MSG_ODOM, MSG_IMU, MSG_FUSED_POSE,
         MSG_STM_STATUS, MSG_MISSION, MSG_MOTION_COMMAND, MSG_MOTION_STATUS,
     ):
         raise ValueError("unsupported message type")
@@ -404,6 +413,33 @@ def cargo_audit_frame(
         total_count,
     ))
     return build_frame(MSG_MISSION, sequence, payload)
+
+
+def imu_frame(sequence: int, yaw_mdeg: int, rate_ddeg_s: int,
+              age_ms: int, status: int) -> bytes:
+    if not -(1 << 31) <= yaw_mdeg < (1 << 31):
+        raise ValueError("yaw must fit signed 32-bit millidegrees")
+    if not -(1 << 15) <= rate_ddeg_s < (1 << 15):
+        raise ValueError("rate must fit signed 16-bit tenths of a degree/second")
+    if not 0 <= age_ms <= 255 or not 0 <= status <= 0x7F:
+        raise ValueError("invalid IMU age or flags")
+    payload = (yaw_mdeg.to_bytes(4, "big", signed=True)
+               + rate_ddeg_s.to_bytes(2, "big", signed=True)
+               + bytes((age_ms, status)))
+    return build_frame(MSG_IMU, sequence, payload)
+
+
+def parse_imu(frame: bytes) -> dict[str, int]:
+    message_type, sequence, payload = parse_frame(frame)
+    if message_type != MSG_IMU or payload[7] & 0x80:
+        raise ValueError("not a valid IMU frame")
+    return {
+        "sequence": sequence,
+        "yaw_mdeg": int.from_bytes(payload[0:4], "big", signed=True),
+        "rate_ddeg_s": int.from_bytes(payload[4:6], "big", signed=True),
+        "age_ms": payload[6],
+        "status": payload[7],
+    }
 
 
 def parse_odometry(frame: bytes) -> dict[str, int]:

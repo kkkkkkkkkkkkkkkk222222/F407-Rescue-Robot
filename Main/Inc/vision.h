@@ -63,6 +63,15 @@
 #define VISION_MSG_MISSION        0x18U
 #define VISION_MSG_COMMAND_CONTEXT 0x1DU
 #define VISION_MSG_STATUS_CONTEXT  0x1EU
+#define VISION_MSG_IMU             0x1FU
+
+#define VISION_IMU_VALID           0x01U
+#define VISION_IMU_READY           0x02U
+#define VISION_IMU_RECOVERING      0x04U
+#define VISION_IMU_UNCERTAIN       0x08U
+#define VISION_IMU_STALE           0x10U
+#define VISION_IMU_YAW_CLAMPED     0x20U
+#define VISION_IMU_RATE_CLAMPED    0x40U
 
 #define VISION_COLOR_RED          0x11U
 #define VISION_COLOR_BLUE         0x12U
@@ -259,6 +268,12 @@ typedef struct {
 } VisionOdom;
 
 typedef struct {
+  int32_t yaw_mdeg;
+  int16_t rate_ddeg_s;
+  uint8_t age_ms, status;
+} VisionImu;
+
+typedef struct {
   uint8_t command_sequence;
   uint8_t state;
   uint8_t fault;
@@ -286,6 +301,7 @@ bool Vision_MissionIsFresh(const VisionMissionCommand *command,
 void Vision_RequestConfigAck(void);
 void Vision_QueueStmStatus(const VisionStmStatus *status);
 void Vision_QueueOdom(const VisionOdom *odom);
+void Vision_QueueImu(const VisionImu *imu);
 void Vision_Process(void);
 typedef struct {
   uint32_t rx_bytes, valid_frames, invalid_frames, last_rx_ms, last_valid_ms;

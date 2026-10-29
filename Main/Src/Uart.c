@@ -35,6 +35,7 @@ static UartTxSlot tx_queue[UART_TX_QUEUE_SIZE];
 static int8_t tx_active_slot;
 static uint32_t tx_order;
 static uint32_t tx_dropped;
+static uint32_t odom_tx_frames, imu_tx_frames;
 
 static bool uart_is_ack(const uint8_t *data, uint16_t size)
 {
@@ -42,19 +43,20 @@ static bool uart_is_ack(const uint8_t *data, uint16_t size)
          (data[2] == 0x01U) && (data[3] == 0xC3U);
 }
 
-static bool uart_is_odom(const UartTxSlot *slot)
+static bool uart_is_telemetry(const UartTxSlot *slot)
 {
   return slot->used && (slot->size == 15U) &&
          (slot->data[0] == 0xA3U) && (slot->data[1] == 0xB3U) &&
-         (slot->data[2] == 0x15U) && (slot->data[14] == 0xC3U);
+         (slot->data[2] == VISION_MSG_ODOM || slot->data[2] == VISION_MSG_IMU) &&
+         (slot->data[14] == 0xC3U);
 }
 
-static bool uart_data_is_odom(const uint8_t *data, uint16_t size)
+static bool uart_data_is_telemetry(const uint8_t *data, uint16_t size)
 {
   return (size == VISION_FRAME_SIZE) &&
          (data[0] == VISION_FRAME_HEAD_1) &&
          (data[1] == VISION_FRAME_HEAD_2) &&
-         (data[2] == VISION_MSG_ODOM) &&
+         (data[2] == VISION_MSG_ODOM || data[2] == VISION_MSG_IMU) &&
          (data[VISION_FRAME_SIZE - 1U] == VISION_FRAME_TAIL);
 }
 
@@ -168,6 +170,7 @@ bool Uart_Init(void)
   tx_active_slot = -1;
   tx_order = 0U;
   tx_dropped = 0U;
+  odom_tx_frames = imu_tx_frames = 0U;
   return uart_start_rx();
 }
 
@@ -187,13 +190,13 @@ bool Uart_Send(const uint8_t *data, uint16_t size)
     }
   }
 
-  /* Keep control ACKs and the newest cumulative odometry snapshot. */
+  /* Control messages can replace queued telemetry, never the active transfer. */
   if ((slot < 0) &&
-      (uart_is_ack(data, size) || uart_data_is_odom(data, size) ||
+      (uart_is_ack(data, size) || uart_data_is_telemetry(data, size) ||
        uart_data_is_status(data, size))) {
     uint32_t oldest_order = UINT32_MAX;
     for (uint8_t i = 0U; i < UART_TX_QUEUE_SIZE; ++i) {
-      if (((int8_t)i != tx_active_slot) && uart_is_odom(&tx_queue[i]) &&
+      if (((int8_t)i != tx_active_slot) && uart_is_telemetry(&tx_queue[i]) &&
           (tx_queue[i].order < oldest_order)) {
         slot = (int8_t)i;
         oldest_order = tx_queue[i].order;
@@ -266,6 +269,7 @@ UartLinkStatus Uart_GetLinkStatus(void)
   const UartLinkStatus status = {
     .rx_errors = rx_errors, .last_rx_error = last_rx_error,
     .rx_restarts = rx_restarts, .tx_dropped = tx_dropped,
+    .odom_tx_frames = odom_tx_frames, .imu_tx_frames = imu_tx_frames,
     .tx_remaining = huart3.TxXferCount, .tx_size = huart3.TxXferSize,
     .rx_active = rx_active, .rx_pending = rx_recovery_pending
   };
@@ -303,6 +307,11 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *uart)
 
   const uint32_t primask = __get_PRIMASK();
   __disable_irq();
+  const UartTxSlot *completed = &tx_queue[(uint8_t)tx_active_slot];
+  if (completed->size == VISION_FRAME_SIZE) {
+    if (completed->data[2] == VISION_MSG_ODOM) { ++odom_tx_frames; }
+    if (completed->data[2] == VISION_MSG_IMU) { ++imu_tx_frames; }
+  }
   tx_queue[(uint8_t)tx_active_slot].used = false;
   tx_active_slot = -1;
   uart_start_tx();
