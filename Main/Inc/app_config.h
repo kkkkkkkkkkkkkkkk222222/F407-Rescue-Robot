@@ -288,6 +288,9 @@
 #define APP_MOTOR_ZERO_EXIT_MM_S           6.0f
 /* F405 debug MOVE trial: gate yaw before mixing, not individual wheels. */
 #define APP_DEBUG_MOVE_YAW_SLEW_MM_S2     80.0f
+#define APP_DEBUG_MOVE_HEADING_RATE_KD    0.20f /* (mm/s) / (deg/s), D on measurement */
+#define APP_DEBUG_MOVE_YAW_ZERO_ENTER     0.5f
+#define APP_DEBUG_MOVE_YAW_ZERO_EXIT      1.0f
 #define APP_DEBUG_MOVE_REAR_FF_FULL_MM_S  12.0f
 /* Bounded F405 debug lateral startup; these do not change ordinary MOVE/TURN. */
 #define APP_DEBUG_LATERAL_SYNC_MS         600U

@@ -126,7 +126,7 @@ static void wheel_report_move_log(void)
       "MOVE_LOG N=%lu MS=%lu SEQ=%u CMD=%u STATE=%u PENDING=%u FAULT=%u "
       "RAW32=%ld,%ld,%ld TARGET=%d,%d,%d ACTUAL=%d,%d,%d PWM=%d,%d,%d "
       "FF=%d,%d,%d YAW_MDEG=%ld RATE_MDPS=%ld XY=%ld,%ld CROSS=%ld VALID=%u "
-      "YAW_CMD100=%ld IMU=%u AGE=%lu UERR=%lu ENC_BAD=%lu DROP=%lu\r\n",
+      "YAW_CMD100=%ld YAW_D100=%ld IMU=%u AGE=%lu UERR=%lu ENC_BAD=%lu DROP=%lu\r\n",
       (unsigned long)++move_log_index, (unsigned long)now, status.command_sequence,
       status.command, status.state, status.console_pending, status.fault,
       (long)(int32_t)enc[0].position, (long)(int32_t)enc[1].position, (long)(int32_t)enc[2].position,
@@ -137,7 +137,7 @@ static void wheel_report_move_log(void)
       (long)(yaw > INT32_MAX ? INT32_MAX : yaw < INT32_MIN ? INT32_MIN : yaw),
       (long)imu.gyro_mdps[2], (long)pose.x_mm, (long)pose.y_mm,
       (long)motor.move_cross_mm, motor.move_path_valid,
-      (long)motor.move_yaw_c100, imu.ready, (unsigned long)imu.uart_angle_age_ms,
+      (long)motor.move_yaw_c100, (long)motor.move_damping_c100, imu.ready, (unsigned long)imu.uart_angle_age_ms,
       (unsigned long)imu.uart_rx_errors,
       (unsigned long)BoardF405_EncoderInvalidTransitions(), (unsigned long)tx_dropped);
   wheel_send(text);
@@ -501,6 +501,12 @@ static void wheel_report_version(void)
   wheel_send(text);
 #if APP_BOARD_F405_ROBO
   wheel_send("CONSOLE_RX=DMA_IDLE DMA_BYTES=512 RING_BYTES=1024\r\n");
+  (void)snprintf(text, sizeof(text),
+      "MOVE_HOLD RATE_D1000=%ld ZERO_ENTER100=%ld ZERO_EXIT100=%ld\r\n",
+      (long)(APP_DEBUG_MOVE_HEADING_RATE_KD * 1000.0f),
+      (long)(APP_DEBUG_MOVE_YAW_ZERO_ENTER * 100.0f),
+      (long)(APP_DEBUG_MOVE_YAW_ZERO_EXIT * 100.0f));
+  wheel_send(text);
   (void)snprintf(text, sizeof(text),
       "AXIS=LEFT_POSITIVE TURN_MODE=CONTINUOUS_TO_TOL FINAL_ENTRY_MDEG=%ld BOOST_STEP=%u BOOST_MAX=%u\r\n",
       (long)APP_DEBUG_TURN_FINAL_ENTRY_MDEG, APP_DEBUG_TURN_BOOST_STEP_PWM, APP_DEBUG_TURN_BOOST_MAX_PWM);

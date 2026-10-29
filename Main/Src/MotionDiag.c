@@ -9,7 +9,7 @@
 #include "motor.h"
 
 #define DIAG_MAGIC 0x4D444731UL
-#define DIAG_FORMAT 7U
+#define DIAG_FORMAT 8U
 
 typedef struct {
   uint32_t valid, exception, pc, lr, xpsr, stack_pointer, exc_return;
@@ -128,9 +128,9 @@ static void print_record(void (*send)(const char *), const char *prefix, const M
   send(text);
 #if APP_BOARD_F405_ROBO
   (void)snprintf(text, sizeof(text),
-      "%s MOVE_CTL STATE=%u PATH_VALID=%u CROSS_MM=%ld YAW_ACTIVE=%u YAW_MM_S100=%ld REAR_TARGET=%d REAR_ACTUAL=%d REAR_PWM=%d\r\n",
+      "%s MOVE_CTL STATE=%u PATH_VALID=%u CROSS_MM=%ld YAW_ACTIVE=%u YAW_MM_S100=%ld DAMP_MM_S100=%ld REAR_TARGET=%d REAR_ACTUAL=%d REAR_PWM=%d\r\n",
       prefix, m->move_state, m->move_path_valid, (long)m->move_cross_mm,
-      m->move_yaw_active, (long)m->move_yaw_c100,
+      m->move_yaw_active, (long)m->move_yaw_c100, (long)m->move_damping_c100,
       m->target_mm_s[2], m->actual_mm_s[2], m->output[2]);
   send(text);
 #endif

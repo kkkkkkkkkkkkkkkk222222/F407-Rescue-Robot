@@ -52,6 +52,7 @@ typedef struct {
   uint8_t zero_confirm_cycles;
   bool yaw_correction_active, path_reference_valid;
   float yaw_correction_mm_s;
+  float yaw_damping_mm_s;
   float start_x_mm, start_y_mm, start_heading_rad;
 } DistanceMove;
 
@@ -580,6 +581,7 @@ static void motor_stop_outputs(bool use_brake)
   Pid_Reset(&heading_pid);
   distance_move.yaw_correction_active = false;
   distance_move.yaw_correction_mm_s = 0.0f;
+  distance_move.yaw_damping_mm_s = 0.0f;
   motor_reset_targets();
 
   if (use_brake && was_moving && (brake_cycles_remaining == 0U) &&
@@ -751,12 +753,18 @@ static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
       Pid_Update(&heading_pid, (float)heading_error_mdeg / 1000.0f, 0.0f) *
       APP_MOTOR_HEADING_OUTPUT_SIGN;
 #if APP_BOARD_F405_ROBO && APP_ENABLE_MOTION_DEBUG_TASK
+  /* D on measured yaw rate avoids differentiating wrapped/quantized angles.
+   * Apply the same raw-yaw-to-wheel sign as P, for forward AND reverse MOVE. */
+  distance_move.yaw_damping_mm_s = -APP_DEBUG_MOVE_HEADING_RATE_KD *
+      ((float)imu.gyro_mdps[2] * 0.001f) * APP_MOTOR_HEADING_OUTPUT_SIGN;
+  rotate_correction = motor_clamp_float(rotate_correction + distance_move.yaw_damping_mm_s,
+      -APP_MOTOR_HEADING_LIMIT_MM_S, APP_MOTOR_HEADING_LIMIT_MM_S);
   const float magnitude = motor_abs_float(rotate_correction);
   if (distance_move.yaw_correction_active) {
-    if (magnitude <= APP_MOTOR_ZERO_ENTER_MM_S) {
+    if (magnitude <= APP_DEBUG_MOVE_YAW_ZERO_ENTER) {
       distance_move.yaw_correction_active = false;
     }
-  } else if (magnitude > APP_MOTOR_ZERO_EXIT_MM_S) {
+  } else if (magnitude > APP_DEBUG_MOVE_YAW_ZERO_EXIT) {
     distance_move.yaw_correction_active = true;
   }
   if (!distance_move.yaw_correction_active) { rotate_correction = 0.0f; }
@@ -1700,6 +1708,7 @@ MotorDebugTrace Motor_GetDebugTrace(void)
   trace.move_state = (uint8_t)distance_move.status;
   trace.move_yaw_active = distance_move.yaw_correction_active;
   trace.move_yaw_c100 = (int32_t)(distance_move.yaw_correction_mm_s * 100.0f);
+  trace.move_damping_c100 = (int32_t)(distance_move.yaw_damping_mm_s * 100.0f);
   const float path_dx = (float)pose.x_mm - distance_move.start_x_mm;
   const float path_dy = (float)pose.y_mm - distance_move.start_y_mm;
   const float path_heading = distance_move.start_heading_rad;
@@ -1861,6 +1870,7 @@ static MotorDistanceStatus motor_move_distance(float distance_m,
   distance_move.yaw_correction_active = false;
   distance_move.yaw_correction_mm_s = 0.0f;
   distance_move.path_reference_valid = false;
+  distance_move.yaw_damping_mm_s = 0.0f;
   if ((distance_mm >= -APP_GO_DISTANCE_TOLERANCE_MM) &&
       (distance_mm <= APP_GO_DISTANCE_TOLERANCE_MM)) {
     distance_move.status = MOTOR_DISTANCE_DONE;

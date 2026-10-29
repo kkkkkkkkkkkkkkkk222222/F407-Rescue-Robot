@@ -105,6 +105,7 @@ typedef struct {
   uint8_t turn_phase, turn_corrections, turn_failure;
   uint8_t turn_state, slowing, brake_cycles, paused, pi_active_mask;
   int32_t move_cross_mm, move_yaw_c100;
+  int32_t move_damping_c100;
   uint8_t move_path_valid, move_state, move_yaw_active;
 } MotorDebugTrace;
 MotorDebugTrace Motor_GetDebugTrace(void);
