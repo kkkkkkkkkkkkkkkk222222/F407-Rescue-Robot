@@ -409,7 +409,7 @@
 #error "IMU gyro scale must be within +/-10 percent"
 #endif
 #define APP_MOTOR_CONTROL_PERIOD_MS      10U
-#define APP_IMU_TELEMETRY_PERIOD_MS      20U
+#define APP_IMU_TELEMETRY_PERIOD_MS      10U
 #define APP_TASK_PERIOD_MS               20U
 #define APP_COMMAND_RX_TIMEOUT_MS         500U
 #define APP_VISUAL_UPDATE_TIMEOUT_MS      500U

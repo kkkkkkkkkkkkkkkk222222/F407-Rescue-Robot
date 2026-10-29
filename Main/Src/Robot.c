@@ -549,8 +549,7 @@ void Robot_Process(void)
       imu_telemetry_ms = now;
       uint32_t age = imu.sample_count ? now - imu_telemetry_sample_ms : UINT32_MAX;
 #if APP_IMU_USE_UART
-      age = imu.uart_angle_age_ms > imu.uart_rate_age_ms ?
-          imu.uart_angle_age_ms : imu.uart_rate_age_ms;
+      age = imu.uart_angle_age_ms;
 #endif
       VisionImu report = {0};
       if (imu.ready) { report.status |= VISION_IMU_READY; }
@@ -564,14 +563,8 @@ void Robot_Process(void)
         report.status |= VISION_IMU_YAW_CLAMPED;
         yaw = yaw > INT32_MAX ? INT32_MAX : INT32_MIN;
       }
-      int32_t rate = imu.gyro_mdps[2] / 100;
-      if (rate > INT16_MAX || rate < INT16_MIN) {
-        report.status |= VISION_IMU_RATE_CLAMPED;
-        rate = rate > INT16_MAX ? INT16_MAX : INT16_MIN;
-      }
       if (report.status == VISION_IMU_READY) { report.status |= VISION_IMU_VALID; }
       report.yaw_mdeg = (int32_t)yaw;
-      report.rate_ddeg_s = (int16_t)rate;
       report.age_ms = age > UINT8_MAX ? UINT8_MAX : (uint8_t)age;
       Vision_QueueImu(&report);
     }
