@@ -31,6 +31,15 @@ uint32_t BoardF405_EncoderInvalidTransitions(void);
 void BoardF405_ServoIRQ(void);
 void BoardF405_ServoTestSet(uint8_t id, uint8_t angle);
 void BoardF405_ServoTestOff(uint8_t id);
+#if APP_ENABLE_MOTION_DEBUG_TASK
+typedef struct {
+  uint32_t pulses, late_edges;
+  uint16_t high_min_us, high_max_us, rise_delay_max_us, fall_delay_max_us;
+  uint16_t period_min_us, period_max_us;
+  uint8_t angle, enabled;
+} BoardF405_ServoTiming;
+void BoardF405_ServoTimingRead(BoardF405_ServoTiming result[4], bool reset);
+#endif
 void BoardF405_Report(void);
 void BoardF405_ReportVersion(void);
 
