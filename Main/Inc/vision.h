@@ -71,6 +71,7 @@
 #define VISION_IMU_UNCERTAIN       0x08U
 #define VISION_IMU_STALE           0x10U
 #define VISION_IMU_YAW_CLAMPED     0x20U
+#define VISION_IMU_RATE_CLAMPED    0x40U
 
 #define VISION_COLOR_RED          0x11U
 #define VISION_COLOR_BLUE         0x12U
@@ -268,6 +269,7 @@ typedef struct {
 
 typedef struct {
   int32_t yaw_mdeg;
+  int16_t rate_ddeg_s;
   uint8_t age_ms, status;
 } VisionImu;
 

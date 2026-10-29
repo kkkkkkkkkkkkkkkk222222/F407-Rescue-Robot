@@ -28,6 +28,7 @@ IMU_RECOVERING = 0x04
 IMU_UNCERTAIN = 0x08
 IMU_STALE = 0x10
 IMU_YAW_CLAMPED = 0x20
+IMU_RATE_CLAMPED = 0x40
 CONFIG_ACK = bytes((0xA3, 0xB3, 0x01, 0xC3))
 
 IMAGE_WIDTH = 1280
@@ -414,23 +415,28 @@ def cargo_audit_frame(
     return build_frame(MSG_MISSION, sequence, payload)
 
 
-def imu_frame(sequence: int, yaw_mdeg: int, age_ms: int, status: int) -> bytes:
+def imu_frame(sequence: int, yaw_mdeg: int, rate_ddeg_s: int,
+              age_ms: int, status: int) -> bytes:
     if not -(1 << 31) <= yaw_mdeg < (1 << 31):
         raise ValueError("yaw must fit signed 32-bit millidegrees")
-    if not 0 <= age_ms <= 255 or not 0 <= status <= 0x3F:
+    if not -(1 << 15) <= rate_ddeg_s < (1 << 15):
+        raise ValueError("rate must fit signed 16-bit tenths of a degree/second")
+    if not 0 <= age_ms <= 255 or not 0 <= status <= 0x7F:
         raise ValueError("invalid IMU age or flags")
     payload = (yaw_mdeg.to_bytes(4, "big", signed=True)
-               + bytes((0, 0, age_ms, status)))
+               + rate_ddeg_s.to_bytes(2, "big", signed=True)
+               + bytes((age_ms, status)))
     return build_frame(MSG_IMU, sequence, payload)
 
 
 def parse_imu(frame: bytes) -> dict[str, int]:
     message_type, sequence, payload = parse_frame(frame)
-    if message_type != MSG_IMU or payload[4:6] != bytes(2) or payload[7] & 0xC0:
+    if message_type != MSG_IMU or payload[7] & 0x80:
         raise ValueError("not a valid IMU frame")
     return {
         "sequence": sequence,
         "yaw_mdeg": int.from_bytes(payload[0:4], "big", signed=True),
+        "rate_ddeg_s": int.from_bytes(payload[4:6], "big", signed=True),
         "age_ms": payload[6],
         "status": payload[7],
     }

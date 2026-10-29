@@ -779,9 +779,10 @@ void Vision_QueueImu(const VisionImu *imu)
 {
   if (imu == 0) { return; }
   const uint32_t yaw = (uint32_t)imu->yaw_mdeg;
+  const uint16_t rate = (uint16_t)imu->rate_ddeg_s;
   const uint8_t payload[VISION_PAYLOAD_SIZE] = {
     (uint8_t)(yaw >> 24), (uint8_t)(yaw >> 16), (uint8_t)(yaw >> 8), (uint8_t)yaw,
-    0U, 0U, imu->age_ms, imu->status
+    (uint8_t)(rate >> 8), (uint8_t)rate, imu->age_ms, imu->status
   };
   uint8_t pending[VISION_FRAME_SIZE];
   vision_build_frame(pending, VISION_MSG_IMU,
