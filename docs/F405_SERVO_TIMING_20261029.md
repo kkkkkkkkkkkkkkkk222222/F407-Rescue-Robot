@@ -1,5 +1,10 @@
 # F405 Servo Timing Measurement, 2026-10-29
 
+Historical measurement record: at the operator's request the servo code was
+restored to its pre-diagnostic revision (b7ee9b2). SPWM and its instrumentation
+are no longer present in the restored firmware. The measurements below are
+retained as observations from the temporary diagnostic build.
+
 NormalDebug motion service adds two non-motion commands:
 
 - `SPWM`: report timing for S1 lift, S2 right claw, S3 camera and S4 left claw.

@@ -670,26 +670,6 @@ static void wheel_execute(void)
     return;
   }
 #if APP_BOARD_F405_ROBO
-  if (strcmp(command, "SPWM") == 0) {
-    if (count > 1U || (count == 1U && args[0] != 0)) {
-      wheel_send("ERR SPWM: NO ARGUMENT OR 0 TO RESET TIMING STATS\r\n"); return;
-    }
-    BoardF405_ServoTiming timing[4];
-    BoardF405_ServoTimingRead(timing, count == 1U);
-    wheel_send("SPWM SOFTWARE_EDGE_TIMING_US; NO VOLTAGE OR SERVO FEEDBACK\r\n");
-    for (uint8_t i = 0U; i < 4U; ++i) {
-      char reply[192];
-      (void)snprintf(reply, sizeof(reply),
-          "SPWM ID=%u ENABLED=%u ANGLE=%u N=%lu HIGH_US=%u..%u PERIOD_US=%u..%u RISE_MAX_US=%u FALL_MAX_US=%u LATE=%lu\r\n",
-          i+1U,timing[i].enabled,timing[i].angle,(unsigned long)timing[i].pulses,
-          timing[i].pulses ? timing[i].high_min_us : 0U,timing[i].high_max_us,
-          timing[i].period_min_us == UINT16_MAX ? 0U : timing[i].period_min_us,
-          timing[i].period_max_us,timing[i].rise_delay_max_us,timing[i].fall_delay_max_us,
-          (unsigned long)timing[i].late_edges);
-      wheel_send(reply);
-    }
-    return;
-  }
   if (strcmp(command, "S") == 0) {
     if (count != 2U || args[0] < 1 || args[0] > 4 || args[1] < 0 || args[1] > 180) {
       wheel_send("ERR S: ID 1..4 ANGLE 0..180\r\n"); return;
@@ -853,7 +833,6 @@ static void wheel_execute(void)
     wheel_report_version();
 #if APP_BOARD_F405_ROBO
     wheel_send("MLOG 1/0: COMPACT 100ms DRIVE LOG, NO MOTION, CONTINUES AFTER STOP\r\n");
-    wheel_send("SPWM [0]: READ / RESET SOFTWARE SERVO EDGE TIMING, NO MOTION\r\n");
 #endif
     wheel_send("DIAG CRASH TRACE 0/1; MOTION TRACE + 2s POST-STOP; NO AUTO MOTION\r\n");
     wheel_send("TURN deg [deg/s=30]; MOVE mm [mm/s=150]\r\n"
