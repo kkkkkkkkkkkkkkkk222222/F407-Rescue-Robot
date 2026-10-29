@@ -522,7 +522,7 @@ static void debug_update_move(uint32_t now_ms)
   const float brake_a = APP_DEBUG_LATERAL_DECEL_MM_S2;
   const float delay_rate = brake_a * APP_DEBUG_LATERAL_BRAKE_DELAY_S;
   const float usable = fmaxf(0.0f, remaining_mm - APP_MOTION_DEBUG_DISTANCE_TOLERANCE_MM);
-  speed_mm_s = fminf(speed_mm_s, fmaxf(fminf(active_move_speed_mm_s, 60.0f),
+  speed_mm_s = fminf(speed_mm_s, fmaxf(fminf(active_move_speed_mm_s, APP_DEBUG_LATERAL_END_MM_S),
       sqrtf(delay_rate * delay_rate + 2.0f * brake_a * usable) - delay_rate));
 #else
   if (remaining_mm < APP_MOTION_DEBUG_SLOWDOWN_MM) {

@@ -101,9 +101,14 @@ typedef struct {
 
 #if APP_BOARD_F405_ROBO && APP_ENABLE_MOTION_DEBUG_TASK
 static bool lateral_trial, lateral_synced;
-static uint32_t lateral_started_ms;
 static uint8_t lateral_sync_hits;
-static uint16_t lateral_boost_used_ms[3];
+static float lateral_feedback[3];
+static struct {
+  uint16_t waiting_ms, elapsed_ms, cooldown_ms, travel_counts, pwm;
+  uint8_t attempts;
+  int8_t sign;
+  bool active;
+} lateral_boost[3];
 #endif
 
 typedef struct {
@@ -1239,22 +1244,25 @@ static void motor_update_direction_move(void)
 #if APP_BOARD_F405_ROBO && APP_ENABLE_MOTION_DEBUG_TASK
   if (lateral_trial) {
     vector_accel = APP_DEBUG_LATERAL_ACCEL_MM_S2;
-    if (!lateral_synced) {
-      bool following = true;
-      for (uint8_t i = 0; i < MOTOR_COUNT; ++i) {
-        if (motor_abs(target_speeds_mm_s[i]) < 30 ||
-            measured_speeds_mm_s[i] * (int32_t)target_speeds_mm_s[i] <= 0 ||
-            motor_abs(measured_speeds_mm_s[i]) < 20) { following = false; }
+    bool following = true;
+    uint8_t checked_wheels = 0U;
+    for (uint8_t i = 0; i < MOTOR_COUNT; ++i) {
+      const float target = (float)target_speeds_mm_s[i];
+      const float measured = lateral_feedback[i] * (target < 0.0f ? -1.0f : 1.0f);
+      if (motor_abs_float(target) >= 30.0f) {
+        ++checked_wheels;
+        if (measured < motor_abs_float(target) * APP_DEBUG_LATERAL_FOLLOW_RATIO) following = false;
       }
-      lateral_sync_hits = following ? (uint8_t)(lateral_sync_hits + 1U) : 0U;
-      lateral_synced = lateral_sync_hits >= 3U ||
-          HAL_GetTick() - lateral_started_ms >= APP_DEBUG_LATERAL_SYNC_MS;
-      if (!lateral_synced) {
-        const float length = sqrtf(desired_forward * desired_forward + desired_lateral * desired_lateral);
-        if (length > APP_DEBUG_LATERAL_START_MM_S) {
-          const float scale = APP_DEBUG_LATERAL_START_MM_S / length;
-          desired_forward *= scale; desired_lateral *= scale;
-        }
+    }
+    following = following && checked_wheels > 0U;
+    lateral_sync_hits = following ? (lateral_sync_hits < 3U ? lateral_sync_hits+1U : 3U) : 0U;
+    lateral_synced = lateral_sync_hits >= 3U;
+    /* Re-evaluate throughout the move, not just a timed startup window. */
+    if (!lateral_synced) {
+      const float length = sqrtf(desired_forward * desired_forward + desired_lateral * desired_lateral);
+      if (length > APP_DEBUG_LATERAL_START_MM_S) {
+        const float scale = APP_DEBUG_LATERAL_START_MM_S / length;
+        desired_forward *= scale; desired_lateral *= scale;
       }
     }
   }
@@ -1449,6 +1457,11 @@ void Motor_Update(void)
     measured_counts[index] = encoder[index].delta_10ms * encoder_signs[index];
     measured_speeds_mm_s[index] =
         motor_round_to_int16(motor_counts_to_mm_s((float)measured_counts[index]));
+#if APP_BOARD_F405_ROBO && APP_ENABLE_MOTION_DEBUG_TASK
+    if (lateral_trial) {
+      lateral_feedback[index] += 0.25f * ((float)measured_speeds_mm_s[index] - lateral_feedback[index]);
+    }
+#endif
   }
 
 #if APP_ENABLE_MOTION_DEBUG_TASK
@@ -1519,6 +1532,10 @@ void Motor_Update(void)
     float correction;
 
     if (targets[index] == 0) {
+#if APP_BOARD_F405_ROBO && APP_ENABLE_MOTION_DEBUG_TASK
+      lateral_boost[index].active = false;
+      lateral_boost[index].waiting_ms = 0U;
+#endif
       Pid_Reset(&speed_pids[index]);
       motor_apply_pwm(id, 0);
       continue;
@@ -1603,16 +1620,49 @@ void Motor_Update(void)
     const float boost = spin_move.active ? APP_MOVE_SPIN_PID_BOOST : 1.0f;
     /* Preserve the existing PID gains, correction bounds and integrator. */
 #if APP_BOARD_F405_ROBO && APP_ENABLE_MOTION_DEBUG_TASK
-    const bool lateral_start = lateral_trial && direction_move.active &&
-        HAL_GetTick() - lateral_started_ms < APP_DEBUG_LATERAL_SYNC_MS;
-    const float integral_before = speed_pids[index].integral;
-    /* Do not store a large kick while a wheel has not broken away. */
-    const bool freeze_integral = lateral_start && motor_abs(measured) == 0;
+    const bool lateral_running = lateral_trial && direction_move.active;
+    if (lateral_running) {
+      const int8_t sign = targets[index] > 0 ? 1 : -1;
+      if (lateral_boost[index].cooldown_ms >= APP_MOTOR_CONTROL_PERIOD_MS) {
+        lateral_boost[index].cooldown_ms -= APP_MOTOR_CONTROL_PERIOD_MS;
+      }
+      if (lateral_boost[index].active) {
+        lateral_boost[index].elapsed_ms += APP_MOTOR_CONTROL_PERIOD_MS;
+        if (measured * sign > 0) { lateral_boost[index].travel_counts += motor_abs(measured); }
+        if (sign != lateral_boost[index].sign || lateral_boost[index].travel_counts >= 5U ||
+            lateral_boost[index].elapsed_ms >= APP_DEBUG_LATERAL_BOOST_MS ||
+            (lateral_boost[index].elapsed_ms >= 20U && lateral_feedback[index] * sign >=
+             motor_abs(target_speeds_mm_s[index]) * APP_DEBUG_LATERAL_FOLLOW_RATIO)) {
+          lateral_boost[index].active = false;
+          lateral_boost[index].cooldown_ms = APP_DEBUG_LATERAL_BOOST_REST_MS;
+        }
+      }
+      const bool lagging = motor_abs(target_speeds_mm_s[index]) >= 40 &&
+          lateral_feedback[index] * sign < fmaxf(10.0f, motor_abs(target_speeds_mm_s[index]) * 0.2f);
+      if (!lagging || lateral_boost[index].active || lateral_boost[index].cooldown_ms) {
+        lateral_boost[index].waiting_ms = 0U;
+      } else if (lateral_boost[index].waiting_ms < APP_DEBUG_LATERAL_BOOST_WAIT_MS) {
+        lateral_boost[index].waiting_ms += APP_MOTOR_CONTROL_PERIOD_MS;
+      }
+      if (lateral_boost[index].waiting_ms >= APP_DEBUG_LATERAL_BOOST_WAIT_MS &&
+          lateral_boost[index].attempts < APP_DEBUG_LATERAL_BOOST_MAX_COUNT) {
+        lateral_boost[index].pwm = APP_DEBUG_LATERAL_BOOST_PWM +
+            lateral_boost[index].attempts * APP_DEBUG_LATERAL_BOOST_STEP_PWM;
+        ++lateral_boost[index].attempts;
+        lateral_boost[index].elapsed_ms = lateral_boost[index].travel_counts = 0U;
+        lateral_boost[index].waiting_ms = 0U;
+        lateral_boost[index].sign = sign;
+        lateral_boost[index].active = true;
+      }
+    }
+    /* Freeze only during an actual assist pulse, never during a powerless wait. */
+    const bool freeze_integral = lateral_running && lateral_boost[index].active;
     if (lateral_trial && motor_abs_float((float)measured) >
         1.2f * motor_abs_float(target_counts_per_update[index]) &&
         speed_pids[index].integral * target_counts_per_update[index] > 0.0f) {
       speed_pids[index].integral *= 0.85f;
     }
+    const float integral_before = speed_pids[index].integral;
 #endif
     correction = boost * Pid_Update(&speed_pids[index],
                                     target_counts_per_update[index],
@@ -1631,13 +1681,11 @@ void Motor_Update(void)
 #endif
     int32_t output = base_pwm + (int32_t)correction;
 #if APP_BOARD_F405_ROBO && APP_ENABLE_MOTION_DEBUG_TASK
-    if (lateral_start && HAL_GetTick() - lateral_started_ms >= 80U &&
-        motor_abs(target_speeds_mm_s[index]) >= 40 && measured == 0 &&
-        lateral_boost_used_ms[index] < APP_DEBUG_LATERAL_BOOST_MS) {
-      if (motor_abs(output) < APP_DEBUG_LATERAL_BOOST_PWM) {
-        output = targets[index] > 0 ? APP_DEBUG_LATERAL_BOOST_PWM : -APP_DEBUG_LATERAL_BOOST_PWM;
+    if (lateral_running && lateral_boost[index].active) {
+      const int32_t directional = output * lateral_boost[index].sign;
+      if (directional < lateral_boost[index].pwm) {
+        output = lateral_boost[index].sign * (int32_t)lateral_boost[index].pwm;
       }
-      lateral_boost_used_ms[index] += APP_MOTOR_CONTROL_PERIOD_MS;
     }
 #endif
     if (!spin_move.active && ((targets[index] > 0 && output < 0) ||
@@ -1709,6 +1757,14 @@ MotorDebugTrace Motor_GetDebugTrace(void)
   trace.move_yaw_active = distance_move.yaw_correction_active;
   trace.move_yaw_c100 = (int32_t)(distance_move.yaw_correction_mm_s * 100.0f);
   trace.move_damping_c100 = (int32_t)(distance_move.yaw_damping_mm_s * 100.0f);
+#if APP_BOARD_F405_ROBO
+  trace.lateral_active = lateral_trial && direction_move.active;
+  trace.lateral_synced = trace.lateral_active && lateral_synced;
+  for (uint8_t i = 0U; i < MOTOR_COUNT; ++i) {
+    trace.lateral_attempts[i] = lateral_boost[i].attempts;
+    if (trace.lateral_active && lateral_boost[i].active) trace.lateral_boost_mask |= (uint8_t)(1U << i);
+  }
+#endif
   const float path_dx = (float)pose.x_mm - distance_move.start_x_mm;
   const float path_dy = (float)pose.y_mm - distance_move.start_y_mm;
   const float path_heading = distance_move.start_heading_rad;
@@ -1987,6 +2043,7 @@ static MotorTurnStatus motor_start_turn(float angle_deg, float speed_mm_s, float
       (int32_t)(absolute_angle * 1000.0f + 0.5f);
   motor_stop_outputs(false);
   angle_turn.target_mdeg = target_mdeg;
+  distance_move.path_reference_valid = false;
   angle_turn.start_yaw_mdeg = imu.yaw_mdeg;
   angle_turn.start_ms = HAL_GetTick();
   angle_turn.travelled_mdeg = 0LL;
@@ -2284,6 +2341,7 @@ bool Motor_MoveAngle(float speed_mm_s, float angle_deg)
 
   if (starting) {
     distance_move.status = MOTOR_DISTANCE_IDLE;
+    distance_move.path_reference_valid = false;
     distance_move.slowing = false;
     distance_move.no_progress_cycles = 0U;
     angle_turn.status = MOTOR_TURN_IDLE;
@@ -2294,10 +2352,16 @@ bool Motor_MoveAngle(float speed_mm_s, float angle_deg)
     direction_move.active = true;
 #if APP_BOARD_F405_ROBO && APP_ENABLE_MOTION_DEBUG_TASK
     lateral_trial = motor_abs_float(target_lateral) > motor_abs_float(target_forward);
-    lateral_started_ms = HAL_GetTick();
     lateral_synced = false;
     lateral_sync_hits = 0U;
-    for (uint8_t i = 0; i < MOTOR_COUNT; ++i) { lateral_boost_used_ms[i] = 0U; }
+    for (uint8_t i = 0; i < MOTOR_COUNT; ++i) {
+      lateral_feedback[i] = (float)measured_speeds_mm_s[i];
+      lateral_boost[i].active = false;
+      lateral_boost[i].waiting_ms = lateral_boost[i].elapsed_ms = lateral_boost[i].cooldown_ms = 0U;
+      lateral_boost[i].travel_counts = lateral_boost[i].pwm = 0U;
+      lateral_boost[i].attempts = 0U;
+      lateral_boost[i].sign = 0;
+    }
 #endif
   } else {
     const bool target_changed =

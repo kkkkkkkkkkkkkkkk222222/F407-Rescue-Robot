@@ -9,7 +9,7 @@
 #include "motor.h"
 
 #define DIAG_MAGIC 0x4D444731UL
-#define DIAG_FORMAT 8U
+#define DIAG_FORMAT 9U
 
 typedef struct {
   uint32_t valid, exception, pc, lr, xpsr, stack_pointer, exc_return;
@@ -132,6 +132,11 @@ static void print_record(void (*send)(const char *), const char *prefix, const M
       prefix, m->move_state, m->move_path_valid, (long)m->move_cross_mm,
       m->move_yaw_active, (long)m->move_yaw_c100, (long)m->move_damping_c100,
       m->target_mm_s[2], m->actual_mm_s[2], m->output[2]);
+  send(text);
+  (void)snprintf(text, sizeof(text),
+      "%s LATERAL ACTIVE=%u SYNC=%u BOOST_MASK=%u TRIES=%u,%u,%u\r\n",
+      prefix,m->lateral_active,m->lateral_synced,m->lateral_boost_mask,
+      m->lateral_attempts[0],m->lateral_attempts[1],m->lateral_attempts[2]);
   send(text);
 #endif
   (void)snprintf(text, sizeof(text),
