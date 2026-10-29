@@ -103,6 +103,8 @@ typedef struct {
 static bool lateral_trial, lateral_synced;
 static uint8_t lateral_sync_hits;
 static float lateral_feedback[3];
+static float lateral_yaw_pwm, lateral_reference_dps;
+static int32_t lateral_error_mdeg;
 static struct {
   uint16_t waiting_ms, elapsed_ms, cooldown_ms, travel_counts, pwm;
   uint8_t attempts;
@@ -538,6 +540,8 @@ static void motor_clear_direction_move(void)
 {
 #if APP_BOARD_F405_ROBO && APP_ENABLE_MOTION_DEBUG_TASK
   lateral_trial = false;
+  lateral_yaw_pwm = lateral_reference_dps = 0.0f;
+  lateral_error_mdeg = 0;
 #endif
   direction_move.active = false;
   direction_move.reversing = false;
@@ -1276,9 +1280,23 @@ static void motor_update_direction_move(void)
 
   const int32_t error_mdeg = motor_wrap_heading_error(
       (int64_t)direction_move.target_yaw_mdeg - imu.yaw_mdeg);
-  const float rotate_correction =
+  float rotate_correction =
       Pid_Update(&heading_pid, (float)error_mdeg / 1000.0f, 0.0f) *
       APP_MOTOR_HEADING_OUTPUT_SIGN;
+#if APP_BOARD_F405_ROBO && APP_ENABLE_MOTION_DEBUG_TASK
+  if (lateral_trial) {
+    lateral_error_mdeg = error_mdeg;
+    lateral_reference_dps = motor_clamp_float(
+        error_mdeg * 0.001f * APP_DEBUG_LATERAL_YAW_POSITION_KP,
+        -APP_DEBUG_LATERAL_YAW_RATE_DPS, APP_DEBUG_LATERAL_YAW_RATE_DPS);
+    /* Gyro-rate feedback acts on common wheel effort immediately, while
+     * encoder PI still controls each wheel's translation speed. */
+    lateral_yaw_pwm = motor_clamp_float(
+        (lateral_reference_dps - imu.gyro_mdps[2] * 0.001f) *
+        APP_MOTOR_HEADING_OUTPUT_SIGN * APP_DEBUG_LATERAL_YAW_RATE_KP,
+        -APP_DEBUG_LATERAL_YAW_PWM_LIMIT, APP_DEBUG_LATERAL_YAW_PWM_LIMIT);
+  }
+#endif
   motor_set_omni_speed(current_forward, current_lateral, rotate_correction);
 }
 
@@ -1530,6 +1548,10 @@ void Motor_Update(void)
     const uint32_t index = id - 1U;
     const int32_t measured = measured_counts[index];
     float correction;
+#if APP_BOARD_F405_ROBO && APP_ENABLE_MOTION_DEBUG_TASK
+    speed_pids[index].kp = lateral_trial && direction_move.active ?
+        APP_DEBUG_LATERAL_SPEED_KP : APP_MOTOR_SPEED_KP;
+#endif
 
     if (targets[index] == 0) {
 #if APP_BOARD_F405_ROBO && APP_ENABLE_MOTION_DEBUG_TASK
@@ -1621,6 +1643,7 @@ void Motor_Update(void)
     /* Preserve the existing PID gains, correction bounds and integrator. */
 #if APP_BOARD_F405_ROBO && APP_ENABLE_MOTION_DEBUG_TASK
     const bool lateral_running = lateral_trial && direction_move.active;
+    bool lateral_transfer = false;
     if (lateral_running) {
       const int8_t sign = targets[index] > 0 ? 1 : -1;
       if (lateral_boost[index].cooldown_ms >= APP_MOTOR_CONTROL_PERIOD_MS) {
@@ -1633,6 +1656,9 @@ void Motor_Update(void)
             lateral_boost[index].elapsed_ms >= APP_DEBUG_LATERAL_BOOST_MS ||
             (lateral_boost[index].elapsed_ms >= 20U && lateral_feedback[index] * sign >=
              motor_abs(target_speeds_mm_s[index]) * APP_DEBUG_LATERAL_FOLLOW_RATIO)) {
+          lateral_transfer = sign == lateral_boost[index].sign &&
+              lateral_feedback[index] * sign >= 10.0f &&
+              lateral_feedback[index] * sign < motor_abs(target_speeds_mm_s[index]);
           lateral_boost[index].active = false;
           lateral_boost[index].cooldown_ms = APP_DEBUG_LATERAL_BOOST_REST_MS;
         }
@@ -1657,11 +1683,6 @@ void Motor_Update(void)
     }
     /* Freeze only during an actual assist pulse, never during a powerless wait. */
     const bool freeze_integral = lateral_running && lateral_boost[index].active;
-    if (lateral_trial && motor_abs_float((float)measured) >
-        1.2f * motor_abs_float(target_counts_per_update[index]) &&
-        speed_pids[index].integral * target_counts_per_update[index] > 0.0f) {
-      speed_pids[index].integral *= 0.85f;
-    }
     const float integral_before = speed_pids[index].integral;
 #endif
     correction = boost * Pid_Update(&speed_pids[index],
@@ -1672,6 +1693,20 @@ void Motor_Update(void)
       correction -= boost * speed_pids[index].ki *
           (speed_pids[index].integral - integral_before);
       speed_pids[index].integral = integral_before;
+    }
+    if (lateral_transfer && speed_pids[index].ki > 0.0f) {
+      /* Keep the effort that actually overcame friction instead of dropping
+       * back to the pre-start PI output. Ordinary PI removes excess effort. */
+      const float sign = targets[index] > 0 ? 1.0f : -1.0f;
+      const float applied = sign * lateral_boost[index].pwm;
+      const float desired_integral = (applied - base_pwm -
+          speed_pids[index].kp * speed_pids[index].last_error) / speed_pids[index].ki;
+      if (desired_integral * sign > speed_pids[index].integral * sign) {
+        speed_pids[index].integral = motor_clamp_float(desired_integral,
+            speed_pids[index].integral_min, speed_pids[index].integral_max);
+        correction = speed_pids[index].kp * speed_pids[index].last_error +
+            speed_pids[index].ki * speed_pids[index].integral;
+      }
     }
 #endif
 #if APP_ENABLE_MOTION_DEBUG_TASK
@@ -1687,6 +1722,7 @@ void Motor_Update(void)
         output = lateral_boost[index].sign * (int32_t)lateral_boost[index].pwm;
       }
     }
+    if (lateral_running) { output += (int32_t)lateral_yaw_pwm; }
 #endif
     if (!spin_move.active && ((targets[index] > 0 && output < 0) ||
                               (targets[index] < 0 && output > 0))) {
@@ -1760,6 +1796,9 @@ MotorDebugTrace Motor_GetDebugTrace(void)
 #if APP_BOARD_F405_ROBO
   trace.lateral_active = lateral_trial && direction_move.active;
   trace.lateral_synced = trace.lateral_active && lateral_synced;
+  trace.lateral_yaw_pwm = trace.lateral_active ? (int16_t)lateral_yaw_pwm : 0;
+  trace.lateral_error_mdeg = trace.lateral_active ? lateral_error_mdeg : 0;
+  trace.lateral_reference_mdps = trace.lateral_active ? (int32_t)(lateral_reference_dps * 1000.0f) : 0;
   for (uint8_t i = 0U; i < MOTOR_COUNT; ++i) {
     trace.lateral_attempts[i] = lateral_boost[i].attempts;
     if (trace.lateral_active && lateral_boost[i].active) trace.lateral_boost_mask |= (uint8_t)(1U << i);

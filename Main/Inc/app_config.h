@@ -295,6 +295,11 @@
 /* Bounded F405 debug lateral startup; these do not change ordinary MOVE/TURN. */
 #define APP_DEBUG_LATERAL_START_MM_S      200.0f
 #define APP_DEBUG_LATERAL_FOLLOW_RATIO    0.60f
+#define APP_DEBUG_LATERAL_SPEED_KP        15.0f
+#define APP_DEBUG_LATERAL_YAW_POSITION_KP 3.0f
+#define APP_DEBUG_LATERAL_YAW_RATE_KP     2.0f
+#define APP_DEBUG_LATERAL_YAW_RATE_DPS    30.0f
+#define APP_DEBUG_LATERAL_YAW_PWM_LIMIT   80.0f
 #define APP_DEBUG_LATERAL_END_MM_S        180.0f
 #define APP_DEBUG_LATERAL_ACCEL_MM_S2    1000.0f
 #define APP_DEBUG_LATERAL_DECEL_MM_S2     800.0f

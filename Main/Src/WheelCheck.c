@@ -121,12 +121,12 @@ static void wheel_report_move_log(void)
   const IMUData imu = IMU_GetData();
   const LocationPose pose = Location_GetPose();
   const int64_t yaw = imu.yaw_mdeg - move_log_yaw_origin;
-  char text[512];
+  char text[640];
   (void)snprintf(text, sizeof(text),
       "MOVE_LOG N=%lu MS=%lu SEQ=%u CMD=%u STATE=%u PENDING=%u FAULT=%u "
       "RAW32=%ld,%ld,%ld TARGET=%d,%d,%d ACTUAL=%d,%d,%d PWM=%d,%d,%d "
       "FF=%d,%d,%d YAW_MDEG=%ld RATE_MDPS=%ld XY=%ld,%ld CROSS=%ld VALID=%u "
-      "YAW_CMD100=%ld YAW_D100=%ld LAT=%u SYNC=%u BOOST_MASK=%u TRIES=%u,%u,%u IMU=%u AGE=%lu UERR=%lu ENC_BAD=%lu DROP=%lu\r\n",
+      "YAW_CMD100=%ld YAW_D100=%ld LAT=%u SYNC=%u BOOST_MASK=%u TRIES=%u,%u,%u I100=%ld,%ld,%ld YAW_PWM=%d ERR_MDEG=%ld REF_MDPS=%ld IMU=%u AGE=%lu UERR=%lu ENC_BAD=%lu DROP=%lu\r\n",
       (unsigned long)++move_log_index, (unsigned long)now, status.command_sequence,
       status.command, status.state, status.console_pending, status.fault,
       (long)(int32_t)enc[0].position, (long)(int32_t)enc[1].position, (long)(int32_t)enc[2].position,
@@ -140,6 +140,8 @@ static void wheel_report_move_log(void)
       (long)motor.move_yaw_c100, (long)motor.move_damping_c100,
       motor.lateral_active,motor.lateral_synced,motor.lateral_boost_mask,
       motor.lateral_attempts[0],motor.lateral_attempts[1],motor.lateral_attempts[2],
+      (long)motor.i_pwm100[0],(long)motor.i_pwm100[1],(long)motor.i_pwm100[2],
+      motor.lateral_yaw_pwm,(long)motor.lateral_error_mdeg,(long)motor.lateral_reference_mdps,
       imu.ready, (unsigned long)imu.uart_angle_age_ms,
       (unsigned long)imu.uart_rx_errors,
       (unsigned long)BoardF405_EncoderInvalidTransitions(), (unsigned long)tx_dropped);

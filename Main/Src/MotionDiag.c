@@ -9,7 +9,7 @@
 #include "motor.h"
 
 #define DIAG_MAGIC 0x4D444731UL
-#define DIAG_FORMAT 9U
+#define DIAG_FORMAT 10U
 
 typedef struct {
   uint32_t valid, exception, pc, lr, xpsr, stack_pointer, exc_return;
