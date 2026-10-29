@@ -73,6 +73,7 @@ typedef struct {
   int64_t boost_start_yaw_mdeg;
   int32_t brake_distance_mdeg;
   uint16_t boost_ms;
+  uint16_t boost_pwm;
   uint8_t boosts, boost_exit;
   int8_t last_direction;
   uint8_t corrections;
@@ -775,6 +776,16 @@ static void motor_turn_end_boost(uint8_t reason)
     angle_turn.boost_ms = (uint16_t)(HAL_GetTick() - angle_turn.boost_started_ms);
     angle_turn.boost_exit = reason;
     angle_turn.next_boost_ms = HAL_GetTick() + APP_DEBUG_TURN_BOOST_COOLDOWN_MS;
+#if APP_BOARD_F405_ROBO
+    if (reason == 3U) {
+      /* Escalate only after a full pulse made no useful progress. */
+      const uint16_t next = angle_turn.boost_pwm + APP_DEBUG_TURN_BOOST_STEP_PWM;
+      angle_turn.boost_pwm = next > APP_DEBUG_TURN_BOOST_MAX_PWM ?
+          APP_DEBUG_TURN_BOOST_MAX_PWM : next;
+    } else if (reason == 1U || reason == 2U) {
+      angle_turn.boost_pwm = APP_DEBUG_TURN_BOOST_PWM;
+    }
+#endif
   }
   angle_turn.boosting = false;
   angle_turn.no_progress_ms = 0U;
@@ -996,6 +1007,8 @@ static void motor_update_debug_turn(const IMUData *imu)
     angle_turn.command_rate_dps = angle_turn.reference_rate_dps;
     angle_turn.phase = MOTOR_TURN_PHASE_DRIVE;
     motor_set_rotate_speed(angle_turn.reference_rate_dps * mm_s_per_dps);
+    /* Keep the main stroke continuous; assist only if it stalls near the end. */
+    (void)motor_turn_update_boost(imu, fresh, wheels_still, rate, abs_error);
     return;
   }
 #endif
@@ -1544,7 +1557,7 @@ void Motor_Update(void)
     if (angle_turn.status == MOTOR_TURN_RUNNING && angle_turn.boosting) {
       /* Bounded breakaway pulse; freeze the inner integrator until motion. */
       const int16_t pulse = targets[index] > 0 ?
-          APP_DEBUG_TURN_BOOST_PWM : -APP_DEBUG_TURN_BOOST_PWM;
+          (int16_t)angle_turn.boost_pwm : -(int16_t)angle_turn.boost_pwm;
       motor_apply_pwm(id, pulse * motor_signs[index]);
       continue;
     }
@@ -1672,6 +1685,7 @@ MotorDebugTrace Motor_GetDebugTrace(void)
   trace.turn_boost_ms = angle_turn.boost_ms;
   trace.turn_boost_active = angle_turn.boosting;
   trace.turn_boost_count = angle_turn.boosts;
+  trace.turn_boost_pwm = angle_turn.boost_pwm;
   trace.turn_boost_exit = angle_turn.boost_exit;
   trace.turn_brake_distance_mdeg = angle_turn.brake_distance_mdeg;
   trace.turn_phase = (uint8_t)angle_turn.phase;
@@ -1983,6 +1997,7 @@ static MotorTurnStatus motor_start_turn(float angle_deg, float speed_mm_s, float
   angle_turn.brake_distance_mdeg = 0;
   angle_turn.boost_ms = 0U;
   angle_turn.boosts = 0U;
+  angle_turn.boost_pwm = APP_DEBUG_TURN_BOOST_PWM;
   angle_turn.boost_exit = 0U;
   angle_turn.boosting = false;
   angle_turn.settle_latched = false;

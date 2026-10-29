@@ -99,6 +99,7 @@ typedef struct {
   int32_t turn_error_mdeg, turn_reference_mdps, turn_command_mdps;
   uint32_t turn_imu_age_ms;
   uint16_t turn_settle_ms, turn_rest_ms, turn_boost_ms;
+  uint16_t turn_boost_pwm;
   int32_t turn_brake_distance_mdeg;
   uint8_t turn_boost_active, turn_boost_count, turn_boost_exit;
   uint8_t turn_phase, turn_corrections, turn_failure;
