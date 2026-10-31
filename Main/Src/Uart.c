@@ -44,6 +44,11 @@ static int8_t tx_active_slot;
 static uint32_t tx_order;
 static uint32_t tx_dropped;
 static uint32_t odom_tx_frames, imu_tx_frames;
+#if DEBUG_TIMED_LINK
+static volatile bool tx_recovery_pending;
+static uint64_t tx_started_us;
+static uint32_t tx_retry_ms;
+#endif
 
 static bool uart_is_ack(const uint8_t *data, uint16_t size)
 {
@@ -96,6 +101,9 @@ static bool uart_data_is_status(const uint8_t *data, uint16_t size)
 
 static void uart_start_tx(void)
 {
+#if DEBUG_TIMED_LINK
+  if(tx_recovery_pending) { return; }
+#endif
   if ((tx_active_slot >= 0) ||
       (huart3.gState != HAL_UART_STATE_READY)) {
     return;
@@ -136,6 +144,7 @@ static void uart_start_tx(void)
                            tx_queue[(uint8_t)selected].size) == HAL_OK) {
     tx_active_slot = selected;
 #if DEBUG_TIMED_LINK
+    tx_started_us=DebugTelemetry_NowUs();
     DebugTelemetry_TxStarted(tx_queue[(uint8_t)selected].data,
         tx_queue[(uint8_t)selected].size,tx_queue[(uint8_t)selected].queued_us);
 #endif
@@ -206,6 +215,9 @@ bool Uart_Init(void)
   tx_order = 0U;
   tx_dropped = 0U;
   odom_tx_frames = imu_tx_frames = 0U;
+#if DEBUG_TIMED_LINK
+  tx_recovery_pending=false; tx_started_us=0U; tx_retry_ms=0U;
+#endif
   return uart_start_rx();
 }
 
@@ -285,6 +297,29 @@ bool Uart_Send(const uint8_t *data, uint16_t size)
 bool Uart_Receive(uint16_t size)
 {
   if (size == 0U) {
+#if DEBUG_TIMED_LINK
+    if(!tx_recovery_pending && tx_active_slot>=0 && DebugTelemetry_NowUs()-tx_started_us>100000U) {
+      tx_recovery_pending=true;
+      tx_retry_ms=Robot_GetMilliseconds();
+    }
+    if(tx_recovery_pending && (int32_t)(Robot_GetMilliseconds()-tx_retry_ms)>=0) {
+      /* Keep SysTick and DMA IRQs live while HAL aborts. The pending flag
+       * prevents a completion callback from starting another transfer. */
+      if(HAL_UART_AbortTransmit(&huart3)==HAL_OK) {
+        const uint32_t mask=__get_PRIMASK(); __disable_irq();
+        if(tx_active_slot>=0) {
+          if(uart_is_timed_sample(tx_queue[(uint8_t)tx_active_slot].data,
+                                 tx_queue[(uint8_t)tx_active_slot].size)) {
+            DebugTelemetry_TxDropped();
+          }
+          tx_queue[(uint8_t)tx_active_slot].used=false;
+          tx_active_slot=-1; ++tx_dropped;
+        }
+        tx_recovery_pending=false; __set_PRIMASK(mask);
+      }
+      tx_retry_ms=Robot_GetMilliseconds()+100U;
+    }
+#endif
     if (rx_recovery_pending) {
       /* HAL DMA abort may wait; keep SysTick running during that operation. */
       (void)HAL_UART_AbortReceive(&huart3);
@@ -394,6 +429,11 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *uart)
     return;
   }
 
+#if DEBUG_TIMED_LINK
+  if((uart->ErrorCode & HAL_UART_ERROR_DMA) && !tx_recovery_pending) {
+    tx_recovery_pending=true; tx_retry_ms=Robot_GetMilliseconds();
+  }
+#endif
   ++rx_errors;
   last_rx_error = uart->ErrorCode;
   rx_active = false;
