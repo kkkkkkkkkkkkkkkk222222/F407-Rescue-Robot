@@ -1,4 +1,5 @@
 #include "Uart.h"
+#include "DebugTelemetry.h"
 #include "TaskDiag.h"
 #include "DebugConsole.h"
 
@@ -13,7 +14,11 @@
 extern UART_HandleTypeDef huart3;
 
 #define UART_RX_DMA_SIZE    64U
+#if DEBUG_TIMED_LINK
+#define UART_TX_MAX_SIZE   192U
+#else
 #define UART_TX_MAX_SIZE    64U
+#endif
 #define UART_TX_QUEUE_SIZE   8U
 #define UART_RETRY_MS      100U
 
@@ -29,6 +34,9 @@ typedef struct {
   uint16_t size;
   uint32_t order;
   bool used;
+#if DEBUG_TIMED_LINK
+  uint64_t queued_us;
+#endif
 } UartTxSlot;
 
 static UartTxSlot tx_queue[UART_TX_QUEUE_SIZE];
@@ -43,8 +51,18 @@ static bool uart_is_ack(const uint8_t *data, uint16_t size)
          (data[2] == 0x01U) && (data[3] == 0xC3U);
 }
 
+#if DEBUG_TIMED_LINK
+static bool uart_is_extended(const uint8_t *data, uint16_t size)
+{ return size>=11U && data[0]==0xd4U && data[1]==0x4dU; }
+static bool uart_is_timed_sample(const uint8_t *data, uint16_t size)
+{ return uart_is_extended(data,size) && (data[3]==7U || data[3]==8U); }
+#endif
+
 static bool uart_is_telemetry(const UartTxSlot *slot)
 {
+#if DEBUG_TIMED_LINK
+  if(slot->used && uart_is_timed_sample(slot->data,slot->size)) return true;
+#endif
   return slot->used && (slot->size == 15U) &&
          (slot->data[0] == 0xA3U) && (slot->data[1] == 0xB3U) &&
          (slot->data[2] == VISION_MSG_ODOM || slot->data[2] == VISION_MSG_IMU) &&
@@ -53,6 +71,9 @@ static bool uart_is_telemetry(const UartTxSlot *slot)
 
 static bool uart_data_is_telemetry(const uint8_t *data, uint16_t size)
 {
+#if DEBUG_TIMED_LINK
+  if(uart_is_timed_sample(data,size)) return true;
+#endif
   return (size == VISION_FRAME_SIZE) &&
          (data[0] == VISION_FRAME_HEAD_1) &&
          (data[1] == VISION_FRAME_HEAD_2) &&
@@ -87,6 +108,12 @@ static void uart_start_tx(void)
     if (!tx_queue[i].used) {
       continue;
     }
+#if DEBUG_TIMED_LINK
+    if(uart_is_timed_sample(tx_queue[i].data,tx_queue[i].size) &&
+        DebugTelemetry_NowUs()-tx_queue[i].queued_us>8000U) {
+      tx_queue[i].used=false; ++tx_dropped; DebugTelemetry_TxDropped(); continue;
+    }
+#endif
     const bool is_ack = uart_is_ack(tx_queue[i].data, tx_queue[i].size);
     if ((selected < 0) || (is_ack && !selected_ack) ||
         ((is_ack == selected_ack) &&
@@ -100,10 +127,18 @@ static void uart_start_tx(void)
     return;
   }
 
+#if DEBUG_TIMED_LINK
+  if (HAL_UART_Transmit_DMA(&huart3,
+#else
   if (HAL_UART_Transmit_IT(&huart3,
+#endif
                            tx_queue[(uint8_t)selected].data,
                            tx_queue[(uint8_t)selected].size) == HAL_OK) {
     tx_active_slot = selected;
+#if DEBUG_TIMED_LINK
+    DebugTelemetry_TxStarted(tx_queue[(uint8_t)selected].data,
+        tx_queue[(uint8_t)selected].size,tx_queue[(uint8_t)selected].queued_us);
+#endif
   }
 }
 
@@ -183,8 +218,17 @@ bool Uart_Send(const uint8_t *data, uint16_t size)
   const uint32_t primask = __get_PRIMASK();
   __disable_irq();
   int8_t slot = -1;
+#if DEBUG_TIMED_LINK
+  if(uart_is_timed_sample(data,size)) {
+    for(uint8_t i=0;i<UART_TX_QUEUE_SIZE;++i) {
+      if((int8_t)i!=tx_active_slot && tx_queue[i].used &&
+          uart_is_timed_sample(tx_queue[i].data,tx_queue[i].size) &&
+          tx_queue[i].data[3]==data[3]) { slot=(int8_t)i; break; }
+    }
+  }
+#endif
   for (uint8_t i = 0U; i < UART_TX_QUEUE_SIZE; ++i) {
-    if (!tx_queue[i].used) {
+    if (slot < 0 && !tx_queue[i].used) {
       slot = (int8_t)i;
       break;
     }
@@ -193,7 +237,11 @@ bool Uart_Send(const uint8_t *data, uint16_t size)
   /* Control messages can replace queued telemetry, never the active transfer. */
   if ((slot < 0) &&
       (uart_is_ack(data, size) || uart_data_is_telemetry(data, size) ||
-       uart_data_is_status(data, size))) {
+       uart_data_is_status(data, size)
+#if DEBUG_TIMED_LINK
+       || uart_is_extended(data,size)
+#endif
+       )) {
     uint32_t oldest_order = UINT32_MAX;
     for (uint8_t i = 0U; i < UART_TX_QUEUE_SIZE; ++i) {
       if (((int8_t)i != tx_active_slot) && uart_is_telemetry(&tx_queue[i]) &&
@@ -214,11 +262,19 @@ bool Uart_Send(const uint8_t *data, uint16_t size)
 
   if (tx_queue[(uint8_t)slot].used) {
     ++tx_dropped;
+#if DEBUG_TIMED_LINK
+    if(uart_is_timed_sample(tx_queue[(uint8_t)slot].data,tx_queue[(uint8_t)slot].size)) {
+      DebugTelemetry_TxDropped();
+    }
+#endif
   }
   memcpy(tx_queue[(uint8_t)slot].data, data, size);
   tx_queue[(uint8_t)slot].size = size;
   tx_queue[(uint8_t)slot].order = tx_order++;
   tx_queue[(uint8_t)slot].used = true;
+#if DEBUG_TIMED_LINK
+  tx_queue[(uint8_t)slot].queued_us=DebugTelemetry_NowUs();
+#endif
   uart_start_tx();
   if (primask == 0U) {
     __enable_irq();
@@ -308,6 +364,9 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *uart)
   const uint32_t primask = __get_PRIMASK();
   __disable_irq();
   const UartTxSlot *completed = &tx_queue[(uint8_t)tx_active_slot];
+#if DEBUG_TIMED_LINK
+  DebugTelemetry_TxCompleted(completed->data,completed->size);
+#endif
   if (completed->size == VISION_FRAME_SIZE) {
     if (completed->data[2] == VISION_MSG_ODOM) { ++odom_tx_frames; }
     if (completed->data[2] == VISION_MSG_IMU) { ++imu_tx_frames; }

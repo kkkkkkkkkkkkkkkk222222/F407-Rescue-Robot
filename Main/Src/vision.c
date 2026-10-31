@@ -1,4 +1,5 @@
 #include "vision.h"
+#include "DebugTelemetry.h"
 #include "TaskDiag.h"
 
 static volatile VisionDiagnostic link_diag;
@@ -650,6 +651,9 @@ void Vision_ParseBytes(const uint8_t *data, size_t size, uint32_t tick_ms)
   link_diag.rx_bytes += (uint32_t)size;
   if (size != 0U) link_diag.last_rx_ms = tick_ms;
   for (size_t i = 0U; i < size; ++i) {
+#if DEBUG_TIMED_LINK
+    if (DebugTelemetry_RxByte(data[i],frame_index == 0U)) { continue; }
+#endif
     vision_parse_byte(data[i], tick_ms);
   }
 }

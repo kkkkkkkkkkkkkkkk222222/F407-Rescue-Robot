@@ -1,4 +1,5 @@
 #include "Location.h"
+#include "DebugTelemetry.h"
 
 #include <math.h>
 
@@ -145,6 +146,9 @@ void Location_ResetReference(int32_t x_mm, int32_t y_mm, int32_t heading_mdeg)
   location.imu_sample_valid = imu.ready;
   location.valid = imu.ready;
   location_leave_critical(primask);
+#if DEBUG_TIMED_LINK
+  DebugTelemetry_ReferenceReset();
+#endif
 }
 
 void Location_Update10ms(void)

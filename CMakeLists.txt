@@ -26,6 +26,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
 set(APP_BOARD "F407_LEGACY" CACHE STRING "Board: F407_LEGACY or F405_ROBO")
 set_property(CACHE APP_BOARD PROPERTY STRINGS F407_LEGACY F405_ROBO)
 option(APP_NORMALDEBUG_MOTION_TEST "NormalDebug runs the MotionDebug test task" ON)
+set(APP_NORMALDEBUG_UPPER_BAUD "115200" CACHE STRING "F405 motion service UART4 baud")
 if(NOT APP_BOARD STREQUAL "F407_LEGACY" AND NOT APP_BOARD STREQUAL "F405_ROBO")
     message(FATAL_ERROR "Unsupported APP_BOARD=${APP_BOARD}")
 endif()
@@ -52,6 +53,8 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Main/Src/CenteringTask.c
     Main/Src/Debug.c
+    Main/Src/DebugClock.c
+    Main/Src/DebugTelemetry.c
     Main/Src/MotionDiag.c
     Main/Src/Gamepad.c
     Main/Src/DebugConsole.c
@@ -99,6 +102,18 @@ endif()
 if(APP_BOARD STREQUAL "F405_ROBO")
     target_compile_definitions(WWW PRIVATE
         APP_NORMALDEBUG_MOTION_TEST=$<BOOL:${APP_NORMALDEBUG_MOTION_TEST}>)
+    if(APP_NORMALDEBUG_MOTION_TEST)
+        target_compile_definitions(WWW PRIVATE APP_NORMALDEBUG_UPPER_BAUD=${APP_NORMALDEBUG_UPPER_BAUD})
+        file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated")
+        add_custom_target(debug_build_identity
+            COMMAND ${CMAKE_COMMAND} "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
+                "-DOUTPUT_FILE=${CMAKE_BINARY_DIR}/generated/DebugBuildIdentity.h"
+                "-DIDENTITY_CONFIG=${CMAKE_BUILD_TYPE}|${APP_BOARD}|${APP_NORMALDEBUG_UPPER_BAUD}|${CMAKE_C_COMPILER}|${CMAKE_C_FLAGS}|${CMAKE_C_FLAGS_DEBUG}"
+                -P "${CMAKE_SOURCE_DIR}/cmake/DebugBuildIdentity.cmake"
+            BYPRODUCTS "${CMAKE_BINARY_DIR}/generated/DebugBuildIdentity.h")
+        add_dependencies(WWW debug_build_identity)
+        target_include_directories(WWW PRIVATE "${CMAKE_BINARY_DIR}/generated")
+    endif()
 endif()
 
 # Remove wrong libob.a library dependency when using cpp files

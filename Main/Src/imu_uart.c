@@ -1,4 +1,5 @@
 #include "app_config.h"
+#include "DebugTelemetry.h"
 
 #if APP_IMU_USE_UART
 #include "imu.h"
@@ -15,6 +16,9 @@ static int64_t angle_counts, origin_counts;
 static uint32_t angle_ms, rate_ms, last_poll_ms, good_samples;
 static uint32_t period_sum, period_samples;
 static uint32_t config_due_ms;
+#if DEBUG_TIMED_LINK
+static uint64_t last_received_us;
+#endif
 #if APP_BOARD_F405_ROBO
 static uint32_t baud_probe_due_ms;
 #endif
@@ -65,6 +69,9 @@ static void receive_frame(uint8_t type, int16_t raw, uint32_t now)
     rate_ms = now;
     rate_seen = true;
     ++data.uart_rate_frames;
+#if DEBUG_TIMED_LINK
+    DebugTelemetry_GyroSample(type,data.yaw_mdeg,data.gyro_mdps[2],last_received_us);
+#endif
     return;
   }
   if (type != 0xBBU) { return; }
@@ -97,6 +104,9 @@ static void receive_frame(uint8_t type, int16_t raw, uint32_t now)
   angle_ms = now;
   data.yaw_mdeg = counts_to_mdeg(angle_counts - origin_counts);
   ++data.sample_count;
+#if DEBUG_TIMED_LINK
+  DebugTelemetry_GyroSample(type,data.yaw_mdeg,data.gyro_mdps[2],last_received_us);
+#endif
 
   if (!rate_seen || now - rate_ms >= APP_IMU_UART_STALE_MS) {
     lose_stream();
@@ -144,6 +154,9 @@ void IMU_UART_IRQHandler(void)
   if ((status & (USART_SR_RXNE | USART_SR_ORE | USART_SR_FE |
                  USART_SR_NE | USART_SR_PE)) == 0U) { return; }
   const uint8_t value = (uint8_t)APP_IMU_UART_INSTANCE->DR;
+#if DEBUG_TIMED_LINK
+  last_received_us = DebugTelemetry_NowUs();
+#endif
   if (status & (USART_SR_ORE | USART_SR_FE | USART_SR_NE | USART_SR_PE)) {
     ++data.error_count;
     ++data.uart_rx_errors;

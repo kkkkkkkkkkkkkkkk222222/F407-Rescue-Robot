@@ -1,5 +1,6 @@
 #include "encoder.h"
 #include "main.h"
+#include "DebugTelemetry.h"
 
 static TIM_HandleTypeDef *const hardware[2] = {&htim1, &htim8};
 static uint16_t previous_hw[2];
@@ -50,6 +51,10 @@ void Encoder_Init(void)
 
 void Encoder_Sample10ms(void)
 {
+#if DEBUG_TIMED_LINK
+  const uint64_t capture_begin = DebugTelemetry_NowUs();
+  const bool pending_before = (EXTI->PR & (GPIO_PIN_8 | GPIO_PIN_9)) != 0U;
+#endif
   for (uint8_t i = 0; i < 2U; ++i) {
     const uint16_t now = (uint16_t)__HAL_TIM_GET_COUNTER(hardware[i]);
     delta_10ms[i] = (int16_t)(now - previous_hw[i]);
@@ -60,6 +65,13 @@ void Encoder_Sample10ms(void)
   delta_10ms[2] = (int32_t)(now - previous_third);
   previous_third = now;
   position[2] += delta_10ms[2];
+#if DEBUG_TIMED_LINK
+  const uint64_t capture_end = DebugTelemetry_NowUs();
+  int64_t raw[3]; int32_t delta[3];
+  for (uint8_t i=0U;i<3U;++i) { raw[i]=position[i]; delta[i]=delta_10ms[i]; }
+  DebugTelemetry_WheelSample(capture_begin,capture_end,raw,delta,invalid_transitions,
+      pending_before || (EXTI->PR & (GPIO_PIN_8 | GPIO_PIN_9)) != 0U);
+#endif
 }
 
 void Encoder_GetAll(EncoderStatus status[3])

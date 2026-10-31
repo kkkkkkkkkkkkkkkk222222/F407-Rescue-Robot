@@ -50,6 +50,15 @@
             }
         },
         {
+            "name": "NormalDebugTimed",
+            "displayName": "F405 motion service - timed telemetry at 230400",
+            "inherits": "NormalDebug",
+            "cacheVariables": {
+                "APP_NORMALDEBUG_UPPER_BAUD": "230400",
+                "APP_AUTO_BACKUP": "OFF"
+            }
+        },
+        {
             "name": "NormalDebugTask",
             "displayName": "F405 NormalDebug - full rescue task",
             "inherits": "NormalDebug",
@@ -86,6 +95,10 @@
         {
             "name": "NormalDebug",
             "configurePreset": "NormalDebug"
+        },
+        {
+            "name": "NormalDebugTimed",
+            "configurePreset": "NormalDebugTimed"
         },
         {
             "name": "NormalDebugTask",

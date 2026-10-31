@@ -1,0 +1,3 @@
+#define DEBUG_FIRMWARE_ID_BYTES {0xaa}
+#define DEBUG_GIT_ID_BYTES {0x12}
+#define DEBUG_SOURCE_DIRTY 1

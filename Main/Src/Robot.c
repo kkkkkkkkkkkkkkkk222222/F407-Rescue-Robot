@@ -1,4 +1,5 @@
 #include "Robot.h"
+#include "DebugTelemetry.h"
 
 #include <stdbool.h>
 
@@ -343,6 +344,9 @@ static void process_motor_test_key(uint32_t now_ms)
 
 void Robot_Init(void)
 {
+#if DEBUG_TIMED_LINK
+  DebugTelemetry_Init();
+#endif
 #if APP_ENABLE_MOTION_DEBUG_TASK
   MotionDiag_Init();
 #endif
@@ -579,6 +583,9 @@ void Robot_Process(void)
 
   ROBOT_TRACE_STAGE(MOTION_DIAG_VISION);
   Vision_Process();
+#if DEBUG_TIMED_LINK
+  DebugTelemetry_Process();
+#endif
   TaskDiag_Process();
 
 #if APP_ENABLE_AUTOMATIC_MOTOR_TEST && !APP_ENABLE_TASK && \
