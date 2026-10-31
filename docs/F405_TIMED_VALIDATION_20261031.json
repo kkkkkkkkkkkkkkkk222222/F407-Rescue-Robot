@@ -1,0 +1,100 @@
+{
+  "implementation_commit": "43fa6ab456ff26f2cc5661d2b3934efbf482fb45",
+  "upper_baseline": "278370a",
+  "board_verified_this_run": false,
+  "flashed_this_run": false,
+  "serial_commands_sent_this_run": false,
+  "host_c_module_test": {
+    "passed": true,
+    "compiler": "GCC x86_64 -Wall -Wextra -Werror",
+    "decoded_actual_c_frames": 35,
+    "hardware_platform_mocked": true,
+    "physical_timing_verified": false,
+    "output_summary": "C firmware module: queries, baud gate, encoder feedback, invalid samples, gyro source identity, repeat, reference and reboot checks passed. HOST SIMULATION ONLY."
+  },
+  "legacy_protocol_checks": {
+    "passed": 23,
+    "scope": "existing Python checks, not physical/control acceptance"
+  },
+  "builds": {
+    "NormalDebugTimed": {
+      "compiled": true,
+      "flashed_this_run": false,
+      "elf_sha256": "c59e6727a0b97734716ece0e5ddd94c927e64708491c8112f882f790e88e37ea",
+      "embedded_firmware_id": "7106765d648eee9e2b4040b782b0e1ac0aa8e0b37602080fb879bf950fe8c64e",
+      "embedded_git_commit": "43fa6ab456ff26f2cc5661d2b3934efbf482fb45",
+      "source_dirty": 1
+    },
+    "NormalDebug": {
+      "compiled": true,
+      "flashed_this_run": false,
+      "elf_sha256": "53e9a3988972fa9b5a4fffd08618deef36fb51568ddbd094c4691d05e3a88b57",
+      "embedded_firmware_id": "9ad352c6158c8a81bc34d2ab476726f1f0ec15dcaab36a4bc1b5884855d2b52a",
+      "embedded_git_commit": "43fa6ab456ff26f2cc5661d2b3934efbf482fb45",
+      "source_dirty": 1
+    },
+    "NormalDebugTask": {
+      "compiled": true,
+      "flashed_this_run": false,
+      "elf_sha256": "6d48e41c42d66ad8d72dccca1a43166fd79e43a1f1c240abf04f795649980998"
+    },
+    "MotionDebug": {
+      "compiled": true,
+      "flashed_this_run": false,
+      "elf_sha256": "49429adf57391490aaa3b958e3b43e7aeb7f848ea86cc0680464f0f865fcd5c3"
+    }
+  },
+  "bandwidth_model": {
+    "classification": "capacity calculation, NOT measured UART throughput/latency",
+    "bytes_per_second": {
+      "legacy_odom": 1500,
+      "legacy_imu": 1500,
+      "motion_status": 300,
+      "new_wheel": 4750,
+      "new_gyro": 9500,
+      "sync_5hz": 285,
+      "identity_1hz": 148,
+      "stats_1hz": 143
+    },
+    "total_Bps": 18126,
+    "utilization_115200": 1.5734375,
+    "utilization_230400": 0.78671875,
+    "profile_enable_minimum_baud": 230400,
+    "source_frame_serialization_us_at_230400": 4123.263888888889,
+    "max_unsent_timed_queue_age_us": 8000
+  },
+  "board_latency_log": null,
+  "board_clock_drift_bound_ppm": null,
+  "imu_acquisition_to_receive_bound_us": null,
+  "rear_exti_edge_to_counter_bound_us": null,
+  "sdk_gate": {
+    "qualified": false,
+    "reason": "unknown source-time bounds and clock drift; no new-board performance evidence"
+  },
+  "stats_fields": [
+    "requests",
+    "crc_errors",
+    "bad_headers",
+    "request_queue_drops",
+    "partial_timeouts",
+    "wheel_measurements",
+    "wheel_invalid",
+    "wheel_skipped",
+    "gyro_enqueued",
+    "gyro_repeated",
+    "gyro_publish_slots_skipped",
+    "enqueue_rejected",
+    "extended_started",
+    "extended_completed",
+    "timed_coalesced_or_expired",
+    "max_wheel_capture_us",
+    "max_wheel_end_to_dma_return_us",
+    "max_queue_us",
+    "max_yaw_receive_gap_us",
+    "max_rate_receive_gap_us",
+    "max_wheel_interval_us",
+    "sync_replies",
+    "identity_replies",
+    "max_oldest_gyro_receive_to_dma_return_us"
+  ]
+}

@@ -1,5 +1,10 @@
 # F405 接线、资源与验收清单
 
+2026-10-31：仅运动测试服务新增[带时标反馈/身份/对时接口](F405_TIMED_CONTRACT_20261031.md)。
+TIM5用于1MHz共同单调时钟，IRQ优先级0；UART4 TX使用DMA1 Stream4 Channel4，优先级7。
+原NormalDebug仍为115200，新NormalDebugTimed预设为230400，运行模式仍为5/MOTIONDEBUG。
+新流上电关闭、需显式订阅；比赛入口不启用上述新资源。本次实现尚未烧录或板上验证。
+
 2026-10-21，固件接线标识 `WIRING=423`。适用 STM32F405RGT6 工训 ROBO 板、
 NormalDebug，含默认运动测试 ON 和比赛入口 OFF；不适用于旧 F407 板。
 插座位号依据用户提供的控制板手册，芯片能力依据 ST DS8626/RM0090。
