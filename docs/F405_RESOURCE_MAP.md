@@ -1,5 +1,10 @@
 # F405 接线、资源与验收清单
 
+2026-11-01：最新接口见 [NormalDebugTimed v1.1 完整合同](F405_TIMED_CONTRACT_20261101.md)。
+新增只读时间/发送质量查询，强化 UART4 DMA 所有权与恢复排空；旧控制、运动学及资源分配不变。
+晶振漂移、后轮边沿延迟和单轴模块物理采样延迟仍无可靠界；不得据此放行 SDK 时间资格。
+本轮未烧录、未启动车轮；实现提交和实际编译身份以新验证 JSON 为准。
+
 2026-10-31：仅运动测试服务新增[带时标反馈/身份/对时接口](F405_TIMED_CONTRACT_20261031.md)。
 TIM5用于1MHz共同单调时钟，IRQ优先级0；UART4 TX使用DMA1 Stream4 Channel4，优先级7。
 原NormalDebug仍为115200，新NormalDebugTimed预设为230400，运行模式仍为5/MOTIONDEBUG。

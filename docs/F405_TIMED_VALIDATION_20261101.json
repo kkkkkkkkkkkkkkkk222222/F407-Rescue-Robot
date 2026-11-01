@@ -1,0 +1,155 @@
+{
+  "implementation_commit": "512038d2cfe83653d1c3036ad003fc23117df344",
+  "checkout_commit": "512038d2cfe83653d1c3036ad003fc23117df344",
+  "upper_baseline": "c4fdc330f52aab44162f966b15de0313e16afb6d",
+  "board_verified_this_run": false,
+  "flashed_this_run": false,
+  "serial_commands_sent_this_run": true,
+  "host_c_module_test": {
+    "passed": true,
+    "compiler": "GCC x86_64 -Wall -Wextra -Werror",
+    "decoded_actual_c_frames": 29,
+    "hardware_platform_mocked": true,
+    "physical_timing_verified": false,
+    "output_summary": "C firmware module: queries, baud gate, encoder feedback, invalid samples, gyro source identity, repeat, reference and reboot checks passed. HOST SIMULATION ONLY."
+  },
+  "legacy_protocol_checks": {
+    "passed": 23,
+    "scope": "existing Python checks, not physical/control acceptance"
+  },
+  "builds": {
+    "NormalDebugTimed": {
+      "compiled": true,
+      "flashed_this_run": false,
+      "elf_sha256": "09141513db4c8e477873b3a5d5952996b36105ce6e5ef4ccb87086ff3095fb9a",
+      "embedded_firmware_id": "7f6218d363496216cfde6be4c8855c208c11164820db5c11d3df065d80c74542",
+      "embedded_git_commit": "512038d2cfe83653d1c3036ad003fc23117df344",
+      "source_dirty": 1
+    },
+    "NormalDebug": {
+      "compiled": true,
+      "flashed_this_run": false,
+      "elf_sha256": "7ecf159ec58f7e666b13f55d60f5b2b50ac2fedc0ac6439d4a6e538185e31c91",
+      "embedded_firmware_id": "a3a437590eae385ef8ca5aae32e992a6d4c42e04a1f40225702a2964d2a19d51",
+      "embedded_git_commit": "512038d2cfe83653d1c3036ad003fc23117df344",
+      "source_dirty": 1
+    },
+    "NormalDebugTask": {
+      "compiled": true,
+      "flashed_this_run": false,
+      "elf_sha256": "6baed83968a6fdf057fbbcc1928783940b2dbe1ae8a1e6649944b07594dd1fe2"
+    },
+    "MotionDebug": {
+      "compiled": true,
+      "flashed_this_run": false,
+      "elf_sha256": "93e2dbe7b9b24162b657ed7f422b0ecd701536167e7c4da0ca74cf9baf3347bb"
+    }
+  },
+  "bandwidth_model": {
+    "classification": "capacity calculation, NOT measured UART throughput/latency",
+    "bytes_per_second": {
+      "legacy_odom": 1500,
+      "legacy_imu": 1500,
+      "motion_status": 300,
+      "new_wheel": 4750,
+      "new_gyro": 9500,
+      "sync_5hz": 285,
+      "identity_1hz": 148,
+      "stats_1hz": 143
+    },
+    "total_Bps": 18126,
+    "utilization_115200": 1.5734375,
+    "utilization_230400": 0.78671875,
+    "profile_enable_minimum_baud": 230400,
+    "source_frame_serialization_us_at_230400": 4123.263888888889,
+    "max_unsent_timed_queue_age_us": 8000,
+    "quality_page_0_and_1_each_1hz_Bps": 342,
+    "total_with_quality_Bps": 18468,
+    "with_quality_utilization_230400": 0.8015625,
+    "quality_reply_serialization_us": 7421.875,
+    "note": "nominal ceiling model; query bursts can expire timed packets. Stagger pages, do not batch polls. Not measured board throughput."
+  },
+  "board_latency_log": null,
+  "board_clock_drift_bound_ppm": null,
+  "imu_acquisition_to_receive_bound_us": null,
+  "rear_exti_edge_to_counter_bound_us": null,
+  "sdk_gate": {
+    "qualified": false,
+    "reason": "unknown source-time bounds and clock drift; no new-board performance evidence"
+  },
+  "stats_fields": [
+    "requests",
+    "crc_errors",
+    "bad_headers",
+    "request_queue_drops",
+    "partial_timeouts",
+    "wheel_measurements",
+    "wheel_invalid",
+    "wheel_skipped",
+    "gyro_enqueued",
+    "gyro_repeated",
+    "gyro_publish_slots_skipped",
+    "enqueue_rejected",
+    "extended_started",
+    "extended_completed",
+    "timed_coalesced_or_expired",
+    "max_wheel_capture_us",
+    "max_wheel_end_to_dma_return_us",
+    "max_queue_us",
+    "max_yaw_receive_gap_us",
+    "max_rate_receive_gap_us",
+    "max_wheel_interval_us",
+    "sync_replies",
+    "identity_replies",
+    "max_oldest_gyro_receive_to_dma_return_us"
+  ],
+  "contract_version": "1.1",
+  "user_reported_running_before_changes": {
+    "git": "f81e9ef9a33981d8453eafe9574572e87dea90c6",
+    "source_dirty": 1,
+    "provenance": "RDK real query reported by user; not independently repeated here",
+    "firmware_id": null
+  },
+  "local_read_only_probe": {
+    "port": "COM18",
+    "baud": 115200,
+    "commands": [
+      "PING",
+      "STAT"
+    ],
+    "received_bytes": 0,
+    "physical_link_identity_verified": false,
+    "motion_commands_sent": false,
+    "flashed": false
+  },
+  "motion_commands_sent_this_run": false,
+  "physical_timing_verified": false,
+  "physical_uart_integrity_verified": false,
+  "root_cause_of_RDK_prefixes": "not established; hardening covers specific unsafe ownership/recovery states, not a physical diagnosis",
+  "host_uart_test": {
+    "log": "HOST MODEL ONLY: 2006 completed transfers; 2000 mixed CRC frames byte-exact, caller reuse, coalescing, expiry, HAL_BUSY, abort-drain, unexpected TC passed.\nTX started=2007 complete=2005 recoveries=4 seal_errors=1 precondition=1 expired=1 replaced=1 bytes_started=110265 bytes_completed=110235\n",
+    "clean_mixed_frame_count": 2000,
+    "injected_failures": "HAL_BUSY, stale DMAT, abort with shifter not drained, unexpected TC, active RAM mutation",
+    "injected_seal_failure_expected": 1,
+    "physical_peripherals_mocked": true
+  },
+  "host_clock_test": {
+    "log": "HOST MODEL ONLY: actual DebugClock.c nominal divider, pending/serviced low32 wrap, regression quarantine, timer/clock-tree change checks passed; drift remains unknown.\n",
+    "physical_peripherals_mocked": true
+  },
+  "python_checks": {
+    "command": "python -m unittest tools.test_timed_quality tools.test_vision_protocol",
+    "passed": 30
+  },
+  "dirty_patch": {
+    "file": "F405_TIMED_BUILD_DIFF_20261101.patch",
+    "sha256": "bc041bf020a318f9e64c45779915f11a7ff7880b21d44fd92a82ecbaf7a42e03"
+  },
+  "build_reproduction": {
+    "configure": "cmake --preset NormalDebugTimed",
+    "build": "cmake --build --preset NormalDebugTimed --parallel 6",
+    "compiler": "arm-none-eabi-gcc.exe (Arm GNU Toolchain 15.3.Rel1 (Build arm-15.149)) 15.3.1 20260627",
+    "source_dirty_explained": "existing Main/Src/Task.c blank lines; apply supplied patch to implementation commit for the same source input fingerprint",
+    "exact_ELF_reproducibility": "not claimed; existing __DATE__/__TIME__ banner and absolute toolchain paths affect ELF bytes"
+  }
+}

@@ -21,7 +21,7 @@ def run(args):
 
 
 def write_json(name, value):
-    (DOC / name).write_text(json.dumps(value, ensure_ascii=False, indent=2)+"\n", encoding="utf-8")
+    (DOC / name).write_text(json.dumps(value, ensure_ascii=False, indent=2)+"\n", encoding="utf-8", newline="\n")
 
 
 def main():
@@ -36,6 +36,8 @@ def main():
     contract["types"]["0x0B"] = dict(name="quality_request", payload_bytes=10, side_effects="none")
     contract["types"]["0x0C"] = dict(name="quality_reply", payload_bytes=160, quality_schema=1,
                                     pages=[0, 1], periodic=False, fragmentation=False)
+    contract["types"]["0x07"]["frequency_semantics"]="nominal real two-interval sample output; no catch-up replay"
+    contract["types"]["0x08"]["frequency_semantics"]="100Hz scheduler ceiling; suppressed if both source IDs unchanged"
     contract["capabilities"]["read_only_quality_pages"] = 1024
     for field in contract["fields"]["identity_reply"]:
         if field["name"] == "protocol_minor": field["meaning"] = "1"
@@ -119,6 +121,8 @@ def main():
         "https://www.st.com/resource/en/errata_sheet/dm00037591-stm32f405-407xx-and-stm32f415-417xx-device-limitations-stmicroelectronics.pdf",
     ]
     contract["vendor_imu_evidence"] = dict(protocol="5A AA/BB low high sum8, five bytes; no source tick/sequence",
+        provided_manual_sha256="bbcadc0971825d3da1237a25c50e5b4badd64a0eb528a5fa5f4d88755b21ae3b",
+        provenance="user-provided single-axis UART communication manual, not IMU660RC documentation",
         advertised_output_max_hz=1000, uart_max_baud=230400,
         one_packet_serialization_us=5*10/230400*1e6,
         internal_filter_queue_total_delay_bound_us=None,
@@ -145,7 +149,7 @@ def main():
         content+=f"### {group}\n\n| Name | Mask |\n| --- | --- |\n"
         for name,value in contract[group].items(): content+=f"| {name} | 0x{value:X} |\n"
         content+="\n"
-    markdown.write_text(content,encoding="utf-8")
+    markdown.write_text(content,encoding="utf-8",newline="\n")
 
     examples = artifacts["examples"]
     examples["contract_version"] = "1.1"
@@ -169,9 +173,9 @@ def main():
     write_json(f"F405_TIMED_EXAMPLES_{STAMP}.json", examples)
     uart_log=run(["build/test_timed_uart_queue.exe"])
     clock_log=run(["build/test_timed_clock.exe"])
-    (DOC/f"F405_TIMED_HOST_SIMULATION_{STAMP}.log").write_text(artifacts["c_host_log"]+uart_log+clock_log,encoding="utf-8")
+    (DOC/f"F405_TIMED_HOST_SIMULATION_{STAMP}.log").write_text(artifacts["c_host_log"]+uart_log+clock_log,encoding="utf-8",newline="\n")
     patch=run(["git","diff","--no-ext-diff","--binary","HEAD","--","Main","Boards","Core","Drivers","cmake","CMakeLists.txt","CMakePresets.json"])
-    (DOC/f"F405_TIMED_BUILD_DIFF_{STAMP}.patch").write_text(patch,encoding="utf-8")
+    (DOC/f"F405_TIMED_BUILD_DIFF_{STAMP}.patch").write_text(patch,encoding="utf-8",newline="\n")
     v.update(upper_baseline=contract["upper_baseline"], contract_version="1.1",
         user_reported_running_before_changes=dict(git="f81e9ef9a33981d8453eafe9574572e87dea90c6",source_dirty=1,
             provenance="RDK real query reported by user; not independently repeated here", firmware_id=None),
