@@ -15,6 +15,10 @@ static IMUData imu={.ready=true};
 uint64_t DebugTelemetry_NowUs(void) { return now; }
 void DebugClock_Init(void) { now=100; }
 bool DebugClock_NewEpoch(uint8_t epoch[16]) { memset(epoch,++boots,16); return true; }
+static bool clock_healthy=true;
+bool DebugClock_IsHealthy(void) { return clock_healthy; }
+void DebugClock_GetQuality(uint32_t fields[12]) { memset(fields,0,48); fields[11]=UINT32_MAX; }
+void Uart_GetTimedQuality(uint32_t fields[30]) { memset(fields,0,120); }
 IMUData IMU_GetData(void) { return imu; }
 bool Uart_Send(const uint8_t *data,uint16_t size)
 { assert(count<128 && size<=192); memcpy(frames[count],data,size); sizes[count++]=size; return true; }
@@ -22,10 +26,11 @@ static uint16_t crc(const uint8_t *b,unsigned n)
 { uint16_t c=0xffff; for(unsigned i=0;i<n;i++){c^=b[i];for(unsigned j=0;j<8;j++)c=(c>>1)^((c&1)?0xa001:0);}return c; }
 static void request(unsigned kind,unsigned nonce,unsigned version,bool enable,bool corrupt)
 {
-  unsigned n=kind==5?12:8;
+  unsigned n=kind==5?12:kind==11?10:8;
   uint8_t frame[32]={0xd4,0x4d,version,kind,0,n,0,nonce};
   frame[15]=nonce;
   if(kind==5) { frame[16]=enable;frame[17]=1; }
+  if(kind==11) { frame[16]=enable?2:1;frame[17]=nonce&1U; }
   unsigned c=crc(frame+2,n+6);frame[n+8]=c;frame[n+9]=c>>8;frame[n+10]=0xe4;
   if(corrupt) frame[n+8]^=1;
   for(unsigned i=0;i<n+11;i++) { now+=44;assert(DebugTelemetry_RxByte(frame[i],true)); }
@@ -70,13 +75,21 @@ int main(void)
   int g=latest(8);assert(g>=0 && sizes[g]==95);
   assert(get(frames[g]+52,4)&64);assert(get(frames[g]+76,4)&64);
   assert(get(frames[g]+40,8)!=get(frames[g]+64,8));
-  now=71000;DebugTelemetry_Process();g=latest(8);assert(get(frames[g]+52,4)&128);
-  wheel(80000,z,1,true);wheel(90000,z,1,false);
+  unsigned before=count;
+  now=71000;DebugTelemetry_Process();g=latest(8);
+  for(unsigned i=before;i<count;i++) assert(frames[i][3]!=8);
+  now=72000;DebugTelemetry_GyroSample(0xaa,90000,30000,now-50);
+  now=82000;DebugTelemetry_Process();g=latest(8);assert(get(frames[g]+52,4)&128);
+  wheel(84000,z,1,true);wheel(90000,z,1,false);
   w=latest(7);assert(!(get(frames[w]+80,4)&1));assert((int32_t)get(frames[w]+48,4)==INT32_MIN);
   now=100000;DebugTelemetry_ReferenceReset();
   wheel(100000,z,1,false);wheel(110000,z,1,false);
   request(1,7,1,false,false);assert(get(frames[latest(2)]+34,4)==1);
   request(9,8,1,false,false);assert(sizes[latest(10)]==143);
+  request(11,10,1,false,false);assert(sizes[latest(12)]==171);
+  request(11,11,1,false,false);assert(sizes[latest(12)]==171);
+  assert(get(frames[latest(12)]+44,1)==1 && get(frames[latest(12)]+45,1)==1);
+  request(11,13,1,true,false);assert(get(frames[latest(127)]+16,2)==5);
   wheel(120000,z,1,false);wheel(130000,z,1,false);
   w=latest(7);assert(get(frames[w]+80,4)&1);
   assert(get(frames[w]+48,4)==0 && get(frames[w]+52,4)==0);
@@ -91,6 +104,11 @@ int main(void)
   assert((int32_t)get(frames[g]+60,4)==-30000);
   now=192000;DebugTelemetry_GyroSample(0xaa,-90000,2000000,now-50);DebugTelemetry_Process();
   g=latest(8);assert((get(frames[g]+76,4)&33)==32);
+  clock_healthy=false;
+  now=203000;DebugTelemetry_GyroSample(0xaa,-90000,1000,now-50);DebugTelemetry_Process();
+  g=latest(8);assert(!(get(frames[g]+76,4)&1) && (get(frames[g]+76,4)&1024));
+  request(3,12,1,false,false);assert(get(frames[latest(4)]+52,2)==0);
+  clock_healthy=true;
   request(5,9,1,false,false);old=count;now+=100000;DebugTelemetry_Process();assert(count==old);
   DebugTelemetry_Init();request(1,10,1,false,false);
   assert(frames[latest(2)][18]!=original_epoch);

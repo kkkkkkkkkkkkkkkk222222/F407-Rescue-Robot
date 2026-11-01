@@ -10,7 +10,8 @@
 
 /* Extended namespace D4 4D, not a reinterpretation of the legacy A3 B3 frames. */
 enum { ID_REQ=1, ID_REPLY, SYNC_REQ, SYNC_REPLY, CONFIG_REQ, CONFIG_REPLY,
-       WHEEL=7, GYRO=8, STATS_REQ=9, STATS_REPLY=10, ERROR_REPLY=127 };
+       WHEEL=7, GYRO=8, STATS_REQ=9, STATS_REPLY=10,
+       QUALITY_REQ=11, QUALITY_REPLY=12, ERROR_REPLY=127 };
 enum { OK=0, BAD_VERSION=1, BAD_TYPE=2, BAD_LENGTH=3, BANDWIDTH=4, BAD_PROFILE=5 };
 enum { W_VALID=1, W_TIME_BOUND=2, W_PENDING=4, W_TRANSITION=8,
        W_INTERVAL=16, W_CLIPPED=32, W_GAP=64, W_SLIP_UNKNOWN=128, W_EPOCH_BAD=256 };
@@ -30,6 +31,10 @@ static bool epoch_valid, initialized, streaming;
 static volatile uint32_t reference_epoch;
 static uint16_t packet_sequence;
 static volatile uint32_t stats[24];
+static volatile uint32_t quality[18];
+static int64_t previous_raw[3];
+static uint32_t previous_capture_us;
+static uint64_t last_gyro_enqueue_us;
 
 typedef struct {
   uint64_t t0, t1;
@@ -102,6 +107,9 @@ void DebugTelemetry_Init(void)
   memset((void *)&latest_rate,0,sizeof(latest_rate));
   DebugClock_Init();
   memset((void *)stats,0,sizeof(stats));
+  memset((void *)quality,0,sizeof(quality));
+  memset(previous_raw,0,sizeof(previous_raw));
+  previous_capture_us=0U; last_gyro_enqueue_us=0U;
   epoch_valid=DebugClock_NewEpoch(epoch);
   /* RNG failure disables qualification, never robot motion and never fabricates an epoch. */
   initialized=true;
@@ -118,34 +126,44 @@ void DebugTelemetry_WheelSample(uint64_t begin, uint64_t end,
     const int64_t position[3], const int32_t delta[3], uint32_t bad, bool pending)
 {
   if(!initialized) return;
+  if(end<begin) { ++quality[0]; return; }
   const uint64_t middle=begin+(end-begin)/2U;
   const uint32_t span=bounded_u32(end-begin);
   maximum(15,span);
-  if(!previous_wheel_us) { previous_wheel_us=middle; previous_bad=bad; return; }
+  if(!previous_wheel_us) {
+    previous_wheel_us=middle; previous_bad=bad;
+    memcpy(previous_raw,position,sizeof(previous_raw)); previous_capture_us=span;
+    return;
+  }
   if(!wheel_intervals) {
     accumulation.t0=previous_wheel_us;
     accumulation.flags=W_SLIP_UNKNOWN;
-    accumulation.capture_us=span;
+    accumulation.capture_us=span>previous_capture_us?span:previous_capture_us;
     memset(accumulation.delta,0,sizeof(accumulation.delta));
   }
   if(pending) accumulation.flags|=W_PENDING;
   if(bad!=previous_bad) accumulation.flags|=W_TRANSITION;
   if(middle-previous_wheel_us>15000U) accumulation.flags|=W_GAP;
+  if(middle<=previous_wheel_us) { accumulation.flags|=W_INTERVAL; ++quality[0]; }
   for(uint8_t i=0;i<3U;++i) {
+    if((uint32_t)((uint64_t)position[i]-(uint64_t)previous_raw[i])!=(uint32_t)delta[i]) {
+      accumulation.flags|=W_CLIPPED; ++quality[1];
+    }
+    previous_raw[i]=position[i];
     const int64_t sum=(int64_t)accumulation.delta[i]+delta[i];
     if(sum>INT32_MAX || sum<INT32_MIN) accumulation.flags|=W_CLIPPED;
     accumulation.delta[i]=sum>INT32_MAX ? INT32_MAX : sum<INT32_MIN ? INT32_MIN : (int32_t)sum;
     accumulation.raw[i]=(uint32_t)position[i];
   }
   if(span>accumulation.capture_us) accumulation.capture_us=span;
-  previous_bad=bad; previous_wheel_us=middle;
+  previous_bad=bad; previous_wheel_us=middle; previous_capture_us=span;
   if(++wheel_intervals<2U) return;
   wheel_intervals=0U;
   accumulation.t1=middle;
   const uint64_t duration=middle-accumulation.t0;
   maximum(20,duration);
   if(!duration || duration>50000U) accumulation.flags|=W_INTERVAL;
-  if(!epoch_valid) accumulation.flags|=W_EPOCH_BAD;
+  if(!epoch_valid || !DebugClock_IsHealthy()) accumulation.flags|=W_EPOCH_BAD;
   if(!(accumulation.flags & ~(uint32_t)W_SLIP_UNKNOWN)) {
     const float scale=(3.14159265358979323846f*APP_WHEEL_DIAMETER_MM/
         APP_ENCODER_COUNTS_PER_WHEEL_REV)*1000000000.0f/(float)duration;
@@ -169,6 +187,12 @@ void DebugTelemetry_WheelSample(uint64_t begin, uint64_t end,
   }
   accumulation.id=++stats[5];
   latest_wheel=accumulation;
+}
+
+void DebugTelemetry_EncoderIRQ(uint32_t elapsed_us)
+{
+  ++quality[2];
+  if(elapsed_us>quality[3]) quality[3]=elapsed_us;
 }
 
 void DebugTelemetry_GyroSample(uint8_t type, int64_t yaw, int32_t rate, uint64_t received)
@@ -218,7 +242,7 @@ static uint32_t gyro_flags(const GyroSample *s, const IMUData *imu, uint64_t now
   if(!yaw && (s->value>=1999900LL || s->value<=-1999900LL)) f|=G_CLIPPED;
   if(!s->received || now-s->received>20000U) f|=G_STALE;
   f|=s->received && s->id!=previous_id ? G_NEW:G_REPEAT;
-  if(!epoch_valid) f|=G_EPOCH_BAD;
+  if(!epoch_valid || !DebugClock_IsHealthy()) f|=G_EPOCH_BAD;
   if((f&G_READY) && !(f&(G_RECOVERING|G_UNCERTAIN|G_STALE|G_CLIPPED|G_EPOCH_BAD))) f|=G_VALID;
   return f;
 }
@@ -228,6 +252,9 @@ static void publish_gyro(uint64_t now)
   GyroSample yaw,rate;
   const uint32_t m=enter(); yaw=latest_yaw; rate=latest_rate; leave(m);
   const IMUData imu=IMU_GetData();
+  /* No fresh source means no new measurement publication. A source that is
+   * unchanged alongside a fresh one retains its own REPEAT flag and source ID. */
+  if(yaw.id==published_yaw && rate.id==published_rate) { ++quality[4]; return; }
   uint8_t p[MAX_PAYLOAD]; uint16_t n;
   prefix(p,&n); put(p,&n,++gyro_id,4);
   put(p,&n,(uint64_t)yaw.value,8); put(p,&n,yaw.received,8); put(p,&n,yaw.id,4);
@@ -239,6 +266,10 @@ static void publish_gyro(uint64_t now)
     ++stats[8];
     if(yaw.id==published_yaw || rate.id==published_rate) ++stats[9];
     published_yaw=yaw.id; published_rate=rate.id;
+    if(last_gyro_enqueue_us && now-last_gyro_enqueue_us>quality[5]) {
+      quality[5]=bounded_u32(now-last_gyro_enqueue_us);
+    }
+    last_gyro_enqueue_us=now;
   }
 }
 
@@ -246,6 +277,10 @@ static void publish_wheel(void)
 {
   WheelSample s; const uint32_t m=enter(); s=latest_wheel; leave(m);
   const uint64_t now=DebugTelemetry_NowUs();
+  if(!DebugClock_IsHealthy()) {
+    s.flags=(s.flags & ~(uint32_t)W_VALID)|W_EPOCH_BAD;
+    s.velocity[0]=s.velocity[1]=INT32_MIN;
+  }
   if(!s.t1 || s.id==consumed_wheel) {
     if(now-last_wheel_report_us<WHEEL_PERIOD_US || (s.t1 && now-s.t1<30000U)) return;
     s.flags=(s.flags & ~(uint32_t)W_VALID)|512U;
@@ -261,7 +296,7 @@ static void publish_wheel(void)
   for(uint8_t i=0;i<3U;++i) put(p,&n,s.raw[i],4);
   for(uint8_t i=0;i<3U;++i) put(p,&n,(uint32_t)s.delta[i],4);
   put(p,&n,s.flags,4);
-  /* Rear EXTI edge latency and sensor acquisition delay have no proven bound. */
+  /* Snapshot span is not the physical edge-to-count uncertainty. */
   put(p,&n,UINT32_MAX,4); put(p,&n,s.capture_us,4);
   maximum(16,DebugTelemetry_NowUs()-s.t1);
   (void)send_frame(WHEEL,packet_sequence++,p,n);
@@ -278,8 +313,8 @@ static void reply_request(const Request *r)
   const uint8_t type=b[3];
   const uint64_t nonce=length>=8U ? read_be(b+8,8):0U;
   uint16_t status=b[2]!=1U ? BAD_VERSION :
-      (type!=ID_REQ && type!=SYNC_REQ && type!=CONFIG_REQ && type!=STATS_REQ) ? BAD_TYPE :
-      length!=(type==CONFIG_REQ ? 12U:8U) ? BAD_LENGTH:OK;
+      (type!=ID_REQ && type!=SYNC_REQ && type!=CONFIG_REQ && type!=STATS_REQ && type!=QUALITY_REQ) ? BAD_TYPE :
+      length!=(type==CONFIG_REQ ? 12U:type==QUALITY_REQ ? 10U:8U) ? BAD_LENGTH:OK;
   uint8_t p[MAX_PAYLOAD]; uint16_t n=0;
   put(p,&n,nonce,8);
   if(status!=OK) {
@@ -288,11 +323,12 @@ static void reply_request(const Request *r)
   }
   if(type==ID_REQ) {
     ++stats[22];
-    put(p,&n,epoch_valid?0U:1U,2); memcpy(p+n,epoch,16); n+=16;
-    put(p,&n,reference_epoch,4); put(p,&n,0x3ffU,8);
+    const bool healthy=DebugClock_IsHealthy();
+    put(p,&n,!epoch_valid?1U:healthy?0U:2U,2); memcpy(p+n,epoch,16); n+=16;
+    put(p,&n,reference_epoch,4); put(p,&n,0x7ffU,8);
     put(p,&n,405U,2); put(p,&n,APP_ACTIVE_MODE,1); put(p,&n,1U,1);
-    put(p,&n,1U,1); put(p,&n,0U,1); put(p,&n,1000000U,4);
-    put(p,&n,huart3.Init.BaudRate,4); put(p,&n,epoch_valid?3U:1U,4);
+    put(p,&n,1U,1); put(p,&n,1U,1); put(p,&n,1000000U,4);
+    put(p,&n,huart3.Init.BaudRate,4); put(p,&n,(healthy?1U:0U)|(epoch_valid?2U:0U),4);
     put(p,&n,UINT32_MAX,4);
     for(uint8_t i=0;i<3U;++i) put(p,&n,((const uint32_t *)UID_BASE)[i],4);
     put(p,&n,DBGMCU->IDCODE,4); put(p,&n,SCB->CPUID,4);
@@ -303,7 +339,7 @@ static void reply_request(const Request *r)
   } else if(type==SYNC_REQ) {
     ++stats[21]; memcpy(p+n,epoch,16); n+=16;
     put(p,&n,r->received,8); put(p,&n,DebugTelemetry_NowUs(),8);
-    put(p,&n,1U,4); put(p,&n,epoch_valid?1U:0U,2);
+    put(p,&n,1U,4); put(p,&n,epoch_valid && DebugClock_IsHealthy()?1U:0U,2);
     (void)send_frame(SYNC_REPLY,seq,p,n);
   } else if(type==CONFIG_REQ) {
     const bool enabled=b[16]!=0U;
@@ -320,6 +356,32 @@ static void reply_request(const Request *r)
     put(p,&n,huart3.Init.BaudRate,4); put(p,&n,WHEEL_PERIOD_US,4);
     put(p,&n,GYRO_PERIOD_US,4); put(p,&n,REQUIRED_BAUD,4);
     (void)send_frame(CONFIG_REPLY,seq,p,n);
+  } else if(type==QUALITY_REQ) {
+    const uint8_t schema=b[16],page=b[17];
+    if(schema!=1U || page>1U) {
+      put(p,&n,BAD_PROFILE,2); put(p,&n,type,1); put(p,&n,1U,1);
+      (void)send_frame(ERROR_REPLY,seq,p,n); return;
+    }
+    memcpy(p+n,epoch,16); n+=16; put(p,&n,reference_epoch,4);
+    put(p,&n,DebugTelemetry_NowUs(),8); put(p,&n,1U,1); put(p,&n,page,1); put(p,&n,30U,2);
+    uint32_t fields[30]={0};
+    if(page==0U) Uart_GetTimedQuality(fields);
+    else {
+      DebugClock_GetQuality(fields);
+      const uint32_t m=enter();
+      for(uint8_t i=0;i<6U;++i) fields[12U+i]=quality[i];
+      fields[18]=stats[15]; fields[19]=stats[20];
+      fields[20]=stats[18]; fields[21]=stats[19];
+      fields[22]=latest_yaw.id; fields[23]=latest_rate.id;
+      leave(m);
+      const IMUData imu=IMU_GetData();
+      fields[24]=imu.uart_baud; fields[25]=imu.uart_rx_errors;
+      fields[26]=imu.uart_checksum_errors;
+      fields[27]=fields[28]=UINT32_MAX; /* Physical source delays unknown. */
+      fields[29]=7U; /* Missing crystal, rear-edge and IMU-delay evidence. */
+    }
+    for(uint8_t i=0;i<30U;++i) put(p,&n,fields[i],4);
+    (void)send_frame(QUALITY_REPLY,seq,p,n);
   } else {
     memcpy(p+n,epoch,16); n+=16; put(p,&n,reference_epoch,4);
     put(p,&n,DebugTelemetry_NowUs(),8);

@@ -8,6 +8,29 @@ MAX_PAYLOAD = 160
 ID_REQ, ID_REPLY, SYNC_REQ, SYNC_REPLY = 1, 2, 3, 4
 CONFIG_REQ, CONFIG_REPLY, WHEEL, GYRO, STATS_REQ, STATS_REPLY = 5, 6, 7, 8, 9, 10
 ERROR_REPLY = 127
+QUALITY_REQ, QUALITY_REPLY = 11, 12
+QUALITY_NAMES = (
+    (
+        "tx_started", "tx_completed", "tx_hal_busy", "tx_start_errors", "tx_recoveries",
+        "tx_abort_errors", "tx_unexpected_tc", "tx_buffer_seal_errors", "tx_precondition_blocks",
+        "tx_stuck", "tx_expired", "tx_replaced", "tx_queue_high_water", "tx_bytes_started",
+        "tx_bytes_completed", "max_queue_us", "max_transfer_us", "max_wheel_enqueue_age_us",
+        "max_gyro_enqueue_age_us", "max_wheel_tc_age_us", "max_gyro_tc_age_us",
+        "max_wheel_tc_gap_us", "max_gyro_tc_gap_us", "dma_enabled", "uart_dmat",
+        "uart_tx_irq_bits", "dma_remaining", "last_uart_error", "tx_drain_waits",
+        "tx_tc_during_recovery",
+    ),
+    (
+        "clock_faults", "clock_regressions", "clock_wrap_irqs", "rcc_cr", "rcc_cfgr",
+        "rcc_pllcfgr", "tim5_psc", "tim5_arr", "tim5_cr1", "tim5_dier", "debug_apb1_freeze",
+        "drift_bound_ppm", "wheel_time_order_errors", "wheel_raw_delta_mismatches",
+        "rear_exti_services", "max_rear_exti_service_us", "gyro_no_new_suppressed",
+        "max_gyro_enqueue_gap_us", "max_wheel_capture_us", "max_wheel_interval_us",
+        "max_yaw_receive_gap_us", "max_rate_receive_gap_us", "yaw_source_id", "rate_source_id",
+        "sensor_uart_baud", "sensor_uart_rx_errors", "sensor_uart_checksum_errors",
+        "rear_edge_delay_bound_us", "imu_source_delay_bound_us", "missing_evidence_bits",
+    ),
+)
 STATS_NAMES = (
     "requests", "crc_errors", "bad_headers", "request_queue_drops",
     "partial_timeouts", "wheel_measurements", "wheel_invalid", "wheel_skipped",
@@ -46,12 +69,17 @@ def parse(raw: bytes) -> dict:
     return {"version": version, "type": kind, "sequence": sequence, "payload": raw[8:-3]}
 
 
-def request(kind: int, nonce: int, sequence: int = 0, *, enable: bool = False) -> bytes:
-    if kind not in (ID_REQ, SYNC_REQ, CONFIG_REQ, STATS_REQ):
+def request(kind: int, nonce: int, sequence: int = 0, *, enable: bool = False,
+            quality_page: int = 0) -> bytes:
+    if kind not in (ID_REQ, SYNC_REQ, CONFIG_REQ, STATS_REQ, QUALITY_REQ):
         raise ValueError("unsupported request")
     payload = struct.pack(">Q", nonce)
     if kind == CONFIG_REQ:
         payload += bytes((int(enable), 1, 0, 0))
+    if kind == QUALITY_REQ:
+        if quality_page not in (0, 1):
+            raise ValueError("unknown quality page")
+        payload += bytes((1, quality_page))
     return packet(kind, sequence, payload)
 
 
@@ -87,6 +115,15 @@ def decode(raw: bytes) -> dict:
     elif kind == STATS_REPLY:
         values = struct.unpack(">Q16sIQ" + "I" * 24, p)
         names = ("nonce", "boot_epoch", "reference_epoch", "snapshot_us") + STATS_NAMES
+    elif kind == QUALITY_REPLY:
+        if len(p) < 40:
+            raise ValueError("short quality header")
+        schema, page, count = struct.unpack(">BBH", p[36:40])
+        if schema != 1 or page not in (0, 1) or count != 30 or len(p) != 40 + 4*count:
+            raise ValueError("unsupported quality schema/page/length")
+        values = struct.unpack(">Q16sIQBBH" + "I"*count, p)
+        names = ("nonce", "boot_epoch", "reference_epoch", "snapshot_us", "quality_schema",
+                 "page", "field_count") + QUALITY_NAMES[page]
     elif kind == ERROR_REPLY:
         values, names = struct.unpack(">QHBB", p), ("nonce", "status", "request_type", "supported_version")
     else:
@@ -139,3 +176,66 @@ def stream_frames(data: bytes) -> list[bytes]:
                 continue
         cursor += 1
     return result
+
+
+def inspect_capture(data: bytes) -> dict:
+    """Offline integrity audit. Never drops evidence of extra bytes or bad CRC.
+
+    A capture boundary can cut a frame; trailing partial bytes are not silently
+    counted as a valid frame or joined to a different measurement.
+    """
+    frames, rejected = [], []
+    cursor = 0
+    while cursor < len(data):
+        rest = data[cursor:]
+        if rest == b"\xd4" or rest == b"\xa3":
+            break
+        if rest[:2] == MAGIC:
+            if len(rest) < 8:
+                break
+            length = int.from_bytes(rest[4:6], "big") + 11
+            if length <= MAX_PAYLOAD + 11 and len(rest) < length:
+                break
+            candidate = rest[:length]
+            try:
+                parsed = parse(candidate)
+            except ValueError:
+                pass
+            else:
+                frames.append(dict(offset=cursor, size=length, family="extended",
+                                   type=parsed["type"]))
+                cursor += length
+                continue
+        if rest[:2] == b"\xa3\xb3":
+            if len(rest) >= 4 and rest[:4] == b"\xa3\xb3\x01\xc3":
+                frames.append(dict(offset=cursor, size=4, family="legacy_ack", type=1))
+                cursor += 4
+                continue
+            if len(rest) < 15:
+                break
+            candidate = rest[:15]
+            if candidate[-1] == 0xc3 and crc16(candidate[2:12]) == int.from_bytes(candidate[12:14], "little"):
+                frames.append(dict(offset=cursor, size=15, family="legacy", type=candidate[2]))
+                cursor += 15
+                continue
+        rejected.append(dict(offset=cursor, byte=data[cursor]))
+        cursor += 1
+    return dict(valid_frames=frames, rejected_bytes=rejected,
+                trailing_partial_hex=data[cursor:].hex(),
+                stream_integrity_pass=not rejected and cursor == len(data))
+
+
+def observed_scale_interval(first: dict, second: dict) -> tuple[float, float]:
+    """Past-interval average MCU/host rate, NOT a future oscillator guarantee.
+
+    Each MCU response_prepare event occurred between host write-before and
+    validated receive. Serial asymmetry/queueing widens, not removes, the range.
+    """
+    if first["boot_epoch"] != second["boot_epoch"]:
+        raise ValueError("cross-boot scale comparison")
+    delta = (second["response_prepare_us"]-first["response_prepare_us"])*1000
+    lo_dt = second["host_write_before_ns"]-first["receive_monotonic_ns"]
+    hi_dt = second["receive_monotonic_ns"]-first["host_write_before_ns"]
+    if delta <= 0 or lo_dt <= 0 or hi_dt < lo_dt:
+        raise ValueError("non-separated clock observations")
+    return max(0, delta-2000)/hi_dt, (delta+2000)/lo_dt

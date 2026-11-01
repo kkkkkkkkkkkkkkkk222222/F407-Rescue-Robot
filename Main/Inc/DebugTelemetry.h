@@ -17,5 +17,8 @@ void DebugTelemetry_ReferenceReset(void);
 void DebugTelemetry_TxStarted(const uint8_t *data, uint16_t size, uint64_t queued);
 void DebugTelemetry_TxCompleted(const uint8_t *data, uint16_t size);
 void DebugTelemetry_TxDropped(void);
+bool DebugClock_IsHealthy(void);
+void DebugClock_GetQuality(uint32_t fields[12]);
+void DebugTelemetry_EncoderIRQ(uint32_t elapsed_us);
 #endif
 #endif

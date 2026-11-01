@@ -19,6 +19,9 @@ void BoardF405_EncoderIRQ(void)
 {
   const uint32_t pending = EXTI->PR & (GPIO_PIN_8 | GPIO_PIN_9);
   if (pending == 0U) { return; }
+#if DEBUG_TIMED_LINK
+  const uint64_t entered_us=DebugTelemetry_NowUs();
+#endif
   EXTI->PR = pending;
   const uint8_t ab = read_ab();
   /* STM32 TI12 convention: TI1/A rising while TI2/B is low counts UP. */
@@ -29,6 +32,9 @@ void BoardF405_EncoderIRQ(void)
   if ((previous_ab ^ ab) == 3U) { ++invalid_transitions; }
   third_count += (uint32_t)step[(previous_ab << 2U) | ab];
   previous_ab = ab;
+#if DEBUG_TIMED_LINK
+  DebugTelemetry_EncoderIRQ((uint32_t)(DebugTelemetry_NowUs()-entered_us));
+#endif
 }
 
 uint32_t BoardF405_EncoderInvalidTransitions(void) { return invalid_transitions; }
@@ -52,6 +58,8 @@ void Encoder_Init(void)
 void Encoder_Sample10ms(void)
 {
 #if DEBUG_TIMED_LINK
+  const uint32_t capture_mask=__get_PRIMASK();
+  __disable_irq();
   const uint64_t capture_begin = DebugTelemetry_NowUs();
   const bool pending_before = (EXTI->PR & (GPIO_PIN_8 | GPIO_PIN_9)) != 0U;
 #endif
@@ -67,10 +75,13 @@ void Encoder_Sample10ms(void)
   position[2] += delta_10ms[2];
 #if DEBUG_TIMED_LINK
   const uint64_t capture_end = DebugTelemetry_NowUs();
+  const bool pending_after=(EXTI->PR & (GPIO_PIN_8 | GPIO_PIN_9)) != 0U;
   int64_t raw[3]; int32_t delta[3];
   for (uint8_t i=0U;i<3U;++i) { raw[i]=position[i]; delta[i]=delta_10ms[i]; }
-  DebugTelemetry_WheelSample(capture_begin,capture_end,raw,delta,invalid_transitions,
-      pending_before || (EXTI->PR & (GPIO_PIN_8 | GPIO_PIN_9)) != 0U);
+  const uint32_t bad=invalid_transitions;
+  __set_PRIMASK(capture_mask);
+  DebugTelemetry_WheelSample(capture_begin,capture_end,raw,delta,bad,
+      pending_before || pending_after);
 #endif
 }
 
