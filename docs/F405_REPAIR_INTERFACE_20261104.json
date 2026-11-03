@@ -30,7 +30,14 @@
   "builds": {"NormalDebugTimed": {"mode": 5, "service": "MOTIONDEBUG", "UART4_baud": 230400}, "NormalDebugTask": {"service": "TASK", "UART4_baud": 115200, "07_08_enabled": false}},
   "rate_model": {"wheel_hz": 50, "gyro_publish_ceiling_hz": 100, "07_08_only_Bps": 14250, "measured_this_run": false},
   "actual_flashed_this_run": false,
-  "implementation_commit": "c2deed235123d40c1be761b58bf2d7cb9c3f820a",
+  "implementation_commit": "0a2dbf7f523cba577c6ccacc3db5fae31b8dae48",
+  "build_identity_not_board_actual": {
+    "preset": "NormalDebugTimed",
+    "firmware_id": "acbe5483edf9e02ba767be0d5cebba9457552ea0f3b67c4c3aebc2bd34e6a80d",
+    "git": "0a2dbf7f523cba577c6ccacc3db5fae31b8dae48",
+    "source_dirty": 1,
+    "dirty_diff": "Existing two whitespace-only lines after Main/Src/Task.c line1547; no functional source delta"
+  },
   "synthetic_unsupported_quality_reply": {
     "hex": "D4 4D 01 7F 00 0C 12 34 01 02 03 04 05 06 07 08 00 02 0B 01 74 9E E4",
     "meaning": "SEQ1234, nonce0102030405060708, status2, rejected type0B, supported envelope1; CRC16LE=74 9E",

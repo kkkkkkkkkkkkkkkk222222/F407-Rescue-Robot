@@ -30,7 +30,14 @@ RECOVERING不再经ready清除引发连锁误停。代码范围已完成，待�
 
 - 规则提交：`ca87bfa956a6a6bc1126d65738fbeff4eb1545b5`。
 - 前一步实现为c2deed2；本次补齐用户选择的恢复持续执行策略，协议语义更新为1.3。
-- 最终构建身份在提交后记录；旧构建c2deed2已经被替代，不冒充当前交付镜像。
+- 最终实现提交：`0a2dbf7f523cba577c6ccacc3db5fae31b8dae48`。
+- 最终本地构建：NormalDebugTimed，MODE5/MOTIONDEBUG，UART4=230400，协议1.3。
+  嵌入Git=0a2dbf7，source_dirty=1；firmware_id=
+  `acbe5483edf9e02ba767be0d5cebba9457552ea0f3b67c4c3aebc2bd34e6a80d`。
+  ELF SHA256=`c6c09d74f3a98dfac40129ed3e3b6310011aac0a0a4225373d0c4745912bb500`。
+  NormalDebugTask本轮ELF SHA256=`6425941bc39b38a839bf3a025e40952b2d8cd55bf4f17e7ec835564a1b08175d`。
+  当前源差异只有既有Task.c的1547行后一个空行和一个两空格行；IDE/tmp修改未混入提交。
+  后续文档HEAD不等于构建身份；重新编译会更新Git/firmware_id。上述均非板端实烧证明。
 - 变更说明及接口语义增量：[F405_REPAIR_20261104](F405_REPAIR_20261104.md)。
 - NormalDebugTimed（230400）和NormalDebugTask（115200）均编译通过；未新增比赛07/08。
 - 直接相关的现有UART驱动、遥测模块、32帧DMA队列主机检查通过；无新增测试框架。
@@ -38,6 +45,7 @@ RECOVERING不再经ready清除引发连锁误停。代码范围已完成，待�
 - 已审核diff：没有新增时间门控、ISR、巡检、永久FAULT或ESCAPE；PID/速度/Task业务没有改动。
 - 直接回归覆盖：RX错误/长间隔仍ready、源值/ID不伪造、新帧继续更新、冷启动错误不假装ready。
   现有轮速闭环继续运行，保持控制目标不等于锁死一次PWM。
+- 本次选择确认后，只重跑上述UART驱动直接回归及两个受影响F405构建，全部通过。
 - 未烧录、未复位、未发送运动；COM18只读尝试无回执且调用阻塞，已终止关闭，不能确认当前实烧身份。
 
 ## TODO（另定范围）
