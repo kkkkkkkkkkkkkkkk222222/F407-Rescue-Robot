@@ -26,6 +26,14 @@ F405_REPAIR_HANDOFF_20261104 核对，历史阶段要求不自动继承。
 
 ## 本轮实际结果
 
+- 规则提交：`ca87bfa956a6a6bc1126d65738fbeff4eb1545b5`。
+- 实现提交：`c2deed235123d40c1be761b58bf2d7cb9c3f820a`。
+- 本地交付构建：NormalDebugTimed，MODE5/MOTIONDEBUG，UART4=230400，协议1.2，
+  嵌入Git=c2deed2，source_dirty=1，firmware_id=
+  `97e107eecccbc14f5b7f18527bfe94788e40cc900a00918be3dbebd893d0f95b`。
+  ELF SHA256=`d064eabc1b21e8706d4a4f782086f05912bda08464fd5a2ac54de474b13fb7ea`。
+  dirty来自用户既有Task.c的1547行后一个空行与一个两空格行；没有功能差异。
+  后续文档提交不等于该构建版本，重新编译会更新嵌入Git和firmware_id。
 - 变更说明及接口语义增量：[F405_REPAIR_20261104](F405_REPAIR_20261104.md)。
 - NormalDebugTimed（230400）和NormalDebugTask（115200）均编译通过；未新增比赛07/08。
 - 直接相关的现有UART驱动、遥测模块、32帧DMA队列主机检查通过；无新增测试框架。
