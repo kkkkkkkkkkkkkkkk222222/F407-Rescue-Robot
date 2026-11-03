@@ -13,12 +13,9 @@ static uint8_t packet[5], packet_length;
 static bool angle_seen, rate_seen, ever_ready, uart_started;
 static int16_t previous_angle_raw;
 static int64_t angle_counts, origin_counts;
-static uint32_t angle_ms, rate_ms, last_poll_ms, good_samples;
+static uint32_t angle_ms, rate_ms, good_samples;
 static uint32_t period_sum, period_samples;
 static uint32_t config_due_ms;
-#if DEBUG_TIMED_LINK
-static uint64_t last_received_us;
-#endif
 #if APP_BOARD_F405_ROBO
 static uint32_t baud_probe_due_ms;
 #endif
@@ -46,12 +43,10 @@ static void lose_stream(void)
   if (!data.recovering) {
     ++data.integration_gap_count;
   }
+  /* Explicit UART errors retain the existing control policy pending the
+   * user's recovery-output choice. Elapsed age no longer reaches this path. */
   data.ready = false;
   data.recovering = true;
-  /* An outage can hide complete revolutions. A healthy link cannot prove yaw. */
-  if (ever_ready && HAL_GetTick() - angle_ms >= APP_IMU_UART_UNWRAP_MAX_GAP_MS) {
-    data.heading_uncertain = true;
-  }
   good_samples = 0U;
 }
 
@@ -70,7 +65,7 @@ static void receive_frame(uint8_t type, int16_t raw, uint32_t now)
     rate_seen = true;
     ++data.uart_rate_frames;
 #if DEBUG_TIMED_LINK
-    DebugTelemetry_GyroSample(type,data.yaw_mdeg,data.gyro_mdps[2],last_received_us);
+    DebugTelemetry_GyroSample(type,data.yaw_mdeg,data.gyro_mdps[2],DebugTelemetry_NowUs());
 #endif
     return;
   }
@@ -79,21 +74,16 @@ static void receive_frame(uint8_t type, int16_t raw, uint32_t now)
   if (angle_seen) {
     const uint32_t dt = now - angle_ms;
     data.sample_interval_us = dt * 1000U;
-    if (data.sample_interval_us > data.max_sample_interval_us) {
-      data.max_sample_interval_us = data.sample_interval_us;
-    }
-    if (dt >= APP_IMU_UART_STALE_MS) {
-      lose_stream();
-      period_sum = period_samples = 0U;
-    }
     int32_t delta = (int32_t)raw - previous_angle_raw;
     if (delta > 32767) { delta -= 65536; }
     if (delta < -32768) { delta += 65536; }
     angle_counts += delta;
-    period_sum += dt;
-    if (++period_samples >= 8U) {
-      data.uart_output_period_ms = (period_sum + 4U) / 8U;
-      period_sum = period_samples = 0U;
+    if (data.uart_config_state != CONFIG_DONE && data.uart_config_state != CONFIG_FAILED) {
+      period_sum += dt;
+      if (++period_samples >= 8U) {
+        data.uart_output_period_ms = (period_sum + 4U) / 8U;
+        period_sum = period_samples = 0U;
+      }
     }
   } else {
     /* The first absolute module angle becomes our local zero reference. */
@@ -105,13 +95,10 @@ static void receive_frame(uint8_t type, int16_t raw, uint32_t now)
   data.yaw_mdeg = counts_to_mdeg(angle_counts - origin_counts);
   ++data.sample_count;
 #if DEBUG_TIMED_LINK
-  DebugTelemetry_GyroSample(type,data.yaw_mdeg,data.gyro_mdps[2],last_received_us);
+  DebugTelemetry_GyroSample(type,data.yaw_mdeg,data.gyro_mdps[2],DebugTelemetry_NowUs());
 #endif
 
-  if (!rate_seen || now - rate_ms >= APP_IMU_UART_STALE_MS) {
-    lose_stream();
-    return;
-  }
+  if (!rate_seen) { return; }
   if (good_samples < APP_IMU_UART_RECOVERY_SAMPLES) { ++good_samples; }
   if (good_samples >= APP_IMU_UART_RECOVERY_SAMPLES) {
     if (data.recovering && ever_ready) { ++data.recovery_count; }
@@ -122,7 +109,7 @@ static void receive_frame(uint8_t type, int16_t raw, uint32_t now)
   }
 }
 
-static void receive_byte(uint8_t value, uint32_t now)
+static void receive_byte(uint8_t value)
 {
   ++data.uart_rx_bytes;
   packet[packet_length++] = value;
@@ -135,7 +122,7 @@ static void receive_byte(uint8_t value, uint32_t now)
       const uint8_t sum = (uint8_t)(packet[0] + packet[1] + packet[2] + packet[3]);
       if (sum == packet[4]) {
         receive_frame(packet[1], (int16_t)((uint16_t)packet[2] |
-                                           ((uint16_t)packet[3] << 8U)), now);
+                                           ((uint16_t)packet[3] << 8U)), HAL_GetTick());
         packet_length = 0U;
         return;
       }
@@ -154,9 +141,6 @@ void IMU_UART_IRQHandler(void)
   if ((status & (USART_SR_RXNE | USART_SR_ORE | USART_SR_FE |
                  USART_SR_NE | USART_SR_PE)) == 0U) { return; }
   const uint8_t value = (uint8_t)APP_IMU_UART_INSTANCE->DR;
-#if DEBUG_TIMED_LINK
-  last_received_us = DebugTelemetry_NowUs();
-#endif
   if (status & (USART_SR_ORE | USART_SR_FE | USART_SR_NE | USART_SR_PE)) {
     ++data.error_count;
     ++data.uart_rx_errors;
@@ -164,7 +148,7 @@ void IMU_UART_IRQHandler(void)
     lose_stream();
     return;
   }
-  receive_byte(value, HAL_GetTick());
+  receive_byte(value);
 }
 
 static bool send_command(uint8_t reg, uint8_t low, uint8_t high)
@@ -308,7 +292,6 @@ bool IMU_Init(void)
   angle_seen = rate_seen = ever_ready = uart_started = false;
   angle_counts = origin_counts = 0LL;
   angle_ms = rate_ms = good_samples = period_sum = period_samples = 0U;
-  last_poll_ms = HAL_GetTick();
   data.init_result = IMU_INIT_RX_TIMEOUT;
   data.recovering = true;
   gyro_uart.Instance = APP_IMU_UART_INSTANCE;
@@ -353,18 +336,11 @@ void IMU_Update(uint32_t now_ms)
 {
   (void)now_ms;
   if (!uart_started) { return; }
+  if (data.uart_config_state == CONFIG_DONE || data.uart_config_state == CONFIG_FAILED) { return; }
   /* Startup HAL time and runtime Robot time have different zero points. */
-  const uint32_t now = HAL_GetTick();
-  const uint32_t mask = lock();
-  if (now - last_poll_ms > data.max_poll_interval_ms) {
-    data.max_poll_interval_ms = now - last_poll_ms;
-  }
-  last_poll_ms = now;
-  if (data.ready && (!angle_seen || !rate_seen ||
-      now - angle_ms >= APP_IMU_UART_STALE_MS ||
-      now - rate_ms >= APP_IMU_UART_STALE_MS)) { lose_stream(); }
-  unlock(mask);
-  configure_output_rate(now);
+  /* No runtime age qualification: this avoids the old pre-lock now/ISR race.
+   * The existing startup negotiation has its own protocol pacing. */
+  configure_output_rate(HAL_GetTick());
 }
 
 void IMU_ZeroYaw(void)
@@ -386,8 +362,9 @@ IMUData IMU_GetData(void)
 {
   const uint32_t mask = lock();
   IMUData snapshot = data;
-  snapshot.uart_angle_age_ms = angle_seen ? HAL_GetTick() - angle_ms : UINT32_MAX;
-  snapshot.uart_rate_age_ms = rate_seen ? HAL_GetTick() - rate_ms : UINT32_MAX;
+  const uint32_t now = HAL_GetTick();
+  snapshot.uart_angle_age_ms = angle_seen ? now - angle_ms : UINT32_MAX;
+  snapshot.uart_rate_age_ms = rate_seen ? now - rate_ms : UINT32_MAX;
   unlock(mask);
   return snapshot;
 }

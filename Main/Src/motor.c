@@ -884,15 +884,9 @@ static bool motor_turn_update_boost(const IMUData *imu, bool fresh, bool wheels_
 
 static void motor_update_debug_turn(const IMUData *imu)
 {
-  const uint32_t now = HAL_GetTick();
   const bool fresh = imu->sample_count != angle_turn.last_sample_count;
   if (fresh) {
     angle_turn.last_sample_count = imu->sample_count;
-    angle_turn.last_sample_ms = now;
-  } else if ((uint32_t)(now - angle_turn.last_sample_ms) >=
-             APP_DEBUG_TURN_IMU_STALE_MS) {
-    motor_turn_fail(MOTOR_TURN_FAIL_IMU_STALE);
-    return;
   }
 
   /* Keep relative turns unwrapped, including negative and full-circle goals. */
@@ -1770,8 +1764,7 @@ MotorDebugTrace Motor_GetDebugTrace(void)
   trace.turn_error_mdeg = angle_turn.error_mdeg;
   trace.turn_reference_mdps = (int32_t)(angle_turn.reference_rate_dps * 1000.0f);
   trace.turn_command_mdps = (int32_t)(angle_turn.command_rate_dps * 1000.0f);
-  trace.turn_imu_age_ms = angle_turn.status == MOTOR_TURN_RUNNING ?
-      HAL_GetTick() - angle_turn.last_sample_ms : 0U;
+  trace.turn_imu_age_ms = UINT32_MAX; /* Retired diagnostic, not sampled. */
   trace.turn_settle_ms = angle_turn.settle_ms;
   trace.turn_rest_ms = angle_turn.rest_ms;
   trace.turn_boost_ms = angle_turn.boost_ms;
@@ -2529,10 +2522,8 @@ static void motor_update_spin_angle(void)
   const bool fresh = imu.sample_count != spin_move.last_sample_count;
   if (fresh) {
     spin_move.last_sample_count = imu.sample_count;
-    spin_move.last_sample_ms = HAL_GetTick();
   }
   if (!imu.ready || imu.heading_uncertain || !Location_GetPose().valid ||
-      HAL_GetTick() - spin_move.last_sample_ms >= APP_DEBUG_TURN_IMU_STALE_MS ||
       HAL_GetTick() - spin_move.started_ms >= APP_MOTOR_TURN_TIMEOUT_MS) {
     motor_finish_spin_angle(MOTOR_TURN_FAULT); return;
   }

@@ -61,7 +61,9 @@ void MotionDiag_SetStage(MotionDiagStage stage, uint32_t app_ms)
 
 void MotionDiag_TaskTick(void)
 {
+#if !APP_BOARD_F405_ROBO
   ++live_record.task_loops;
+#endif
 }
 
 void MotionDiag_MotorTick(uint32_t app_ms)
@@ -171,11 +173,17 @@ static void print_record(void (*send)(const char *), const char *prefix, const M
 
 void MotionDiag_Print(void (*send)(const char *), const char *prefix)
 {
+#if APP_BOARD_F405_ROBO
+  (void)prefix;
+  send("DIAG TIMING DISABLED; USE STAT / IMU / ENC\r\n");
+  return;
+#else
   const uint32_t mask = __get_PRIMASK();
   __disable_irq();
   const MotionRecord record = live_record;
   if (mask == 0U) { __enable_irq(); }
   print_record(send, prefix, &record);
+#endif
 }
 
 void MotionDiag_PrintPrevious(void (*send)(const char *))

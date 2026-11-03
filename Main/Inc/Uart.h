@@ -15,7 +15,5 @@ typedef struct {
   bool rx_active, rx_pending;
 } UartLinkStatus;
 UartLinkStatus Uart_GetLinkStatus(void);
-/* Read-only schema 1/page 0 counters; maxima are observations, not bounds. */
-void Uart_GetTimedQuality(uint32_t fields[30]);
 
 #endif

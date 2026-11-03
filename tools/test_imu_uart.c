@@ -105,29 +105,29 @@ int main(void)
 
   boot(5U);
   sample(100, 200U); /* Short interruption: absolute angle preserves heading. */
-  assert(!data.ready && !data.heading_uncertain);
+  assert(data.ready && !data.heading_uncertain);
   sample(101, 5U); sample(102, 5U);
-  assert(data.ready && !data.heading_uncertain && data.recovery_count == 1U);
+  assert(data.ready && !data.heading_uncertain && data.recovery_count == 0U);
   sample(103, 500U);
   sample(104, 5U); sample(105, 5U);
-  assert(data.ready && data.heading_uncertain);
+  assert(data.ready && !data.heading_uncertain);
   IMU_ConfirmHeadingReference();
   assert(!data.heading_uncertain);
 
   boot(5U);
   test_usart2.SR = USART_SR_RXNE | USART_SR_ORE;
   IMU_UART_IRQHandler();
-  assert(data.uart_rx_errors == 1U && !data.ready && !data.heading_uncertain);
+  assert(data.uart_rx_errors == 1U && !data.ready && data.recovering && !data.heading_uncertain);
   sample(1, 5U); sample(2, 5U); sample(3, 5U);
   assert(data.ready);
   ms += 151U;
   frame(0xAAU, 0);
   IMU_Update(1U); /* Health uses HAL time, not the application clock argument. */
-  assert(!data.ready);
+  assert(data.ready); /* Age never creates an artificial outage. */
 
   boot(5U);
   for (unsigned i = 0; i < 40; ++i) { ms += 5U; frame(0xBBU, 0); }
-  assert(!data.ready); /* Angle-only traffic cannot hide a stale rate. */
+  assert(data.ready); /* Rate count stays unchanged; no synthetic new sample. */
   boot(5U);
   ms = UINT32_MAX - 10U;
   sample(0, 0); sample(0, 5); sample(0, 5);
@@ -147,7 +147,7 @@ int main(void)
   data.uart_output_period_ms = 50U;
   IMU_Update(0U);
   assert(data.uart_config_state == CONFIG_FAILED && data.ready);
-  puts("PASS UART: protocol/resync, both signs, three turns, zero, AA freshness, "
-       "errors, short/long outage recovery, tick wrap, boot recovery, rate config");
+  puts("PASS UART: protocol/resync, unwrapped signs, ready survives gaps; explicit RX error preserved, "
+       "no age gate, tick wrap, boot recovery, rate config (host only)");
   return 0;
 }

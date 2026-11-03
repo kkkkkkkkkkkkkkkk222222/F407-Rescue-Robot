@@ -61,8 +61,6 @@ static uint32_t circles_start_ms;
 static uint32_t circles_dwell_start_ms;
 static uint32_t circles_still_start_ms;
 static bool circles_still;
-static uint32_t circles_last_sample;
-static uint32_t circles_last_sample_ms;
 #endif
 
 static uint32_t debug_enter_critical(void)
@@ -336,8 +334,6 @@ static void debug_start_circles(int8_t count, int64_t anchor_raw_mdeg,
   circles.direction = (count < 0) ? -1 : 1;
   circles.anchor_raw_mdeg = anchor_raw_mdeg;
   circles_start_ms = now_ms;
-  circles_last_sample = imu.sample_count;
-  circles_last_sample_ms = now_ms;
   debug_circle_start_lap(now_ms, &imu);
 }
 
@@ -346,14 +342,6 @@ static bool debug_circle_wait(uint32_t now_ms, const IMUData *imu)
   const uint32_t maximum_dwell_ms = APP_DEBUG_CIRCLES_DWELL_MS + 2000U;
   const uint32_t maximum_batch_ms = circles.total *
       (APP_MOTOR_TURN_TIMEOUT_MS + maximum_dwell_ms);
-  if (imu->sample_count != circles_last_sample) {
-    circles_last_sample = imu->sample_count;
-    circles_last_sample_ms = now_ms;
-  }
-  if ((uint32_t)(now_ms - circles_last_sample_ms) >= APP_DEBUG_TURN_IMU_STALE_MS) {
-    debug_finish(DEBUG_MOTION_FAULT, DEBUG_MOTION_FAULT_IMU, now_ms);
-    return true;
-  }
   if ((uint32_t)(now_ms - circles_start_ms) >= maximum_batch_ms) {
     debug_finish(DEBUG_MOTION_FAULT, DEBUG_MOTION_FAULT_TIMEOUT, now_ms);
     return true;

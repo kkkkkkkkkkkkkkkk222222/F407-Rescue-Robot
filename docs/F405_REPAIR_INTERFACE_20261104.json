@@ -1,0 +1,35 @@
+{
+  "contract": "F405 feedback semantics 1.2",
+  "wire_version": 1,
+  "identity_protocol": [1, 2],
+  "capabilities": 991,
+  "layouts_inherited_from": "F405_TIMED_CONTRACT_20261101.json",
+  "override_scope": "All entries below supersede v1.1 behavior; no new motion interfaces",
+  "unsupported_requests": {"0x09": "0x7F status2", "0x0B": "0x7F status2"},
+  "removed_gates": ["wheel15ms/50ms", "gyro20ms", "TX_queue8ms", "TX_stuck100ms", "clock_register_health", "UART_IMU_runtime150ms", "UART_IMU_uncertain300ms", "turn_IMU100ms"],
+  "wheel": {
+    "layout_unchanged": true,
+    "valid_cleared_by": ["nonpositive_numeric_interval", "invalid_quadrature_transition", "raw_delta_mismatch", "numeric_overflow"],
+    "valid_not_cleared_by": ["age", "interval_over50ms", "time_bound_unknown", "EXTI_pending", "epoch_unavailable", "reference_reset"],
+    "missing_feedback": "no new packet; never synthesize zero",
+    "forward_formula": "pi*0.070/1061.268*(dn1-dn2)/(sqrt(3)*dt)",
+    "left_formula": "pi*0.070/1061.268*(dn1+dn2-2*dn3)/(3*dt)",
+    "velocity_unit": "um/s", "raw_delta_sign_changed": false
+  },
+  "gyro": {
+    "layout_unchanged": true,
+    "receive_event": "MCU ISR after valid frame checksum and own source value update",
+    "physical_acquisition_time": false,
+    "valid": "source value exists and is representable; independent of ready/recovering/age/unknown bound",
+    "yaw_unit": "mdeg", "rate_unit": "mdps", "positive": "CCW",
+    "source_ids": "own MCU valid-frame counters, never target or repeated value given new source ID",
+    "unchanged_sources": "suppress when both unchanged; otherwise preserve own REPEAT"
+  },
+  "legacy_0x1F": {"layout_unchanged": true, "yaw_unit": "mdeg", "rate_unit": "0.1deg/s", "age": "max own source age, saturated u8", "uart_valid": "existing valid representable yaw and rate", "uart_stale_flag": "no angle sample yet"},
+  "clock": {"bit0": "TIM5 configured only", "bit1": "RNG epoch available", "epoch_fault": {"0": "RNG available", "1": "RNG unavailable"}, "sync_epoch_valid": "RNG only", "drift_bound_ppm": 4294967295, "physical_source_uncertainty_us": 4294967295, "time_bound_known": false, "source_time_unbounded": true},
+  "builds": {"NormalDebugTimed": {"mode": 5, "service": "MOTIONDEBUG", "UART4_baud": 230400}, "NormalDebugTask": {"service": "TASK", "UART4_baud": 115200, "07_08_enabled": false}},
+  "rate_model": {"wheel_hz": 50, "gyro_publish_ceiling_hz": 100, "07_08_only_Bps": 14250, "measured_this_run": false},
+  "actual_flashed_this_run": false,
+  "physical_accuracy_verified": false,
+  "pending_human_decision": "output behavior after explicit UART error/persistent loss; existing explicit error action-abort path remains"
+}

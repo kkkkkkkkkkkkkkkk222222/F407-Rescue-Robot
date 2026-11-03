@@ -28,7 +28,7 @@ extern TIM_HandleTypeDef htim6;
 #define LCD_PERIOD_MS     100U
 
 static volatile uint32_t app_milliseconds;
-#if APP_ENABLE_MOTION_DEBUG_TASK
+#if APP_ENABLE_MOTION_DEBUG_TASK && !APP_BOARD_F405_ROBO
 #define ROBOT_TRACE_STAGE(stage) MotionDiag_SetStage(stage, app_milliseconds)
 #else
 #define ROBOT_TRACE_STAGE(stage) ((void)0)
@@ -560,7 +560,11 @@ void Robot_Process(void)
       if (imu.ready) { report.status |= VISION_IMU_READY; }
       if (imu.recovering) { report.status |= VISION_IMU_RECOVERING; }
       if (imu.heading_uncertain) { report.status |= VISION_IMU_UNCERTAIN; }
-      if (age >= APP_IMU_UART_STALE_MS || imu.sample_count == 0U) {
+      if (imu.sample_count == 0U
+#if !APP_IMU_USE_UART
+          || age >= APP_IMU_UART_STALE_MS
+#endif
+          ) {
         report.status |= VISION_IMU_STALE;
       }
       int64_t yaw = imu.yaw_mdeg;
@@ -573,7 +577,14 @@ void Robot_Process(void)
         report.status |= VISION_IMU_RATE_CLAMPED;
         rate = rate > INT16_MAX ? INT16_MAX : INT16_MIN;
       }
+#if APP_IMU_USE_UART
+      if (imu.sample_count != 0U && imu.uart_rate_frames != 0U &&
+          !(report.status & (VISION_IMU_YAW_CLAMPED | VISION_IMU_RATE_CLAMPED))) {
+        report.status |= VISION_IMU_VALID;
+      }
+#else
       if (report.status == VISION_IMU_READY) { report.status |= VISION_IMU_VALID; }
+#endif
       report.yaw_mdeg = (int32_t)yaw;
       report.rate_ddeg_s = (int16_t)rate;
       report.age_ms = age > UINT8_MAX ? UINT8_MAX : (uint8_t)age;
@@ -696,7 +707,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *timer)
 
   if (motor_update_due) {
     Motor_Update();
-#if APP_ENABLE_MOTION_DEBUG_TASK
+#if APP_ENABLE_MOTION_DEBUG_TASK && !APP_BOARD_F405_ROBO
     MotionDiag_MotorTick(app_milliseconds);
 #endif
   }

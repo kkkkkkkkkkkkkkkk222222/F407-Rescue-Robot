@@ -14,11 +14,5 @@ void DebugTelemetry_WheelSample(uint64_t begin, uint64_t end,
     const int64_t position[3], const int32_t delta[3], uint32_t bad, bool pending);
 void DebugTelemetry_GyroSample(uint8_t type, int64_t yaw, int32_t rate, uint64_t received);
 void DebugTelemetry_ReferenceReset(void);
-void DebugTelemetry_TxStarted(const uint8_t *data, uint16_t size, uint64_t queued);
-void DebugTelemetry_TxCompleted(const uint8_t *data, uint16_t size);
-void DebugTelemetry_TxDropped(void);
-bool DebugClock_IsHealthy(void);
-void DebugClock_GetQuality(uint32_t fields[12]);
-void DebugTelemetry_EncoderIRQ(uint32_t elapsed_us);
 #endif
 #endif

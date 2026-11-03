@@ -19,9 +19,6 @@ void BoardF405_EncoderIRQ(void)
 {
   const uint32_t pending = EXTI->PR & (GPIO_PIN_8 | GPIO_PIN_9);
   if (pending == 0U) { return; }
-#if DEBUG_TIMED_LINK
-  const uint64_t entered_us=DebugTelemetry_NowUs();
-#endif
   EXTI->PR = pending;
   const uint8_t ab = read_ab();
   /* STM32 TI12 convention: TI1/A rising while TI2/B is low counts UP. */
@@ -32,9 +29,6 @@ void BoardF405_EncoderIRQ(void)
   if ((previous_ab ^ ab) == 3U) { ++invalid_transitions; }
   third_count += (uint32_t)step[(previous_ab << 2U) | ab];
   previous_ab = ab;
-#if DEBUG_TIMED_LINK
-  DebugTelemetry_EncoderIRQ((uint32_t)(DebugTelemetry_NowUs()-entered_us));
-#endif
 }
 
 uint32_t BoardF405_EncoderInvalidTransitions(void) { return invalid_transitions; }

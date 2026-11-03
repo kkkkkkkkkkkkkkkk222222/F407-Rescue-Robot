@@ -76,7 +76,7 @@ static bool motion_tracking;
 static uint8_t tracked_sequence;
 static int64_t motion_start_yaw_mdeg;
 static uint32_t last_motion_report_ms;
-static bool trace_enabled = true;
+static bool trace_enabled = !APP_BOARD_F405_ROBO;
 #if APP_BOARD_F405_ROBO
 static bool move_log_enabled, move_log_saved_trace;
 static uint32_t move_log_last_ms, move_log_index;
@@ -793,8 +793,13 @@ static void wheel_execute(void)
     }
 #endif
     if (strcmp(command, "TRACE") == 0 && count == 1U && (args[0] == 0 || args[0] == 1)) {
+#if APP_BOARD_F405_ROBO
+      trace_enabled = false;
+      wheel_send("TRACE DISABLED; USE STAT / IMU\r\n");
+#else
       trace_enabled = args[0] != 0;
       wheel_send(trace_enabled ? "TRACE ON\r\n" : "TRACE OFF\r\n");
+#endif
       return;
     }
     wheel_send("ERR COMMAND ARGUMENTS; SEND HELP\r\n");
