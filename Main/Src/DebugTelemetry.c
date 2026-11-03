@@ -219,10 +219,11 @@ static uint32_t gyro_flags(const GyroSample *s, const IMUData *imu,
   return f;
 }
 
-static void publish_gyro(uint64_t now)
+static void publish_gyro(void)
 {
   GyroSample yaw,rate;
-  const uint32_t m=enter(); yaw=latest_yaw; rate=latest_rate; leave(m);
+  const uint32_t m=enter(); yaw=latest_yaw; rate=latest_rate;
+  const uint64_t now=DebugTelemetry_NowUs(); leave(m);
   const IMUData imu=IMU_GetData();
   /* No fresh source means no new measurement publication. A source that is
    * unchanged alongside a fresh one retains its own REPEAT flag and source ID. */
@@ -278,7 +279,7 @@ static void reply_request(const Request *r)
     put(p,&n,epoch_valid?0U:1U,2); memcpy(p+n,epoch,16); n+=16;
     put(p,&n,reference_epoch,4); put(p,&n,0x3dfU,8);
     put(p,&n,405U,2); put(p,&n,APP_ACTIVE_MODE,1); put(p,&n,1U,1);
-    put(p,&n,1U,1); put(p,&n,2U,1); put(p,&n,1000000U,4);
+    put(p,&n,1U,1); put(p,&n,3U,1); put(p,&n,1000000U,4);
     put(p,&n,huart3.Init.BaudRate,4); put(p,&n,1U|(epoch_valid?2U:0U),4);
     put(p,&n,UINT32_MAX,4);
     for(uint8_t i=0;i<3U;++i) put(p,&n,((const uint32_t *)UID_BASE)[i],4);
@@ -323,7 +324,7 @@ void DebugTelemetry_Process(void)
   const uint64_t now=DebugTelemetry_NowUs();
   if(now>=next_gyro_us) {
     next_gyro_us=now+GYRO_PERIOD_US;
-    publish_gyro(now);
+    publish_gyro();
   }
   publish_wheel();
 }

@@ -1,7 +1,7 @@
 {
-  "contract": "F405 feedback semantics 1.2",
+  "contract": "F405 feedback semantics 1.3",
   "wire_version": 1,
-  "identity_protocol": [1, 2],
+  "identity_protocol": [1, 3],
   "capabilities": 991,
   "layouts_inherited_from": "F405_TIMED_CONTRACT_20261101.json",
   "override_scope": "All entries below supersede v1.1 behavior; no new motion interfaces",
@@ -37,5 +37,7 @@
     "sent_to_hardware": false
   },
   "physical_accuracy_verified": false,
-  "pending_human_decision": "output behavior after explicit UART error/persistent loss; existing explicit error action-abort path remains"
+  "uart_recovery_control": "User approved: retain acquired-ready, last valid feedback and current action through RX recovery; no new timeout/pause/abort; existing action completion/timeouts and manual STOP remain",
+  "uart_ready_semantics": "acquired valid initialization feedback; READY and RECOVERING may both be true; never initialized stays false",
+  "pending_human_decision": null
 }

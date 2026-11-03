@@ -43,9 +43,9 @@ static void lose_stream(void)
   if (!data.recovering) {
     ++data.integration_gap_count;
   }
-  /* Explicit UART errors retain the existing control policy pending the
-   * user's recovery-output choice. Elapsed age no longer reaches this path. */
-  data.ready = false;
+  /* Once acquired, retain the last feedback through RX recovery. This must
+   * not cancel the action in Location, motor, Debug or Task. */
+  data.ready = ever_ready;
   data.recovering = true;
   good_samples = 0U;
 }
@@ -175,7 +175,7 @@ static bool select_baud(uint32_t baud)
   period_sum = period_samples = 0U;
   data.uart_output_period_ms = 0U;
   good_samples = 0U;
-  data.ready = false;
+  data.ready = ever_ready;
   data.uart_baud = baud;
   HAL_NVIC_ClearPendingIRQ(APP_IMU_UART_IRQn);
   __HAL_UART_ENABLE_IT(&gyro_uart, UART_IT_RXNE);

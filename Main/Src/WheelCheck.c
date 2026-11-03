@@ -535,13 +535,13 @@ static void wheel_report_version(void)
       (unsigned long)APP_MOTOR_TURN_TIMEOUT_MS);
   wheel_send(text);
   (void)snprintf(text, sizeof(text),
-      "TURN_CFG POS_P100=%ld RATE_P100=%ld ACCEL_DPS2=%ld DECEL_DPS2=%ld STATIC_PWM=%ld ENTER_MDEG=%ld EXIT_MDEG=%ld STOP_MDPS=%ld SETTLE_MS=%u MAX_TRIMS=%u STALE_MS=%u\r\n",
+      "TURN_CFG POS_P100=%ld RATE_P100=%ld ACCEL_DPS2=%ld DECEL_DPS2=%ld STATIC_PWM=%ld ENTER_MDEG=%ld EXIT_MDEG=%ld STOP_MDPS=%ld SETTLE_MS=%u MAX_TRIMS=%u IMU_AGE_GATE=OFF\r\n",
       (long)(APP_DEBUG_TURN_POSITION_KP * 100.0f), (long)(APP_DEBUG_TURN_RATE_KP * 100.0f),
       (long)APP_DEBUG_TURN_ACCEL_DPS2, (long)APP_DEBUG_TURN_DECEL_DPS2,
       (long)APP_DEBUG_TURN_STATIC_PWM, (long)APP_DEBUG_TURN_ENTER_MDEG,
       (long)APP_DEBUG_TURN_EXIT_MDEG,
       (long)APP_DEBUG_TURN_STOP_RATE_MDPS, APP_DEBUG_TURN_SETTLE_MS,
-      APP_DEBUG_TURN_MAX_CORRECTIONS, APP_DEBUG_TURN_IMU_STALE_MS);
+      APP_DEBUG_TURN_MAX_CORRECTIONS);
   wheel_send(text);
   (void)snprintf(text, sizeof(text),
       "BOOST_CFG PWM=%u MAX_MS=%u WAIT_MS=%u COOLDOWN_MS=%u MAX_COUNT=%u TRAVEL_MDEG=%ld\r\n",

@@ -115,11 +115,18 @@ int main(void)
   assert(!data.heading_uncertain);
 
   boot(5U);
+  const IMUData before_error = IMU_GetData();
   test_usart2.SR = USART_SR_RXNE | USART_SR_ORE;
   IMU_UART_IRQHandler();
-  assert(data.uart_rx_errors == 1U && !data.ready && data.recovering && !data.heading_uncertain);
+  assert(data.uart_rx_errors == 1U && data.ready && data.recovering && !data.heading_uncertain);
+  ms += 1000U;
+  IMU_Update(0U);
+  assert(data.ready && data.recovering);
+  assert(data.sample_count == before_error.sample_count && data.yaw_mdeg == before_error.yaw_mdeg);
+  assert(data.uart_rate_frames == before_error.uart_rate_frames);
   sample(1, 5U); sample(2, 5U); sample(3, 5U);
-  assert(data.ready);
+  assert(data.ready && !data.recovering && data.recovery_count == 1U);
+  assert(data.sample_count == before_error.sample_count + 3U);
   ms += 151U;
   frame(0xAAU, 0);
   IMU_Update(1U); /* Health uses HAL time, not the application clock argument. */
@@ -138,6 +145,9 @@ int main(void)
   simulate_stream = false;
   ms = 0U;
   assert(!IMU_Init());
+  test_usart2.SR = USART_SR_RXNE | USART_SR_ORE;
+  IMU_UART_IRQHandler();
+  assert(!data.ready && data.sample_count == 0U);
   for (unsigned i = 0; i < 10; ++i) { sample(0, 5U); }
   IMU_Update(0U);
   assert(data.ready && !data.heading_uncertain); /* Late supply recovers. */
@@ -147,7 +157,7 @@ int main(void)
   data.uart_output_period_ms = 50U;
   IMU_Update(0U);
   assert(data.uart_config_state == CONFIG_FAILED && data.ready);
-  puts("PASS UART: protocol/resync, unwrapped signs, ready survives gaps; explicit RX error preserved, "
+  puts("PASS UART: protocol/resync, unwrapped signs, ready survives gaps/RX recovery without fake samples, "
        "no age gate, tick wrap, boot recovery, rate config (host only)");
   return 0;
 }

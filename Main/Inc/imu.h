@@ -21,7 +21,7 @@ typedef struct {
   uint32_t error_count;
   uint8_t device_id;
   IMUInitResult init_result;
-  bool ready;
+  bool ready; /* UART: acquired feedback; remains true through RX recovery. */
   int32_t gyro_bias_mdps[3];
   uint32_t sample_interval_us;
   uint32_t max_sample_interval_us;
