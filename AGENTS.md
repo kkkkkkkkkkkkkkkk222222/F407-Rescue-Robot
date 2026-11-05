@@ -1,9 +1,9 @@
 # 协作入口
 
 先读 `docs/CURRENT_STATUS.md` 的当前摘要与相关 TODO，核对实际代码后推进。
-有效板型说明仍见 README.md 首段和 docs/F405_RESOURCE_MAP.md；不要用旧 F407
-NormalRun/MotionDebug/Gamepad 的引脚、公式或镜像替代 F405。
-F405 的 NormalDebug/NormalDebugTimed 是运动测试服务，NormalDebugTask 是完整任务服务。
+当前硬件固定为 F405。MotionDebug 用于运动测试，NormalRun 用于正式比赛；
+构建和下载只使用 README 页首列出的两个入口及 build/F405 下对应的镜像。
+板级接线见 docs/F405_RESOURCE_MAP.md，历史交接中的旧名称仅供追溯。
 
 ## 防止旧上下文污染
 

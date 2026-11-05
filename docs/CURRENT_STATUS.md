@@ -1,4 +1,12 @@
-# 当前状态：F405 正式任务接入 T265 轮反馈
+# 当前状态：F405 烧录入口
+
+运动调试用 `MotionDebug`（原 NormalDebugTimed），正式比赛用 `NormalRun`（原 NormalDebugTask）。
+二者沿用协议 1.3、mode=5、UART4=230400；service 分别为 1、2。
+产物和 CLion 配置见 [README](../README.md)。本次只迁移构建入口。
+正式 Task 含 mode51 对整体有效动态定位的恢复支持；RDK 当前采用无框事件及视频回放，
+不启用早先交接中的 H±8° 观察扫描或人工重试建议。
+
+## 历史：正式任务接入轮反馈
 
 三轮停滞后的导航修改及 RDK 待办见[预备点、临时藏点与安全区观察交接](STAGE_STASH_ACQUIRE_20261105.md)。
 

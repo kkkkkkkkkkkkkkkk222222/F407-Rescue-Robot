@@ -1,4 +1,19 @@
-# 快速切换：正常跑图 / UART运动调试 / 手柄遥控
+# F405 工训 ROBO 烧录入口
+
+在 CLion 重新加载 CMake，按用途选择同一行的预设和下载项。
+
+| 用途 | CMake 预设 | CLion 下载项 | 固件路径 | 板端身份 |
+| --- | --- | --- | --- | --- |
+| 运动、舵机和地图调试 | MotionDebug | DAPLink MotionDebug | `build/F405/MotionDebug/MotionDebug.elf` | mode=5，service=1 |
+| 正式比赛 | NormalRun | DAPLink NormalRun | `build/F405/NormalRun/NormalRun.elf` | mode=5，service=2 |
+
+两者均使用 STM32F405RG、RDK UART4 230400/8N1、程序器 USART1 115200/8N1 和协议 1.3。
+命令行依次执行 `cmake --preset NormalRun` 和 `cmake --build --preset NormalRun`；
+调试时两处都换成 `MotionDebug`。烧录时认准表内路径。
+协作规则见 [AGENTS.md](AGENTS.md)，本轮状态见 [CURRENT_STATUS](docs/CURRENT_STATUS.md)。
+
+<details>
+<summary>历史开发记录（旧目录、预设及下载说明已退役）</summary>
 
 当前协作入口：[AGENTS.md](AGENTS.md)。本轮修复状态与待办见
 [CURRENT_STATUS](docs/CURRENT_STATUS.md)；下文历史流程只按需取证，不能自动恢复为当前任务。
@@ -621,3 +636,5 @@ cmake --build --preset Debug
 ```
 
 输出位于`build/Debug/WWW.elf/.hex/.bin`。当前固件只运行完整救援Task，独立视觉居中Task和所有独立测试模式关闭；新PCB“串口1”（USART3）继续以100 Hz发送`TYPE=0x15`三路累计编码器计数，并以20 Hz发送`TYPE=0x17`任务状态。烧录后先架空车轮验证启动定距、重复GRAB/闭合回报握手和返航断流保护，再落地测试；正式Task必须先收到合法`TYPE=0x11`配置，不需要按键确认。可用`tools/vision_protocol.py`验证协议帧。
+
+</details>

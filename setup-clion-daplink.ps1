@@ -12,7 +12,6 @@ if (Get-Process clion64 -ErrorAction SilentlyContinue) {
 
 $projectRoot = (Resolve-Path $PSScriptRoot).Path
 $dapConfig = Join-Path $projectRoot 'dap.cfg'
-$cmakeFile = Join-Path $projectRoot 'CMakeLists.txt'
 
 if (-not (Test-Path -LiteralPath $dapConfig)) {
     throw "Missing $dapConfig. Extract the complete package into the project root."
@@ -70,51 +69,7 @@ if (-not $ClionOptions) {
     throw 'Cannot find CLion settings. Start and close CLion once, or pass -ClionOptions.'
 }
 
-$projectName = 'WWW'
-if (Test-Path -LiteralPath $cmakeFile) {
-    $cmakeText = Get-Content -LiteralPath $cmakeFile -Raw
-    $match = [regex]::Match($cmakeText, 'set\s*\(\s*CMAKE_PROJECT_NAME\s+([^\s\)]+)', 'IgnoreCase')
-    if ($match.Success) {
-        $projectName = $match.Groups[1].Value.Trim('"')
-    }
-}
-
-$configName = 'Debug'
-$workspaceFile = Join-Path $projectRoot '.idea\workspace.xml'
-if (Test-Path -LiteralPath $workspaceFile) {
-    try {
-        [xml]$workspace = Get-Content -LiteralPath $workspaceFile -Raw
-        $cmakeConfig = $workspace.project.component |
-            Where-Object name -eq 'RunManager' |
-            Select-Object -ExpandProperty configuration |
-            Where-Object { $_.TARGET_NAME -eq $projectName } |
-            Select-Object -First 1
-        if ($cmakeConfig.CONFIG_NAME) {
-            $configName = [string]$cmakeConfig.CONFIG_NAME
-        }
-    } catch {
-        Write-Warning 'Cannot read workspace.xml. Using the Debug profile name.'
-    }
-}
-
-$runConfigDir = Join-Path $projectRoot '.idea\runConfigurations'
-[void](New-Item -ItemType Directory -Path $runConfigDir -Force)
-$runConfigFile = Join-Path $runConfigDir 'DAPLink_OpenOCD.xml'
-
-$runConfig = @'
-<component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="DAPLink OpenOCD" type="com.jetbrains.cidr.embedded.openocd.conf.type" factoryName="com.jetbrains.cidr.embedded.openocd.conf.factory" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" PASS_PARENT_ENVS_2="true" PROJECT_NAME="__PROJECT__" TARGET_NAME="__PROJECT__" CONFIG_NAME="__CONFIG__" version="1" RUN_TARGET_PROJECT_NAME="__PROJECT__" RUN_TARGET_NAME="__PROJECT__">
-    <openocd version="1" gdb-port="3333" telnet-port="4444" board-config="$PROJECT_DIR$/dap.cfg" reset-type="INIT" download-type="ALWAYS">
-      <debugger kind="GDB" isBundled="true" />
-    </openocd>
-    <method v="2">
-      <option name="CLION.COMPOUND.BUILD" enabled="true" />
-    </method>
-  </configuration>
-</component>
-'@
-$runConfig = $runConfig.Replace('__PROJECT__', $projectName).Replace('__CONFIG__', $configName)
-[System.IO.File]::WriteAllText($runConfigFile, $runConfig, [System.Text.UTF8Encoding]::new($false))
+# Both profile-specific OpenOCD configurations are tracked in the project.
 
 $settingsFile = Join-Path $ClionOptions 'embedded-support.xml'
 $settings = [System.Xml.XmlDocument]::new()
@@ -145,4 +100,4 @@ Write-Host "Project:        $projectRoot"
 Write-Host "OpenOCD:        $OpenOcd"
 Write-Host 'Debugger:       CLion Bundled GDB (with Python support)'
 Write-Host "CLion settings: $settingsFile"
-Write-Host 'Reopen the project and select DAPLink OpenOCD to run or debug.'
+Write-Host 'Reopen the project and select DAPLink MotionDebug or DAPLink NormalRun to run or debug.'

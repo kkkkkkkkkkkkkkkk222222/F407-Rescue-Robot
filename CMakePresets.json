@@ -2,89 +2,29 @@
     "version": 3,
     "configurePresets": [
         {
-            "name": "default",
+            "name": "f405",
             "hidden": true,
             "generator": "Ninja",
-            "binaryDir": "${sourceDir}/build/${presetName}",
+            "binaryDir": "${sourceDir}/build/F405/${presetName}",
             "toolchainFile": "${sourceDir}/cmake/gcc-arm-none-eabi.cmake",
-            "cacheVariables": {}
-        },
-        {
-            "name": "Debug",
-            "inherits": "default",
             "cacheVariables": {
+                "F405_PROFILE": "${presetName}",
                 "CMAKE_BUILD_TYPE": "Debug"
             }
         },
         {
-            "name": "Release",
-            "inherits": "default",
-            "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Release"
-            }
-        },
-        {
             "name": "MotionDebug",
-            "inherits": "default",
+            "inherits": "f405",
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug",
-                "APP_ACTIVE_MODE_OVERRIDE": "APP_MODE_MOTION_DEBUG_TASK"
-            }
-        },
-        {
-            "name": "NormalRun",
-            "inherits": "default",
-            "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug",
-                "APP_ACTIVE_MODE_OVERRIDE": "APP_MODE_RESCUE_TASK"
-            }
-        },
-        {
-            "name": "NormalDebug",
-            "inherits": "default",
-            "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug",
-                "APP_BOARD": "F405_ROBO",
-                "APP_NORMALDEBUG_MOTION_TEST": "ON",
-                "APP_ACTIVE_MODE_OVERRIDE": "APP_MODE_NORMAL_DEBUG"
-            }
-        },
-        {
-            "name": "NormalDebugTimed",
-            "displayName": "F405 motion service - timed telemetry at 230400",
-            "inherits": "NormalDebug",
-            "cacheVariables": {
-                "APP_NORMALDEBUG_UPPER_BAUD": "230400",
                 "APP_AUTO_BACKUP": "OFF"
             }
         },
         {
-            "name": "NormalDebugTask",
-            "displayName": "F405 NormalDebug - full rescue task",
-            "inherits": "NormalDebug",
-            "cacheVariables": {
-                "APP_NORMALDEBUG_MOTION_TEST": "OFF",
-                "APP_NORMALDEBUG_UPPER_BAUD": "230400"
-            }
-        },
-        {
-            "name": "Gamepad",
-            "inherits": "default",
-            "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug",
-                "APP_ACTIVE_MODE_OVERRIDE": "APP_MODE_GAMEPAD_TASK"
-            }
+            "name": "NormalRun",
+            "inherits": "f405"
         }
     ],
     "buildPresets": [
-        {
-            "name": "Debug",
-            "configurePreset": "Debug"
-        },
-        {
-            "name": "Release",
-            "configurePreset": "Release"
-        },
         {
             "name": "MotionDebug",
             "configurePreset": "MotionDebug"
@@ -92,22 +32,6 @@
         {
             "name": "NormalRun",
             "configurePreset": "NormalRun"
-        },
-        {
-            "name": "NormalDebug",
-            "configurePreset": "NormalDebug"
-        },
-        {
-            "name": "NormalDebugTimed",
-            "configurePreset": "NormalDebugTimed"
-        },
-        {
-            "name": "NormalDebugTask",
-            "configurePreset": "NormalDebugTask"
-        },
-        {
-            "name": "Gamepad",
-            "configurePreset": "Gamepad"
         }
     ]
 }
