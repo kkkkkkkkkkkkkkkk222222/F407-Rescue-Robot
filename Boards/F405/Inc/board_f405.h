@@ -34,5 +34,7 @@ void BoardF405_ServoTestSet(uint8_t id, uint8_t angle);
 void BoardF405_ServoTestOff(uint8_t id);
 void BoardF405_Report(void);
 void BoardF405_ReportVersion(void);
+void BoardF405_RequestBeep(uint8_t count, bool long_tone);
+void BoardF405_ProcessBeep(uint32_t now_ms);
 
 #endif

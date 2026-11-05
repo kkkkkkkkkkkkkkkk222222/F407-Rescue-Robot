@@ -86,6 +86,54 @@ static void board_gpio(void)
   gpio(GPIOB, GPIO_PIN_6 | GPIO_PIN_7, GPIO_MODE_INPUT, GPIO_PULLUP, 0U);
 }
 
+/* UART RX writes the latest request. Only the foreground drives PA10. */
+static volatile uint8_t requested_beeps;
+static volatile bool requested_long_tone;
+
+void BoardF405_RequestBeep(uint8_t count, bool long_tone)
+{
+  requested_long_tone = long_tone;
+  requested_beeps = count;
+}
+
+void BoardF405_ProcessBeep(uint32_t now_ms)
+{
+  static uint8_t remaining;
+  static bool sounding;
+  static uint32_t tone_ms, next_edge_ms;
+  const uint32_t gap_ms = 150U;
+
+  if (requested_beeps != 0U) {
+    const uint32_t mask = __get_PRIMASK();
+    __disable_irq();
+    const uint8_t count = requested_beeps;
+    const bool long_tone = requested_long_tone;
+    requested_beeps = 0U;
+    __set_PRIMASK(mask);
+
+    if (sounding) {
+      /* Separate the replacement's first tone from the interrupted tone. */
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET);
+      sounding = false;
+      next_edge_ms = now_ms + gap_ms;
+    } else if (remaining == 0U) {
+      next_edge_ms = now_ms;
+    }
+    remaining = count;
+    tone_ms = long_tone ? 350U : 100U;
+  }
+
+  if (remaining == 0U || (int32_t)(now_ms - next_edge_ms) < 0) { return; }
+  sounding = !sounding;
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, sounding ? GPIO_PIN_SET : GPIO_PIN_RESET);
+  if (sounding) {
+    next_edge_ms = now_ms + tone_ms;
+  } else {
+    --remaining;
+    next_edge_ms = now_ms + gap_ms;
+  }
+}
+
 static void motor_timer(TIM_HandleTypeDef *timer, TIM_TypeDef *instance, uint32_t channel)
 {
   TIM_OC_InitTypeDef pwm = {0};

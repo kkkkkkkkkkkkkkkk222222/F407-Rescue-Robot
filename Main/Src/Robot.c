@@ -544,6 +544,9 @@ void Robot_Process(void)
     odom_reset_pending = false;
 
     const uint32_t now = Robot_GetMilliseconds();
+#if APP_BOARD_F405_ROBO
+    BoardF405_ProcessBeep(now);
+#endif
     const IMUData imu = IMU_GetData();
     if (imu.sample_count != imu_telemetry_sample) {
       imu_telemetry_sample = imu.sample_count;

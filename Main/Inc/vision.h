@@ -64,6 +64,7 @@
 #define VISION_MSG_COMMAND_CONTEXT 0x1DU
 #define VISION_MSG_STATUS_CONTEXT  0x1EU
 #define VISION_MSG_IMU             0x1FU
+#define VISION_MSG_OPERATOR_BEEP   0x20U
 
 #define VISION_IMU_VALID           0x01U
 #define VISION_IMU_READY           0x02U

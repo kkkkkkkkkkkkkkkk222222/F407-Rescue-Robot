@@ -479,6 +479,17 @@ static void vision_save_frame(uint32_t tick_ms)
   const uint8_t type = frame[FRAME_TYPE_INDEX];
   const uint8_t sequence = frame[FRAME_SEQUENCE_INDEX];
   const uint8_t *payload = &frame[FRAME_PAYLOAD_INDEX];
+#if APP_BOARD_F405_ROBO
+  /* Independent of SEQ and of any pending 0x1D/0x18 mission pair. */
+  if (type == VISION_MSG_OPERATOR_BEEP) {
+    if (payload[0] == 1U && payload[1] >= 1U && payload[1] <= 4U &&
+        payload[2] <= 1U && payload[3] == 0U && payload[4] == 0U &&
+        payload[5] == 0U && payload[6] == 0U && payload[7] == 0U) {
+      BoardF405_RequestBeep(payload[1], payload[2] == 1U);
+    }
+    return;
+  }
+#endif
   const uint32_t primask = __get_PRIMASK();
 
   __disable_irq();
@@ -528,6 +539,9 @@ static bool vision_frame_valid(void)
          ((type == VISION_MSG_CONFIG) || (type == VISION_MSG_REPORT) ||
           (type == VISION_MSG_FUSED_POSE) ||
           (type == VISION_MSG_MISSION) || (type == VISION_MSG_COMMAND_CONTEXT)
+#if APP_BOARD_F405_ROBO
+          || (type == VISION_MSG_OPERATOR_BEEP)
+#endif
 #if APP_ENABLE_MOTION_DEBUG_TASK || APP_ENABLE_GAMEPAD_TASK
           || (type == VISION_MSG_MOTION_COMMAND)
 #endif
