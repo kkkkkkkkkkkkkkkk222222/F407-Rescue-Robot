@@ -6418,7 +6418,7 @@ static void task_process_transport_audit(uint32_t now_ms)
   camera_angle = (float)Camera_GetAngle();
 }
 
-static void task_recover_reference(const VisionData *vision, uint32_t now_ms)
+static void task_recover_reference(const VisionData *vision)
 {
   Motor_Stop();
   task_status.motors_active = false;
@@ -6431,10 +6431,8 @@ static void task_recover_reference(const VisionData *vision, uint32_t now_ms)
   }
   if (recovery_reference_ready) { return; }
   const VisionFusedPose *pose = &vision->fused_pose;
-  if (!Vision_FusedPoseIsFresh(pose, now_ms, 250U) ||
-      !(pose->status & VISION_POSE_T265_GOOD) ||
-      (pose->status & VISION_POSE_T265_UPDATE_REJECTED) ||
-      pose->tracker_confidence < 2U ||
+  /* VALID describes the fused pose; tick_ms assigns it to this recovery. */
+  if (!pose->received || !(pose->status & VISION_POSE_VALID) ||
       (int32_t)(pose->tick_ms - recovery_started_ms) <= 0) {
     recovery_pose_hits = 0U;
     return;
@@ -6446,8 +6444,7 @@ static void task_recover_reference(const VisionData *vision, uint32_t now_ms)
     if (wheels[i].delta_10ms != 0) { recovery_pose_hits = 0U; return; }
   }
   if (recovery_pose_hits > 0U &&
-      (pose->tick_ms - recovery_pose_tick > 250U ||
-       task_abs((float)pose->x_mm - recovery_previous_pose.x_mm) > 20.0f ||
+      (task_abs((float)pose->x_mm - recovery_previous_pose.x_mm) > 20.0f ||
        task_abs((float)pose->y_mm - recovery_previous_pose.y_mm) > 20.0f ||
        task_abs(task_wrap_angle(((float)pose->heading_cdeg -
            recovery_previous_pose.heading_cdeg) * 0.01f)) > 2.0f)) {
@@ -6455,7 +6452,7 @@ static void task_recover_reference(const VisionData *vision, uint32_t now_ms)
   }
   recovery_previous_pose = *pose;
   recovery_pose_tick = pose->tick_ms;
-  if (++recovery_pose_hits >= 3U && now_ms - recovery_started_ms >= 600U) {
+  if (++recovery_pose_hits >= 3U) {
     Location_Reanchor(pose->x_mm, pose->y_mm, (int32_t)pose->heading_cdeg * 10);
     IMU_ConfirmHeadingReference();
     recovery_reference_ready = true;
@@ -6486,7 +6483,7 @@ void Task_Process(uint32_t now_ms)
     task_stop(TASK_FAULT_POSE_TIMEOUT, now_ms);
   }
   if (state == TASK_RECOVERY_WAIT && !mission_paused) {
-    task_recover_reference(&vision, now_ms);
+    task_recover_reference(&vision);
   }
   task_account_manual_pause(now_ms);
   task_capture_budget_sample();
