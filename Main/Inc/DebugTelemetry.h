@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "app_config.h"
-#define DEBUG_TIMED_LINK (APP_BOARD_F405_ROBO && APP_ENABLE_MOTION_DEBUG_TASK)
+#define DEBUG_TIMED_LINK (APP_BOARD_F405_ROBO && (APP_ENABLE_MOTION_DEBUG_TASK || APP_ENABLE_TASK))
 #if DEBUG_TIMED_LINK
 void DebugTelemetry_Init(void);
 void DebugTelemetry_Process(void);

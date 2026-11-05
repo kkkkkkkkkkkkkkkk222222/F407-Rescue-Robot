@@ -119,18 +119,22 @@ static void uart_start_tx(void)
   }
 
   int8_t selected = -1;
-  bool selected_ack = false;
+  uint8_t selected_priority = 0U;
   uint32_t selected_order = UINT32_MAX;
   for (uint8_t i = 0U; i < UART_TX_QUEUE_SIZE; ++i) {
     if (!tx_queue[i].used) {
       continue;
     }
-    const bool is_ack = uart_is_ack(tx_queue[i].data, tx_queue[i].size);
-    if ((selected < 0) || (is_ack && !selected_ack) ||
-        ((is_ack == selected_ack) &&
+    uint8_t priority = uart_is_ack(tx_queue[i].data, tx_queue[i].size) ? 2U : 0U;
+#if APP_BOARD_F405_ROBO && APP_ENABLE_TASK
+    /* Send the complete task context/status pair before waiting wheel/gyro frames. */
+    if (uart_data_is_status(tx_queue[i].data, tx_queue[i].size)) { priority = 1U; }
+#endif
+    if ((selected < 0) || (priority > selected_priority) ||
+        ((priority == selected_priority) &&
          (tx_queue[i].order < selected_order))) {
       selected = (int8_t)i;
-      selected_ack = is_ack;
+      selected_priority = priority;
       selected_order = tx_queue[i].order;
     }
   }

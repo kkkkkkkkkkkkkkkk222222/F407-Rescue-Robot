@@ -1,5 +1,8 @@
 # F405 接线、资源与验收清单
 
+2026-11-05：正式 `NormalDebugTask` 与 `NormalDebugTimed` 共用 TIM5 测量时标及
+UART4 TX DMA1 Stream4 Channel4，两者 RDK 均为 230400/8N1。JP506、USART1 与 UART5 接线照旧。
+
 2026-11-01：最新接口见 [NormalDebugTimed v1.1 完整合同](F405_TIMED_CONTRACT_20261101.md)。
 新增只读时间/发送质量查询，强化 UART4 DMA 所有权与恢复排空；旧控制、运动学及资源分配不变。
 晶振漂移、后轮边沿延迟和单轴模块物理采样延迟仍无可靠界；不得据此放行 SDK 时间资格。
@@ -44,7 +47,7 @@ PB14/PB15 的 CH2N/CH3N 不是编码器输入。仅换这四个插座不能得�
 | 用途 | 接口 | 主控 TX | 主控 RX | 设置 |
 | --- | --- | --- | --- | --- |
 | 程序器文本调试 | JP500~505 任一 I2C 插座 | Pin4 PB6 AF7 USART1 | Pin5 PB7 AF7 USART1 | 115200 8N1 |
-| RDK | JP506 | Pin5 PC10 AF8 UART4 | Pin4 PC11 AF8 UART4 | 115200 8N1 |
+| RDK | JP506 | Pin5 PC10 AF8 UART4 | Pin4 PC11 AF8 UART4 | NormalDebugTask / NormalDebugTimed 230400，普通 NormalDebug 115200；8N1 |
 | 单轴陀螺仪 | JP507 | Pin5 PC12 AF8 UART5 | Pin4 PD2 AF8 UART5 | 230400 8N1，1000Hz |
 | SWD | JP101 | Pin4 PA13 SWDIO | Pin2 PA14 SWCLK | Pin1 3V3参考，Pin3 GND |
 
@@ -90,7 +93,7 @@ RDK 的软件句柄仍叫 huart3/hdma_usart3_rx，实际外设是 UART4。
 | DMA2 Stream2 Channel4 | USART1 调试 RX，512字节循环DMA + IDLE/HT/TC事件；仅运动测试配置 | 7 |
 | PendSV / SysTick | 延后任务 / HAL时基 | 15 |
 
-TIM5/TIM12 不分配。TIM13 虽与 TIM8 更新共用向量，但此处二者均不启用该中断。
+TIM5 用于测量时标；TIM12 不分配。TIM13 虽与 TIM8 更新共用向量，但此处二者均不启用该中断。
 不要把 PWM 通道索引固定成 CH1：右前轮使用 CH4。
 
 ## 首轮只做 WHEELS

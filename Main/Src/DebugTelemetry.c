@@ -24,6 +24,7 @@ enum { G_VALID=1, G_READY=2, G_RECOVERING=4, G_UNCERTAIN=8, G_STALE=16,
 #define WHEEL_PERIOD_US 20000U
 #define GYRO_PERIOD_US 10000U
 #define REQUIRED_BAUD 230400U
+enum { SERVICE_MOTIONDEBUG = 1, SERVICE_RESCUE_TASK = 2 };
 static const uint8_t firmware_id[32] = DEBUG_FIRMWARE_ID_BYTES;
 static const uint8_t git_id[20] = DEBUG_GIT_ID_BYTES;
 static uint8_t epoch[16];
@@ -278,7 +279,8 @@ static void reply_request(const Request *r)
   if(type==ID_REQ) {
     put(p,&n,epoch_valid?0U:1U,2); memcpy(p+n,epoch,16); n+=16;
     put(p,&n,reference_epoch,4); put(p,&n,0x3dfU,8);
-    put(p,&n,405U,2); put(p,&n,APP_ACTIVE_MODE,1); put(p,&n,1U,1);
+    put(p,&n,405U,2); put(p,&n,APP_ACTIVE_MODE,1);
+    put(p,&n,APP_ENABLE_TASK ? SERVICE_RESCUE_TASK : SERVICE_MOTIONDEBUG,1);
     put(p,&n,1U,1); put(p,&n,3U,1); put(p,&n,1000000U,4);
     put(p,&n,huart3.Init.BaudRate,4); put(p,&n,1U|(epoch_valid?2U:0U),4);
     put(p,&n,UINT32_MAX,4);

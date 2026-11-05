@@ -1,5 +1,6 @@
 #include "main.h"
 #include "Robot.h"
+#include "DebugTelemetry.h"
 #include "MotionDiag.h"
 
 #if !APP_IMU_USE_UART
@@ -192,7 +193,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef *uart)
     __HAL_LINKDMA(uart, hdmarx, hdma_usart3_rx);
     HAL_NVIC_SetPriority(DMA1_Stream2_IRQn, 7U, 0U);
     HAL_NVIC_EnableIRQ(DMA1_Stream2_IRQn);
-#if APP_ENABLE_MOTION_DEBUG_TASK
+#if DEBUG_TIMED_LINK
     hdma_debug_upper_tx.Instance = DMA1_Stream4;
     hdma_debug_upper_tx.Init.Channel = DMA_CHANNEL_4;
     hdma_debug_upper_tx.Init.Direction = DMA_MEMORY_TO_PERIPH;
@@ -219,7 +220,7 @@ static void uart_init(UART_HandleTypeDef *uart, USART_TypeDef *instance)
 {
   uart->Instance = instance;
   uart->Init.BaudRate = 115200U;
-#if APP_ENABLE_MOTION_DEBUG_TASK
+#if DEBUG_TIMED_LINK
   if (instance == UART4) { uart->Init.BaudRate = APP_NORMALDEBUG_UPPER_BAUD; }
 #endif
   uart->Init.WordLength = UART_WORDLENGTH_8B;

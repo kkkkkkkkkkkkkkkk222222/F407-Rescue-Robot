@@ -63,7 +63,8 @@
             "displayName": "F405 NormalDebug - full rescue task",
             "inherits": "NormalDebug",
             "cacheVariables": {
-                "APP_NORMALDEBUG_MOTION_TEST": "OFF"
+                "APP_NORMALDEBUG_MOTION_TEST": "OFF",
+                "APP_NORMALDEBUG_UPPER_BAUD": "230400"
             }
         },
         {
