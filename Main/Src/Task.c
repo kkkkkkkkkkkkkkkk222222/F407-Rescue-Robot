@@ -257,8 +257,6 @@ static float start_target_heading_deg;
 static uint32_t scan_entry_report_generation;
 static uint32_t nav_final_push_start_path_mm;
 static uint32_t safe_enter_start_path_mm;
-static uint32_t nav_stage_start_path_mm;
-static uint32_t nav_stage_limit_mm;
 static uint32_t delivery_exit_start_path_mm;
 static uint8_t delivery_exit_phase;
 static uint32_t delivery_exit_phase_started_ms;
@@ -308,16 +306,17 @@ static bool distance_command_done;
 static bool nav_terminal_candidate;
 static bool nav_terminal_latched;
 static bool nav_forward_active;
+static bool stash_terminal_translate;
 static bool nav_heading_locked;
 static bool nav_final_push_active;
 static bool nav_final_push_done;
 static bool nav_final_push_paused;
 static bool nav_realign_pending;
 static bool safe_enter_path_valid;
-static bool nav_stage_guard_valid;
 static bool delivery_exit_path_valid;
 static bool delivery_stage_only;
 static bool safe_align_done;
+static float safe_align_entry_deg;
 static bool safe_align_visual_started;
 static bool delivery_enter_active;
 static bool first_delivery_done;
@@ -1279,9 +1278,7 @@ static void task_enter(TaskState next, uint32_t now_ms)
   nav_final_push_paused = false;
   safe_enter_path_valid = false;
   safe_enter_start_path_mm = 0U;
-  nav_stage_guard_valid = false;
-  nav_stage_start_path_mm = 0U;
-  nav_stage_limit_mm = 0U;
+  stash_terminal_translate = false;
   delivery_exit_path_valid = false;
   delivery_exit_start_path_mm = 0U;
   delivery_stage_only = false;
@@ -1551,8 +1548,6 @@ static void task_initialize(uint32_t now_ms)
   scan_entry_report_generation = 0U;
   nav_final_push_start_path_mm = 0U;
   safe_enter_start_path_mm = 0U;
-  nav_stage_start_path_mm = 0U;
-  nav_stage_limit_mm = 0U;
   delivery_exit_start_path_mm = 0U;
   locked_cargo_counts = 0U;
   configured_color = 0U;
@@ -1576,7 +1571,6 @@ static void task_initialize(uint32_t now_ms)
   nav_final_push_done = false;
   nav_final_push_paused = false;
   safe_enter_path_valid = false;
-  nav_stage_guard_valid = false;
   delivery_exit_path_valid = false;
   first_delivery_done = false;
   first_green_bump_done = false;
@@ -3227,24 +3221,8 @@ static RemoteRouteStatus nav_follow(
   const bool stage_route =
       (expected_command == VISION_CMD_NAVIGATE_WAYPOINT) &&
       task_stage_command(command) && !route_to_stash;
-  if (stage_route && !nav_stage_guard_valid) {
-    nav_stage_start_path_mm = pose.path_mm;
-    nav_stage_limit_mm = (uint32_t)command->target_x_mm +
-                         APP_NAV_STAGE_OVERRUN_MARGIN_MM;
-    nav_stage_guard_valid = true;
-  }
-  const uint32_t stage_travelled_mm =
-      (nav_stage_guard_valid && (pose.path_mm >= nav_stage_start_path_mm)) ?
-          pose.path_mm - nav_stage_start_path_mm : 0U;
-  const bool stage_encoder_arrived = stage_route && nav_stage_guard_valid &&
-      (command->target_x_mm <=
-       (int16_t)APP_NAV_STAGE_NEAR_DISTANCE_MM) &&
-      (stage_travelled_mm >= nav_stage_limit_mm);
-  if (stage_route &&
-      (distance_command_done ||
-       (command->target_x_mm <=
-        (int16_t)APP_NAV_REMOTE_STOP_DISTANCE_MM) ||
-       stage_encoder_arrived)) {
+  /* RDK sends D=0 once its pose is inside the staging waypoint tolerance. */
+  if (stage_route && command->target_x_mm == 0) {
     if (!distance_command_done) {
       /* The staging point is where the upper computer starts observing the
        * safe-zone entrance. Raise the camera before advertising arrival so
@@ -3259,17 +3237,6 @@ static RemoteRouteStatus nav_follow(
     task_status.nav_done = true;
     nav_stop_output();
     return REMOTE_ROUTE_REACHED;
-  }
-  if (stage_route && nav_stage_guard_valid &&
-      (stage_travelled_mm >= nav_stage_limit_mm)) {
-    /* The chassis has already exceeded the first advertised stage distance by
-     * the configured margin, but the host still reports D > 30 mm.  Stop and
-     * wait for a corrected D instead of driving indefinitely. */
-    Motor_Stop();
-    task_status.motors_active = false;
-    nav_forward_active = false;
-    nav_stop_output();
-    return REMOTE_ROUTE_WAITING;
   }
   if ((expected_command == VISION_CMD_RETURN_CENTER) &&
       ((command->target_x_mm <=
@@ -3310,6 +3277,15 @@ static RemoteRouteStatus nav_follow(
   const float command_heading_deg = (float)command->heading_cdeg * 0.01f;
   const bool return_route =
       expected_command == VISION_CMD_RETURN_CENTER;
+  if (route_to_stash && task_status.gripper_closed &&
+      expected_command == VISION_CMD_NAVIGATE_WAYPOINT &&
+      command->target_x_mm <= (int16_t)APP_NAV_FINAL_APPROACH_DISTANCE_MM &&
+      !stash_terminal_translate) {
+    Motor_Stop();
+    nav_forward_active = false;
+    nav_stop_output();
+    stash_terminal_translate = true;
+  }
   const bool lock_allowed =
       (expected_command == VISION_CMD_NAVIGATE_WAYPOINT) &&
       !route_to_stash && !stage_route;
@@ -3357,7 +3333,7 @@ static RemoteRouteStatus nav_follow(
     realign_due = nav_ready &&
         (task_abs(heading_error_deg) >= route_realign_deg);
   }
-  if (realign_due) {
+  if (!stash_terminal_translate && realign_due) {
     Motor_Stop();
     task_status.motors_active = false;
     nav_ready = false;
@@ -3365,7 +3341,7 @@ static RemoteRouteStatus nav_follow(
     nav_stop_output();
     return REMOTE_ROUTE_WAITING;
   }
-  if (!nav_ready) {
+  if (!stash_terminal_translate && !nav_ready) {
     nav_realign_pending = false;
     nav_forward_active = false;
     nav_stop_output();
@@ -3379,7 +3355,8 @@ static RemoteRouteStatus nav_follow(
     }
     return REMOTE_ROUTE_WAITING;
   }
-  if ((uint32_t)(now_ms - step_started_ms) < APP_NAV_TURN_SETTLE_MS) {
+  if (!stash_terminal_translate &&
+      (uint32_t)(now_ms - step_started_ms) < APP_NAV_TURN_SETTLE_MS) {
     return REMOTE_ROUTE_WAITING;
   }
 
@@ -3417,6 +3394,16 @@ static RemoteRouteStatus nav_follow(
 
   const float route_speed_mm_s = nav_speed(
       command->target_x_mm, cruise_speed_mm_s);
+  if (stash_terminal_translate) {
+    /* MoveAngle holds the entry yaw and ramps both body translation axes.
+     * RDK bearing stays in the field frame as the target crosses the chassis. */
+    const float body_angle = task_wrap_angle(command_heading_deg - current_heading_deg);
+    const float speed = fminf(route_speed_mm_s,
+        fmaxf(APP_NAV_MIN_END_SPEED_MM_S, (float)command->target_x_mm));
+    (void)Motor_MoveAngle(speed, body_angle);
+    task_status.motors_active = true;
+    return REMOTE_ROUTE_RUNNING;
+  }
   float target_yaw_mm_s = nav_yaw(heading_error_deg);
   if (return_route) {
     if (target_yaw_mm_s > APP_RETURN_CENTER_HEADING_MAX_MM_S) {
@@ -5601,6 +5588,7 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
     camera_angle = (float)APP_SAFE_ALIGN_CAMERA_ANGLE;
     safe_align_target_deg = task_heading_360(
         (float)command->heading_cdeg * 0.01f);
+    safe_align_entry_deg = safe_align_target_deg;
     safe_align_done = false;
     safe_align_visual_started = false;
     nav_ready = false;
@@ -5610,12 +5598,21 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
              (state == TASK_ALIGN_SAFE_ZONE) &&
              task_align_command_valid(command, false) &&
              !safe_align_visual_started) {
-    /* The upper computer repeats the pose ALIGN while collecting three
-     * frames. ACK it without restarting an already completed turn. */
+    /* A new pose ALIGN may select another viewing heading. Repeated finite
+     * action IDs are already acknowledged by task_accept_mission. */
+    const float requested = task_heading_360((float)command->heading_cdeg * 0.01f);
+    if (task_abs(task_wrap_angle(requested - safe_align_target_deg)) > 0.005f) {
+      if (!safe_align_done) { return; }
+      safe_align_target_deg = requested;
+      safe_align_done = nav_ready = false;
+      task_status.nav_heading_locked = false;
+      task_status.nav_locked_heading_deg = (uint16_t)(requested + 0.5f) % 360U;
+    }
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
   } else if ((command->command == VISION_CMD_ALIGN_SAFE_ZONE) &&
              (state == TASK_ALIGN_SAFE_ZONE) && safe_align_done &&
+             safe_align_target_deg == safe_align_entry_deg &&
              task_align_command_valid(command, true)) {
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
@@ -5653,6 +5650,7 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
     camera_angle = (float)APP_SAFE_ALIGN_CAMERA_ANGLE;
     safe_align_target_deg = task_heading_360(
         (float)command->heading_cdeg * 0.01f);
+    safe_align_entry_deg = safe_align_target_deg;
     safe_align_done = false;
     safe_align_visual_started = false;
     nav_ready = false;
@@ -5690,7 +5688,7 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
              ((((command->flags & VISION_CMD_VISUAL_CORRECTION_VALID) != 0U) &&
                safe_align_visual_started) ||
               (((command->flags & VISION_CMD_VISUAL_CORRECTION_VALID) == 0U) &&
-               !safe_align_visual_started))) {
+               !safe_align_visual_started && safe_align_target_deg == safe_align_entry_deg))) {
     const float final_heading_deg = safe_align_target_deg;
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;

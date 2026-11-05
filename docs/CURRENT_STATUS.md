@@ -1,5 +1,7 @@
 # 当前状态：F405 正式任务接入 T265 轮反馈
 
+三轮停滞后的导航修改及 RDK 待办见[预备点、临时藏点与安全区观察交接](STAGE_STASH_ACQUIRE_20261105.md)。
+
 2026-11-05。下位机基线 `4ac1d3d`，配套上位机 `codex/gamepad-teleop@2fe0381`。
 正式入口用 `NormalDebugTask`，启用完整救援 Task 和原 UART4 上的协议 1.3 反馈。
 RDK 接 JP506，UART4 为 230400/8N1。配置回执优先，比赛状态上下文＋状态同一槽发送，
