@@ -104,8 +104,6 @@ static uint32_t wait_mask(const TaskDiagnostic *d, const TaskStatus *s, const Vi
   if(!v->config_ready) w|=1U;
   if(d->paused) w|=2U;
   if(DebugConsole_IsActive()) w|=4U;
-  if(d->command_age_ms > APP_COMMAND_RX_TIMEOUT_MS) w|=8U;
-  if(d->visual_age_ms > APP_VISUAL_UPDATE_TIMEOUT_MS) w|=16U;
   if(d->audit_state) {
     if(s->camera_angle != APP_GRAB_VIEW_ANGLE) w|=32U;
     if(!s->claw_visible) w|=64U;
@@ -143,9 +141,9 @@ static void report(const TaskDiagnostic *d,const TaskStatus *s,const VisionData 
     (unsigned long)d->sample_age_ms,APP_AUDIT_SAMPLE_INTERVAL_MS,APP_AUDIT_EVIDENCE_MAX_GAP_MS,
     d->audit_left,d->audit_right,d->audit_total,d->audit_flags,s->claw_visible,s->gripper_closed,
     s->camera_angle,APP_GRAB_VIEW_ANGLE,d->transport_camera_ready,d->sweep_samples,d->sweep_stable,d->sweep_ready,d->sweep_valid);
-  EMIT("TD_LINK ID=%lu CONFIG=%u CMD_AGE=%lu/%u VIS_AGE=%lu/%u TARGET=%d,%d SEEN=%lu ACCEPT=%lu REJECT=%lu LAST_REJECT_STAGE=%u REJECT_ACTION=%u RXERR=%lu RXCODE=0x%lX RX_RESTART=%lu RX_ACTIVE=%u TX_DROP=%lu TX_LEFT=%u POSE_RX=%u POSE_AGE=%lu POSE_FLAGS=0x%X\r\n",
-    (unsigned long)id,v->config_ready,(unsigned long)d->command_age_ms,APP_COMMAND_RX_TIMEOUT_MS,
-    (unsigned long)d->visual_age_ms,APP_VISUAL_UPDATE_TIMEOUT_MS,d->target_x,d->target_y,
+  EMIT("TD_LINK ID=%lu CONFIG=%u CMD_AGE=%lu VIS_AGE=%lu TARGET=%d,%d SEEN=%lu ACCEPT=%lu REJECT=%lu LAST_REJECT_STAGE=%u REJECT_ACTION=%u RXERR=%lu RXCODE=0x%lX RX_RESTART=%lu RX_ACTIVE=%u TX_DROP=%lu TX_LEFT=%u POSE_RX=%u POSE_AGE=%lu POSE_FLAGS=0x%X\r\n",
+    (unsigned long)id,v->config_ready,(unsigned long)d->command_age_ms,
+    (unsigned long)d->visual_age_ms,d->target_x,d->target_y,
     (unsigned long)d->rx_count,(unsigned long)d->accept_count,(unsigned long)d->reject_count,d->reject_stage,
     d->rejected_action_id,(unsigned long)link.rx_errors,(unsigned long)link.last_rx_error,(unsigned long)link.rx_restarts,
     link.rx_active,(unsigned long)link.tx_dropped,link.tx_remaining,v->fused_pose.received,

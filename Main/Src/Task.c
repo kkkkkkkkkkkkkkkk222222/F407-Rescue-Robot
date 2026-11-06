@@ -100,11 +100,8 @@ static SeparationMotion separation_motion;
 
 typedef struct {
   int16_t remaining_mm;
-  int32_t heading_mdeg;
   uint32_t path_mm;
-  uint32_t changed_ms;
   bool valid;
-  bool stale;
 } NavProgress;
 
 typedef enum {
@@ -305,8 +302,7 @@ static StartMotionPhase start_motion_phase;
 static bool distance_command_done;
 static bool nav_terminal_candidate;
 static bool nav_terminal_latched;
-static bool nav_forward_active;
-static bool stash_terminal_translate;
+static bool nav_terminal_translate;
 static bool nav_heading_locked;
 static bool nav_final_push_active;
 static bool nav_final_push_done;
@@ -414,9 +410,9 @@ static void task_reset_sweep_audit(uint32_t now_ms);
 static void task_clear_sweep_audit_evidence(void);
 static bool task_audit_state(void);
 
-static void nav_reset_progress(uint32_t now_ms)
+static void nav_reset_progress(void)
 {
-  nav_progress = (NavProgress){.changed_ms = now_ms};
+  nav_progress = (NavProgress){0};
 }
 
 static float task_abs(float value)
@@ -1278,7 +1274,7 @@ static void task_enter(TaskState next, uint32_t now_ms)
   nav_final_push_paused = false;
   safe_enter_path_valid = false;
   safe_enter_start_path_mm = 0U;
-  stash_terminal_translate = false;
+  nav_terminal_translate = false;
   delivery_exit_path_valid = false;
   delivery_exit_start_path_mm = 0U;
   delivery_stage_only = false;
@@ -1396,7 +1392,6 @@ static void task_enter(TaskState next, uint32_t now_ms)
     transport_sort_active = false;
     Motor_Stop();
     nav_ready = false;
-    nav_forward_active = false;
     transport_audit_camera_ready = false;
     transport_audit_phase = transport_audit_attempt = 0U;
     capture_budget_active = false;
@@ -1466,8 +1461,7 @@ static void task_enter(TaskState next, uint32_t now_ms)
     }
     nav_ready = false;
     distance_command_done = false;
-    nav_reset_progress(now_ms);
-    nav_forward_active = false;
+    nav_reset_progress();
     remote_speed_mm_s = 0.0f;
     remote_yaw_mm_s = 0.0f;
   }
@@ -1562,10 +1556,9 @@ static void task_initialize(uint32_t now_ms)
   pose_invalid_pending = false;
   start_motion_phase = START_REVERSE;
   distance_command_done = false;
-  nav_reset_progress(now_ms);
+  nav_reset_progress();
   nav_terminal_candidate = false;
   nav_terminal_latched = false;
-  nav_forward_active = false;
   nav_heading_locked = false;
   nav_final_push_active = false;
   nav_final_push_done = false;
@@ -2384,8 +2377,7 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
 
     case APPROACH_RANGE_MOVE: {
       Camera_SetAngle(approach_measure_pitch);
-      const uint32_t age = now_ms - accepted_context.last_command_rx_ms;
-      if (!accepted_context.valid || age > APP_COMMAND_RX_TIMEOUT_MS) {
+      if (!accepted_context.valid) {
         Motor_PauseFiniteMotion();
         task_status.motors_active = false;
         return;
@@ -2824,9 +2816,7 @@ static void task_process_injury_backoff(uint32_t now_ms)
       injury_backoff_phase = 2U;
       step_started_ms = now_ms;
     } else {
-      if (!accepted_context.valid ||
-          (uint32_t)(now_ms - accepted_context.last_command_rx_ms) >
-              APP_COMMAND_RX_TIMEOUT_MS) {
+      if (!accepted_context.valid) {
         Motor_Stop();
         task_status.motors_active = false;
         return;
@@ -2998,35 +2988,11 @@ static float nav_speed(int16_t remaining_mm, float cruise_speed_mm_s)
 }
 
 static void nav_track_progress(const VisionMissionCommand *command,
-                               const LocationPose *pose, uint32_t now_ms)
+                               const LocationPose *pose)
 {
-  const int32_t distance_change =
-      (int32_t)command->target_x_mm - (int32_t)nav_progress.remaining_mm;
-  int32_t heading_change = pose->heading_mdeg - nav_progress.heading_mdeg;
-  if (heading_change > 180000) {
-    heading_change -= 360000;
-  } else if (heading_change < -180000) {
-    heading_change += 360000;
-  }
-  const uint32_t path_change = (pose->path_mm >= nav_progress.path_mm) ?
-      pose->path_mm - nav_progress.path_mm :
-      nav_progress.path_mm - pose->path_mm;
-  const bool changed = !nav_progress.valid ||
-      (distance_change >= APP_NAV_PROGRESS_DISTANCE_MM) ||
-      (distance_change <= -APP_NAV_PROGRESS_DISTANCE_MM) ||
-      (heading_change >= APP_NAV_PROGRESS_HEADING_MDEG) ||
-      (heading_change <= -APP_NAV_PROGRESS_HEADING_MDEG) ||
-      (path_change >= APP_NAV_PROGRESS_PATH_MM);
-
-  if (changed) {
     nav_progress.remaining_mm = command->target_x_mm;
-    nav_progress.heading_mdeg = pose->heading_mdeg;
     nav_progress.path_mm = pose->path_mm;
-    nav_progress.changed_ms = now_ms;
     nav_progress.valid = true;
-    nav_progress.stale = false;
-    task_status.nav_stale = false;
-  }
 }
 
 static bool nav_terminal_timeout(int16_t remaining_mm, uint32_t now_ms)
@@ -3103,7 +3069,6 @@ static RemoteRouteStatus nav_push(uint32_t now_ms)
   LocationPose pose;
   if (!task_get_location_pose(&pose, now_ms)) {
     task_pause_final_push(now_ms);
-    nav_forward_active = false;
     nav_stop_output();
     return REMOTE_ROUTE_WAITING;
   }
@@ -3157,7 +3122,6 @@ static RemoteRouteStatus nav_push(uint32_t now_ms)
     nav_realign_pending = false;
     nav_final_push_started_ms = now_ms;
     nav_final_push_start_path_mm = pose.path_mm;
-    nav_forward_active = false;
     task_status.nav_final_push = true;
     nav_stop_output();
   } else if (nav_final_push_paused) {
@@ -3203,16 +3167,14 @@ static RemoteRouteStatus nav_follow(
   LocationPose pose;
   if (!task_get_location_pose(&pose, now_ms)) {
     task_pause_final_push(now_ms);
-    nav_forward_active = false;
     nav_stop_output();
     return REMOTE_ROUTE_WAITING;
   }
-  nav_track_progress(command, &pose, now_ms);
+  nav_track_progress(command, &pose);
 
   if (nav_final_push_done) {
     Motor_Stop();
     task_status.motors_active = false;
-    nav_forward_active = false;
     distance_command_done = true;
     task_status.nav_done = true;
     nav_stop_output();
@@ -3232,7 +3194,6 @@ static RemoteRouteStatus nav_follow(
     }
     Motor_Stop();
     task_status.motors_active = false;
-    nav_forward_active = false;
     distance_command_done = true;
     task_status.nav_done = true;
     nav_stop_output();
@@ -3246,7 +3207,6 @@ static RemoteRouteStatus nav_follow(
          (int16_t)APP_NAV_REMOTE_RESUME_DISTANCE_MM)))) {
     Motor_Stop();
     task_status.motors_active = false;
-    nav_forward_active = false;
     distance_command_done = true;
     task_status.nav_done = true;
     nav_stop_output();
@@ -3258,7 +3218,6 @@ static RemoteRouteStatus nav_follow(
        (int16_t)APP_NAV_REMOTE_STOP_DISTANCE_MM)) {
     Motor_Stop();
     task_status.motors_active = false;
-    nav_forward_active = false;
     distance_command_done = true;
     task_status.nav_done = true;
     nav_stop_output();
@@ -3277,14 +3236,13 @@ static RemoteRouteStatus nav_follow(
   const float command_heading_deg = (float)command->heading_cdeg * 0.01f;
   const bool return_route =
       expected_command == VISION_CMD_RETURN_CENTER;
-  if (route_to_stash && task_status.gripper_closed &&
+  if ((stage_route || (route_to_stash && task_status.gripper_closed)) &&
       expected_command == VISION_CMD_NAVIGATE_WAYPOINT &&
       command->target_x_mm <= (int16_t)APP_NAV_FINAL_APPROACH_DISTANCE_MM &&
-      !stash_terminal_translate) {
+      !nav_terminal_translate) {
     Motor_Stop();
-    nav_forward_active = false;
     nav_stop_output();
-    stash_terminal_translate = true;
+    nav_terminal_translate = true;
   }
   const bool lock_allowed =
       (expected_command == VISION_CMD_NAVIGATE_WAYPOINT) &&
@@ -3312,7 +3270,6 @@ static RemoteRouteStatus nav_follow(
     Motor_Stop();
     task_status.motors_active = false;
     nav_ready = false;
-    nav_forward_active = false;
     nav_realign_pending = false;
     nav_stop_output();
   }
@@ -3333,17 +3290,15 @@ static RemoteRouteStatus nav_follow(
     realign_due = nav_ready &&
         (task_abs(heading_error_deg) >= route_realign_deg);
   }
-  if (!stash_terminal_translate && realign_due) {
+  if (!nav_terminal_translate && realign_due) {
     Motor_Stop();
     task_status.motors_active = false;
     nav_ready = false;
-    nav_forward_active = false;
     nav_stop_output();
     return REMOTE_ROUTE_WAITING;
   }
-  if (!stash_terminal_translate && !nav_ready) {
+  if (!nav_terminal_translate && !nav_ready) {
     nav_realign_pending = false;
-    nav_forward_active = false;
     nav_stop_output();
     const float turn_tolerance_deg = nav_heading_locked ?
         APP_NAV_FINAL_TURN_TOLERANCE_DEG :
@@ -3355,7 +3310,7 @@ static RemoteRouteStatus nav_follow(
     }
     return REMOTE_ROUTE_WAITING;
   }
-  if (!stash_terminal_translate &&
+  if (!nav_terminal_translate &&
       (uint32_t)(now_ms - step_started_ms) < APP_NAV_TURN_SETTLE_MS) {
     return REMOTE_ROUTE_WAITING;
   }
@@ -3367,34 +3322,9 @@ static RemoteRouteStatus nav_follow(
     return nav_push(now_ms);
   }
 
-  if (!nav_forward_active) {
-    nav_forward_active = true;
-    nav_progress.changed_ms = now_ms;
-  } else if (!nav_terminal_candidate && !nav_terminal_latched &&
-             ((uint32_t)(now_ms - nav_progress.changed_ms) >=
-              APP_NAV_PROGRESS_TIMEOUT_MS)) {
-    nav_progress.stale = true;
-    task_status.nav_stale = true;
-  }
-  if (delivery_route &&
-      (nav_terminal_candidate || nav_terminal_latched)) {
-    /* The terminal envelope is only a background timeout. Keep the original
-     * D-driven motion active and prevent its small pose residual from being
-     * mistaken for a navigation freeze. */
-    nav_progress.stale = false;
-    task_status.nav_stale = false;
-  }
-  if (nav_progress.stale) {
-    Motor_Stop();
-    task_status.motors_active = false;
-    nav_forward_active = false;
-    nav_stop_output();
-    return REMOTE_ROUTE_WAITING;
-  }
-
   const float route_speed_mm_s = nav_speed(
       command->target_x_mm, cruise_speed_mm_s);
-  if (stash_terminal_translate) {
+  if (nav_terminal_translate) {
     /* MoveAngle holds the entry yaw and ramps both body translation axes.
      * RDK bearing stays in the field frame as the target crosses the chassis. */
     const float body_angle = task_wrap_angle(command_heading_deg - current_heading_deg);
@@ -3598,7 +3528,6 @@ static void task_process_navigation(const VisionData *vision,
     Motor_Stop();
     task_status.motors_active = false;
     nav_ready = false;
-    nav_forward_active = false;
     nav_stop_output();
     return;
   }
@@ -3609,7 +3538,6 @@ static void task_process_navigation(const VisionData *vision,
       Motor_Stop();
       task_status.motors_active = false;
       nav_ready = false;
-      nav_forward_active = false;
       nav_stop_output();
       return;
     }
@@ -3629,7 +3557,6 @@ static void task_process_navigation(const VisionData *vision,
     Motor_Stop();
     task_status.motors_active = false;
     nav_ready = false;
-    nav_forward_active = false;
     nav_stop_output();
     return;
   }
@@ -3639,7 +3566,6 @@ static void task_process_navigation(const VisionData *vision,
     Motor_Stop();
     task_status.motors_active = false;
     nav_ready = false;
-    nav_forward_active = false;
     nav_stop_output();
     return;
   }
@@ -3647,7 +3573,6 @@ static void task_process_navigation(const VisionData *vision,
     Motor_Stop();
     task_status.motors_active = false;
     nav_ready = false;
-    nav_forward_active = false;
     nav_stop_output();
     return;
   }
@@ -3658,7 +3583,6 @@ static void task_process_navigation(const VisionData *vision,
     Motor_Stop();
     task_status.motors_active = false;
     nav_ready = false;
-    nav_forward_active = false;
     nav_stop_output();
   } else if (result == REMOTE_ROUTE_MOTOR_FAULT) {
     task_stop(TASK_FAULT_MOTOR, now_ms);
@@ -3739,7 +3663,6 @@ static void task_process_face_center(const VisionData *vision,
     if (!stash_backoff_pending) {
       nav_ready = false;
     }
-    nav_forward_active = false;
     nav_stop_output();
     return;
   }
@@ -3764,7 +3687,7 @@ static void task_process_face_center(const VisionData *vision,
       task_status.motors_active = false;
       stash_backoff_pending = false;
       nav_ready = false;
-      nav_reset_progress(now_ms);
+      nav_reset_progress();
       step_started_ms = now_ms;
       return;
     }
@@ -3789,7 +3712,6 @@ static void task_process_face_center(const VisionData *vision,
     Motor_Stop();
     task_status.motors_active = false;
     nav_ready = false;
-    nav_forward_active = false;
     nav_stop_output();
   } else if (result == REMOTE_ROUTE_MOTOR_FAULT) {
     task_stop(TASK_FAULT_MOTOR, now_ms);
@@ -3870,7 +3792,6 @@ static void task_pause_runtime(uint32_t now_ms)
   if (!stash_backoff_pending) {
     nav_ready = false;
   }
-  nav_forward_active = false;
   task_pause_final_push(now_ms);
 }
 
@@ -5278,7 +5199,6 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
         if (!stash_backoff_pending) {
           nav_ready = false;
         }
-        nav_forward_active = false;
       }
     }
   } else if (task_audit_is_placeholder(command) &&
@@ -5470,7 +5390,6 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
     Motor_Stop();
     task_status.motors_active = false;
     nav_ready = false;
-    nav_forward_active = false;
   } else if (command->command == VISION_CMD_STOP) {
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
@@ -6216,26 +6135,22 @@ rejected:
   vision->mission = active_mission;
 }
 
-/* Returns true only for expired continuous control. Finite mechanics keep
- * their origins and run through their existing completion/recovery path. */
-static bool task_continuous_expired(uint32_t now_ms)
+/* Keep the last accepted input until an explicit replacement or cancellation. */
+static bool task_continuous_input_missing(void)
 {
-  const bool comm_stale = !accepted_context.valid ||
-      (uint32_t)(now_ms - accepted_context.last_command_rx_ms) > APP_COMMAND_RX_TIMEOUT_MS;
-  const bool visual_stale = !accepted_context.visual_valid || !app_visual_valid ||
-      (uint32_t)(now_ms - accepted_context.last_visual_update_ms) > APP_VISUAL_UPDATE_TIMEOUT_MS;
+  const bool missing_context = !accepted_context.valid;
+  const bool missing_target = !accepted_context.visual_valid || !app_visual_valid;
   const bool approach = (state == TASK_APPROACH && !task_approach_runs_without_target()) ||
       state == TASK_SAFE_SWEEP_APPROACH || state == TASK_SAFE_SWEEP_RETRIEVE;
   const bool remote_navigation = (state == TASK_NAVIGATE && !delivery_enter_active) ||
       (state == TASK_FACE_FIELD_CENTER && !stash_backoff_pending);
-  if ((approach && (comm_stale ||
-       (active_mission.command == VISION_CMD_APPROACH_TARGET && visual_stale))) ||
-      (remote_navigation && comm_stale)) {
+  if ((approach && (missing_context ||
+       (active_mission.command == VISION_CMD_APPROACH_TARGET && missing_target))) ||
+      (remote_navigation && missing_context)) {
     Motor_Stop();
     task_status.motors_active = false;
     sweep_forward_commanded = false;
     nav_ready = false;
-    nav_forward_active = false;
     return true;
   }
   return false;
@@ -6248,10 +6163,8 @@ static void task_approach_watchdog(uint32_t now_ms)
   if (approach_phase == APPROACH_TRACK) timeout = APP_APPROACH_ALIGN_TIMEOUT_MS;
   if (approach_phase == APPROACH_RANGE_WAIT) timeout = APP_APPROACH_RANGE_WAIT_MS;
   if (approach_phase == APPROACH_RANGE_MOVE) timeout = APP_APPROACH_RANGE_TIMEOUT_MS;
-  const bool link_lost = approach_phase == APPROACH_RANGE_MOVE &&
-      (!accepted_context.valid || now_ms - accepted_context.last_command_rx_ms >=
-                                  APP_APPROACH_LINK_RECOVER_MS);
-  if (link_lost || (timeout != 0U && now_ms - approach_deadline_ms >= timeout)) {
+  const bool missing_context = approach_phase == APPROACH_RANGE_MOVE && !accepted_context.valid;
+  if (missing_context || (timeout != 0U && now_ms - approach_deadline_ms >= timeout)) {
     Motor_Stop();
     task_status.motors_active = false;
     accepted_context.cancelled = true;
@@ -6528,7 +6441,7 @@ void Task_Process(uint32_t now_ms)
   }
   const bool local_approach_autonomous =
       task_approach_runs_without_target();
-  if (task_continuous_expired(now_ms)) {
+  if (task_continuous_input_missing()) {
     task_status.found = false;
     task_publish_status(now_ms);
     return;
