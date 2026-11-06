@@ -159,7 +159,7 @@ static volatile SpinMove spin_move;
 static void motor_update_spin_angle(void);
 static volatile bool finite_motion_paused;
 static uint32_t finite_pause_started_ms;
-static uint8_t brake_cycles_remaining;
+static volatile uint8_t brake_cycles_remaining;
 #if APP_ENABLE_MOTION_DEBUG_TASK
 static int16_t debug_feedforward[3];
 static int32_t debug_correction_pwm100[3];
@@ -1404,6 +1404,11 @@ void Motor_Stop(void)
   angle_turn.slowing = false;
   motor_stop_outputs(true);
   motor_leave_critical(primask);
+}
+
+bool Motor_IsBraking(void)
+{
+  return brake_cycles_remaining > 0U;
 }
 
 void Motor_PauseFiniteMotion(void)

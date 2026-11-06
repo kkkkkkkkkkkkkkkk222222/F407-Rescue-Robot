@@ -68,6 +68,8 @@ bool Motor_MoveAngle(float speed_mm_s, float angle_deg);
  * Completion/time/distance remain owned by the caller; false means rejected. */
 bool Motor_MoveHeading(float forward_mm_s, float field_heading_deg);
 void Motor_Stop(void);
+/* Existing brake pulse only; no new delay or wheel/IMU qualification. */
+bool Motor_IsBraking(void);
 /* Suspend an existing finite move without changing its encoder/yaw origin.
  * Only an explicit resume continues it; Stop still cancels it completely. */
 void Motor_PauseFiniteMotion(void);

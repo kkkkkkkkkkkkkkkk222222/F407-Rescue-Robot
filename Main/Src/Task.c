@@ -105,6 +105,21 @@ typedef struct {
 } NavProgress;
 
 typedef enum {
+  NAV_COARSE_ALIGN = 0,
+  NAV_COARSE_DRIVE,
+  NAV_COARSE_BRAKE,
+  NAV_COARSE_FINE
+} NavCoarsePhase;
+
+typedef struct {
+  NavCoarsePhase phase;
+  float initial_remaining_mm, heading_deg;
+  float origin_x_mm, origin_y_mm, direction_x, direction_y;
+  float progress_mm;
+  bool valid;
+} NavCoarse;
+
+typedef enum {
   AUDIT_SEMANTIC_INVALID = 0,
   AUDIT_SEMANTIC_STASH_NONEMPTY,
   AUDIT_SEMANTIC_FIRST_GREEN,
@@ -399,6 +414,7 @@ static uint32_t remote_target_generation;
 static bool remote_target_sequence_valid;
 static RemoteActionState remote_action;
 static NavProgress nav_progress;
+static NavCoarse nav_coarse;
 
 static void task_enter(TaskState next, uint32_t now_ms);
 static bool distance_failed(MotorDistanceStatus result);
@@ -413,6 +429,11 @@ static bool task_audit_state(void);
 static void nav_reset_progress(void)
 {
   nav_progress = (NavProgress){0};
+}
+
+static void nav_reset_coarse(void)
+{
+  nav_coarse = (NavCoarse){0};
 }
 
 static float task_abs(float value)
@@ -1557,6 +1578,7 @@ static void task_initialize(uint32_t now_ms)
   start_motion_phase = START_REVERSE;
   distance_command_done = false;
   nav_reset_progress();
+  nav_reset_coarse();
   nav_terminal_candidate = false;
   nav_terminal_latched = false;
   nav_heading_locked = false;
@@ -1807,12 +1829,18 @@ static float task_track_target(const VisionData *vision, bool track_camera)
                                       (float)APP_VISION_TARGET_X,
                                       filtered_target_x, dt_s) *
                          APP_STEERING_DIRECTION;
+  const bool stationary_alignment = state == TASK_APPROACH &&
+      (approach_phase == APPROACH_TRACK ||
+       approach_phase == APPROACH_CLUSTER_ALIGN ||
+       approach_phase == APPROACH_ALIGN_125);
+  const float minimum_mm_s = stationary_alignment ?
+      APP_APPROACH_ALIGN_MIN_TURN_MM_S : APP_STEERING_MIN_MM_S;
   if ((steering_target_mm_s > 0.0f) &&
-      (steering_target_mm_s < APP_STEERING_MIN_MM_S)) {
-    steering_target_mm_s = APP_STEERING_MIN_MM_S;
+      (steering_target_mm_s < minimum_mm_s)) {
+    steering_target_mm_s = minimum_mm_s;
   } else if ((steering_target_mm_s < 0.0f) &&
-             (steering_target_mm_s > -APP_STEERING_MIN_MM_S)) {
-    steering_target_mm_s = -APP_STEERING_MIN_MM_S;
+             (steering_target_mm_s > -minimum_mm_s)) {
+    steering_target_mm_s = -minimum_mm_s;
   }
   return steering_target_mm_s;
 }
@@ -3156,6 +3184,110 @@ static RemoteRouteStatus nav_push(uint32_t now_ms)
   return REMOTE_ROUTE_RUNNING;
 }
 
+static RemoteRouteStatus nav_follow_coarse(
+    const VisionMissionCommand *command, const LocationPose *pose,
+    float cruise_speed_mm_s, uint32_t now_ms)
+{
+  if (!nav_coarse.valid) {
+    /* Owned by the accepted task/action, not by SEQ or each H/D refresh. */
+    nav_coarse.valid = true;
+    nav_coarse.initial_remaining_mm = (float)command->target_x_mm;
+    nav_coarse.heading_deg = (float)command->heading_cdeg * 0.01f;
+    const float heading_rad = nav_coarse.heading_deg *
+        (3.14159265358979323846f / 180.0f);
+    nav_coarse.direction_x = cosf(heading_rad);
+    nav_coarse.direction_y = sinf(heading_rad);
+    nav_coarse.phase = command->target_x_mm <= (int16_t)APP_NAV_LINEAR_SLOWDOWN_MM ?
+        NAV_COARSE_BRAKE : NAV_COARSE_ALIGN;
+    nav_terminal_translate = false;
+    nav_ready = false;
+    Motor_Stop();
+    task_status.motors_active = false;
+    nav_stop_output();
+    return REMOTE_ROUTE_WAITING;
+  }
+
+  if (nav_coarse.phase == NAV_COARSE_ALIGN) {
+    /* A shorter new position may skip the coarse leg, never lengthen it. */
+    if (command->target_x_mm <= (int16_t)APP_NAV_LINEAR_SLOWDOWN_MM) {
+      nav_coarse.phase = NAV_COARSE_BRAKE;
+      Motor_Stop();
+      task_status.motors_active = false;
+      nav_stop_output();
+      return REMOTE_ROUTE_WAITING;
+    }
+    if (!nav_ready) {
+      const float tolerance = command->command == VISION_CMD_RETURN_CENTER ?
+          APP_RETURN_CENTER_TURN_TOLERANCE_DEG : APP_NAV_HEADING_TOLERANCE_DEG;
+      if (!turn_to(nav_coarse.heading_deg, pose->heading_mdeg * 0.001f,
+                   tolerance, now_ms)) {
+        return REMOTE_ROUTE_MOTOR_FAULT;
+      }
+      return REMOTE_ROUTE_WAITING;
+    }
+    if ((uint32_t)(now_ms - step_started_ms) < APP_NAV_TURN_SETTLE_MS) {
+      return REMOTE_ROUTE_WAITING;
+    }
+    /* Location integrates real F405 wheel deltas with the main gyro. RDK
+     * position updates do not re-anchor this local odometry during NAV. */
+    nav_coarse.origin_x_mm = (float)pose->x_mm;
+    nav_coarse.origin_y_mm = (float)pose->y_mm;
+    nav_coarse.progress_mm = 0.0f;
+    nav_coarse.phase = NAV_COARSE_DRIVE;
+  }
+
+  if (nav_coarse.phase == NAV_COARSE_DRIVE) {
+    const float projection_mm =
+        ((float)pose->x_mm - nav_coarse.origin_x_mm) * nav_coarse.direction_x +
+        ((float)pose->y_mm - nav_coarse.origin_y_mm) * nav_coarse.direction_y;
+    /* Backward travel or a larger remote D cannot renew the coarse budget. */
+    nav_coarse.progress_mm = fmaxf(nav_coarse.progress_mm, projection_mm);
+    const float remaining_mm = fminf(
+        nav_coarse.initial_remaining_mm - nav_coarse.progress_mm,
+        (float)command->target_x_mm);
+    if (remaining_mm <= APP_NAV_COARSE_RESERVE_MM ||
+        command->target_x_mm <= (int16_t)APP_NAV_FINAL_APPROACH_DISTANCE_MM) {
+      nav_coarse.phase = NAV_COARSE_BRAKE;
+      Motor_Stop();
+      task_status.motors_active = false;
+      nav_stop_output();
+      /* This is not a global arrival and never sets distance/nav DONE. */
+      return REMOTE_ROUTE_WAITING;
+    }
+    const float ratio = fminf(1.0f,
+        (remaining_mm - APP_NAV_COARSE_RESERVE_MM) /
+        (APP_NAV_LINEAR_SLOWDOWN_MM - APP_NAV_COARSE_RESERVE_MM));
+    const float maximum_mm_s = fminf(cruise_speed_mm_s, APP_NAV_FAST_SPEED_MM_S);
+    const float requested_mm_s = APP_NAV_MIN_END_SPEED_MM_S +
+        (maximum_mm_s - APP_NAV_MIN_END_SPEED_MM_S) * ratio;
+    const float rate_mm_s2 = requested_mm_s >= remote_speed_mm_s ?
+        APP_NAV_SPEED_ACCEL_MM_S2 : APP_NAV_SPEED_DECEL_MM_S2;
+    remote_speed_mm_s = task_step_toward(remote_speed_mm_s, requested_mm_s,
+        rate_mm_s2 * APP_TASK_PERIOD_MS * 0.001f);
+    const bool accepted = Motor_MoveHeading(remote_speed_mm_s, nav_coarse.heading_deg);
+    task_status.motors_active = accepted;
+    return accepted ? REMOTE_ROUTE_RUNNING : REMOTE_ROUTE_WAITING;
+  }
+
+  if (nav_coarse.phase == NAV_COARSE_BRAKE) {
+    /* Finish Motor_Stop's existing six 10 ms brake cycles, without a new
+     * timer, sensor-age gate, or stationary qualification loop. */
+    if (Motor_IsBraking()) { return REMOTE_ROUTE_WAITING; }
+    nav_coarse.phase = NAV_COARSE_FINE;
+    nav_terminal_translate = true;
+  }
+
+  /* Sticky fine phase: latest H is translation direction, not chassis yaw.
+   * MoveAngle holds the entry gyro heading and owns the existing XY ramp. */
+  const float body_angle = task_wrap_angle(command->heading_cdeg * 0.01f -
+                                          pose->heading_mdeg * 0.001f);
+  const float speed_mm_s = fminf(APP_NAV_FINAL_APPROACH_SPEED_MM_S,
+      fmaxf(APP_NAV_MIN_END_SPEED_MM_S, (float)command->target_x_mm));
+  (void)Motor_MoveAngle(speed_mm_s, body_angle);
+  task_status.motors_active = true;
+  return REMOTE_ROUTE_RUNNING;
+}
+
 static RemoteRouteStatus nav_follow(
     const VisionMissionCommand *command, uint8_t expected_command,
     float cruise_speed_mm_s, uint32_t now_ms)
@@ -3236,13 +3368,8 @@ static RemoteRouteStatus nav_follow(
   const float command_heading_deg = (float)command->heading_cdeg * 0.01f;
   const bool return_route =
       expected_command == VISION_CMD_RETURN_CENTER;
-  if ((stage_route || (route_to_stash && task_status.gripper_closed)) &&
-      expected_command == VISION_CMD_NAVIGATE_WAYPOINT &&
-      command->target_x_mm <= (int16_t)APP_NAV_FINAL_APPROACH_DISTANCE_MM &&
-      !nav_terminal_translate) {
-    Motor_Stop();
-    nav_stop_output();
-    nav_terminal_translate = true;
+  if (stage_route || route_to_stash || return_route) {
+    return nav_follow_coarse(command, &pose, cruise_speed_mm_s, now_ms);
   }
   const bool lock_allowed =
       (expected_command == VISION_CMD_NAVIGATE_WAYPOINT) &&
@@ -5883,6 +6010,7 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     context_session_generation = vision->session_generation;
     accepted_context = (TaskContext){0};
     active_mission = (VisionMissionCommand){0};
+    nav_reset_coarse();
     command_generation_seen = 0U;
     task_clear_audit_result();
     task_reset_sweep_audit(now_ms);
@@ -6081,6 +6209,10 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     app_visual_valid = false;
   }
   if (new_action) {
+    if (incoming.command == VISION_CMD_NAVIGATE_WAYPOINT ||
+        incoming.command == VISION_CMD_RETURN_CENTER) {
+      nav_reset_coarse();
+    }
     accepted_context.task_id = incoming.task_id;
     accepted_context.action_id = incoming.action_id;
     accepted_context.opcode = incoming.command;

@@ -491,6 +491,8 @@
 /* Derivative uses seconds, not frames; softened together with visual P. */
 #define APP_STEERING_KD_MM                0.0025f
 #define APP_STEERING_MIN_MM_S             10.0f
+/* Pixel-only stationary alignment; engineering starting point, not calibrated. */
+#define APP_APPROACH_ALIGN_MIN_TURN_MM_S  60.0f
 #define APP_STEERING_LIMIT_MM_S           90.0f
 #define APP_STEERING_RATE_MM_S2          400.0f
 #define APP_STEERING_DIRECTION           1.0f
@@ -519,10 +521,12 @@
 #define APP_GRAB_CAMERA_MIN_ANGLE         90U
 #define APP_GRAB_RAISE_OBSERVE_MS       1000U
 #define APP_GRAB_SCAN_ROTATE_MM_S        100.0f
-#define APP_NAV_FAST_SPEED_MM_S          800.0f
+#define APP_NAV_FAST_SPEED_MM_S          600.0f
 #define APP_NAV_FINAL_APPROACH_DISTANCE_MM 300U
-#define APP_NAV_FINAL_APPROACH_SPEED_MM_S 400.0f
-#define APP_NAV_LINEAR_SLOWDOWN_MM       300.0f
+#define APP_NAV_FINAL_APPROACH_SPEED_MM_S 200.0f
+#define APP_NAV_LINEAR_SLOWDOWN_MM       600.0f
+/* End the encoder-bounded coarse leg before the global waypoint. */
+#define APP_NAV_COARSE_RESERVE_MM        250.0f
 #define APP_NAV_END_SPEED_RATIO            0.2f
 #define APP_NAV_MIN_END_SPEED_MM_S        120.0f
 #define APP_NAV_REMOTE_STOP_DISTANCE_MM      0U
@@ -612,7 +616,7 @@
 #define APP_DELIVERY_EXIT_DISTANCE_M       0.30f
 #define APP_DELIVERY_EXIT_SPEED_MM_S      400.0f
 #define APP_DELIVERY_EXIT_LIFT_SETTLE_MS   1000U
-#define APP_RETURN_CENTER_SPEED_MM_S       800.0f
+#define APP_RETURN_CENTER_SPEED_MM_S       600.0f
 #define APP_RETURN_CENTER_HEADING_MAX_MM_S 100.0f
 #define APP_RETURN_CENTER_TURN_TOLERANCE_DEG 3.0f
 #define APP_RETURN_CENTER_REALIGN_DEG       8.0f
