@@ -12,6 +12,8 @@ typedef enum {
   CLAW_ACTION_OPEN_RIGHT,
   CLAW_ACTION_CLUSTER_OPEN_LEFT,
   CLAW_ACTION_CLUSTER_OPEN_RIGHT,
+  CLAW_ACTION_BUMP_TOUCH,
+  CLAW_ACTION_BUMP_OPEN,
   CLAW_ACTION_RETRACT,
   CLAW_ACTION_TOUCH,
   CLAW_ACTION_HALF_TOUCH
@@ -138,32 +140,78 @@ bool Claw_Open(uint32_t now_ms)
   return claw_move_together(CLAW_ACTION_OPEN, now_ms, 108U, 72U, 1000U);
 }
 
+static bool claw_step_to(uint8_t id, uint8_t target)
+{
+  const int current = Servo_GetAngle(id);
+  if (current == target) { return true; }
+  const int step = APP_CLAW_SEPARATE_STEP_DEG;
+  int delta = (int)target - current;
+  if (delta > step) { delta = step; }
+  if (delta < -step) { delta = -step; }
+  const uint8_t next = (uint8_t)(current + delta);
+  Servo_SetAngle(id, next);
+  return next == target;
+}
+
+static bool claw_move_separation(ClawAction action, uint32_t now_ms,
+                                 uint8_t left_angle, uint8_t right_angle,
+                                 uint32_t settle_ms)
+{
+  if (claw_action != action) {
+    claw_action = action;
+    claw_step = 1U;
+    claw_step_ms = now_ms;
+    claw_done = false;
+  }
+  if (!claw_done && claw_step == 1U &&
+      (uint32_t)(now_ms - claw_step_ms) >= APP_TASK_PERIOD_MS) {
+    /* At most one step after a pause; never catch up with a large angle jump. */
+    const bool left_at_target = claw_step_to(4U, left_angle);
+    const bool right_at_target = claw_step_to(2U, right_angle);
+    claw_step_ms = now_ms;
+    if (left_at_target && right_at_target) { claw_step = 2U; }
+  }
+  if (claw_step == 2U && (uint32_t)(now_ms - claw_step_ms) >= settle_ms) {
+    claw_done = true;
+  }
+  return claw_done;
+}
+
+bool Claw_SetBumpPosition(bool closed, uint32_t now_ms)
+{
+  if (closed) {
+    return claw_move_separation(CLAW_ACTION_BUMP_TOUCH, now_ms,
+                                APP_CLAW_LEFT_TOUCH_ANGLE, APP_CLAW_RIGHT_TOUCH_ANGLE, 2000U);
+  }
+  return claw_move_separation(CLAW_ACTION_BUMP_OPEN, now_ms, 108U, 72U, 1000U);
+}
+
 bool Claw_OpenLeft(uint32_t now_ms)
 {
   /* Release left and use the task's latched baseline/attempt relaxation. */
-  return claw_move_together(CLAW_ACTION_OPEN_LEFT, now_ms,
-                            108U, claw_relaxed_right(), 600U);
+  return claw_move_separation(CLAW_ACTION_OPEN_LEFT, now_ms,
+                              108U, claw_relaxed_right(), 600U);
 }
 
 bool Claw_OpenRight(uint32_t now_ms)
 {
   /* Mirror of Claw_OpenLeft: a smaller left-servo angle closes it farther. */
-  return claw_move_together(CLAW_ACTION_OPEN_RIGHT, now_ms,
-                            claw_relaxed_left(), 72U, 600U);
+  return claw_move_separation(CLAW_ACTION_OPEN_RIGHT, now_ms,
+                              claw_relaxed_left(), 72U, 600U);
 }
 
 bool Claw_ClusterOpenLeft(uint32_t now_ms)
 {
   /* Selective separation uses the same retained-side profile across retries. */
-  return claw_move_together(CLAW_ACTION_CLUSTER_OPEN_LEFT, now_ms,
-                            108U, claw_relaxed_right(), 600U);
+  return claw_move_separation(CLAW_ACTION_CLUSTER_OPEN_LEFT, now_ms,
+                              108U, claw_relaxed_right(), 600U);
 }
 
 bool Claw_ClusterOpenRight(uint32_t now_ms)
 {
   /* Mirror of Claw_ClusterOpenLeft for a retained left-side target. */
-  return claw_move_together(CLAW_ACTION_CLUSTER_OPEN_RIGHT, now_ms,
-                            claw_relaxed_left(), 72U, 600U);
+  return claw_move_separation(CLAW_ACTION_CLUSTER_OPEN_RIGHT, now_ms,
+                              claw_relaxed_left(), 72U, 600U);
 }
 
 bool Claw_Retract(uint32_t now_ms)

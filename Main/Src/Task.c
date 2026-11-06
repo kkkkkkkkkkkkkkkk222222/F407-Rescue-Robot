@@ -5083,7 +5083,7 @@ static void task_process_remote_action(const VisionMissionCommand *command,
         } else if (remote_action.phase == 1U) {
           Motor_Stop();
           task_status.motors_active = false;
-          if (Claw_Touch(now_ms)) {
+          if (Claw_SetBumpPosition(true, now_ms)) {
             task_status.gripper_closed = false;
             task_remote_action_advance(now_ms);
           }
@@ -5098,7 +5098,7 @@ static void task_process_remote_action(const VisionMissionCommand *command,
         } else {
           Motor_Stop();
           task_status.motors_active = false;
-          if (Claw_Open(now_ms)) {
+          if (Claw_SetBumpPosition(false, now_ms)) {
             task_status.gripper_closed = false;
             cargo_recheck_pending = false;
             cluster_target_active = false;
