@@ -3186,7 +3186,7 @@ static RemoteRouteStatus nav_push(uint32_t now_ms)
 
 static RemoteRouteStatus nav_follow_coarse(
     const VisionMissionCommand *command, const LocationPose *pose,
-    float cruise_speed_mm_s, uint32_t now_ms)
+    float cruise_speed_mm_s, bool stage_route, uint32_t now_ms)
 {
   if (!nav_coarse.valid) {
     /* Owned by the accepted task/action, not by SEQ or each H/D refresh. */
@@ -3281,6 +3281,12 @@ static RemoteRouteStatus nav_follow_coarse(
    * MoveAngle holds the entry gyro heading and owns the existing XY ramp. */
   const float body_angle = task_wrap_angle(command->heading_cdeg * 0.01f -
                                           pose->heading_mdeg * 0.001f);
+  if (stage_route) {
+    const float speed_mm_s = fminf(APP_NAV_FINE_MAX_SPEED_MM_S,
+        APP_NAV_FINE_DISTANCE_GAIN_S_INV * (float)command->target_x_mm);
+    task_status.motors_active = Motor_MoveAngleFine(speed_mm_s, body_angle);
+    return REMOTE_ROUTE_RUNNING;
+  }
   const float speed_mm_s = fminf(APP_NAV_FINAL_APPROACH_SPEED_MM_S,
       fmaxf(APP_NAV_MIN_END_SPEED_MM_S, (float)command->target_x_mm));
   (void)Motor_MoveAngle(speed_mm_s, body_angle);
@@ -3369,7 +3375,7 @@ static RemoteRouteStatus nav_follow(
   const bool return_route =
       expected_command == VISION_CMD_RETURN_CENTER;
   if (stage_route || route_to_stash || return_route) {
-    return nav_follow_coarse(command, &pose, cruise_speed_mm_s, now_ms);
+    return nav_follow_coarse(command, &pose, cruise_speed_mm_s, stage_route, now_ms);
   }
   const bool lock_allowed =
       (expected_command == VISION_CMD_NAVIGATE_WAYPOINT) &&

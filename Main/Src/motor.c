@@ -89,6 +89,7 @@ typedef struct {
   bool active;
   bool reversing;
   bool absolute_heading;
+  bool fine_correction;
   float field_heading_deg;
   float target_forward_mm_s;
   float target_lateral_mm_s;
@@ -340,6 +341,9 @@ static void motor_set_target_counts(uint8_t id, float target_counts)
    * Starting or reversing must leave the wider zero band first. */
   float zero_limit_mm_s = ((targets[index] == 0) || reversing) ?
       APP_MOTOR_ZERO_EXIT_MM_S : APP_MOTOR_ZERO_ENTER_MM_S;
+  if (direction_move.fine_correction && !direction_move.reversing) {
+    zero_limit_mm_s = APP_NAV_FINE_WHEEL_ZERO_MM_S;
+  }
 #if APP_ENABLE_MOTION_DEBUG_TASK
   if (angle_turn.status == MOTOR_TURN_RUNNING) {
     zero_limit_mm_s = 0.5f;
@@ -546,6 +550,7 @@ static void motor_clear_direction_move(void)
   direction_move.active = false;
   direction_move.reversing = false;
   direction_move.absolute_heading = false;
+  direction_move.fine_correction = false;
   direction_move.field_heading_deg = 0.0f;
   direction_move.target_forward_mm_s = 0.0f;
   direction_move.target_lateral_mm_s = 0.0f;
@@ -1615,6 +1620,18 @@ void Motor_Update(void)
         60000.0f / (APP_ENCODER_COUNTS_PER_WHEEL_REV * APP_MOTOR_CONTROL_PERIOD_MS);
     float static_pwm = spin_move.active ?
         APP_MOVE_SPIN_FF_STATIC_PWM : (float)APP_MOTOR_BASE_PWM;
+    if (direction_move.fine_correction && !direction_move.reversing) {
+      const float target_mm_s = motor_abs_float(
+          motor_counts_to_mm_s(target_counts_per_update[index]));
+      const float measured_along_mm_s = (targets[index] > 0) ?
+          (float)measured_speeds_mm_s[index] : -(float)measured_speeds_mm_s[index];
+      const float deficit_mm_s = target_mm_s - fmaxf(0.0f, measured_along_mm_s);
+      /* Fade static effort on small mixed components. Add effort only for
+       * the speed deficit so it falls away as this wheel follows its target. */
+      static_pwm *= fminf(1.0f, target_mm_s / APP_MOTOR_ZERO_EXIT_MM_S);
+      static_pwm += motor_clamp_float(deficit_mm_s * APP_NAV_FINE_ASSIST_PWM_PER_MM_S,
+          0.0f, APP_NAV_FINE_ASSIST_MAX_PERMILLE);
+    }
 #if APP_ENABLE_MOTION_DEBUG_TASK
     if (angle_turn.status == MOTOR_TURN_RUNNING) {
       static_pwm = APP_DEBUG_TURN_STATIC_PWM;
@@ -2342,7 +2359,7 @@ static bool motor_move_spin_output(float speed_mm_s, float direction_deg,
   return true;
 }
 
-bool Motor_MoveAngle(float speed_mm_s, float angle_deg)
+static bool motor_move_angle(float speed_mm_s, float angle_deg, bool fine_correction)
 {
   if (!isfinite(speed_mm_s) || !isfinite(angle_deg)) {
     return false;
@@ -2417,6 +2434,7 @@ bool Motor_MoveAngle(float speed_mm_s, float angle_deg)
     }
   }
 
+  direction_move.fine_correction = fine_correction;
   direction_move.target_forward_mm_s = target_forward;
   direction_move.target_lateral_mm_s = target_lateral;
   if (starting) {
@@ -2429,6 +2447,17 @@ bool Motor_MoveAngle(float speed_mm_s, float angle_deg)
                        direction_move.target_lateral_mm_s) <= 0.5f);
   motor_leave_critical(primask);
   return ready;
+}
+
+bool Motor_MoveAngle(float speed_mm_s, float angle_deg)
+{
+  return motor_move_angle(speed_mm_s, angle_deg, false);
+}
+
+bool Motor_MoveAngleFine(float speed_mm_s, float angle_deg)
+{
+  (void)motor_move_angle(speed_mm_s, angle_deg, true);
+  return commands[0] != 0 || commands[1] != 0 || commands[2] != 0;
 }
 
 bool Motor_MoveHeading(float forward_mm_s, float field_heading_deg)

@@ -527,6 +527,12 @@
 #define APP_NAV_LINEAR_SLOWDOWN_MM       600.0f
 /* End the encoder-bounded coarse leg before the global waypoint. */
 #define APP_NAV_COARSE_RESERVE_MM        250.0f
+/* STAGE FINE tuning for low-speed closed-loop translation. */
+#define APP_NAV_FINE_MAX_SPEED_MM_S      120.0f
+#define APP_NAV_FINE_DISTANCE_GAIN_S_INV   1.0f
+#define APP_NAV_FINE_WHEEL_ZERO_MM_S       0.5f
+#define APP_NAV_FINE_ASSIST_PWM_PER_MM_S   2.0f
+#define APP_NAV_FINE_ASSIST_MAX_PERMILLE 150.0f
 #define APP_NAV_END_SPEED_RATIO            0.2f
 #define APP_NAV_MIN_END_SPEED_MM_S        120.0f
 #define APP_NAV_REMOTE_STOP_DISTANCE_MM      0U

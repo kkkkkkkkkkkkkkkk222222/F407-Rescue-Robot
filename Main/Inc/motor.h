@@ -64,6 +64,9 @@ MotorTurnStatus Motor_MoveSpinAngle(float speed_mm_s, float direction_deg,
                                    float turn_deg, float max_rate_dps);
 /* 0 deg=forward, 90 deg=left, 180 deg=backward, 270 deg=right. */
 bool Motor_MoveAngle(float speed_mm_s, float angle_deg);
+/* STAGE FINE translation. Returns the current drive PWM activity while the
+ * vector ramp and reversal handling continue in Motor_Update(). */
+bool Motor_MoveAngleFine(float speed_mm_s, float angle_deg);
 /* Continuous signed forward speed with an absolute Location heading.
  * Completion/time/distance remain owned by the caller; false means rejected. */
 bool Motor_MoveHeading(float forward_mm_s, float field_heading_deg);
