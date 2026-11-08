@@ -33,13 +33,15 @@ PRESET OK 表示已接受。等 PRESET DONE 后再做偏移校准。
 
 关闭串口助手的端口连接，再执行自动段中的 Claw run-in 命令。
 脚本进入 DEBUG，先发 S 2 90 并给右爪留出到位时间，再按当前默认偏移运行。
-左爪每 0.5 秒切换一次 S 4 18 和 S 4 120，默认循环 10 分钟。
+左爪在 S 4 18 和 S 4 120 之间切换，默认间隔 500 ms，循环 10 分钟。
+可给磨合命令加 -IntervalMs 250。按每 60° 用时 120 ms 折算，此跨度至少间隔 204 ms。
 按 Ctrl+C 可提前停止循环。完成后停在 S 4 18，右爪保持 S 2 90。
 结束磨合后可继续用 DEBUG 命令调试。
 RUN 会重启主控并执行起步收纳。重新开始比赛时由 RDK 发赛前配置。
 
 左爪小步短测使用桌面 F405 Claw Test 文件夹。用记事本改 settings.ini，保存后双击 Start.cmd。
-StartDeg、EndDeg 是逻辑角，LeftTrimDeg 是测试换算用的左爪偏移。StepDeg 小于 0.5°，IntervalMs 是步间隔。
+StartDeg、EndDeg 是逻辑角，LeftTrimDeg 是测试换算用的左爪偏移。
+StepDeg 为步幅，IntervalMs 为步间隔，最短为一帧 PWM（20 ms）。两项组合的指令速率上限为每 120 ms 走 60°。
 HoldMs 是每端的停留时间，Cycles 是往返次数。正常结束会回到启动前的左爪脉宽，Stop.cmd 则保持停止时的脉宽。
 在 PowerShell 运行 Start.cmd -Preview 可以先看换算结果，默认参数用于 18° 到 22° 的一次空载短测。
 

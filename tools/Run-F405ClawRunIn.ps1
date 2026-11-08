@@ -1,13 +1,17 @@
 param(
     [string]$Port = 'COM18',
     [ValidateRange(1, 3600)][int]$DurationSeconds = 600,
-    [string]$StopFile
+    [string]$StopFile,
+    [int]$IntervalMs = 500
 )
 
 $ErrorActionPreference = 'Stop'
-$intervalMs = 500
 $inAngle = 18
 $outAngle = 120
+$minIntervalMs = ($outAngle - $inAngle) * 120 / 60
+if ($IntervalMs -lt $minIntervalMs) {
+    throw "Set IntervalMs to at least $minIntervalMs for $inAngle to $outAngle deg (limit 60 deg per 120 ms)."
+}
 $durationMs = $DurationSeconds * 1000L
 $configPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'Main/Inc/app_config.h'
 $config = [System.IO.File]::ReadAllText($configPath)
@@ -58,7 +62,7 @@ try {
     if (Test-StopRequested) { Write-Output 'STOPPED during right claw setup'; return }
     Send-RunInCommand "O 4 $($offsets[4])" '\bOK\r?\n'
 
-    Write-Output "START S2=90 S4=$inAngle/$outAngle INTERVAL_MS=$intervalMs DURATION_S=$DurationSeconds OFFSETS=$($offsets[2]),$($offsets[4])"
+    Write-Output "START S2=90 S4=$inAngle/$outAngle INTERVAL_MS=$IntervalMs DURATION_S=$DurationSeconds OFFSETS=$($offsets[2]),$($offsets[4])"
     $clock = [Diagnostics.Stopwatch]::StartNew()
     $sent = 0
     $lastAngle = $null
@@ -71,7 +75,7 @@ try {
         $sentAt = $clock.ElapsedMilliseconds
         Send-RunInCommand "S 4 $lastAngle" '\bOK\r?\n'
         $sent++
-        $nextAt = $sentAt + $intervalMs
+        $nextAt = $sentAt + $IntervalMs
         if ($clock.ElapsedMilliseconds -ge $nextReport) {
             Write-Output ('PROGRESS ELAPSED_S={0:F1} COMMANDS={1} S4={2}' -f $clock.Elapsed.TotalSeconds, $sent, $lastAngle)
             $nextReport += 60000L

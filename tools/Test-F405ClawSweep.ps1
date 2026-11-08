@@ -65,9 +65,8 @@ function Read-Integer([string]$Name, [int]$Min, [int]$Max) {
 $startDeg = Read-Number StartDeg 0 180
 $endDeg = Read-Number EndDeg 0 180
 $trimDeg = Read-Integer LeftTrimDeg -180 180
-$stepDeg = Read-Number StepDeg 0.09 0.5
-if ($stepDeg -ge 0.5) { throw 'Set StepDeg below 0.5.' }
-$intervalMs = Read-Integer IntervalMs 40 10000
+$stepDeg = Read-Number StepDeg 0.09 180
+$intervalMs = Read-Integer IntervalMs 20 10000
 $holdMs = Read-Integer HoldMs 0 60000
 $cycles = Read-Integer Cycles 1 10000
 
@@ -81,10 +80,16 @@ $startPulse = Convert-ToPulse $startDeg
 $endPulse = Convert-ToPulse $endDeg
 $stepUs = [int][Math]::Floor($stepDeg * 2000 / 180)
 $actualStep = [decimal]$stepUs * 180 / 2000
+$minIntervalMs = [int][Math]::Ceiling($actualStep * 120 / 60)
+if ($intervalMs -lt $minIntervalMs) {
+    throw "Set IntervalMs to at least $minIntervalMs for this StepDeg (limit 60 deg per 120 ms)."
+}
+$commandRate = [Math]::Round($actualStep * 1000 / $intervalMs, 2)
 $stepsPerLeg = [Math]::Ceiling([Math]::Abs($endPulse - $startPulse) / $stepUs)
 $sweepSeconds = $cycles * 2.0 * ($stepsPerLeg * $intervalMs + $holdMs) / 1000.0
 Write-Output "S4 $startDeg <-> $endDeg deg, test trim $trimDeg deg"
 Write-Output "PWM $startPulse <-> $endPulse us, step $stepUs us ($actualStep deg), interval $intervalMs ms"
+Write-Output "Command pace up to $commandRate deg/s, limit 500 deg/s"
 Write-Output "Hold $holdMs ms per end, $cycles round trips, about $sweepSeconds s plus travel to and from the start"
 if ($Preview) { return }
 

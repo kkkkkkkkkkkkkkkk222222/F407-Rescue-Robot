@@ -24,9 +24,11 @@ if {[mrw [expr {$ticks+4}]] != 5100 || [mrw [expr {$ticks+12}]] != 10100 ||
 set left_fall [expr {$ticks+24}]
 set original [mrw $left_fall]
 set right_pulse [expr {[mrw [expr {$ticks+8}]]-5100}]
+# Each pulse microsecond is 0.09 degrees, requiring 0.18 ms at the requested rate limit.
 if {$original < 15600 || $original > 17600 || $right_pulse < 500 || $right_pulse > 2500 ||
     $start_pulse < 500 || $start_pulse > 2500 || $end_pulse < 500 || $end_pulse > 2500 ||
-    $step_us < 1 || $step_us > 5 || $interval_ms < 40 || $hold_ms < 0 || $cycles < 1} {
+    $step_us < 1 || $step_us > 2000 || $interval_ms < 20 || $step_us*9 > $interval_ms*50 ||
+    $hold_ms < 0 || $cycles < 1} {
   error "Claw pulse or sweep parameters are outside the expected range"
 }
 
