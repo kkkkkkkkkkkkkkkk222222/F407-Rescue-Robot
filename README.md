@@ -7,7 +7,9 @@
 | 运动、舵机和地图调试 | MotionDebug | DAPLink MotionDebug | `build/F405/MotionDebug/MotionDebug.elf` | mode=5，service=1 |
 | 正式比赛 | NormalRun | DAPLink NormalRun | `build/F405/NormalRun/NormalRun.elf` | mode=5，service=2 |
 
-两者均使用 STM32F405RG、RDK UART4 230400/8N1、程序器 USART1 115200/8N1 和协议 1.3。
+两者均使用 STM32F405RG、RDK UART4 921600/8N1、程序器 USART1 115200/8N1 和协议 1.3。
+07 每个真实编码器相邻采样区间发布一次，标称 100Hz；08 有新源时最高 100Hz。
+本轮跨端要求与交付状态见 [固定协作入口](docs/CROSS_REPO_REQUESTS.md)。
 命令行依次执行 `cmake --preset NormalRun` 和 `cmake --build --preset NormalRun`；
 调试时两处都换成 `MotionDebug`。烧录时认准表内路径。
 协作规则见 [AGENTS.md](AGENTS.md)，本轮状态见 [CURRENT_STATUS](docs/CURRENT_STATUS.md)。

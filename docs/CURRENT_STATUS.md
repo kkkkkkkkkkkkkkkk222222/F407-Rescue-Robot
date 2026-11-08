@@ -1,5 +1,14 @@
 # 当前状态：F405 烧录入口
 
+2026-11-08 UART-100HZ-01。
+- RDK 固定入口核对至 `347791666cd3d32ecfe157979fe8e772ff30f4a8`，本端从 `6302bf2` 增量实施。
+  当前跨端要求与回执集中在 [CROSS_REPO_REQUESTS](CROSS_REPO_REQUESTS.md)，AGENTS 已加入两端固定入口。
+- 实现提交为 `14b2a3a9077e6980a540631ce94345e61eb0487d`。MotionDebug / NormalRun 共用 UART4 921600/8N1，
+  07 每个真实相邻编码器区间发布一次，标称100Hz。08 仍为有新源时最高100Hz，协议仍为1.3。
+  RDK 部署时须同步使用921600。主IMU 230400、程序器文本串口115200及原控制逻辑沿用现有设置。
+- 两个原固件入口均已编译、链接成功。未烧录、未运行实车动作，内嵌身份及 source_dirty 原因见固定入口。
+  当前板端 actual 未亲自读回，100Hz 实收、SDK 与地面效果待实测。
+
 2026-11-08 左爪小步自助测试。
 - `tools/Test-F405ClawSweep.ps1 -Install` 生成桌面 `F405 Claw Test`，保留已有 `settings.ini`。
   保存角度、偏移、步幅、间隔、端点停留和次数后双击 `Start.cmd`，双击 `Stop.cmd` 保持当时脉宽并停止变化。
@@ -73,8 +82,8 @@
   报告 d6ae45c4、dirty=1，不能据此确认当前板端实际固件。
 
 运动调试用 `MotionDebug`（原 NormalDebugTimed），正式比赛用 `NormalRun`（原 NormalDebugTask）。
-二者沿用协议 1.3、mode=5、UART4=230400；service 分别为 1、2。
-产物和 CLion 配置见 [README](../README.md)。本次只迁移构建入口。
+二者当前使用协议 1.3、mode=5、UART4=921600；service 分别为 1、2。
+产物和 CLion 配置见 [README](../README.md)。UART-100HZ-01 的本轮回执见页首固定入口。
 正式 Task 含 mode51 对整体有效动态定位的恢复支持；RDK 当前采用无框事件及视频回放，
 不启用早先交接中的 H±8° 观察扫描或人工重试建议。
 

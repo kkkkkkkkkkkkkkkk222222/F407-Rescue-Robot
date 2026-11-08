@@ -35,3 +35,17 @@
 
 来源：用户本轮明确要求及上位机 `582a1f6` 的 `docs/CHANGE_WORKFLOW.md`。
 具体技术方案及跨端送达状态只记当前状态/TODO，不固化为长期规则。
+
+## 跨仓库固定入口
+
+本端当前要求及审核/实现回执见 `docs/CROSS_REPO_REQUESTS.md`。
+涉及相关跨端接口或用户通知有更新时，直接读取对端固定入口并核对源提交和请求 ID。
+只更新与当次目标相关的要求及回执，不恢复历史任务，不要求用户逐次手工转交。
+
+- 本端 https://github.com/kkkkkkkkkkkkkkkk222222/F407-Rescue-Robot/blob/main/docs/CROSS_REPO_REQUESTS.md
+- RDK https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CROSS_REPO_REQUESTS.md
+
+发布、读取或镜像要求不等于审核通过或实施授权，也不建立常驻自动修改服务。
+接收方先核对自己的代码，说明问题、最小方案、成本和两端影响，可接受、缩小、替代或拒绝。
+人保留知情、拒绝和选择权。已明确批准范围直接推进，超范围的重要取舍先问人，AI 不能互相授权。
+原禁止擅自新增新鲜度、握手、资格等待、停车/FAULT、高频巡检和无效测试的约束继续适用。
