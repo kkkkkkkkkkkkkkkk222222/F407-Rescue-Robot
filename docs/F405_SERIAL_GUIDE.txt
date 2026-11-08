@@ -38,6 +38,11 @@ PRESET OK 表示已接受。等 PRESET DONE 后再做偏移校准。
 结束磨合后可继续用 DEBUG 命令调试。
 RUN 会重启主控并执行起步收纳。重新开始比赛时由 RDK 发赛前配置。
 
+左爪小步短测使用桌面 F405 Claw Test 文件夹。用记事本改 settings.ini，保存后双击 Start.cmd。
+StartDeg、EndDeg 是逻辑角，LeftTrimDeg 是测试换算用的左爪偏移。StepDeg 小于 0.5°，IntervalMs 是步间隔。
+HoldMs 是每端的停留时间，Cycles 是往返次数。正常结束会回到启动前的左爪脉宽，Stop.cmd 则保持停止时的脉宽。
+在 PowerShell 运行 Start.cmd -Preview 可以先看换算结果，默认参数用于 18° 到 22° 的一次空载短测。
+
 三、NormalRun 任务日志
 
 PING / HELP             检查串口或列出命令

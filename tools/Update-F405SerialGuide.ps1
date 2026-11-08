@@ -57,12 +57,15 @@ foreach ($preset in $presets) {
     $lines += 'P {0,-10} {1,3}/{2,-3} -> {3,3}/{4,-3}           {5,3}/{6}' -f $name, $left, $right, $leftPwm, $rightPwm, $lift, $camera
 }
 $runInScript = Join-Path $PSScriptRoot 'Run-F405ClawRunIn.ps1'
+$sweepScript = Join-Path $PSScriptRoot 'Test-F405ClawSweep.ps1'
 $lines += @(
     ''
     'Refresh in PowerShell'
     ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $PSCommandPath)
     'Claw run-in in PowerShell'
     ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $runInScript)
+    'Claw fine sweep desktop installer'
+    ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{0}" -Install' -f $sweepScript)
     '[[F405-AUTO-END]]'
 )
 
