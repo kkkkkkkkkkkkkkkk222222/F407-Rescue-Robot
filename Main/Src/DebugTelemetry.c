@@ -21,9 +21,9 @@ enum { G_VALID=1, G_READY=2, G_RECOVERING=4, G_UNCERTAIN=8, G_STALE=16,
 #define MAX_PAYLOAD 160U
 #define REQUEST_MAX 64U
 #define REQUEST_SLOTS 4U
-#define WHEEL_PERIOD_US 20000U
+#define WHEEL_PERIOD_US 10000U
 #define GYRO_PERIOD_US 10000U
-#define REQUIRED_BAUD 230400U
+#define REQUIRED_BAUD 921600U
 enum { SERVICE_MOTIONDEBUG = 1, SERVICE_RESCUE_TASK = 2 };
 static const uint8_t firmware_id[32] = DEBUG_FIRMWARE_ID_BYTES;
 static const uint8_t git_id[20] = DEBUG_GIT_ID_BYTES;
@@ -42,9 +42,8 @@ typedef struct {
   uint32_t raw[3];
 } WheelSample;
 static volatile WheelSample latest_wheel;
-static WheelSample accumulation;
 static uint64_t previous_wheel_us;
-static uint32_t previous_bad, wheel_intervals;
+static uint32_t previous_bad;
 static uint32_t consumed_wheel;
 
 typedef struct { uint64_t received; int64_t value; uint32_t id; } GyroSample;
@@ -92,10 +91,9 @@ void DebugTelemetry_Init(void)
 {
   initialized=false; streaming=false; reference_epoch=0U; packet_sequence=0U;
   previous_wheel_us=0U; wheel_id=0U;
-  previous_bad=wheel_intervals=consumed_wheel=0U;
+  previous_bad=consumed_wheel=0U;
   published_yaw=published_rate=gyro_id=0U; next_gyro_us=0U;
   request_head=request_tail=0U; rx_size=rx_expected=0U;
-  memset(&accumulation,0,sizeof(accumulation));
   memset((void *)&latest_wheel,0,sizeof(latest_wheel));
   memset((void *)&latest_yaw,0,sizeof(latest_yaw));
   memset((void *)&latest_rate,0,sizeof(latest_rate));
@@ -126,52 +124,46 @@ void DebugTelemetry_WheelSample(uint64_t begin, uint64_t end,
     memcpy(previous_raw,position,sizeof(previous_raw)); previous_capture_us=span;
     return;
   }
-  if(!wheel_intervals) {
-    accumulation.t0=previous_wheel_us;
-    accumulation.flags=W_SLIP_UNKNOWN;
-    accumulation.capture_us=span>previous_capture_us?span:previous_capture_us;
-    memset(accumulation.delta,0,sizeof(accumulation.delta));
-  }
-  if(pending) accumulation.flags|=W_PENDING;
-  if(bad!=previous_bad) accumulation.flags|=W_TRANSITION;
-  if(middle<=previous_wheel_us) accumulation.flags|=W_INTERVAL;
+  /* Publish each adjacent encoder interval using its measured duration. */
+  WheelSample sample={0};
+  sample.t0=previous_wheel_us;
+  sample.t1=middle;
+  sample.flags=W_SLIP_UNKNOWN;
+  sample.capture_us=span>previous_capture_us?span:previous_capture_us;
+  if(pending) sample.flags|=W_PENDING;
+  if(bad!=previous_bad) sample.flags|=W_TRANSITION;
+  if(middle<=previous_wheel_us) sample.flags|=W_INTERVAL;
   for(uint8_t i=0;i<3U;++i) {
     if((uint32_t)((uint64_t)position[i]-(uint64_t)previous_raw[i])!=(uint32_t)delta[i]) {
-      accumulation.flags|=W_CLIPPED;
+      sample.flags|=W_CLIPPED;
     }
     previous_raw[i]=position[i];
-    const int64_t sum=(int64_t)accumulation.delta[i]+delta[i];
-    if(sum>INT32_MAX || sum<INT32_MIN) accumulation.flags|=W_CLIPPED;
-    accumulation.delta[i]=sum>INT32_MAX ? INT32_MAX : sum<INT32_MIN ? INT32_MIN : (int32_t)sum;
-    accumulation.raw[i]=(uint32_t)position[i];
+    sample.delta[i]=delta[i];
+    sample.raw[i]=(uint32_t)position[i];
   }
-  if(span>accumulation.capture_us) accumulation.capture_us=span;
   previous_bad=bad; previous_wheel_us=middle; previous_capture_us=span;
-  if(++wheel_intervals<2U) return;
-  wheel_intervals=0U;
-  accumulation.t1=middle;
-  const uint64_t duration=middle-accumulation.t0;
-  if(!duration) accumulation.flags|=W_INTERVAL;
-  if(!epoch_valid) accumulation.flags|=W_EPOCH_BAD;
-  if(!(accumulation.flags & (W_TRANSITION|W_INTERVAL|W_CLIPPED))) {
+  const uint64_t duration=sample.t1-sample.t0;
+  if(!duration) sample.flags|=W_INTERVAL;
+  if(!epoch_valid) sample.flags|=W_EPOCH_BAD;
+  if(!(sample.flags & (W_TRANSITION|W_INTERVAL|W_CLIPPED))) {
     const float scale=(3.14159265358979323846f*APP_WHEEL_DIAMETER_MM/
         APP_ENCODER_COUNTS_PER_WHEEL_REV)*1000000000.0f/(float)duration;
-    const float vx=scale*((float)accumulation.delta[0]-accumulation.delta[1])/1.7320508075688772f;
-    const float vy=scale*((float)accumulation.delta[0]+accumulation.delta[1]-2.0f*accumulation.delta[2])/3.0f;
+    const float vx=scale*((float)sample.delta[0]-sample.delta[1])/1.7320508075688772f;
+    const float vy=scale*((float)sample.delta[0]+sample.delta[1]-2.0f*sample.delta[2])/3.0f;
     if(!isfinite(vx) || !isfinite(vy) || fabsf(vx)>=2147483647.0f || fabsf(vy)>=2147483647.0f) {
-      accumulation.flags|=W_CLIPPED;
+      sample.flags|=W_CLIPPED;
     } else {
-      accumulation.velocity[0]=(int32_t)roundf(vx);
-      accumulation.velocity[1]=(int32_t)roundf(vy);
-      accumulation.flags|=W_VALID;
+      sample.velocity[0]=(int32_t)roundf(vx);
+      sample.velocity[1]=(int32_t)roundf(vy);
+      sample.flags|=W_VALID;
     }
   }
-  accumulation.reference=reference_epoch;
-  if(!(accumulation.flags&W_VALID)) {
-    accumulation.velocity[0]=accumulation.velocity[1]=INT32_MIN;
+  sample.reference=reference_epoch;
+  if(!(sample.flags&W_VALID)) {
+    sample.velocity[0]=sample.velocity[1]=INT32_MIN;
   }
-  accumulation.id=++wheel_id;
-  latest_wheel=accumulation;
+  sample.id=++wheel_id;
+  latest_wheel=sample;
 }
 
 void DebugTelemetry_GyroSample(uint8_t type, int64_t yaw, int32_t rate, uint64_t received)
