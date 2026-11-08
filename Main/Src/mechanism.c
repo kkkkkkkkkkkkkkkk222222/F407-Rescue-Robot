@@ -48,7 +48,7 @@ static uint8_t claw_relaxed_left(void)
 
 static uint8_t claw_relaxed_right(void)
 {
-  return APP_CLAW_RIGHT_TOUCH_ANGLE + separation_extra_close_deg;
+  return APP_CLAW_RIGHT_FROM_LEFT(claw_relaxed_left());
 }
 
 static bool claw_move_sequential(ClawAction action, uint32_t now_ms,
@@ -83,15 +83,14 @@ static bool claw_move_sequential(ClawAction action, uint32_t now_ms,
 }
 
 static bool claw_move_together(ClawAction action, uint32_t now_ms,
-                               uint8_t left_angle, uint8_t right_angle,
-                               uint32_t wait_ms)
+                               uint8_t left_angle, uint32_t wait_ms)
 {
   if (claw_action != action) {
     claw_action = action;
     claw_step_ms = now_ms;
     claw_done = false;
     Servo_SetAngle(4U, left_angle);
-    Servo_SetAngle(2U, right_angle);
+    Servo_SetAngle(2U, APP_CLAW_RIGHT_FROM_LEFT(left_angle));
     return false;
   }
 
@@ -142,7 +141,8 @@ void Lift_SetTravelPosition(void)
 
 bool Claw_Open(uint32_t now_ms)
 {
-  return claw_move_together(CLAW_ACTION_OPEN, now_ms, 108U, 72U, 1000U);
+  return claw_move_together(CLAW_ACTION_OPEN, now_ms,
+                            APP_CLAW_LEFT_OPEN_ANGLE, 1000U);
 }
 
 static bool claw_step_to(uint8_t id, uint8_t target)
@@ -188,42 +188,44 @@ bool Claw_SetBumpPosition(bool closed, uint32_t now_ms)
     return claw_move_separation(CLAW_ACTION_BUMP_TOUCH, now_ms,
                                 APP_CLAW_LEFT_TOUCH_ANGLE, APP_CLAW_RIGHT_TOUCH_ANGLE, 2000U);
   }
-  return claw_move_separation(CLAW_ACTION_BUMP_OPEN, now_ms, 108U, 72U, 1000U);
+  return claw_move_separation(CLAW_ACTION_BUMP_OPEN, now_ms,
+                              APP_CLAW_LEFT_OPEN_ANGLE, APP_CLAW_RIGHT_OPEN_ANGLE, 1000U);
 }
 
 bool Claw_OpenLeft(uint32_t now_ms)
 {
   /* Release left and use the task's latched baseline/attempt relaxation. */
   return claw_move_separation(CLAW_ACTION_OPEN_LEFT, now_ms,
-                              108U, claw_relaxed_right(), 600U);
+                              APP_CLAW_LEFT_OPEN_ANGLE, claw_relaxed_right(), 600U);
 }
 
 bool Claw_OpenRight(uint32_t now_ms)
 {
   /* Mirror of Claw_OpenLeft: a smaller left-servo angle closes it farther. */
   return claw_move_separation(CLAW_ACTION_OPEN_RIGHT, now_ms,
-                              claw_relaxed_left(), 72U, 600U);
+                              claw_relaxed_left(), APP_CLAW_RIGHT_OPEN_ANGLE, 600U);
 }
 
 bool Claw_ClusterOpenLeft(uint32_t now_ms)
 {
   /* Selective separation uses the same retained-side profile across retries. */
   return claw_move_separation(CLAW_ACTION_CLUSTER_OPEN_LEFT, now_ms,
-                              108U, claw_relaxed_right(), 600U);
+                              APP_CLAW_LEFT_OPEN_ANGLE, claw_relaxed_right(), 600U);
 }
 
 bool Claw_ClusterOpenRight(uint32_t now_ms)
 {
   /* Mirror of Claw_ClusterOpenLeft for a retained left-side target. */
   return claw_move_separation(CLAW_ACTION_CLUSTER_OPEN_RIGHT, now_ms,
-                              claw_relaxed_left(), 72U, 600U);
+                              claw_relaxed_left(), APP_CLAW_RIGHT_OPEN_ANGLE, 600U);
 }
 
 bool Claw_Retract(uint32_t now_ms)
 {
   /* Fold the left claw first, then place the right claw on the outside. */
   return claw_move_sequential(CLAW_ACTION_RETRACT, now_ms,
-                              4U, 23U, 2U, 147U);
+                              4U, APP_CLAW_LEFT_RETRACT_ANGLE,
+                              2U, APP_CLAW_RIGHT_RETRACT_ANGLE);
 }
 
 bool Claw_Touch(uint32_t now_ms)
@@ -231,14 +233,12 @@ bool Claw_Touch(uint32_t now_ms)
   /* Both claws move together, but keep the existing two-second confirmation
    * window before GRIPPER_CLOSED is reported to the RDK. */
   return claw_move_together(CLAW_ACTION_TOUCH, now_ms,
-                            APP_CLAW_LEFT_TOUCH_ANGLE,
-                            APP_CLAW_RIGHT_TOUCH_ANGLE, 2000U);
+                            APP_CLAW_LEFT_TOUCH_ANGLE, 2000U);
 }
 
 bool Claw_HalfTouch(uint32_t now_ms)
 {
   return claw_move_together(CLAW_ACTION_HALF_TOUCH, now_ms,
                             APP_CLAW_LEFT_TOUCH_ANGLE + APP_INJURY_CLAW_RELAX_DEG,
-                            APP_CLAW_RIGHT_TOUCH_ANGLE - APP_INJURY_CLAW_RELAX_DEG,
                             APP_INJURY_CLAW_SETTLE_MS);
 }

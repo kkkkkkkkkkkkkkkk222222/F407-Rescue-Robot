@@ -1,0 +1,76 @@
+F405 串口调试手册
+
+程序器串口通常为 COM18，115200，8 位数据位，无校验，1 位停止位。
+文本发送，每条命令加回车或换行。程序器 USART1 为 PB6 TX、PB7 RX。
+
+一、NormalRun 舵机与比赛姿态
+
+发送 DEBUG，收到 DEBUG OK 后进入维护并停止底盘。发送 P 可列出预设。
+S 1 88 设升降逻辑角。S 2 90 设右爪逻辑角。S 3 140 设摄像头逻辑角。
+S 4 18 设左爪逻辑角。O 2 2 和 O 4 5 分别设右爪、左爪总偏移，单位度。
+O 即时试调，RUN 重启后重新加载 app_config.h 中的默认偏移。
+
+以左爪 S4 为参考。双爪开、合、半闭时，右爪 S2 的逻辑角是 180° 减左爪角。
+两路 PWM 分别应用各自的安装偏移。实际信号对应角度看自动表中的 PWM 列。
+收纳用独立角度，P START 先收左爪到内侧，再收右爪到外侧。
+单侧分离按选中的一侧开爪，并用相同的镜像规则计算保留侧。
+
+P START    起步收纳，左爪先收
+P SEARCH   120° 搜寻
+P LOW      105° 搜寻
+P OBSERVE  开爪观察夹内
+P AUDIT    合爪复审
+P HALF     半闭爪后退的初始姿态
+P STAGE    安全区预备点
+P DROP     投送时双开
+PRESET OK 表示已接受。等 PRESET DONE 后再做偏移校准。
+运行刷新命令只更新自动标记内的角度和偏移。其余内容可用记事本直接编辑。
+
+[[F405-AUTO-BEGIN]]
+[[F405-AUTO-END]]
+
+二、左爪磨合
+
+关闭串口助手的端口连接，再执行自动段中的 Claw run-in 命令。
+脚本进入 DEBUG，先发 S 2 90 并给右爪留出到位时间，再按当前默认偏移运行。
+左爪每 0.5 秒切换一次 S 4 18 和 S 4 120，默认循环 10 分钟。
+按 Ctrl+C 可提前停止循环。完成后停在 S 4 18，右爪保持 S 2 90。
+结束磨合后可继续用 DEBUG 命令调试。
+RUN 会重启主控并执行起步收纳。重新开始比赛时由 RDK 发赛前配置。
+
+三、NormalRun 任务日志
+
+PING / HELP             检查串口或列出命令
+STAT / IMU / ENC / MOTOR 查看板级状态、陀螺、编码器或驱动
+TSTAT                   读取比赛任务快照
+TLOG 1 / TLOG 0         开启或关闭任务日志
+TDUMP                   导出任务事件记录
+TD_DRIVE 的 PWM 为三轮电机占空比指令，SERVO_TARGET 为舵机逻辑角。
+
+四、MotionDebug 常用指令
+
+MOVE 200 150          前进 200 mm，速度 150 mm/s。负距离后退
+TURN 90 30            顺时针相对转 90°，角速度 30°/s。负角度反向
+BODY 0 100 150        车体向左移动 100 mm，第一项向前，第二项向左为正
+FIELD 100 0 150       场地坐标 X 方向相对位移 100 mm，速度 150 mm/s
+CIRCLES 1 60          以固定参考转一圈，角速度 60°/s
+STOP / HOLD           停车。STOP 也取消逐轮检查和多圈批次
+RESET                 停车并重建运动测试的 x、y、航向参考
+S 3 140               静止时开启 S3，设逻辑角 140°
+SOFF 4 / SOFF         停止指定路或四路舵机脉冲
+WHEELS                三轮架空后逐轮点动，右前、左前、后轮
+CAL 1 150 400         三轮架空后给 W1 15% PWM，持续 400 ms
+MLOG 1 / MLOG 0       开启或关闭 100 ms 驱动日志
+DIAG / CRASH          查看诊断或上次故障记录
+底盘动作等 FINAL，再发下一条。速度单位 mm/s，TURN 和 CIRCLES 的速度单位 °/s。
+
+五、连线和烧录
+
+RDK 使用 JP506 的 UART4，230400 8N1。JP101 烧录口依次为 3.3V 参考、SWCLK、GND、SWDIO。
+CLion 选 NormalRun 与 DAPLink NormalRun 烧比赛版，选 MotionDebug 与 DAPLink MotionDebug 烧运动测试版。
+在工程目录可执行以下两行烧入已编译的比赛镜像。
+
+$image = "build/F405/NormalRun/NormalRun.elf"
+openocd -f dap.cfg -c ("program " + $image + " verify reset exit")
+
+COM18 无法打开时，关闭占用端口的串口助手。烧录出现 CMD_INFO failed 时重新插接电脑端 DAPLink。

@@ -82,8 +82,8 @@
 #define APP_GAMEPAD_CLAW_RATE_DEG_S 35.0f
 #define APP_GAMEPAD_CLAW_LEFT_CLOSED_ANGLE ((float)APP_CLAW_LEFT_TOUCH_ANGLE)
 #define APP_GAMEPAD_CLAW_RIGHT_CLOSED_ANGLE ((float)APP_CLAW_RIGHT_TOUCH_ANGLE)
-#define APP_GAMEPAD_CLAW_LEFT_OPEN_ANGLE 108.0f
-#define APP_GAMEPAD_CLAW_RIGHT_OPEN_ANGLE 72.0f
+#define APP_GAMEPAD_CLAW_LEFT_OPEN_ANGLE ((float)APP_CLAW_LEFT_OPEN_ANGLE)
+#define APP_GAMEPAD_CLAW_RIGHT_OPEN_ANGLE ((float)APP_CLAW_RIGHT_OPEN_ANGLE)
 #define APP_ENABLE_MOTION_TEST           0
 #define APP_ENABLE_LOCATION_DEMO         0
 #define APP_ENABLE_MOVE_SPIN_TEST        0
@@ -618,9 +618,9 @@
 #define APP_LIFT_TRAVEL_ANGLE             88U
 /* F405 installation offsets in degrees, added at PWM output. */
 #define APP_SERVO_S1_OFFSET_DEG            0  /* Lift */
-#define APP_SERVO_S2_OFFSET_DEG            0  /* Right claw */
+#define APP_SERVO_S2_OFFSET_DEG            2  /* Right claw */
 #define APP_SERVO_S3_OFFSET_DEG            0  /* Camera */
-#define APP_SERVO_S4_OFFSET_DEG            0  /* Left claw */
+#define APP_SERVO_S4_OFFSET_DEG            5  /* Left claw */
 #define APP_DELIVERY_CAMERA_ANGLE         120U
 #define APP_DELIVERY_CAMERA_SETTLE_MS     300U
 #define APP_DELIVERY_VERIFY_WAIT_MS       1000U
@@ -638,8 +638,15 @@
 #define APP_STASH_RETURN_BACKOFF_M           0.35f
 #define APP_STASH_RETURN_BACKOFF_SPEED_MM_S 650.0f
 #define APP_REMOTE_YIELD_SPEED_MM_S          750.0f
+/* The left claw defines each mirrored logical pose. PWM trim is per servo. */
+#define APP_CLAW_RIGHT_FROM_LEFT(left_deg) (180U - (left_deg))
+#define APP_CLAW_LEFT_OPEN_ANGLE                108U
 #define APP_CLAW_LEFT_TOUCH_ANGLE                76U
-#define APP_CLAW_RIGHT_TOUCH_ANGLE              104U
+#define APP_CLAW_RIGHT_OPEN_ANGLE  APP_CLAW_RIGHT_FROM_LEFT(APP_CLAW_LEFT_OPEN_ANGLE)
+#define APP_CLAW_RIGHT_TOUCH_ANGLE APP_CLAW_RIGHT_FROM_LEFT(APP_CLAW_LEFT_TOUCH_ANGLE)
+/* Stow folds the left claw inside before bringing the right claw around it. */
+#define APP_CLAW_LEFT_RETRACT_ANGLE              18U
+#define APP_CLAW_RIGHT_RETRACT_ANGLE            147U
 #define APP_CLAW_SEPARATE_SINGLE_CLOSE_DEG        10U
 #define APP_CLAW_SEPARATE_MULTI_CLOSE_DEG         10U
 #define APP_CLAW_SEPARATE_STEP_DEG                 4U /* Per 20 ms Task period. */
