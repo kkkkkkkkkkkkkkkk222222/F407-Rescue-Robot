@@ -5,8 +5,20 @@
 /* Lift/right claw/camera/left claw -> JP304/JP307/JP308/JP309. */
 static const uint16_t pins[4] = {GPIO_PIN_13, GPIO_PIN_0, GPIO_PIN_1, GPIO_PIN_2};
 static volatile uint8_t angles[4];
+static int16_t offsets_deg[4] = {
+    APP_SERVO_S1_OFFSET_DEG, APP_SERVO_S2_OFFSET_DEG,
+    APP_SERVO_S3_OFFSET_DEG, APP_SERVO_S4_OFFSET_DEG
+};
 static bool started;
 static volatile uint16_t enabled_pins, pending_pins;
+
+static uint32_t servo_pulse_for_angle(uint8_t index, uint8_t angle)
+{
+  int32_t output_deg = (int32_t)angle + offsets_deg[index];
+  if (output_deg < 0) { output_deg = 0; }
+  if (output_deg > 180) { output_deg = 180; }
+  return 500U + (uint32_t)output_deg * 2000U / 180U;
+}
 
 void BoardF405_ServoIRQ(void)
 {
@@ -40,7 +52,10 @@ static void servo_start(uint16_t outputs)
   TIM4->CCMR1 = TIM_CCMR1_OC1PE | TIM_CCMR1_OC2PE;
   TIM4->CCMR2 = TIM_CCMR2_OC3PE | TIM_CCMR2_OC4PE;
   TIM4->CCER = TIM_CCER_CC1E | TIM_CCER_CC2E | TIM_CCER_CC3E | TIM_CCER_CC4E;
-  TIM4->CCR1 = TIM4->CCR2 = TIM4->CCR3 = TIM4->CCR4 = 1500U;
+  TIM4->CCR1 = servo_pulse_for_angle(0U, 90U);
+  TIM4->CCR2 = servo_pulse_for_angle(1U, 90U);
+  TIM4->CCR3 = servo_pulse_for_angle(2U, 90U);
+  TIM4->CCR4 = servo_pulse_for_angle(3U, 90U);
   for (uint8_t i = 0; i < 4U; ++i) { angles[i] = 90U; }
   TIM4->EGR = TIM_EGR_UG;
   TIM4->SR = 0U;
@@ -86,7 +101,7 @@ void Servo_SetAngle(uint8_t id, uint8_t angle)
   if (id < 1U || id > 4U) { return; }
   if (angle > 180U) { angle = 180U; }
   TaskDiag_Event("SERVO_TARGET", id, angle, 0, 0, 0, 0);
-  const uint32_t pulse = 500U + (uint32_t)angle * 2000U / 180U;
+  const uint32_t pulse = servo_pulse_for_angle(id - 1U, angle);
   const uint32_t mask = __get_PRIMASK();
   __disable_irq();
   angles[id - 1U] = angle;
@@ -105,4 +120,11 @@ void Servo_SetAngle(uint8_t id, uint8_t angle)
 uint8_t Servo_GetAngle(uint8_t id)
 {
   return id >= 1U && id <= 4U ? angles[id - 1U] : 0U;
+}
+
+void Servo_SetOffset(uint8_t id, int16_t offset_deg)
+{
+  if (id < 1U || id > 4U) { return; }
+  offsets_deg[id - 1U] = offset_deg;
+  Servo_SetAngle(id, Servo_GetAngle(id));
 }

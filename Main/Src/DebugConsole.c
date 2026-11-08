@@ -1,6 +1,7 @@
 #include "DebugConsole.h"
 #include "TaskDiag.h"
 
+#include <limits.h>
 #include <string.h>
 
 #include "app_config.h"
@@ -85,8 +86,10 @@ static bool debug_parse_uint(const char **cursor, unsigned int *value)
     ++(*cursor);
   }
   while ((**cursor >= '0') && (**cursor <= '9')) {
+    const unsigned int digit = (unsigned int)(**cursor - '0');
+    if (parsed > (UINT_MAX - digit) / 10U) { return false; }
     has_digit = true;
-    parsed = parsed * 10U + (unsigned int)(**cursor - '0');
+    parsed = parsed * 10U + digit;
     ++(*cursor);
   }
   *value = parsed;
@@ -117,7 +120,7 @@ static void debug_execute(char *command)
     return;
   }
   if (strcmp(command, "HELP") == 0) {
-    debug_send("NORMALDEBUG: PING / STAT / IMU / ENC / MOTOR / DEBUG / S id deg / RUN\r\n");
+    debug_send("NORMALDEBUG: PING / STAT / IMU / ENC / MOTOR / DEBUG / S id deg / O id +/-deg / RUN\r\n");
     debug_send("TASK LOG: TLOG 1 / TLOG 0 / TSTAT / TDUMP; NO MOTION\r\n");
     return;
   }
@@ -138,6 +141,26 @@ static void debug_execute(char *command)
     Motor_Stop();
     debug_send("RUN RESET\r\n");
     NVIC_SystemReset();
+#if APP_BOARD_F405_ROBO
+  } else if ((command[0] == 'O') && (command[1] == ' ')) {
+    const char *cursor = &command[1];
+    const bool id_valid = debug_parse_uint(&cursor, &id) && (*cursor == ' ');
+    while (*cursor == ' ') { ++cursor; }
+    const bool negative = (*cursor == '-');
+    if (negative || (*cursor == '+')) { ++cursor; }
+    const bool offset_valid = debug_parse_uint(&cursor, &angle);
+    while (*cursor == ' ') { ++cursor; }
+    if (status.active && id_valid && offset_valid && (*cursor == '\0') &&
+        (id >= 1U) && (id <= 4U) && (angle <= 180U)) {
+      const int16_t offset = negative ? -(int16_t)angle : (int16_t)angle;
+      Servo_SetOffset((uint8_t)id, offset);
+      status.servo_id = (uint8_t)id;
+      status.servo_angle = Servo_GetAngle((uint8_t)id);
+      debug_send("OK\r\n");
+    } else {
+      debug_send("ERR\r\n");
+    }
+#endif
   } else if ((command[0] == 'S') && (command[1] == ' ')) {
     const char *cursor = &command[1];
     const bool id_valid = debug_parse_uint(&cursor, &id);

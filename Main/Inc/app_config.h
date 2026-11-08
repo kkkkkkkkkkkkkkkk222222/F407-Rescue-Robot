@@ -616,6 +616,11 @@
 #define APP_POSE_WAIT_TIMEOUT_MS          1500U
 #define APP_LIFT_START_ANGLE              55U
 #define APP_LIFT_TRAVEL_ANGLE             88U
+/* F405 installation offsets in degrees, added at PWM output. */
+#define APP_SERVO_S1_OFFSET_DEG            0  /* Lift */
+#define APP_SERVO_S2_OFFSET_DEG            0  /* Right claw */
+#define APP_SERVO_S3_OFFSET_DEG            0  /* Camera */
+#define APP_SERVO_S4_OFFSET_DEG            0  /* Left claw */
 #define APP_DELIVERY_CAMERA_ANGLE         120U
 #define APP_DELIVERY_CAMERA_SETTLE_MS     300U
 #define APP_DELIVERY_VERIFY_WAIT_MS       1000U
