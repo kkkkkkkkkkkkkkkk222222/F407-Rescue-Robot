@@ -49,6 +49,45 @@ static void debug_send(const char *text)
 #endif
 }
 
+#if APP_BOARD_F405_ROBO
+typedef struct {
+  const char *name;
+  void (*set_lift)(void);
+  uint8_t camera;
+  bool (*move_claw)(uint32_t now_ms);
+} DebugPreset;
+
+static const DebugPreset presets[] = {
+    {"START",   Lift_SetStartPosition,  90U,                              Claw_Retract},
+    {"SEARCH",  Lift_SetTravelPosition, APP_SEARCH_HIGH_CAMERA_ANGLE,     Claw_Open},
+    {"LOW",     Lift_SetTravelPosition, APP_SEARCH_LOW_CAMERA_ANGLE,      Claw_Open},
+    {"OBSERVE", Lift_SetTravelPosition, APP_GRAB_VIEW_ANGLE,               Claw_Open},
+    {"AUDIT",   Lift_SetTravelPosition, APP_GRAB_VIEW_ANGLE,               Claw_Touch},
+    {"HALF",    Lift_SetTravelPosition, APP_SEARCH_HIGH_CAMERA_ANGLE,     Claw_HalfTouch},
+    {"STAGE",   Lift_SetTravelPosition, APP_SAFE_ALIGN_CAMERA_ANGLE,       Claw_Touch},
+    {"DROP",    Lift_SetTravelPosition, APP_DELIVERY_CAMERA_ANGLE,        Claw_Open}
+};
+static const DebugPreset *pending_preset;
+static const char preset_help[] = "P START / SEARCH / LOW / OBSERVE / AUDIT / HALF / STAGE / DROP\r\n";
+
+static void debug_start_preset(const char *name)
+{
+  if (status.active) {
+    for (uint32_t i = 0U; i < sizeof(presets) / sizeof(presets[0]); ++i) {
+      if (strcmp(name, presets[i].name) == 0) {
+        pending_preset = &presets[i];
+        Claw_RestartAction();
+        pending_preset->set_lift();
+        Camera_SetAngle(pending_preset->camera);
+        debug_send("PRESET OK\r\n");
+        return;
+      }
+    }
+  }
+  debug_send("ERR PRESET; USE DEBUG THEN P NAME\r\n");
+}
+#endif
+
 static void debug_start_rx(void)
 {
 #if APP_BOARD_F405_ROBO && APP_ENABLE_TASK
@@ -65,6 +104,9 @@ static void debug_set_servo(unsigned int id, unsigned int angle)
     debug_send("ERR\r\n");
     return;
   }
+#if APP_BOARD_F405_ROBO
+  pending_preset = NULL;
+#endif
 
   if (id == 3U) {
     Camera_SetAngle((uint8_t)angle);
@@ -121,6 +163,7 @@ static void debug_execute(char *command)
   }
   if (strcmp(command, "HELP") == 0) {
     debug_send("NORMALDEBUG: PING / STAT / IMU / ENC / MOTOR / DEBUG / S id deg / O id +/-deg / RUN\r\n");
+    debug_send(preset_help);
     debug_send("TASK LOG: TLOG 1 / TLOG 0 / TSTAT / TDUMP; NO MOTION\r\n");
     return;
   }
@@ -131,6 +174,9 @@ static void debug_execute(char *command)
   }
 #endif
   if (strcmp(command, "DEBUG") == 0) {
+#if APP_BOARD_F405_ROBO
+    pending_preset = NULL;
+#endif
     status.active = true;
     __DMB();
     Motor_Stop();
@@ -142,6 +188,10 @@ static void debug_execute(char *command)
     debug_send("RUN RESET\r\n");
     NVIC_SystemReset();
 #if APP_BOARD_F405_ROBO
+  } else if (strcmp(command, "P") == 0) {
+    debug_send(preset_help);
+  } else if ((command[0] == 'P') && (command[1] == ' ')) {
+    debug_start_preset(&command[2]);
   } else if ((command[0] == 'O') && (command[1] == ' ')) {
     const char *cursor = &command[1];
     const bool id_valid = debug_parse_uint(&cursor, &id) && (*cursor == ' ');
@@ -188,6 +238,9 @@ void DebugConsole_Init(void)
   status.servo_id = 3U;
   status.servo_angle = Servo_GetAngle(3U);
 #if APP_ENABLE_RUNTIME_SERVO_DEBUG
+#if APP_BOARD_F405_ROBO
+  pending_preset = NULL;
+#endif
   debug_start_rx();
 #endif
 }
@@ -233,6 +286,12 @@ void DebugConsole_Process(void)
       }
     }
   }
+#if APP_BOARD_F405_ROBO
+  if (pending_preset != NULL && pending_preset->move_claw(HAL_GetTick())) {
+    pending_preset = NULL;
+    debug_send("PRESET DONE\r\n");
+  }
+#endif
 #endif
 }
 

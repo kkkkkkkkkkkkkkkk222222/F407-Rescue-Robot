@@ -35,6 +35,10 @@ void Motor_SetSpeed(float target_speed, uint8_t id);
 /* Encoder distance control with IMU heading hold; positive is forward. */
 MotorDistanceStatus Motor_MoveDistance(float distance_m,
                                        float max_speed_mm_s);
+/* Encoder distance with a fixed field-frame heading, including reverse. */
+MotorDistanceStatus Motor_MoveDistanceHeading(float distance_m,
+                                              float max_speed_mm_s,
+                                              float field_heading_deg);
 /* Distance progress along the latched request; wrong-way travel is negative. */
 float Motor_GetDistanceTravelledMm(void);
 /* Encoder distance control with a linear terminal speed profile. */

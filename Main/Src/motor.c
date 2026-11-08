@@ -37,6 +37,8 @@ typedef struct {
   MotorDistanceStatus status;
   bool slowing;
   bool waiting_for_stop;
+  bool field_heading_hold;
+  int32_t field_heading_mdeg;
   float travelled_mm;
   float target_mm;
   float max_speed_mm_s;
@@ -683,8 +685,10 @@ static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
 
     distance_move.start_m1_count = encoder[0].position;
     distance_move.start_m2_count = encoder[1].position;
-    distance_move.target_yaw_mdeg = imu.yaw_mdeg;
     const LocationPose start_pose = Location_GetPose();
+    if (!distance_move.field_heading_hold) {
+      distance_move.target_yaw_mdeg = imu.yaw_mdeg;
+    }
     distance_move.start_x_mm = (float)start_pose.x_mm;
     distance_move.start_y_mm = (float)start_pose.y_mm;
     distance_move.start_heading_rad = (float)start_pose.heading_mdeg * 0.001f * MOTOR_DEG_TO_RAD;
@@ -761,8 +765,16 @@ static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
       distance_move.current_speed_mm_s, requested_speed_mm_s,
       speed_step_mm_s);
 
-  const int32_t heading_error_mdeg = motor_wrap_heading_error(
-      distance_move.target_yaw_mdeg - imu.yaw_mdeg);
+  int32_t heading_error_mdeg;
+  if (distance_move.field_heading_hold) {
+    const LocationPose pose = Location_GetPose();
+    const int32_t field_error_mdeg = motor_wrap_heading_error(
+        (int64_t)distance_move.field_heading_mdeg - pose.heading_mdeg);
+    heading_error_mdeg = (APP_LOCATION_IMU_YAW_SIGN > 0.0f) ?
+        field_error_mdeg : -field_error_mdeg;
+  } else {
+    heading_error_mdeg = motor_wrap_heading_error(distance_move.target_yaw_mdeg - imu.yaw_mdeg);
+  }
   float rotate_correction =
       Pid_Update(&heading_pid, (float)heading_error_mdeg / 1000.0f, 0.0f) *
       APP_MOTOR_HEADING_OUTPUT_SIGN;
@@ -1918,8 +1930,10 @@ void Motor_SetSpeed(float target_speed, uint8_t id)
 static MotorDistanceStatus motor_move_distance(float distance_m,
                                                float max_speed_mm_s,
                                                float slowdown_mm,
-                                                float end_speed_mm_s,
-                                                bool limit_slowdown_to_half)
+                                               float end_speed_mm_s,
+                                               bool limit_slowdown_to_half,
+                                               bool field_heading_hold,
+                                               float field_heading_deg)
 {
   const uint32_t primask = motor_enter_critical();
   if (distance_move.status != MOTOR_DISTANCE_IDLE) {
@@ -1954,6 +1968,7 @@ static MotorDistanceStatus motor_move_distance(float distance_m,
   }
   if (!isfinite(distance_m) || !isfinite(max_speed_mm_s) ||
       !isfinite(slowdown_mm) || !isfinite(end_speed_mm_s) ||
+      (field_heading_hold && !isfinite(field_heading_deg)) ||
       (max_speed_mm_s <= 0.0f) ||
       (max_speed_mm_s > (float)MOTOR_MAX_SPEED) ||
       (end_speed_mm_s <= 0.0f) ||
@@ -1997,6 +2012,9 @@ static MotorDistanceStatus motor_move_distance(float distance_m,
   distance_move.start_m1_count = 0;
   distance_move.start_m2_count = 0;
   distance_move.target_yaw_mdeg = 0;
+  distance_move.field_heading_hold = field_heading_hold;
+  distance_move.field_heading_mdeg = field_heading_hold ?
+      (int32_t)lroundf(motor_wrap_angle_deg(field_heading_deg) * 1000.0f) : 0;
   distance_move.slowdown_start_mm = slowdown_mm;
   if (limit_slowdown_to_half &&
       (distance_move.slowdown_start_mm > (absolute_distance * 0.5f))) {
@@ -2017,8 +2035,10 @@ static MotorDistanceStatus motor_move_distance(float distance_m,
   return MOTOR_DISTANCE_RUNNING;
 }
 
-MotorDistanceStatus Motor_MoveDistance(float distance_m,
-                                        float max_speed_mm_s)
+static MotorDistanceStatus motor_move_distance_default(float distance_m,
+                                                       float max_speed_mm_s,
+                                                       bool field_heading_hold,
+                                                       float field_heading_deg)
 {
   const float end_speed_mm_s =
       (max_speed_mm_s < APP_GO_DISTANCE_MIN_SPEED_MM_S) ?
@@ -2026,7 +2046,18 @@ MotorDistanceStatus Motor_MoveDistance(float distance_m,
   const float slowdown_mm = APP_GO_DISTANCE_SLOWDOWN_MM *
       max_speed_mm_s / APP_GO_DISTANCE_SPEED_MM_S;
   return motor_move_distance(distance_m, max_speed_mm_s, slowdown_mm,
-                             end_speed_mm_s, true);
+                             end_speed_mm_s, true, field_heading_hold, field_heading_deg);
+}
+
+MotorDistanceStatus Motor_MoveDistance(float distance_m, float max_speed_mm_s)
+{
+  return motor_move_distance_default(distance_m, max_speed_mm_s, false, 0.0f);
+}
+
+MotorDistanceStatus Motor_MoveDistanceHeading(float distance_m, float max_speed_mm_s,
+                                              float field_heading_deg)
+{
+  return motor_move_distance_default(distance_m, max_speed_mm_s, true, field_heading_deg);
 }
 
 float Motor_GetDistanceTravelledMm(void)
@@ -2044,7 +2075,7 @@ MotorDistanceStatus Motor_MoveDistanceLinear(float distance_m,
                                              float end_speed_mm_s)
 {
   return motor_move_distance(distance_m, max_speed_mm_s, slowdown_mm,
-                             end_speed_mm_s, false);
+                             end_speed_mm_s, false, false, 0.0f);
 }
 
 MotorDistanceStatus Motor_MoveDistanceConstant(float distance_m,
@@ -2052,7 +2083,7 @@ MotorDistanceStatus Motor_MoveDistanceConstant(float distance_m,
 {
   return motor_move_distance(distance_m, speed_mm_s,
                              APP_GO_DISTANCE_TOLERANCE_MM + 1.0f,
-                             speed_mm_s, false);
+                             speed_mm_s, false, false, 0.0f);
 }
 
 MotorTurnStatus Motor_TurnAngle(float angle_deg)

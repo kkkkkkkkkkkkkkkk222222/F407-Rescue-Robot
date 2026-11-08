@@ -10,7 +10,16 @@ static int16_t offsets_deg[4] = {
     APP_SERVO_S3_OFFSET_DEG, APP_SERVO_S4_OFFSET_DEG
 };
 static bool started;
-static volatile uint16_t enabled_pins, pending_pins;
+static volatile uint16_t pending_pins, armed_pins;
+
+enum { SERVO_SLOT_US = 5000U, SERVO_FIRST_EDGE_US = 100U, SERVO_EDGES = 8U };
+static volatile uint32_t edge_ticks[SERVO_EDGES];
+static volatile uint32_t edge_bsrr[SERVO_EDGES];
+
+static uint32_t servo_slot_start(uint8_t index)
+{
+  return SERVO_FIRST_EDGE_US + (uint32_t)index * SERVO_SLOT_US;
+}
 
 static uint32_t servo_pulse_for_angle(uint8_t index, uint8_t angle)
 {
@@ -22,49 +31,88 @@ static uint32_t servo_pulse_for_angle(uint8_t index, uint8_t angle)
 
 void BoardF405_ServoIRQ(void)
 {
-  const uint32_t events = TIM4->SR & TIM4->DIER &
-      (TIM_SR_UIF | TIM_SR_CC1IF | TIM_SR_CC2IF | TIM_SR_CC3IF | TIM_SR_CC4IF);
-  TIM4->SR = ~events;
-  uint32_t set = (events & TIM_SR_UIF) ? enabled_pins : 0U;
-  if (events & TIM_SR_UIF) {
-    /* Delay a newly enabled output until its preloaded compare is active. */
-    enabled_pins |= pending_pins;
-    pending_pins = 0U;
-  }
-  uint32_t clear = 0U;
+  if ((TIM4->SR & TIM_SR_UIF) == 0U) { return; }
+  TIM4->SR = ~TIM_SR_UIF;
+  /* Stage a newly enabled test channel across a frame so its first pulse
+   * uses the new width even if the timing DMA prefetched an old word. */
   for (uint8_t i = 0; i < 4U; ++i) {
-    if (events & (TIM_SR_CC1IF << i)) { clear |= pins[i]; }
+    if (armed_pins & pins[i]) { edge_bsrr[2U * i] = pins[i]; }
   }
-  /* If delayed past a falling edge, never raise an already-expired pulse. */
-  GPIOC->BSRR = (set & ~clear) | (clear << 16U);
+  armed_pins = pending_pins;
+  pending_pins = 0U;
+  if (armed_pins == 0U) { TIM4->DIER &= ~TIM_DIER_UIE; }
 }
 
 static void servo_start(uint16_t outputs)
 {
+  if (started) { BoardF405_ServoEmergencyOff(); }
   HAL_NVIC_DisableIRQ(TIM4_IRQn);
-  enabled_pins = outputs;
   pending_pins = 0U;
+  armed_pins = 0U;
+  __HAL_RCC_DMA1_CLK_ENABLE();
+  __HAL_RCC_DMA2_CLK_ENABLE();
   TIM4->CR1 = 0U;
   TIM4->DIER = 0U;
+  for (uint8_t i = 0; i < 4U; ++i) {
+    angles[i] = 90U;
+    edge_ticks[2U * i] = servo_slot_start(i) + servo_pulse_for_angle(i, 90U);
+    edge_ticks[2U * i + 1U] = servo_slot_start((i + 1U) % 4U);
+    edge_bsrr[2U * i] = outputs & pins[i];
+    edge_bsrr[2U * i + 1U] = (uint32_t)pins[i] << 16U;
+  }
+
+  /* Each compare advances CCR1 to the next edge. TRGO sends the same event
+   * through TIM1 ITR3/TRC to spare capture channel 3. Encoder CH1/2 stay in
+   * quadrature mode. Only DMA writes the signal edges to GPIOC. */
+  TIM4->CR2 = TIM_TRGO_OC1;
   TIM4->PSC = 83U; /* APB1 timer 84 MHz -> 1 us per tick. */
   TIM4->ARR = 19999U;
   TIM4->CNT = 0U;
-  TIM4->CCMR1 = TIM_CCMR1_OC1PE | TIM_CCMR1_OC2PE;
-  TIM4->CCMR2 = TIM_CCMR2_OC3PE | TIM_CCMR2_OC4PE;
-  TIM4->CCER = TIM_CCER_CC1E | TIM_CCER_CC2E | TIM_CCER_CC3E | TIM_CCER_CC4E;
-  TIM4->CCR1 = servo_pulse_for_angle(0U, 90U);
-  TIM4->CCR2 = servo_pulse_for_angle(1U, 90U);
-  TIM4->CCR3 = servo_pulse_for_angle(2U, 90U);
-  TIM4->CCR4 = servo_pulse_for_angle(3U, 90U);
-  for (uint8_t i = 0; i < 4U; ++i) { angles[i] = 90U; }
+  TIM4->CCMR1 = 0U;
+  TIM4->CCMR2 = 0U;
+  TIM4->CCER = TIM_CCER_CC1E;
+  TIM4->CCR1 = servo_slot_start(0U);
   TIM4->EGR = TIM_EGR_UG;
   TIM4->SR = 0U;
+
+  TIM1->CCER &= ~TIM_CCER_CC3E;
+  TIM1->SMCR = (TIM1->SMCR & ~TIM_SMCR_TS) | TIM_TS_ITR3;
+  TIM1->CCMR2 = (TIM1->CCMR2 & ~(TIM_CCMR2_CC3S | TIM_CCMR2_IC3PSC |
+                                TIM_CCMR2_IC3F)) | TIM_CCMR2_CC3S;
+  TIM1->CCER = (TIM1->CCER & ~(TIM_CCER_CC3P | TIM_CCER_CC3NP)) | TIM_CCER_CC3E;
+  TIM1->SR = ~(TIM_SR_CC3IF | TIM_SR_CC3OF);
+
+  /* RM0090: TIM4_CC1 on DMA1 stream 0/channel 2. */
+  DMA1->LIFCR = DMA_LIFCR_CFEIF0 | DMA_LIFCR_CDMEIF0 | DMA_LIFCR_CTEIF0 |
+                DMA_LIFCR_CHTIF0 | DMA_LIFCR_CTCIF0;
+  DMA1_Stream0->PAR = (uint32_t)(uintptr_t)&TIM4->CCR1;
+  DMA1_Stream0->M0AR = (uint32_t)(uintptr_t)edge_ticks;
+  DMA1_Stream0->NDTR = SERVO_EDGES;
+  DMA1_Stream0->FCR = 0U;
+  DMA1_Stream0->CR = DMA_CHANNEL_2 | DMA_MEMORY_TO_PERIPH | DMA_MINC_ENABLE |
+                     DMA_PDATAALIGN_WORD | DMA_MDATAALIGN_WORD | DMA_CIRCULAR |
+                     DMA_PRIORITY_HIGH;
+
+  /* TIM1_CC3 on DMA2 stream 6/channel 0. ES0182 calls for the memory port
+   * on GPIO writes while an APB2 peripheral (USART1 RX) also uses DMA2. */
+  DMA2->HIFCR = DMA_HIFCR_CFEIF6 | DMA_HIFCR_CDMEIF6 | DMA_HIFCR_CTEIF6 |
+                DMA_HIFCR_CHTIF6 | DMA_HIFCR_CTCIF6;
+  DMA2_Stream6->PAR = (uint32_t)(uintptr_t)edge_bsrr;
+  DMA2_Stream6->M0AR = (uint32_t)(uintptr_t)&GPIOC->BSRR;
+  DMA2_Stream6->NDTR = SERVO_EDGES;
+  DMA2_Stream6->FCR = 0U;
+  DMA2_Stream6->CR = DMA_CHANNEL_0 | DMA_PERIPH_TO_MEMORY | DMA_PINC_ENABLE |
+                     DMA_PDATAALIGN_WORD | DMA_MDATAALIGN_WORD | DMA_CIRCULAR |
+                     DMA_PRIORITY_HIGH;
+  GPIOC->BSRR = (uint32_t)F405_SERVO_PINS << 16U;
+  __DMB();
+  DMA1_Stream0->CR |= DMA_SxCR_EN;
+  DMA2_Stream6->CR |= DMA_SxCR_EN;
+  TIM1->DIER |= TIM_DIER_CC3DE;
   started = true;
   HAL_NVIC_SetPriority(TIM4_IRQn, 1U, 0U);
   HAL_NVIC_ClearPendingIRQ(TIM4_IRQn);
-  TIM4->DIER = TIM_DIER_UIE | TIM_DIER_CC1IE | TIM_DIER_CC2IE |
-               TIM_DIER_CC3IE | TIM_DIER_CC4IE;
-  GPIOC->BSRR = outputs | ((uint32_t)(F405_SERVO_PINS & ~outputs) << 16U);
+  TIM4->DIER = TIM_DIER_CC1DE;
   TIM4->CR1 = TIM_CR1_ARPE | TIM_CR1_CEN;
   HAL_NVIC_EnableIRQ(TIM4_IRQn);
 }
@@ -74,13 +122,19 @@ void Servo_Init(void) { servo_start(F405_SERVO_PINS); }
 void BoardF405_ServoTestSet(uint8_t id, uint8_t angle)
 {
   if (id < 1U || id > 4U || angle > 180U) { return; }
+  if (!started) { servo_start(0U); }
+  Servo_SetAngle(id, angle);
+  const uint8_t index = id - 1U;
   const uint32_t mask = __get_PRIMASK();
   __disable_irq();
-  if (!started) { servo_start(0U); }
-  enabled_pins &= (uint16_t)~pins[id - 1U];
-  GPIOC->BSRR = (uint32_t)pins[id - 1U] << 16U;
-  Servo_SetAngle(id, angle);
-  pending_pins |= pins[id - 1U];
+  if (edge_bsrr[2U * index] == 0U) {
+    armed_pins &= (uint16_t)~pins[index];
+    pending_pins |= pins[index];
+    if ((TIM4->DIER & TIM_DIER_UIE) == 0U) {
+      TIM4->SR = ~TIM_SR_UIF;
+      TIM4->DIER |= TIM_DIER_UIE;
+    }
+  }
   __set_PRIMASK(mask);
 }
 
@@ -90,9 +144,12 @@ void BoardF405_ServoTestOff(uint8_t id)
   const uint16_t off = id == 0U ? F405_SERVO_PINS : pins[id - 1U];
   const uint32_t mask = __get_PRIMASK();
   __disable_irq();
-  enabled_pins &= (uint16_t)~off;
   pending_pins &= (uint16_t)~off;
-  GPIOC->BSRR = (uint32_t)off << 16U;
+  armed_pins &= (uint16_t)~off;
+  /* Leave an in-flight pulse to its scheduled falling edge. */
+  for (uint8_t i = 0; i < 4U; ++i) {
+    if (off & pins[i]) { edge_bsrr[2U * i] = 0U; }
+  }
   __set_PRIMASK(mask);
 }
 
@@ -101,20 +158,12 @@ void Servo_SetAngle(uint8_t id, uint8_t angle)
   if (id < 1U || id > 4U) { return; }
   if (angle > 180U) { angle = 180U; }
   TaskDiag_Event("SERVO_TARGET", id, angle, 0, 0, 0, 0);
-  const uint32_t pulse = servo_pulse_for_angle(id - 1U, angle);
-  const uint32_t mask = __get_PRIMASK();
-  __disable_irq();
-  angles[id - 1U] = angle;
+  const uint8_t index = id - 1U;
+  angles[index] = angle;
   if (started) {
-    /* Preload transfers at the next 20 ms frame, never midway through a pulse. */
-    switch (id) {
-      case 1U: TIM4->CCR1 = pulse; break;
-      case 2U: TIM4->CCR2 = pulse; break;
-      case 3U: TIM4->CCR3 = pulse; break;
-      default: TIM4->CCR4 = pulse; break;
-    }
+    /* An aligned word sets the next pulse. A loaded CCR1 stays fixed. */
+    edge_ticks[2U * index] = servo_slot_start(index) + servo_pulse_for_angle(index, angle);
   }
-  __set_PRIMASK(mask);
 }
 
 uint8_t Servo_GetAngle(uint8_t id)
@@ -127,4 +176,17 @@ void Servo_SetOffset(uint8_t id, int16_t offset_deg)
   if (id < 1U || id > 4U) { return; }
   offsets_deg[id - 1U] = offset_deg;
   Servo_SetAngle(id, Servo_GetAngle(id));
+}
+
+void BoardF405_ServoEmergencyOff(void)
+{
+  if (!started) { return; }
+  TIM4->CR1 = 0U;
+  TIM4->DIER = 0U;
+  TIM1->DIER &= ~TIM_DIER_CC3DE;
+  DMA1_Stream0->CR &= ~DMA_SxCR_EN;
+  DMA2_Stream6->CR &= ~DMA_SxCR_EN;
+  while ((DMA1_Stream0->CR | DMA2_Stream6->CR) & DMA_SxCR_EN) {}
+  GPIOC->BSRR = (uint32_t)F405_SERVO_PINS << 16U;
+  started = false;
 }

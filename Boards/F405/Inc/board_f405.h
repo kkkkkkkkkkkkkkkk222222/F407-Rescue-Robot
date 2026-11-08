@@ -32,6 +32,7 @@ uint32_t BoardF405_EncoderInvalidTransitions(void);
 void BoardF405_ServoIRQ(void);
 void BoardF405_ServoTestSet(uint8_t id, uint8_t angle);
 void BoardF405_ServoTestOff(uint8_t id);
+void BoardF405_ServoEmergencyOff(void);
 void BoardF405_Report(void);
 void BoardF405_ReportVersion(void);
 void BoardF405_RequestBeep(uint8_t count, bool long_tone);

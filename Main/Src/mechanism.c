@@ -25,6 +25,11 @@ static uint32_t claw_step_ms;
 static bool claw_done;
 static uint8_t separation_extra_close_deg;
 
+void Claw_RestartAction(void)
+{
+  claw_action = CLAW_ACTION_NONE;
+}
+
 void Claw_SetSeparationHold(uint8_t extra_close_deg)
 {
   if (extra_close_deg > APP_CLAW_SEPARATE_SINGLE_CLOSE_DEG) {

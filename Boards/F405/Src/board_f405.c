@@ -304,6 +304,7 @@ void Error_Handler(void)
   GPIOB->BSRR = GPIO_PIN_0 << 16U;
   GPIOC->BSRR = (GPIO_PIN_4 | GPIO_PIN_5 | F405_SERVO_PINS) << 16U;
   TIM2->CCER = TIM3->CCER = TIM13->CCER = 0U;
+  BoardF405_ServoEmergencyOff();
   while (1) {}
 #endif
 }

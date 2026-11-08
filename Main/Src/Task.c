@@ -1860,9 +1860,10 @@ static void task_process_start(uint32_t now_ms)
   /* Separate translation and rotation. Each leg has its own signed encoder
    * origin; wheel slip/rotation cannot consume a shared 1700 mm path budget. */
   if (start_motion_phase == START_REVERSE) {
-    const MotorDistanceStatus result = Motor_MoveDistance(
+    const MotorDistanceStatus result = Motor_MoveDistanceHeading(
         -APP_START_CLEARANCE_DISTANCE_M,
-        APP_START_CLEARANCE_SPEED_MM_S);
+        APP_START_CLEARANCE_SPEED_MM_S,
+        task_wrap_angle(start_target_heading_deg - APP_START_TURN_DEG));
     task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
     if (result == MOTOR_DISTANCE_DONE) {
       Motor_Stop();
@@ -1908,8 +1909,9 @@ static void task_process_start(uint32_t now_ms)
     }
     return;
   }
-  const MotorDistanceStatus result = Motor_MoveDistance(
-      APP_START_FORWARD_DISTANCE_M, APP_START_FORWARD_SPEED_MM_S);
+  const MotorDistanceStatus result = Motor_MoveDistanceHeading(
+      APP_START_FORWARD_DISTANCE_M, APP_START_FORWARD_SPEED_MM_S,
+      start_target_heading_deg);
   task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
   if (result == MOTOR_DISTANCE_DONE) {
     Motor_Stop();

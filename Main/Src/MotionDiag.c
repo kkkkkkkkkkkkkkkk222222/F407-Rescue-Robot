@@ -221,6 +221,7 @@ static void emergency_outputs_off(void)
   GPIOC->BSRR = (GPIO_PIN_4 | GPIO_PIN_5 | F405_SERVO_PINS) << 16U;
   GPIOA->MODER = (GPIOA->MODER & ~0x0000FFFFUL) | 0x00005555UL;
   GPIOB->MODER = (GPIOB->MODER & ~0x0000000FUL) | 0x00000005UL;
+  BoardF405_ServoEmergencyOff();
 #else
   /* Bypass HAL, locks and floating-point state even if the interrupted stack
    * is corrupt. Force all six AT8236 inputs low as GPIO outputs. */
