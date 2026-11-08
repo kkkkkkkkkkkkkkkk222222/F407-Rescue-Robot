@@ -29,8 +29,9 @@
 | 审核结论 | 接受本轮最小方案，源码证实原 10ms 采样被两段汇总为 20ms |
 | 代码实现提交 | `14b2a3a9077e6980a540631ce94345e61eb0487d` |
 | 构建状态 | MotionDebug 和 NormalRun 均编译、链接成功 |
-| 本轮烧录 | 未烧录 |
-| 板端 actual / boot_epoch | 本轮未连接串口或下载器读取，未知 |
+| 后续授权烧录 | 用户最终指定 MotionDebug，已烧录并通过 OpenOCD Flash verify，NormalRun 未烧录 |
+| 板端 actual | Git 与 firmware_id 已从板端 Flash 经 SWD 读回，见下表 |
+| 板端 boot_epoch | 已从板端 RAM 经 SWD 读回，见下表 |
 | 实收频率、SDK 与地面精度 | 本轮未实测 |
 
 源要求见 [固定源提交](https://github.com/danmo-teng/shijue_fangan/blob/347791666cd3d32ecfe157979fe8e772ff30f4a8/docs/CROSS_REPO_REQUESTS.md)。
@@ -117,8 +118,31 @@ IDE 修改及 tmp 也保留在工作区，不纳入本次提交。
 
 ## 尚未完成
 
-- 部署及通过原身份查询亲自读取板端 actual、source_dirty、boot_epoch、mode/service 与波特率。
+- RDK 经 UART4 原身份查询读回并记录 actual、source_dirty、boot_epoch、mode/service 与波特率。
 - 通过原日志核对不同 measurement_id、相邻约 10ms 的真实 t0/t1 区间及 07/08 实收频率、缺号和延迟。
 - RDK 对本次实现提交复核，部署后核对实际 SDK API 接受情况及人工地面验证。
 
 以上实机项目尚未执行，配置回执、编译或 SDK 接口成功均不作为地面精度证明。
+
+## 后续授权烧录与只读读回
+
+2026-11-08 用户将烧录目标改为 MotionDebug，并要求先不启动车轮。
+本次使用表内原 MotionDebug.elf，SHA256 与先前构建一致。OpenOCD 已返回 `Verified OK` 并复位运行。
+COM18/115200 启动输出确认 F405_ROBO、MODE=5、SERVICE=MOTIONDEBUG。
+仅发送 `PING`、`STAT`。状态为 IDLE，三轮 TARGET、ACTUAL、PWM 均为 0。
+
+| 板端读取项 | 实际结果 | 依据 |
+| --- | --- | --- |
+| actual Git | 14b2a3a9077e6980a540631ce94345e61eb0487d | SWD 读 Flash 0x0801ba70 的 20 字节 |
+| actual firmware_id | 6839200f0d0354e8decaa242632e7b637e3d709e349ce3164844a9bf39543c21 | SWD 读 Flash 0x0801ba50 的 32 字节 |
+| source_dirty | 1 | 已校验镜像的内嵌值，尚未经 UART4 ID_REPLY 自报读取 |
+| 板型 / mode / service | F405_ROBO / 5 / MOTIONDEBUG | COM18 实际启动与 STAT 回执 |
+| UART4 波特率配置 | 921600/8N1 | SWD 读运行中 huart3 的实例地址及 Init 字段 |
+| UART4 BRR | 0x0000002D | SWD 读寄存器 0x40004c08，未测物理位宽 |
+| boot_epoch | 2b40340370e209faed7d2123a1015296 | SWD 读 RAM 0x2000048c 的 16 字节 |
+
+本次 UART4 没有连接第二个主机发送 ID_REQ，不能把 SWD 读回说成 UART4 身份查询已通过。
+波特率表项为实际运行配置，主机应设 921600，物理线速未用仪器测量。
+本地原始日志位于 `build/F405/MotionDebug/UART-100HZ-01-flash-20261108.log`、
+`UART-100HZ-01-console-20261108.log` 和 `UART-100HZ-01-swd-readback-20261108.log`。
+07/08 订阅、100Hz 实收、SDK 接受和地面精度仍待验证。

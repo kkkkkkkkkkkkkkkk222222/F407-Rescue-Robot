@@ -6,8 +6,11 @@
 - 实现提交为 `14b2a3a9077e6980a540631ce94345e61eb0487d`。MotionDebug / NormalRun 共用 UART4 921600/8N1，
   07 每个真实相邻编码器区间发布一次，标称100Hz。08 仍为有新源时最高100Hz，协议仍为1.3。
   RDK 部署时须同步使用921600。主IMU 230400、程序器文本串口115200及原控制逻辑沿用现有设置。
-- 两个原固件入口均已编译、链接成功。未烧录、未运行实车动作，内嵌身份及 source_dirty 原因见固定入口。
-  当前板端 actual 未亲自读回，100Hz 实收、SDK 与地面效果待实测。
+- 两个原固件入口均已编译、链接成功。后续按用户最终指定已烧录 MotionDebug，Flash verify 通过。
+  COM18 回执为 F405_ROBO / mode5 / MOTIONDEBUG，IDLE，三轮目标、实际和 PWM 均为零。
+  板端 SWD 实读 Git 为 `14b2a3a9077e6980a540631ce94345e61eb0487d`，UART4 运行配置为921600/8N1。
+  firmware_id、boot_epoch 和已校验镜像 dirty=1 的依据见固定入口，未通过UART4直接查询身份。
+  NormalRun 未烧录，100Hz 实收、SDK 与地面效果待实测。
 
 2026-11-08 左爪小步自助测试。
 - `tools/Test-F405ClawSweep.ps1 -Install` 生成桌面 `F405 Claw Test`，保留已有 `settings.ini`。
