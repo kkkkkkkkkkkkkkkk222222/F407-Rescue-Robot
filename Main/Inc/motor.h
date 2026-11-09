@@ -39,9 +39,8 @@ MotorDistanceStatus Motor_MoveDistance(float distance_m,
 MotorDistanceStatus Motor_MoveDistanceHeading(float distance_m,
                                               float max_speed_mm_s,
                                               float field_heading_deg);
-/* Fixed heading with a lower zero-speed threshold for the rear wheel. */
-MotorDistanceStatus Motor_MoveDistanceHeadingLowRearDeadband(
-    float distance_m, float max_speed_mm_s, float field_heading_deg);
+/* Opening forward leg with its own acceleration and heading-based speed cap. */
+MotorDistanceStatus Motor_MoveStartForward(float field_heading_deg);
 /* Distance progress along the latched request; wrong-way travel is negative. */
 float Motor_GetDistanceTravelledMm(void);
 /* Encoder distance control with a linear terminal speed profile. */
@@ -79,6 +78,8 @@ bool Motor_MoveAngleFine(float speed_mm_s, float angle_deg);
 bool Motor_MoveHeading(float forward_mm_s, float field_heading_deg);
 /* Same heading control with a lower zero-speed threshold for the rear wheel. */
 bool Motor_MoveHeadingLowRearDeadband(float forward_mm_s, float field_heading_deg);
+/* Body-relative translation with a fixed field heading and low rear deadband. */
+bool Motor_MoveAngleHeading(float speed_mm_s, float angle_deg, float field_heading_deg);
 void Motor_Stop(void);
 /* Existing brake pulse only; no new delay or wheel/IMU qualification. */
 bool Motor_IsBraking(void);

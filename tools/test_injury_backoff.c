@@ -14,6 +14,7 @@ static LocationPose test_pose = {.valid = true, .heading_mdeg = 90000};
 static bool motor_fault;
 static bool heading_rejected;
 static float heading_output;
+static float fine_speed_request;
 static unsigned heading_calls;
 static MotorDistanceStatus distance_result;
 static float distance_request;
@@ -70,9 +71,11 @@ MotorDistanceStatus Motor_MoveDistanceHeading(float distance, float speed, float
   ++distance_calls;
   return distance_result;
 }
-MotorDistanceStatus Motor_MoveDistanceHeadingLowRearDeadband(
-    float distance, float speed, float heading)
-{ return Motor_MoveDistanceHeading(distance, speed, heading); }
+MotorDistanceStatus Motor_MoveStartForward(float heading)
+{
+  return Motor_MoveDistanceHeading(APP_START_FORWARD_DISTANCE_M,
+                                   APP_START_FORWARD_SPEED_MM_S, heading);
+}
 MotorDistanceStatus Motor_MoveDistanceLinear(float distance, float speed, float slow, float end)
 {
   distance_request=distance; ++distance_calls;
@@ -85,7 +88,19 @@ MotorTurnStatus Motor_TurnAngle(float angle) { (void)angle; return MOTOR_TURN_DO
 MotorTurnStatus Motor_TurnAngleSpeed(float angle, float speed)
 { (void)angle; (void)speed; return MOTOR_TURN_DONE; }
 bool Motor_MoveAngle(float speed, float angle) { (void)speed; (void)angle; return true; }
-bool Motor_MoveAngleFine(float speed, float angle) { return Motor_MoveAngle(speed, angle); }
+bool Motor_MoveAngleFine(float speed, float angle)
+{
+  fine_speed_request = speed;
+  return Motor_MoveAngle(speed, angle);
+}
+bool Motor_MoveAngleHeading(float speed, float angle, float heading)
+{
+  if (!Motor_MoveHeading(speed, heading)) { return false; }
+  const float angle_rad = angle * (3.14159265358979323846f / 180.0f);
+  reverse_output = speed * cosf(angle_rad);
+  lateral_output = speed * sinf(angle_rad);
+  return true;
+}
 bool Motor_IsBraking(void) { return false; }
 bool Motor_MoveSpin(float speed, float angle, float yaw)
 { (void)speed; (void)angle; (void)yaw; return true; }

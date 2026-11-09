@@ -308,9 +308,12 @@ static bool nav_ready;
 static bool scan_report_gate_open;
 static bool pose_invalid_pending;
 typedef enum {
-  START_REVERSE, START_REVERSE_SETTLE, START_TURN, START_TURN_SETTLE, START_FORWARD
+  START_REVERSE, START_REVERSE_SETTLE, START_TURN, START_TURN_SETTLE,
+  START_FORWARD, START_CENTER_APPROACH
 } StartMotionPhase;
 static StartMotionPhase start_motion_phase;
+static uint32_t start_center_origin_path_mm;
+static float start_center_speed_mm_s;
 static bool distance_command_done;
 static bool nav_terminal_candidate;
 static bool nav_terminal_latched;
@@ -1839,10 +1842,22 @@ static float task_track_target(const VisionData *vision, bool track_camera)
   return steering_target_mm_s;
 }
 
-static void task_process_start(uint32_t now_ms)
+static void task_finish_start(uint32_t now_ms, bool center_reached)
+{
+  Motor_Stop();
+  task_status.motors_active = false;
+  TaskDiag_Event("START_CENTER", center_reached, 0U, 0U, 0U, 0U, 0U);
+  task_enter(TASK_OPEN_CLAW, now_ms);
+}
+
+static void task_process_start(const VisionFusedPose *fused_pose, uint32_t now_ms)
 {
   if ((uint32_t)(now_ms - state_started_ms) >= APP_START_TIMEOUT_MS) {
-    task_stop(TASK_FAULT_START_TIMEOUT, now_ms);
+    if (start_motion_phase == START_CENTER_APPROACH) {
+      task_finish_start(now_ms, false);
+    } else {
+      task_stop(TASK_FAULT_START_TIMEOUT, now_ms);
+    }
     return;
   }
 
@@ -1903,16 +1918,60 @@ static void task_process_start(uint32_t now_ms)
     }
     return;
   }
-  const MotorDistanceStatus result = Motor_MoveDistanceHeadingLowRearDeadband(
-      APP_START_FORWARD_DISTANCE_M, APP_START_FORWARD_SPEED_MM_S,
-      start_target_heading_deg);
-  task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
-  if (result == MOTOR_DISTANCE_DONE) {
+  const bool center_position_valid =
+      fused_pose->received && (fused_pose->status & VISION_POSE_VALID) != 0U;
+  const float center_dx_mm = -(float)fused_pose->x_mm;
+  const float center_dy_mm = -(float)fused_pose->y_mm;
+  const float center_remaining_mm = center_position_valid ?
+      sqrtf(center_dx_mm * center_dx_mm + center_dy_mm * center_dy_mm) : 0.0f;
+  const bool center_reached = center_position_valid &&
+      center_remaining_mm <= APP_START_CENTER_ARRIVAL_MM;
+
+  if (start_motion_phase == START_FORWARD) {
+    if (!center_position_valid ||
+        center_remaining_mm > APP_START_CENTER_APPROACH_MM) {
+      const MotorDistanceStatus result = Motor_MoveStartForward(start_target_heading_deg);
+      task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
+      if (distance_failed(result)) {
+        task_stop(TASK_FAULT_MOTOR, now_ms);
+      }
+      if (result != MOTOR_DISTANCE_DONE) { return; }
+    }
+    if (!center_position_valid || center_reached) {
+      task_finish_start(now_ms, center_reached);
+      return;
+    }
+
+    /* The wheel-distance leg only limits the fast part of the opening. */
     Motor_Stop();
-    task_enter(TASK_OPEN_CLAW, now_ms);
-  } else if (distance_failed(result)) {
-    task_stop(TASK_FAULT_MOTOR, now_ms);
+    task_status.motors_active = false;
+    start_center_origin_path_mm = pose.path_mm;
+    start_center_speed_mm_s = 0.0f;
+    start_motion_phase = START_CENTER_APPROACH;
+    return;
   }
+
+  if (!center_position_valid || center_reached ||
+      pose.path_mm - start_center_origin_path_mm >= APP_START_CENTER_PATH_LIMIT_MM) {
+    task_finish_start(now_ms, center_reached);
+    return;
+  }
+  if (Motor_IsBraking()) { return; }
+
+  /* Position sets translation. Local gyro feedback keeps the opening heading. */
+  const float bearing_deg = atan2f(center_dy_mm, center_dx_mm) *
+      (180.0f / 3.14159265358979323846f);
+  const float body_angle_deg = task_wrap_angle(bearing_deg - pose.heading_mdeg * 0.001f);
+  const float speed_mm_s = fminf(APP_START_CENTER_MAX_SPEED_MM_S,
+      fmaxf(APP_START_CENTER_MIN_SPEED_MM_S, center_remaining_mm));
+  start_center_speed_mm_s = fminf(speed_mm_s, start_center_speed_mm_s +
+      APP_START_FORWARD_ACCEL_MM_S2 * APP_TASK_PERIOD_MS * 0.001f);
+  if (!Motor_MoveAngleHeading(start_center_speed_mm_s, body_angle_deg,
+                              start_target_heading_deg)) {
+    task_stop(TASK_FAULT_MOTOR, now_ms);
+    return;
+  }
+  task_status.motors_active = true;
 }
 
 static void task_process_search(const VisionData *vision, uint32_t now_ms)
@@ -3189,6 +3248,8 @@ static RemoteRouteStatus nav_follow_coarse(
     const VisionMissionCommand *command, const LocationPose *pose,
     float cruise_speed_mm_s, bool stage_route, uint32_t now_ms)
 {
+  const float coarse_start_mm = stage_route ? APP_NAV_STAGE_COARSE_START_MM :
+                                             APP_NAV_LINEAR_SLOWDOWN_MM;
   if (!nav_coarse.valid) {
     /* Owned by the accepted task/action, not by SEQ or each H/D refresh. */
     nav_coarse.valid = true;
@@ -3198,7 +3259,7 @@ static RemoteRouteStatus nav_follow_coarse(
         (3.14159265358979323846f / 180.0f);
     nav_coarse.direction_x = cosf(heading_rad);
     nav_coarse.direction_y = sinf(heading_rad);
-    nav_coarse.phase = command->target_x_mm <= (int16_t)APP_NAV_LINEAR_SLOWDOWN_MM ?
+    nav_coarse.phase = command->target_x_mm <= coarse_start_mm ?
         NAV_COARSE_BRAKE : NAV_COARSE_ALIGN;
     nav_terminal_translate = false;
     nav_ready = false;
@@ -3210,7 +3271,7 @@ static RemoteRouteStatus nav_follow_coarse(
 
   if (nav_coarse.phase == NAV_COARSE_ALIGN) {
     /* A shorter new position may skip the coarse leg, never lengthen it. */
-    if (command->target_x_mm <= (int16_t)APP_NAV_LINEAR_SLOWDOWN_MM) {
+    if (command->target_x_mm <= coarse_start_mm) {
       nav_coarse.phase = NAV_COARSE_BRAKE;
       Motor_Stop();
       task_status.motors_active = false;
@@ -3246,8 +3307,11 @@ static RemoteRouteStatus nav_follow_coarse(
     const float remaining_mm = fminf(
         nav_coarse.initial_remaining_mm - nav_coarse.progress_mm,
         (float)command->target_x_mm);
-    if (remaining_mm <= APP_NAV_COARSE_RESERVE_MM ||
-        command->target_x_mm <= (int16_t)APP_NAV_FINAL_APPROACH_DISTANCE_MM) {
+    const float reserve_mm = stage_route ? APP_NAV_STAGE_COARSE_RESERVE_MM :
+                                          APP_NAV_COARSE_RESERVE_MM;
+    const float fine_entry_mm = stage_route ? APP_NAV_STAGE_FINE_ENTRY_MM :
+                                             (float)APP_NAV_FINAL_APPROACH_DISTANCE_MM;
+    if (remaining_mm <= reserve_mm || command->target_x_mm <= fine_entry_mm) {
       nav_coarse.phase = NAV_COARSE_BRAKE;
       Motor_Stop();
       task_status.motors_active = false;
@@ -3256,8 +3320,8 @@ static RemoteRouteStatus nav_follow_coarse(
       return REMOTE_ROUTE_WAITING;
     }
     const float ratio = fminf(1.0f,
-        (remaining_mm - APP_NAV_COARSE_RESERVE_MM) /
-        (APP_NAV_LINEAR_SLOWDOWN_MM - APP_NAV_COARSE_RESERVE_MM));
+        (remaining_mm - reserve_mm) /
+        (APP_NAV_LINEAR_SLOWDOWN_MM - reserve_mm));
     const float maximum_mm_s = fminf(cruise_speed_mm_s, APP_NAV_FAST_SPEED_MM_S);
     const float requested_mm_s = APP_NAV_MIN_END_SPEED_MM_S +
         (maximum_mm_s - APP_NAV_MIN_END_SPEED_MM_S) * ratio;
@@ -3286,7 +3350,8 @@ static RemoteRouteStatus nav_follow_coarse(
                                           pose->heading_mdeg * 0.001f);
   if (stage_route) {
     const float speed_mm_s = fminf(APP_NAV_FINE_MAX_SPEED_MM_S,
-        APP_NAV_FINE_DISTANCE_GAIN_S_INV * (float)command->target_x_mm);
+        fmaxf(APP_NAV_FINE_MIN_SPEED_MM_S,
+              APP_NAV_FINE_DISTANCE_GAIN_S_INV * (float)command->target_x_mm));
     task_status.motors_active = Motor_MoveAngleFine(speed_mm_s, body_angle);
     return REMOTE_ROUTE_RUNNING;
   }
@@ -6635,7 +6700,7 @@ void Task_Process(uint32_t now_ms)
       break;
 
     case TASK_START:
-      task_process_start(now_ms);
+      task_process_start(&vision.fused_pose, now_ms);
       break;
 
     case TASK_OPEN_CLAW:

@@ -422,6 +422,15 @@
 #define APP_START_CLEARANCE_DISTANCE_M   0.60f
 #define APP_START_CLEARANCE_SPEED_MM_S  600.0f
 #define APP_START_FORWARD_SPEED_MM_S    800.0f
+#define APP_START_FORWARD_ACCEL_MM_S2  1000.0f
+#define APP_START_FORWARD_FULL_SPEED_ERROR_DEG 3.0f
+#define APP_START_FORWARD_SLOW_SPEED_ERROR_DEG 8.0f
+#define APP_START_FORWARD_LARGE_ERROR_SPEED_MM_S 400.0f
+#define APP_START_CENTER_APPROACH_MM    300.0f
+#define APP_START_CENTER_ARRIVAL_MM      80.0f
+#define APP_START_CENTER_PATH_LIMIT_MM  800U
+#define APP_START_CENTER_MIN_SPEED_MM_S 110.0f
+#define APP_START_CENTER_MAX_SPEED_MM_S 300.0f
 #define APP_START_TURN_SPEED_MM_S       250.0f
 #define APP_START_SETTLE_MS              250U
 #define APP_START_TURN_DEG               180.0f
@@ -527,8 +536,13 @@
 #define APP_NAV_LINEAR_SLOWDOWN_MM       600.0f
 /* End the encoder-bounded coarse leg before the global waypoint. */
 #define APP_NAV_COARSE_RESERVE_MM        250.0f
+/* Delivery staging switches to holonomic translation closer to its target. */
+#define APP_NAV_STAGE_COARSE_START_MM    350.0f
+#define APP_NAV_STAGE_COARSE_RESERVE_MM  150.0f
+#define APP_NAV_STAGE_FINE_ENTRY_MM      180.0f
 /* STAGE FINE tuning for low-speed closed-loop translation. */
-#define APP_NAV_FINE_MAX_SPEED_MM_S      120.0f
+#define APP_NAV_FINE_MIN_SPEED_MM_S      110.0f
+#define APP_NAV_FINE_MAX_SPEED_MM_S      180.0f
 #define APP_NAV_FINE_DISTANCE_GAIN_S_INV   1.0f
 #define APP_NAV_FINE_WHEEL_ZERO_MM_S       0.5f
 #define APP_NAV_FINE_ASSIST_PWM_PER_MM_S   2.0f

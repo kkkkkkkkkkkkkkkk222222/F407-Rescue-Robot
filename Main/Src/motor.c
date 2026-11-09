@@ -38,7 +38,7 @@ typedef struct {
   bool slowing;
   bool waiting_for_stop;
   bool field_heading_hold;
-  bool low_rear_deadband;
+  bool start_forward;
   int32_t field_heading_mdeg;
   float travelled_mm;
   float target_mm;
@@ -349,7 +349,7 @@ static void motor_set_target_counts(uint8_t id, float target_counts)
     zero_limit_mm_s = APP_NAV_FINE_WHEEL_ZERO_MM_S;
   } else if (id == 3U &&
              ((distance_move.status == MOTOR_DISTANCE_RUNNING &&
-               distance_move.low_rear_deadband) ||
+               distance_move.start_forward) ||
               (direction_move.active && direction_move.absolute_heading &&
                direction_move.low_rear_deadband && !direction_move.reversing))) {
     zero_limit_mm_s = APP_MOTOR_REAR_HEADING_ZERO_MM_S;
@@ -765,15 +765,6 @@ static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
         (distance_move.max_speed_mm_s - distance_move.end_speed_mm_s) * ratio;
   }
 
-  const float rate_mm_s2 =
-      (requested_speed_mm_s >= distance_move.current_speed_mm_s) ?
-      APP_GO_DISTANCE_ACCEL_MM_S2 : APP_GO_DISTANCE_DECEL_MM_S2;
-  const float speed_step_mm_s = rate_mm_s2 *
-      ((float)APP_MOTOR_CONTROL_PERIOD_MS * 0.001f);
-  distance_move.current_speed_mm_s = motor_step_toward(
-      distance_move.current_speed_mm_s, requested_speed_mm_s,
-      speed_step_mm_s);
-
   int32_t heading_error_mdeg;
   if (distance_move.field_heading_hold) {
     const LocationPose pose = Location_GetPose();
@@ -784,8 +775,30 @@ static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
   } else {
     heading_error_mdeg = motor_wrap_heading_error(distance_move.target_yaw_mdeg - imu.yaw_mdeg);
   }
+  const float heading_error_deg = (float)heading_error_mdeg / 1000.0f;
+  float accel_mm_s2 = APP_GO_DISTANCE_ACCEL_MM_S2;
+  if (distance_move.start_forward) {
+    const float error_span_deg = APP_START_FORWARD_SLOW_SPEED_ERROR_DEG -
+                                 APP_START_FORWARD_FULL_SPEED_ERROR_DEG;
+    const float speed_fraction = motor_clamp_float(
+        (APP_START_FORWARD_SLOW_SPEED_ERROR_DEG - motor_abs_float(heading_error_deg)) /
+        error_span_deg, 0.0f, 1.0f);
+    const float heading_speed_limit = APP_START_FORWARD_LARGE_ERROR_SPEED_MM_S +
+        (distance_move.max_speed_mm_s - APP_START_FORWARD_LARGE_ERROR_SPEED_MM_S) *
+        speed_fraction;
+    requested_speed_mm_s = fminf(requested_speed_mm_s, heading_speed_limit);
+    accel_mm_s2 = APP_START_FORWARD_ACCEL_MM_S2;
+  }
+  const float rate_mm_s2 =
+      (requested_speed_mm_s >= distance_move.current_speed_mm_s) ?
+      accel_mm_s2 : APP_GO_DISTANCE_DECEL_MM_S2;
+  const float speed_step_mm_s = rate_mm_s2 *
+      ((float)APP_MOTOR_CONTROL_PERIOD_MS * 0.001f);
+  distance_move.current_speed_mm_s = motor_step_toward(
+      distance_move.current_speed_mm_s, requested_speed_mm_s, speed_step_mm_s);
+
   float rotate_correction =
-      Pid_Update(&heading_pid, (float)heading_error_mdeg / 1000.0f, 0.0f) *
+      Pid_Update(&heading_pid, heading_error_deg, 0.0f) *
       APP_MOTOR_HEADING_OUTPUT_SIGN;
 #if APP_BOARD_F405_ROBO && APP_ENABLE_MOTION_DEBUG_TASK
   /* D on measured yaw rate avoids differentiating wrapped/quantized angles.
@@ -1943,7 +1956,7 @@ static MotorDistanceStatus motor_move_distance(float distance_m,
                                                bool limit_slowdown_to_half,
                                                bool field_heading_hold,
                                                float field_heading_deg,
-                                               bool low_rear_deadband)
+                                               bool start_forward)
 {
   const uint32_t primask = motor_enter_critical();
   if (distance_move.status != MOTOR_DISTANCE_IDLE) {
@@ -2023,7 +2036,7 @@ static MotorDistanceStatus motor_move_distance(float distance_m,
   distance_move.start_m2_count = 0;
   distance_move.target_yaw_mdeg = 0;
   distance_move.field_heading_hold = field_heading_hold;
-  distance_move.low_rear_deadband = low_rear_deadband;
+  distance_move.start_forward = start_forward;
   distance_move.field_heading_mdeg = field_heading_hold ?
       (int32_t)lroundf(motor_wrap_angle_deg(field_heading_deg) * 1000.0f) : 0;
   distance_move.slowdown_start_mm = slowdown_mm;
@@ -2050,7 +2063,7 @@ static MotorDistanceStatus motor_move_distance_default(float distance_m,
                                                        float max_speed_mm_s,
                                                        bool field_heading_hold,
                                                        float field_heading_deg,
-                                                       bool low_rear_deadband)
+                                                       bool start_forward)
 {
   const float end_speed_mm_s =
       (max_speed_mm_s < APP_GO_DISTANCE_MIN_SPEED_MM_S) ?
@@ -2059,7 +2072,7 @@ static MotorDistanceStatus motor_move_distance_default(float distance_m,
       max_speed_mm_s / APP_GO_DISTANCE_SPEED_MM_S;
   return motor_move_distance(distance_m, max_speed_mm_s, slowdown_mm,
                              end_speed_mm_s, true, field_heading_hold,
-                             field_heading_deg, low_rear_deadband);
+                             field_heading_deg, start_forward);
 }
 
 MotorDistanceStatus Motor_MoveDistance(float distance_m, float max_speed_mm_s)
@@ -2074,10 +2087,10 @@ MotorDistanceStatus Motor_MoveDistanceHeading(float distance_m, float max_speed_
                                      field_heading_deg, false);
 }
 
-MotorDistanceStatus Motor_MoveDistanceHeadingLowRearDeadband(
-    float distance_m, float max_speed_mm_s, float field_heading_deg)
+MotorDistanceStatus Motor_MoveStartForward(float field_heading_deg)
 {
-  return motor_move_distance_default(distance_m, max_speed_mm_s, true,
+  return motor_move_distance_default(APP_START_FORWARD_DISTANCE_M,
+                                     APP_START_FORWARD_SPEED_MM_S, true,
                                      field_heading_deg, true);
 }
 
@@ -2512,11 +2525,11 @@ bool Motor_MoveAngleFine(float speed_mm_s, float angle_deg)
   return commands[0] != 0 || commands[1] != 0 || commands[2] != 0;
 }
 
-static bool motor_move_heading(float forward_mm_s, float field_heading_deg,
-                               bool low_rear_deadband)
+static bool motor_move_angle_heading(float speed_mm_s, float angle_deg,
+                                     float field_heading_deg, bool low_rear_deadband)
 {
-  if (!isfinite(forward_mm_s) || !isfinite(field_heading_deg) ||
-      motor_abs_float(forward_mm_s) > MOTOR_MAX_SPEED) { return false; }
+  if (!isfinite(speed_mm_s) || !isfinite(angle_deg) || !isfinite(field_heading_deg) ||
+      motor_abs_float(speed_mm_s) > MOTOR_MAX_SPEED) { return false; }
   const uint32_t mask = motor_enter_critical();
   const LocationPose pose = Location_GetPose();
   const IMUData imu = IMU_GetData();
@@ -2530,7 +2543,7 @@ static bool motor_move_heading(float forward_mm_s, float field_heading_deg,
       motor_abs_float(motor_wrap_angle_deg(heading - direction_move.field_heading_deg)) > 0.05f;
   /* MoveAngle owns ramping and the same 10 ms heading PI as distance moves.
    * Its return value means ramp-complete, not command-accepted. */
-  (void)Motor_MoveAngle(forward_mm_s, 0.0f);
+  (void)Motor_MoveAngle(speed_mm_s, angle_deg);
   if (direction_move.active) {
     if (new_goal) {
       const float error_deg = motor_wrap_angle_deg(heading - pose.heading_mdeg * 0.001f);
@@ -2549,12 +2562,17 @@ static bool motor_move_heading(float forward_mm_s, float field_heading_deg,
 
 bool Motor_MoveHeading(float forward_mm_s, float field_heading_deg)
 {
-  return motor_move_heading(forward_mm_s, field_heading_deg, false);
+  return motor_move_angle_heading(forward_mm_s, 0.0f, field_heading_deg, false);
 }
 
 bool Motor_MoveHeadingLowRearDeadband(float forward_mm_s, float field_heading_deg)
 {
-  return motor_move_heading(forward_mm_s, field_heading_deg, true);
+  return motor_move_angle_heading(forward_mm_s, 0.0f, field_heading_deg, true);
+}
+
+bool Motor_MoveAngleHeading(float speed_mm_s, float angle_deg, float field_heading_deg)
+{
+  return motor_move_angle_heading(speed_mm_s, angle_deg, field_heading_deg, true);
 }
 
 bool Motor_MoveSpin(float speed_mm_s, float direction_deg, float yaw_tangent_mm_s)

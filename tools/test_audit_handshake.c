@@ -725,6 +725,38 @@ static void test_normalrun_separation_settle(void)
   assert(Claw_ClusterOpenRight(final_step + 260U));
 }
 
+static void test_normalrun_start_center_approach(void)
+{
+  prepare();
+  test_pose.heading_mdeg = 135000;
+  task_enter(TASK_START, 0U);
+  start_motion_phase = START_FORWARD;
+  test_pose.heading_mdeg = 318000;
+  test_pose.path_mm = 1700U;
+  VisionFusedPose pose = {.received = true, .status = VISION_POSE_VALID,
+      .x_mm = -116, .y_mm = 536, .heading_cdeg = 9000U};
+  task_process_start(&pose, 20U);
+  assert(state == TASK_START && start_motion_phase == START_CENTER_APPROACH);
+  assert(distance_calls == 1U && start_center_origin_path_mm == 1700U);
+
+  task_process_start(&pose, 40U);
+  assert(task_abs(task_wrap_angle(heading_output - 315.0f)) < 0.01f);
+  assert(reverse_output > 0.0f && lateral_output < 0.0f);
+  pose.x_mm = -60;
+  pose.y_mm = 40;
+  task_process_start(&pose, 60U);
+  assert(state == TASK_OPEN_CLAW && !task_status.motors_active);
+
+  task_enter(TASK_START, 100U);
+  start_motion_phase = START_FORWARD;
+  pose.y_mm = 220;
+  task_process_start(&pose, 120U);
+  assert(start_motion_phase == START_CENTER_APPROACH && distance_calls == 1U);
+  test_pose.path_mm += APP_START_CENTER_PATH_LIMIT_MM;
+  task_process_start(&pose, 140U);
+  assert(state == TASK_OPEN_CLAW && !task_status.motors_active && !distance_command_done);
+}
+
 static void test_normalrun_navigation_handoffs_and_abort(void)
 {
   prepare();
@@ -733,23 +765,40 @@ static void test_normalrun_navigation_handoffs_and_abort(void)
   VisionMissionCommand route = {.received = true, .command = VISION_CMD_NAVIGATE_WAYPOINT,
       .flags = VISION_CMD_VALID | VISION_CMD_DISTANCE_VALID | VISION_CMD_RED_SIDE |
                VISION_CMD_STAGE_ONLY,
+      .target_x_mm = 500,
       .heading_cdeg = 9000U};
-  assert(nav_follow(&route, route.command, APP_RETURN_CENTER_SPEED_MM_S, 20U) ==
+  assert(nav_follow(&route, route.command, APP_NAV_FAST_SPEED_MM_S, 20U) ==
+         REMOTE_ROUTE_WAITING);
+  assert(nav_coarse.phase == NAV_COARSE_ALIGN);
+  nav_coarse.phase = NAV_COARSE_DRIVE;
+  route.target_x_mm = 200;
+  assert(nav_follow(&route, route.command, APP_NAV_FAST_SPEED_MM_S, 40U) ==
+         REMOTE_ROUTE_RUNNING);
+  route.target_x_mm = 180;
+  assert(nav_follow(&route, route.command, APP_NAV_FAST_SPEED_MM_S, 60U) ==
+         REMOTE_ROUTE_WAITING);
+  assert(nav_coarse.phase == NAV_COARSE_BRAKE && !distance_command_done);
+  route.target_x_mm = 75;
+  assert(nav_follow(&route, route.command, APP_NAV_FAST_SPEED_MM_S, 80U) ==
+         REMOTE_ROUTE_RUNNING);
+  assert(nav_coarse.phase == NAV_COARSE_FINE && fine_speed_request == 110.0f);
+  route.target_x_mm = 0;
+  assert(nav_follow(&route, route.command, APP_NAV_FAST_SPEED_MM_S, 100U) ==
          REMOTE_ROUTE_REACHED);
   assert(distance_command_done && !task_status.motors_active &&
          Camera_GetAngle() == APP_SAFE_ALIGN_CAMERA_ANGLE);
 
-  task_enter(TASK_FACE_FIELD_CENTER, 40U);
+  task_enter(TASK_FACE_FIELD_CENTER, 120U);
   route.command = VISION_CMD_RETURN_CENTER;
   route.flags = VISION_CMD_VALID | VISION_CMD_DISTANCE_VALID | VISION_CMD_RED_SIDE |
                 VISION_CMD_DRIVE_STRAIGHT | VISION_CMD_USE_FINAL_HEADING;
   test_vision.mission = route;
-  task_process_face_center(&test_vision, 60U);
+  task_process_face_center(&test_vision, 140U);
   assert(state == TASK_SEARCH && !task_status.motors_active);
 
   const VisionMissionCommand abort = {
       .received = true, .flags = VISION_CMD_VALID, .command = VISION_CMD_ABORT};
-  task_accept_mission_legacy(&abort, 80U);
+  task_accept_mission_legacy(&abort, 160U);
   assert(state == TASK_STOPPED && task_status.fault == TASK_FAULT_REMOTE_STOP &&
          reverse_output == 0.0f && lateral_output == 0.0f && yaw_output == 0.0f);
 }
@@ -758,6 +807,7 @@ int main(void)
 {
 #ifdef NORMALRUN_FLOW_REVIEW_CHECK
   test_normalrun_start_and_delivery_exit();
+  test_normalrun_start_center_approach();
   test_normalrun_navigation_handoffs_and_abort();
   test_sweep_placeholder_ack_and_real_role_validation();
   test_injury_retrieve_placeholder_does_not_change_destination();
