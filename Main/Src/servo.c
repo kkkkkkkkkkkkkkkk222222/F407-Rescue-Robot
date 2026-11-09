@@ -37,3 +37,9 @@ uint8_t Servo_GetAngle(uint8_t id)
 {
   return ((id >= 1U) && (id <= 4U)) ? angles[id - 1U] : 0U;
 }
+
+uint8_t Servo_OutputAngle(uint8_t id, uint8_t angle)
+{
+  if (id < 1U || id > 4U) { return 0U; }
+  return angle > 180U ? 180U : angle;
+}

@@ -22,6 +22,7 @@ typedef enum {
 static ClawAction claw_action;
 static uint8_t claw_step;
 static uint32_t claw_step_ms;
+static uint32_t claw_wait_ms;
 static bool claw_done;
 static uint8_t separation_extra_close_deg;
 
@@ -82,19 +83,45 @@ static bool claw_move_sequential(ClawAction action, uint32_t now_ms,
   return true;
 }
 
-static bool claw_move_together(ClawAction action, uint32_t now_ms,
-                               uint8_t left_angle, uint32_t wait_ms)
+static uint32_t servo_travel_wait_ms(uint8_t from_deg, uint8_t to_deg)
+{
+  const uint32_t travel_deg = from_deg > to_deg ? from_deg - to_deg : to_deg - from_deg;
+  /* 130 ms per 60 degrees, times 1.5, rounded up to a whole millisecond. */
+  return (travel_deg * 195U + 59U) / 60U;
+}
+
+static uint32_t claw_limit_wait_ms(uint8_t id, uint8_t angle, uint8_t min_deg, uint8_t max_deg)
+{
+  const uint8_t target_deg = Servo_OutputAngle(id, angle);
+  const uint32_t from_min_ms = servo_travel_wait_ms(min_deg, target_deg);
+  const uint32_t from_max_ms = servo_travel_wait_ms(max_deg, target_deg);
+  return from_min_ms > from_max_ms ? from_min_ms : from_max_ms;
+}
+
+static bool claw_move_together(ClawAction action, uint32_t now_ms, uint8_t left_angle)
 {
   if (claw_action != action) {
+    const uint8_t right_angle = APP_CLAW_RIGHT_FROM_LEFT(left_angle);
+    if (action == CLAW_ACTION_HALF_TOUCH) {
+      claw_wait_ms = APP_INJURY_CLAW_SETTLE_MS;
+    } else {
+      /* Contact can move a claw away from its last commanded angle. */
+      const uint32_t left_wait_ms = claw_limit_wait_ms(
+          4U, left_angle, APP_CLAW_LEFT_LIMIT_MIN_DEG, APP_CLAW_LEFT_LIMIT_MAX_DEG);
+      const uint32_t right_wait_ms = claw_limit_wait_ms(
+          2U, right_angle, APP_CLAW_RIGHT_FROM_LEFT(APP_CLAW_LEFT_LIMIT_MAX_DEG),
+          APP_CLAW_RIGHT_FROM_LEFT(APP_CLAW_LEFT_LIMIT_MIN_DEG));
+      claw_wait_ms = left_wait_ms > right_wait_ms ? left_wait_ms : right_wait_ms;
+    }
     claw_action = action;
     claw_step_ms = now_ms;
     claw_done = false;
     Servo_SetAngle(4U, left_angle);
-    Servo_SetAngle(2U, APP_CLAW_RIGHT_FROM_LEFT(left_angle));
+    Servo_SetAngle(2U, right_angle);
     return false;
   }
 
-  if (!claw_done && ((uint32_t)(now_ms - claw_step_ms) >= wait_ms)) {
+  if (!claw_done && ((uint32_t)(now_ms - claw_step_ms) >= claw_wait_ms)) {
     claw_done = true;
   }
   return claw_done;
@@ -134,6 +161,12 @@ void Lift_SetStartPosition(void)
   Servo_SetAngle(1U, APP_LIFT_START_ANGLE);
 }
 
+uint32_t Lift_StartPositionWaitMs(void)
+{
+  return servo_travel_wait_ms(Servo_OutputAngle(1U, Servo_GetAngle(1U)),
+                              Servo_OutputAngle(1U, APP_LIFT_START_ANGLE));
+}
+
 void Lift_SetTravelPosition(void)
 {
   Servo_SetAngle(1U, APP_LIFT_TRAVEL_ANGLE);
@@ -141,8 +174,7 @@ void Lift_SetTravelPosition(void)
 
 bool Claw_Open(uint32_t now_ms)
 {
-  return claw_move_together(CLAW_ACTION_OPEN, now_ms,
-                            APP_CLAW_LEFT_OPEN_ANGLE, 1000U);
+  return claw_move_together(CLAW_ACTION_OPEN, now_ms, APP_CLAW_LEFT_OPEN_ANGLE);
 }
 
 static bool claw_step_to(uint8_t id, uint8_t target)
@@ -234,15 +266,11 @@ bool Claw_Retract(uint32_t now_ms)
 
 bool Claw_Touch(uint32_t now_ms)
 {
-  /* Both claws move together, but keep the existing two-second confirmation
-   * window before GRIPPER_CLOSED is reported to the RDK. */
-  return claw_move_together(CLAW_ACTION_TOUCH, now_ms,
-                            APP_CLAW_LEFT_TOUCH_ANGLE, 2000U);
+  return claw_move_together(CLAW_ACTION_TOUCH, now_ms, APP_CLAW_LEFT_TOUCH_ANGLE);
 }
 
 bool Claw_HalfTouch(uint32_t now_ms)
 {
   return claw_move_together(CLAW_ACTION_HALF_TOUCH, now_ms,
-                            APP_CLAW_LEFT_TOUCH_ANGLE + APP_INJURY_CLAW_RELAX_DEG,
-                            APP_INJURY_CLAW_SETTLE_MS);
+                            APP_CLAW_LEFT_TOUCH_ANGLE + APP_INJURY_CLAW_RELAX_DEG);
 }

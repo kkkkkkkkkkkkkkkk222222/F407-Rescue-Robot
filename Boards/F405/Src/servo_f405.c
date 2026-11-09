@@ -21,12 +21,19 @@ static uint32_t servo_slot_start(uint8_t index)
   return SERVO_FIRST_EDGE_US + (uint32_t)index * SERVO_SLOT_US;
 }
 
-static uint32_t servo_pulse_for_angle(uint8_t index, uint8_t angle)
+uint8_t Servo_OutputAngle(uint8_t id, uint8_t angle)
 {
-  int32_t output_deg = (int32_t)angle + offsets_deg[index];
+  if (id < 1U || id > 4U) { return 0U; }
+  if (angle > 180U) { angle = 180U; }
+  int32_t output_deg = (int32_t)angle + offsets_deg[id - 1U];
   if (output_deg < 0) { output_deg = 0; }
   if (output_deg > 180) { output_deg = 180; }
-  return 500U + (uint32_t)output_deg * 2000U / 180U;
+  return (uint8_t)output_deg;
+}
+
+static uint32_t servo_pulse_for_angle(uint8_t index, uint8_t angle)
+{
+  return 500U + (uint32_t)Servo_OutputAngle(index + 1U, angle) * 2000U / 180U;
 }
 
 void BoardF405_ServoIRQ(void)

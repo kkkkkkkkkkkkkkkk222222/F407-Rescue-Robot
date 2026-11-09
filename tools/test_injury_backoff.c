@@ -20,6 +20,16 @@ static float distance_request;
 static unsigned distance_calls, finite_pauses, finite_resumes;
 void Servo_SetAngle(uint8_t id, uint8_t angle) { servo_angles[id - 1U] = angle; }
 uint8_t Servo_GetAngle(uint8_t id) { return servo_angles[id - 1U]; }
+uint8_t Servo_OutputAngle(uint8_t id, uint8_t angle)
+{
+  static const int offsets[] = {
+      APP_SERVO_S1_OFFSET_DEG, APP_SERVO_S2_OFFSET_DEG,
+      APP_SERVO_S3_OFFSET_DEG, APP_SERVO_S4_OFFSET_DEG
+  };
+  assert(id >= 1U && id <= 4U && angle <= 180U);
+  const int output = (int)angle + offsets[id - 1U];
+  return (uint8_t)(output < 0 ? 0 : output > 180 ? 180 : output);
+}
 void Motor_Stop(void) { reverse_output = lateral_output = yaw_output = 0.0f; }
 void Motor_PauseFiniteMotion(void) { ++finite_pauses; Motor_Stop(); }
 void Motor_ResumeFiniteMotion(void) { ++finite_resumes; }
@@ -161,7 +171,7 @@ static void test_complete_injury_sequence(void)
   assert(!command_accepted && state == TASK_INJURY_RECLOSE);
   assert(!Claw_Touch(3600U));
   assert(servo_angles[3] == 76U && servo_angles[1] == 104U);
-  assert(!Claw_Touch(5599U)); assert(Claw_Touch(5600U));
+  assert(!Claw_Touch(3798U)); assert(Claw_Touch(3799U));
 }
 
 static void test_pause_does_not_consume_reverse_time(void)

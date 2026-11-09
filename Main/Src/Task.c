@@ -271,7 +271,7 @@ static uint32_t nav_final_push_start_path_mm;
 static uint32_t safe_enter_start_path_mm;
 static uint32_t delivery_exit_start_path_mm;
 static uint8_t delivery_exit_phase;
-static uint32_t delivery_exit_phase_started_ms;
+static uint32_t delivery_exit_phase_ready_ms;
 static bool capture_budget_active, capture_wait_active, capture_escape_active;
 static bool capture_escape_return_center;
 static bool capture_escape_reclose;
@@ -1463,7 +1463,7 @@ static void task_enter(TaskState next, uint32_t now_ms)
     task_reset_turn_tracker();
   } else if (next == TASK_EXIT_SAFE_ZONE) {
     delivery_exit_phase = 0U;
-    delivery_exit_phase_started_ms = now_ms;
+    delivery_exit_phase_ready_ms = now_ms + Lift_StartPositionWaitMs();
     Lift_SetStartPosition();
     Camera_SetAngle(APP_DELIVERY_CAMERA_ANGLE);
     camera_angle = (float)APP_DELIVERY_CAMERA_ANGLE;
@@ -6802,7 +6802,7 @@ void Task_Process(uint32_t now_ms)
       if (delivery_exit_phase == 0U) {
         Motor_Stop();
         task_status.motors_active = false;
-        if (now_ms - delivery_exit_phase_started_ms >= APP_DELIVERY_EXIT_LIFT_SETTLE_MS) {
+        if ((int32_t)(now_ms - delivery_exit_phase_ready_ms) >= 0) {
           delivery_exit_phase = 1U;
           delivery_exit_path_valid = false;
         }
@@ -6811,7 +6811,7 @@ void Task_Process(uint32_t now_ms)
       if (delivery_exit_phase == 2U) {
         Motor_Stop();
         task_status.motors_active = false;
-        if (now_ms - delivery_exit_phase_started_ms >= APP_DELIVERY_EXIT_LIFT_SETTLE_MS) {
+        if ((int32_t)(now_ms - delivery_exit_phase_ready_ms) >= 0) {
           task_enter(TASK_FACE_FIELD_CENTER, now_ms);
         }
         break;
@@ -6833,7 +6833,7 @@ void Task_Process(uint32_t now_ms)
       if (result == MOTOR_DISTANCE_DONE) {
         Motor_Stop();
         Lift_SetTravelPosition();
-        delivery_exit_phase_started_ms = now_ms;
+        delivery_exit_phase_ready_ms = now_ms + APP_DELIVERY_EXIT_LIFT_RETURN_SETTLE_MS;
         delivery_exit_phase = 2U;
       } else if (distance_failed(result)) {
         task_stop(TASK_FAULT_MOTOR, now_ms);

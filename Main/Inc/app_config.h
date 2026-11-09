@@ -625,7 +625,7 @@
 #define APP_DELIVERY_VERIFY_WAIT_MS       1000U
 #define APP_DELIVERY_EXIT_DISTANCE_M       0.30f
 #define APP_DELIVERY_EXIT_SPEED_MM_S      400.0f
-#define APP_DELIVERY_EXIT_LIFT_SETTLE_MS   1000U
+#define APP_DELIVERY_EXIT_LIFT_RETURN_SETTLE_MS 1000U
 #define APP_RETURN_CENTER_SPEED_MM_S       600.0f
 #define APP_RETURN_CENTER_HEADING_MAX_MM_S 100.0f
 #define APP_RETURN_CENTER_TURN_TOLERANCE_DEG 3.0f
@@ -639,6 +639,9 @@
 #define APP_REMOTE_YIELD_SPEED_MM_S          750.0f
 /* The left claw defines each mirrored logical pose. PWM trim is per servo. */
 #define APP_CLAW_RIGHT_FROM_LEFT(left_deg) (180U - (left_deg))
+/* Mechanical limits in output degrees. The right claw mirrors the left. */
+#define APP_CLAW_LEFT_LIMIT_MIN_DEG              20U
+#define APP_CLAW_LEFT_LIMIT_MAX_DEG             120U
 #define APP_CLAW_LEFT_OPEN_ANGLE                108U
 #define APP_CLAW_LEFT_TOUCH_ANGLE                76U
 #define APP_CLAW_RIGHT_OPEN_ANGLE  APP_CLAW_RIGHT_FROM_LEFT(APP_CLAW_LEFT_OPEN_ANGLE)
