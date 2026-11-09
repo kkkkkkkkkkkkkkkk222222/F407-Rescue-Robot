@@ -196,28 +196,32 @@ bool Claw_OpenLeft(uint32_t now_ms)
 {
   /* Release left and use the task's latched baseline/attempt relaxation. */
   return claw_move_separation(CLAW_ACTION_OPEN_LEFT, now_ms,
-                              APP_CLAW_LEFT_OPEN_ANGLE, claw_relaxed_right(), 600U);
+                              APP_CLAW_LEFT_OPEN_ANGLE, claw_relaxed_right(),
+                              APP_CLAW_SEPARATE_SETTLE_MS);
 }
 
 bool Claw_OpenRight(uint32_t now_ms)
 {
   /* Mirror of Claw_OpenLeft: a smaller left-servo angle closes it farther. */
   return claw_move_separation(CLAW_ACTION_OPEN_RIGHT, now_ms,
-                              claw_relaxed_left(), APP_CLAW_RIGHT_OPEN_ANGLE, 600U);
+                              claw_relaxed_left(), APP_CLAW_RIGHT_OPEN_ANGLE,
+                              APP_CLAW_SEPARATE_SETTLE_MS);
 }
 
 bool Claw_ClusterOpenLeft(uint32_t now_ms)
 {
   /* Selective separation uses the same retained-side profile across retries. */
   return claw_move_separation(CLAW_ACTION_CLUSTER_OPEN_LEFT, now_ms,
-                              APP_CLAW_LEFT_OPEN_ANGLE, claw_relaxed_right(), 600U);
+                              APP_CLAW_LEFT_OPEN_ANGLE, claw_relaxed_right(),
+                              APP_CLAW_SEPARATE_SETTLE_MS);
 }
 
 bool Claw_ClusterOpenRight(uint32_t now_ms)
 {
   /* Mirror of Claw_ClusterOpenLeft for a retained left-side target. */
   return claw_move_separation(CLAW_ACTION_CLUSTER_OPEN_RIGHT, now_ms,
-                              claw_relaxed_left(), APP_CLAW_RIGHT_OPEN_ANGLE, 600U);
+                              claw_relaxed_left(), APP_CLAW_RIGHT_OPEN_ANGLE,
+                              APP_CLAW_SEPARATE_SETTLE_MS);
 }
 
 bool Claw_Retract(uint32_t now_ms)
