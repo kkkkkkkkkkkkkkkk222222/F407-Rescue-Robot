@@ -170,11 +170,12 @@ static int16_t debug_feedforward[3];
 static int32_t debug_correction_pwm100[3];
 static uint8_t debug_pi_active_mask;
 static volatile uint8_t wheel_check_id;
-static int16_t wheel_check_pwm;
+static int16_t wheel_check_pwm[MOTOR_COUNT];
 static uint32_t wheel_check_start_ms;
 static uint16_t wheel_check_duration_ms;
 static bool wheel_calibration;
 static uint32_t wheel_calibration_started_ms;
+#define MOTOR_CALIBRATION_FRONT_PAIR (MOTOR_COUNT + 1U)
 #endif
 
 static const int8_t motor_signs[MOTOR_COUNT] = {
@@ -1530,7 +1531,7 @@ void Motor_Update(void)
       Motor_Stop();
     } else {
       for (uint8_t id = 1U; id <= MOTOR_COUNT; ++id) {
-        motor_apply_pwm(id, (id == wheel_check_id) ? wheel_check_pwm : 0);
+        motor_apply_pwm(id, wheel_check_pwm[id - 1U]);
       }
       return;
     }
@@ -1862,6 +1863,17 @@ MotorDebugTrace Motor_GetDebugTrace(void)
   return trace;
 }
 
+static void motor_set_wheel_check_pwm(uint8_t id, int16_t pwm, int16_t left_pwm)
+{
+  for (uint8_t i = 0U; i < MOTOR_COUNT; ++i) {
+    wheel_check_pwm[i] = (id == i + 1U) ? pwm : 0;
+  }
+  if (id == MOTOR_CALIBRATION_FRONT_PAIR) {
+    wheel_check_pwm[0] = pwm;
+    wheel_check_pwm[1] = left_pwm;
+  }
+}
+
 bool Motor_WheelCheckPulse(uint8_t id, int16_t pwm, uint16_t duration_ms)
 {
   if ((id < 1U) || (id > MOTOR_COUNT) || (pwm == 0) ||
@@ -1879,7 +1891,7 @@ bool Motor_WheelCheckPulse(uint8_t id, int16_t pwm, uint16_t duration_ms)
     motor_leave_critical(primask);
     return false;
   }
-  wheel_check_pwm = (int16_t)(pwm * motor_signs[id - 1U]);
+  motor_set_wheel_check_pwm(id, (int16_t)(pwm * motor_signs[id - 1U]), 0);
   wheel_check_start_ms = HAL_GetTick();
   wheel_check_duration_ms = duration_ms;
   wheel_check_id = id;
@@ -1892,16 +1904,18 @@ bool Motor_WheelCheckRunning(void)
   return wheel_check_id != 0U;
 }
 
-bool Motor_CalibrationStep(uint8_t id, int16_t pwm, uint16_t duration_ms)
+static bool motor_calibration_step(uint8_t id, int16_t physical_pwm,
+                                   int16_t physical_left_pwm, uint16_t duration_ms)
 {
-  if (id < 1U || id > MOTOR_COUNT || pwm == 0 || pwm < -250 || pwm > 250 ||
-      duration_ms < 100U || duration_ms > 1500U) { return false; }
+  if (duration_ms < 100U || duration_ms > 1500U) { return false; }
+  const bool pair = id == MOTOR_CALIBRATION_FRONT_PAIR;
+  const uint8_t index = pair ? 0U : (uint8_t)(id - 1U);
   const uint32_t mask = motor_enter_critical();
   const uint32_t now = HAL_GetTick();
-  const int16_t physical_pwm = pwm * motor_signs[id - 1U];
   if (wheel_check_id != 0U) {
     if (!wheel_calibration || wheel_check_id != id ||
-        (physical_pwm > 0) != (wheel_check_pwm > 0) ||
+        (physical_pwm > 0) != (wheel_check_pwm[index] > 0) ||
+        (pair && ((physical_left_pwm > 0) != (wheel_check_pwm[1] > 0))) ||
         (uint32_t)(now - wheel_calibration_started_ms) >= 30000U ||
         (uint32_t)(now - wheel_check_start_ms) >= wheel_check_duration_ms) {
       motor_leave_critical(mask);
@@ -1914,12 +1928,32 @@ bool Motor_CalibrationStep(uint8_t id, int16_t pwm, uint16_t duration_ms)
     wheel_calibration_started_ms = now;
   }
   wheel_calibration = true;
-  wheel_check_pwm = physical_pwm;
+  motor_set_wheel_check_pwm(id, physical_pwm, physical_left_pwm);
   wheel_check_start_ms = now;
   wheel_check_duration_ms = duration_ms;
   wheel_check_id = id;
   motor_leave_critical(mask);
   return true;
+}
+
+bool Motor_CalibrationStep(uint8_t id, int16_t pwm, uint16_t duration_ms)
+{
+  if (id < 1U || id > MOTOR_COUNT || pwm == 0 ||
+      pwm < -APP_MOTOR_PWM_MAX_PERMILLE || pwm > APP_MOTOR_PWM_MAX_PERMILLE) {
+    return false;
+  }
+  return motor_calibration_step(id, (int16_t)(pwm * motor_signs[id - 1U]), 0, duration_ms);
+}
+
+bool Motor_CalibrationPair(int16_t right_pwm, int16_t left_pwm, uint16_t duration_ms)
+{
+  if (right_pwm == 0 || left_pwm == 0 || (right_pwm > 0) == (left_pwm > 0) ||
+      right_pwm < -APP_MOTOR_PWM_MAX_PERMILLE || right_pwm > APP_MOTOR_PWM_MAX_PERMILLE ||
+      left_pwm < -APP_MOTOR_PWM_MAX_PERMILLE || left_pwm > APP_MOTOR_PWM_MAX_PERMILLE) {
+    return false;
+  }
+  return motor_calibration_step(MOTOR_CALIBRATION_FRONT_PAIR,
+      (int16_t)(right_pwm * motor_signs[0]), (int16_t)(left_pwm * motor_signs[1]), duration_ms);
 }
 #endif
 

@@ -87,6 +87,7 @@ static uint32_t post_motion_started_ms;
 static bool calibration_active;
 static uint8_t calibration_id;
 static int16_t calibration_pwm;
+static int16_t calibration_left_pwm;
 static uint32_t calibration_step, calibration_step_ms, calibration_sample_ms;
 static int64_t calibration_position[3];
 
@@ -301,13 +302,23 @@ static void calibration_report(void)
     calibration_position[i] = encoder[i].position;
   }
   char text[208];
-  (void)snprintf(text, sizeof(text),
-      "CAL_DATA STEP=%lu ID=%u PWM=%d MS=%lu AGE_MS=%lu DT_MS=%lu RAW=%ld,%ld,%ld FB=%ld ACTIVE=%u\r\n",
-      (unsigned long)calibration_step, calibration_id, calibration_pwm,
-      (unsigned long)now, (unsigned long)(now - calibration_step_ms),
-      (unsigned long)dt, (long)delta[0], (long)delta[1], (long)delta[2],
-      (long)(delta[calibration_id - 1U] * encoder_signs[calibration_id - 1U]),
-      Motor_WheelCheckRunning());
+  if (calibration_id == 0U) {
+    (void)snprintf(text, sizeof(text),
+        "CAL_PAIR_DATA STEP=%lu PWM=%d,%d MS=%lu AGE_MS=%lu DT_MS=%lu RAW=%ld,%ld,%ld FB=%ld,%ld ACTIVE=%u\r\n",
+        (unsigned long)calibration_step, calibration_pwm, calibration_left_pwm,
+        (unsigned long)now, (unsigned long)(now - calibration_step_ms), (unsigned long)dt,
+        (long)delta[0], (long)delta[1], (long)delta[2],
+        (long)(delta[0] * encoder_signs[0]), (long)(delta[1] * encoder_signs[1]),
+        Motor_WheelCheckRunning());
+  } else {
+    (void)snprintf(text, sizeof(text),
+        "CAL_DATA STEP=%lu ID=%u PWM=%d MS=%lu AGE_MS=%lu DT_MS=%lu RAW=%ld,%ld,%ld FB=%ld ACTIVE=%u\r\n",
+        (unsigned long)calibration_step, calibration_id, calibration_pwm,
+        (unsigned long)now, (unsigned long)(now - calibration_step_ms),
+        (unsigned long)dt, (long)delta[0], (long)delta[1], (long)delta[2],
+        (long)(delta[calibration_id - 1U] * encoder_signs[calibration_id - 1U]),
+        Motor_WheelCheckRunning());
+  }
   wheel_send(text);
   calibration_sample_ms = now;
 }
@@ -495,9 +506,10 @@ static void wheel_report_version(void)
 #else
       "MOTIONDEBUG "
 #endif
-      "SERIAL_V3 RX_GUARD=1 DIAG=1 TURN_PROFILE=2 UART_FIX=1 CAL=1 MODE=%u FORWARD_SIGN=%d HEADING_SIGN=%d "
+      "SERIAL_V3 RX_GUARD=1 DIAG=1 TURN_PROFILE=2 UART_FIX=1 CALPAIR=1 CAL_MAX=%u CAL=1 MODE=%u FORWARD_SIGN=%d HEADING_SIGN=%d "
       "HOLD_P_X100=%ld HOLD_I_X10000=%ld STEER_P_X1000=%ld STEER_D_X10000=%ld BUILT="
-      __DATE__ " " __TIME__ "\r\n", (unsigned int)APP_ACTIVE_MODE,
+      __DATE__ " " __TIME__ "\r\n", (unsigned int)APP_MOTOR_PWM_MAX_PERMILLE,
+      (unsigned int)APP_ACTIVE_MODE,
       APP_OMNI_FORWARD_SIGN, (int)APP_MOTOR_HEADING_OUTPUT_SIGN,
       (long)(APP_MOTOR_HEADING_KP * 100.0f + 0.5f),
       (long)(APP_MOTOR_HEADING_KI * 10000.0f + 0.5f),
@@ -697,10 +709,15 @@ static void wheel_execute(void)
     wheel_send("SERVO PWM OFF\r\n"); return;
   }
 #endif
-  if (strcmp(command, "CAL") == 0) {
-    if (count != 3U || args[0] < 1 || args[0] > 3 || args[1] == 0 ||
-        args[1] < -250 || args[1] > 250 || args[2] < 100 || args[2] > 1500) {
-      wheel_send("ERR CAL: ID 1..3, PWM -250..250 NONZERO PERMILLE, MS 100..1500\r\n");
+  const bool pair = strcmp(command, "CALPAIR") == 0;
+  if (pair || strcmp(command, "CAL") == 0) {
+    const int32_t limit = APP_MOTOR_PWM_MAX_PERMILLE;
+    const bool first_arg_valid = pair ?
+        (args[0] >= -limit && args[0] <= limit && args[0] != 0 && (args[0] > 0) != (args[1] > 0)) :
+        (args[0] >= 1 && args[0] <= 3);
+    if (count != 3U || !first_arg_valid || args[1] == 0 ||
+        args[1] < -limit || args[1] > limit || args[2] < 100 || args[2] > 1500) {
+      wheel_send("ERR CAL ARGUMENTS: SEE HELP AND CAL_MAX\r\n");
       return;
     }
     if (calibration_active) { calibration_report(); }
@@ -717,22 +734,29 @@ static void wheel_execute(void)
     }
     const bool first = !calibration_active;
     if (first) { Debug_SetWheelCheckActive(true); }
-    const bool started = Motor_CalibrationStep((uint8_t)args[0], (int16_t)args[1], (uint16_t)args[2]);
+    const bool started = pair ? Motor_CalibrationPair((int16_t)args[0], (int16_t)args[1], (uint16_t)args[2]) :
+        Motor_CalibrationStep((uint8_t)args[0], (int16_t)args[1], (uint16_t)args[2]);
     if (!started && first) { Debug_SetWheelCheckActive(false); }
     if (mask == 0U) { __enable_irq(); }
     if (!started) { wheel_send("ERR CAL: STOP AND WAIT; SAME WHEEL/DIRECTION ONLY\r\n"); return; }
     EncoderStatus encoder[3];
     Encoder_GetAll(encoder);
     for (uint8_t i = 0U; i < 3U; ++i) { calibration_position[i] = encoder[i].position; }
-    calibration_id = (uint8_t)args[0];
-    calibration_pwm = (int16_t)args[1];
+    calibration_id = pair ? 0U : (uint8_t)args[0];
+    calibration_pwm = (int16_t)(pair ? args[0] : args[1]);
+    calibration_left_pwm = pair ? (int16_t)args[1] : 0;
     calibration_active = true;
     calibration_step_ms = calibration_sample_ms = HAL_GetTick();
     ++calibration_step;
     motion_tracking = post_motion_trace = false;
     char text[128];
-    (void)snprintf(text, sizeof(text), "CAL_BEGIN STEP=%lu ID=%u PWM=%d LEASE_MS=%u CONTINUE=%u MAX_TOTAL_MS=30000\r\n",
-        (unsigned long)calibration_step, calibration_id, calibration_pwm, (unsigned int)args[2], !first);
+    if (pair) {
+      (void)snprintf(text, sizeof(text), "CAL_PAIR_BEGIN STEP=%lu PWM=%d,%d LEASE_MS=%u CONTINUE=%u MAX_TOTAL_MS=30000\r\n",
+          (unsigned long)calibration_step, calibration_pwm, calibration_left_pwm, (unsigned int)args[2], !first);
+    } else {
+      (void)snprintf(text, sizeof(text), "CAL_BEGIN STEP=%lu ID=%u PWM=%d LEASE_MS=%u CONTINUE=%u MAX_TOTAL_MS=30000\r\n",
+          (unsigned long)calibration_step, calibration_id, calibration_pwm, (unsigned int)args[2], !first);
+    }
     wheel_send(text);
     return;
   }
@@ -846,7 +870,9 @@ static void wheel_execute(void)
                "BODY forward_mm left_mm [mm/s=150]\r\n"
                "FIELD x_mm y_mm [mm/s=150]\r\n"
                "STOP HOLD RESET STAT GYRO IMU MOTOR ENC WHEELS PING\r\n"
-               "CAL wheel signed_permille lease_ms: AIR ONLY, MAX 250/1500ms/30s, STOP ENDS\r\n"
+               "CAL wheel signed_permille lease_ms: AIR ONLY, LIMIT CAL_MAX\r\n"
+               "CALPAIR right_permille left_permille lease_ms: AIR ONLY, OPPOSITE SIGNS\r\n"
+               "CAL/CALPAIR: 100..1500ms LEASE, 30s TOTAL, STOP ENDS\r\n"
                "WHEELS: AIR ONLY, 1+ -> 2+ -> 3+, 25% 400ms EACH\r\n");
     return;
   }
