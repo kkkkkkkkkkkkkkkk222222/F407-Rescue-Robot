@@ -5,19 +5,25 @@ param(
   [switch]$WheelsSuspended,
   [switch]$Fine,
   [ValidateRange(0, 5)][int]$StartTrials = 0,
-  [string]$OutputDirectory = 'build/MotionDebug/calibration'
+  [string]$OutputDirectory = 'build/MotionDebug/calibration',
+  [switch]$RunInMap
 )
 
 $ErrorActionPreference = 'Stop'
 if (!$WheelsSuspended) { throw 'Confirm all wheels are suspended with -WheelsSuspended.' }
-if ($Fine -and $StartTrials -gt 0) { throw 'Choose Fine or StartTrials, not both.' }
+if (($Fine -and $StartTrials -gt 0) -or ($RunInMap -and ($Fine -or $StartTrials -gt 0))) {
+  throw 'Choose one of Fine, StartTrials, or RunInMap.'
+}
 if ($Wheels | Where-Object { $_ -lt 1 -or $_ -gt 3 }) { throw 'Wheel IDs must be 1..3.' }
 if ($Directions | Where-Object { $_ -ne 1 -and $_ -ne -1 }) { throw 'Directions must be +/-1.' }
 $null = New-Item -ItemType Directory -Force -Path $OutputDirectory
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$base = Join-Path (Resolve-Path $OutputDirectory) ($stamp + $(if ($StartTrials -gt 0) { '-starts' } elseif ($Fine) { '-fine' } else { '-coarse' }))
+$profile = if ($RunInMap) { 'runin-map' } elseif ($StartTrials -gt 0) { 'starts' } elseif ($Fine) { 'fine' } else { 'coarse' }
+$base = Join-Path (Resolve-Path $OutputDirectory) "$stamp-$profile"
+$runInLevels = @(40, 60, 80, 100, 120, 150, 180, 210, 230, 250)
 $log = [Text.StringBuilder]::new()
 $rows = [Collections.Generic.List[object]]::new()
+$points = [Collections.Generic.List[object]]::new()
 $portHandle = [IO.Ports.SerialPort]::new($Port, 115200)
 $portHandle.WriteTimeout = 1000
 $portHandle.Encoding = [Text.Encoding]::GetEncoding(28591)
@@ -49,8 +55,11 @@ try {
   Send-Command 'STOP'
   [void](Read-For 300)
   Send-Command 'STAT'
-  $status = Read-For 500
-  if ($status -notmatch 'CAL=1 MODE=2') { throw "Calibration firmware not confirmed: $status" }
+  $status = Read-For 650
+  if ($status -notmatch 'CAL=1 MODE=2\b' -and
+      $status -notmatch 'BOARD=F405_ROBO SERVICE=MOTIONDEBUG[^\r\n]*\bCAL=1 MODE=5\b') {
+    throw "Calibration firmware not confirmed: $status"
+  }
   foreach ($wheel in $Wheels) {
     foreach ($direction in $Directions) {
       Send-Command 'STOP'
@@ -58,7 +67,11 @@ try {
       if ($stopped -notmatch 'STOP OK') { throw 'STOP was not acknowledged.' }
       $phases = if ($StartTrials -gt 0) { @(1..$StartTrials | ForEach-Object { "START_$_" }) } else { @('UP', 'DOWN') }
       foreach ($phase in $phases) {
-        $levels = if ($phase -eq 'START_2') {
+        $levels = if ($RunInMap -and $phase -eq 'UP') {
+          $runInLevels
+        } elseif ($RunInMap) {
+          $runInLevels[($runInLevels.Count - 1)..0]
+        } elseif ($phase -eq 'START_2') {
           @(80, 70, 60, 50)
         } elseif ($phase -eq 'START_3') {
           @(60, 80, 50, 70)
@@ -118,6 +131,15 @@ try {
           $ms = ($steady | Measure-Object DtMs -Sum).Sum
           $speed = $counts * [math]::PI * 70 * 1000 / (1061.268 * $ms)
           $zero = @($steady | Where-Object Feedback -eq 0).Count
+          if ($RunInMap) {
+            $points.Add([pscustomobject]@{
+              Wheel=$wheel; Direction=$direction; Sweep=$phase
+              PwmPermille=$pwm; PwmPercent=$pwm / 10.0
+              Rpm=[math]::Round($counts * 60000 / (1061.268 * $ms), 2)
+              SpeedMmS=[math]::Round($speed, 2)
+              ZeroSamples=$zero; SampleCount=$steady.Count
+            })
+          }
           'W{0} DIR={1} {2} PWM={3:F1}% SPEED={4:F1}mm/s ZERO={5}/{6}' -f
               $wheel, $direction, $phase, ($level/10.0), $speed, $zero, $steady.Count
         }
@@ -138,4 +160,8 @@ try {
   [IO.File]::WriteAllText("$base.log", $log.ToString())
   $rows | Export-Csv -NoTypeInformation -Encoding utf8 -LiteralPath "$base.csv"
   "SAVED $base.csv"
+  if ($RunInMap -and $points.Count -gt 0) {
+    $points | Export-Csv -NoTypeInformation -Encoding utf8 -LiteralPath "$base-summary.csv"
+    "SUMMARY=$base-summary.csv"
+  }
 }
