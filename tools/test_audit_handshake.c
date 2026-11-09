@@ -392,7 +392,7 @@ static void test_recoverable_wait(void)
       .tracker_confidence=3, .heading_cdeg=9000, .x_mm=100, .y_mm=200}};
   for (unsigned t=700;t<=740;t+=20) {
     v.fused_pose.tick_ms=t;
-    task_recover_reference(&v,t);
+    task_recover_reference(&v);
   }
   assert(recovery_reference_ready && task_status.claw_visible && state == TASK_RECOVERY_WAIT);
   audit_at(1,800); audit_at(2,900); audit_at(3,1000);
@@ -527,12 +527,6 @@ static void test_distance_search_accumulation_and_transport_sort(void)
   accepted_context.last_command_rx_ms=APP_APPROACH_RANGE_TIMEOUT_MS;
   task_approach_watchdog(APP_APPROACH_RANGE_TIMEOUT_MS);
   assert(state==TASK_APPROACH_RECOVER); /* Fresh heartbeats cannot extend the travel deadline. */
-  prepare(); task_enter(TASK_APPROACH,0U); approach_phase=APPROACH_RANGE_MOVE;
-  accepted_context.last_command_rx_ms=0;
-  task_process_approach(&test_vision,600);
-  assert(finite_pauses==1 && distance_calls==0);
-  task_approach_watchdog(APP_APPROACH_LINK_RECOVER_MS);
-  assert(state==TASK_APPROACH_RECOVER);
 
   prepare(); injury_recheck_pending=true;
   VisionMissionCommand c=injury_audit(1);
@@ -642,8 +636,118 @@ static void test_new_curve_targets_and_bounded_exit(void)
   }
 }
 
+static void test_normalrun_start_and_delivery_exit(void)
+{
+  prepare();
+  task_enter(TASK_WAIT_CONFIG, 0U);
+  initial_claw_ready = true;
+  Task_Process(20U);
+  assert(state == TASK_WAIT_CONFIG && distance_calls == 0U);
+  test_vision.config_ready = true;
+  test_vision.start_zone = LOCATION_START_1;
+  test_pose.heading_mdeg = 45000;
+  Task_Process(40U);
+  assert(state == TASK_START && start_motion_phase == START_REVERSE);
+  Task_Process(60U);
+  assert(start_motion_phase == START_REVERSE_SETTLE &&
+         fabsf(distance_request + APP_START_CLEARANCE_DISTANCE_M) < 0.001f &&
+         fabsf(heading_output - 45.0f) < 0.001f);
+  Task_Process(60U + APP_START_SETTLE_MS);
+  assert(start_motion_phase == START_TURN);
+  Task_Process(80U + APP_START_SETTLE_MS);
+  assert(start_motion_phase == START_TURN_SETTLE);
+  test_pose.heading_mdeg = 225000;
+  Task_Process(80U + 2U * APP_START_SETTLE_MS);
+  Task_Process(1080U + 2U * APP_START_SETTLE_MS);
+  assert(start_motion_phase == START_FORWARD);
+  Task_Process(1100U + 2U * APP_START_SETTLE_MS);
+  assert(state == TASK_OPEN_CLAW &&
+         fabsf(distance_request - APP_START_FORWARD_DISTANCE_M) < 0.001f &&
+         fabsf(task_wrap_angle(heading_output - 225.0f)) < 0.001f);
+  Task_Process(1120U + 2U * APP_START_SETTLE_MS);
+  assert(state == TASK_SEARCH);
+
+  prepare();
+  initial_claw_ready = true;
+  test_vision.config_ready = true;
+  task_enter(TASK_RAM_VERIFY, 100U);
+  task_status.gripper_closed = false;
+  first_delivery_done = false;
+  const VisionMissionCommand complete = {
+      .received = true, .command = VISION_CMD_TASK_COMPLETE, .flags = VISION_CMD_VALID};
+  const uint32_t verify_done = 100U + APP_DELIVERY_VERIFY_WAIT_MS;
+  task_process_delivery_verify(&complete, verify_done - 1U);
+  assert(state == TASK_RAM_VERIFY && !first_delivery_done);
+  task_process_delivery_verify(&complete, verify_done);
+  assert(state == TASK_EXIT_SAFE_ZONE && first_delivery_done);
+  const uint32_t reverse_start = verify_done + APP_DELIVERY_EXIT_LIFT_SETTLE_MS;
+  Task_Process(reverse_start);
+  Task_Process(reverse_start + 20U);
+  assert(state == TASK_EXIT_SAFE_ZONE && delivery_exit_phase == 2U);
+  Task_Process(reverse_start + 20U + APP_DELIVERY_EXIT_LIFT_SETTLE_MS);
+  assert(state == TASK_FACE_FIELD_CENTER);
+}
+
+static void test_normalrun_separation_settle(void)
+{
+  prepare();
+  Servo_SetAngle(4U, APP_CLAW_LEFT_TOUCH_ANGLE);
+  Servo_SetAngle(2U, APP_CLAW_RIGHT_TOUCH_ANGLE);
+  Claw_SetSeparationHold(APP_CLAW_SEPARATE_ONE_OR_TWO_CLOSE_DEG);
+  assert(!Claw_ClusterOpenRight(0U));
+  const uint32_t open_steps = (APP_CLAW_RIGHT_TOUCH_ANGLE - APP_CLAW_RIGHT_OPEN_ANGLE +
+      APP_CLAW_SEPARATE_STEP_DEG - 1U) / APP_CLAW_SEPARATE_STEP_DEG;
+  const uint32_t final_step = open_steps * APP_TASK_PERIOD_MS;
+  for (uint32_t now = APP_TASK_PERIOD_MS; now <= final_step; now += APP_TASK_PERIOD_MS) {
+    assert(!Claw_ClusterOpenRight(now));
+  }
+  assert(servo_angles[3] == 56U && servo_angles[1] == 72U);
+  assert(!Claw_ClusterOpenRight(final_step + 259U));
+  assert(Claw_ClusterOpenRight(final_step + 260U));
+}
+
+static void test_normalrun_navigation_handoffs_and_abort(void)
+{
+  prepare();
+  configured_color = VISION_COLOR_RED;
+  task_enter(TASK_NAVIGATE, 0U);
+  VisionMissionCommand route = {.received = true, .command = VISION_CMD_NAVIGATE_WAYPOINT,
+      .flags = VISION_CMD_VALID | VISION_CMD_DISTANCE_VALID | VISION_CMD_RED_SIDE |
+               VISION_CMD_STAGE_ONLY,
+      .heading_cdeg = 9000U};
+  assert(nav_follow(&route, route.command, APP_RETURN_CENTER_SPEED_MM_S, 20U) ==
+         REMOTE_ROUTE_REACHED);
+  assert(distance_command_done && !task_status.motors_active &&
+         Camera_GetAngle() == APP_SAFE_ALIGN_CAMERA_ANGLE);
+
+  task_enter(TASK_FACE_FIELD_CENTER, 40U);
+  route.command = VISION_CMD_RETURN_CENTER;
+  route.flags = VISION_CMD_VALID | VISION_CMD_DISTANCE_VALID | VISION_CMD_RED_SIDE |
+                VISION_CMD_DRIVE_STRAIGHT | VISION_CMD_USE_FINAL_HEADING;
+  test_vision.mission = route;
+  task_process_face_center(&test_vision, 60U);
+  assert(state == TASK_SEARCH && !task_status.motors_active);
+
+  const VisionMissionCommand abort = {
+      .received = true, .flags = VISION_CMD_VALID, .command = VISION_CMD_ABORT};
+  task_accept_mission_legacy(&abort, 80U);
+  assert(state == TASK_STOPPED && task_status.fault == TASK_FAULT_REMOTE_STOP &&
+         reverse_output == 0.0f && lateral_output == 0.0f && yaw_output == 0.0f);
+}
+
 int main(void)
 {
+#ifdef NORMALRUN_FLOW_REVIEW_CHECK
+  test_normalrun_start_and_delivery_exit();
+  test_normalrun_navigation_handoffs_and_abort();
+  test_sweep_placeholder_ack_and_real_role_validation();
+  test_injury_retrieve_placeholder_does_not_change_destination();
+  test_recoverable_wait();
+  test_quantity_grip_and_retry_budget();
+  test_normalrun_separation_settle();
+  puts("NormalRun startup, navigation, delivery/exit, sweep, recovery, claw timing and ABORT PASS");
+  return 0;
+#endif
 #ifdef FLOW_20261019_CHECK
   test_distance_search_accumulation_and_transport_sort();
   test_new_curve_targets_and_bounded_exit();

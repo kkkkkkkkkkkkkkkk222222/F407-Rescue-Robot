@@ -19,6 +19,7 @@ static MotorDistanceStatus distance_result;
 static float distance_request;
 static unsigned distance_calls, finite_pauses, finite_resumes;
 void Servo_SetAngle(uint8_t id, uint8_t angle) { servo_angles[id - 1U] = angle; }
+uint8_t Servo_GetAngle(uint8_t id) { return servo_angles[id - 1U]; }
 void Motor_Stop(void) { reverse_output = lateral_output = yaw_output = 0.0f; }
 void Motor_PauseFiniteMotion(void) { ++finite_pauses; Motor_Stop(); }
 void Motor_ResumeFiniteMotion(void) { ++finite_resumes; }
@@ -49,6 +50,14 @@ void Location_Reanchor(int32_t x, int32_t y, int32_t heading)
 { test_pose.x_mm=x; test_pose.y_mm=y; test_pose.heading_mdeg=heading; }
 MotorDistanceStatus Motor_MoveDistance(float distance, float speed)
 { (void)distance; (void)speed; return MOTOR_DISTANCE_DONE; }
+MotorDistanceStatus Motor_MoveDistanceHeading(float distance, float speed, float heading)
+{
+  (void)speed;
+  distance_request = distance;
+  heading_output = heading;
+  ++distance_calls;
+  return distance_result;
+}
 MotorDistanceStatus Motor_MoveDistanceLinear(float distance, float speed, float slow, float end)
 {
   distance_request=distance; ++distance_calls;
@@ -61,9 +70,17 @@ MotorTurnStatus Motor_TurnAngle(float angle) { (void)angle; return MOTOR_TURN_DO
 MotorTurnStatus Motor_TurnAngleSpeed(float angle, float speed)
 { (void)angle; (void)speed; return MOTOR_TURN_DONE; }
 bool Motor_MoveAngle(float speed, float angle) { (void)speed; (void)angle; return true; }
+bool Motor_MoveAngleFine(float speed, float angle) { return Motor_MoveAngle(speed, angle); }
+bool Motor_IsBraking(void) { return false; }
 bool Motor_MoveSpin(float speed, float angle, float yaw)
 { (void)speed; (void)angle; (void)yaw; return true; }
 void Location_Reset(LocationStart start) { (void)start; }
+#if APP_BOARD_F405_ROBO && APP_ENABLE_TASK
+void TaskDiag_Event(const char *kind, uint32_t a, uint32_t b, uint32_t c,
+                    uint32_t d, uint32_t e, uint32_t f)
+{ (void)kind; (void)a; (void)b; (void)c; (void)d; (void)e; (void)f; }
+void TaskDiag_TaskTick(void) {}
+#endif
 
 static VisionMissionCommand injury_audit(uint8_t id)
 {
@@ -112,9 +129,9 @@ static void tick(uint32_t now)
 static void test_complete_injury_sequence(void)
 {
   prepare();
-  audit_at(1U, 10U); audit_at(1U, 20U); audit_at(2U, 110U);
+  audit_at(1U, 10U); audit_at(1U, 20U);
   assert(state == TASK_POST_GRAB_AUDIT && !audit_received);
-  audit_at(3U, 210U);
+  audit_at(2U, 110U);
   assert(state == TASK_INJURY_BACKOFF && !audit_valid);
   VisionMissionCommand grab = {.received = true, .flags = VISION_CMD_VALID,
     .command = VISION_CMD_GRAB_CONFIRMED};
@@ -129,12 +146,13 @@ static void test_complete_injury_sequence(void)
   tick(850U); assert(reverse_output == -150.0f);
   tick(2849U); assert(state == TASK_INJURY_BACKOFF && reverse_output == -150.0f);
   tick(2850U); assert(reverse_output == 0.0f && Camera_GetAngle() == 140U);
-  tick(3349U); assert(state == TASK_INJURY_BACKOFF);
-  tick(3350U); assert(state == TASK_POST_GRAB_AUDIT && !audit_valid);
+  const uint32_t camera_ready = 2850U + APP_GRAB_CAMERA_SETTLE_MS;
+  tick(camera_ready - 1U); assert(state == TASK_INJURY_BACKOFF);
+  tick(camera_ready); assert(state == TASK_POST_GRAB_AUDIT && !audit_valid);
   assert(injury_recheck_pending && !task_status.gripper_closed);
-  audit_at(5U, 3360U); audit_at(5U, 3370U); audit_at(6U, 3460U);
+  audit_at(5U, camera_ready + 10U); audit_at(5U, camera_ready + 20U);
   assert(state == TASK_POST_GRAB_AUDIT);
-  audit_at(7U, 3560U);
+  audit_at(6U, camera_ready + 110U);
   assert(state == TASK_INJURY_RECLOSE && !task_status.gripper_closed);
   VisionMissionCommand nav = {.received = true, .flags = VISION_CMD_VALID,
     .command = VISION_CMD_NAVIGATE_WAYPOINT};

@@ -114,6 +114,7 @@ def build_frame(message_type: int, sequence: int, payload: bytes) -> bytes:
     if message_type not in (
         MSG_CONFIG, MSG_REPORT, MSG_ODOM, MSG_IMU, MSG_FUSED_POSE,
         MSG_STM_STATUS, MSG_MISSION, MSG_MOTION_COMMAND, MSG_MOTION_STATUS,
+        MSG_COMMAND_CONTEXT, MSG_STATUS_CONTEXT,
     ):
         raise ValueError("unsupported message type")
     if not 0 <= sequence <= 0xFF:
@@ -135,6 +136,7 @@ def parse_frame(frame: bytes) -> tuple[int, int, bytes]:
     if frame[2] not in (
         MSG_CONFIG, MSG_REPORT, MSG_ODOM, MSG_IMU, MSG_FUSED_POSE,
         MSG_STM_STATUS, MSG_MISSION, MSG_MOTION_COMMAND, MSG_MOTION_STATUS,
+        MSG_COMMAND_CONTEXT, MSG_STATUS_CONTEXT,
     ):
         raise ValueError("unsupported message type")
     return frame[2], frame[3], frame[4:12]

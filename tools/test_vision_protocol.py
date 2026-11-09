@@ -5,6 +5,24 @@ from tools import vision_protocol as protocol
 
 
 class VisionProtocolTests(unittest.TestCase):
+    def test_competition_command_and_status_context_pairs(self) -> None:
+        command = protocol.mission_frame(9, protocol.CMD_GRAB_CONFIRMED)
+        pair = protocol.pair_mission_frame(command, 42, 13, 101)
+        self.assertEqual(
+            protocol.parse_frame(pair[:15]),
+            (protocol.MSG_COMMAND_CONTEXT, 9, bytes.fromhex("002a000d00000065")),
+        )
+        self.assertEqual(pair[15:], command)
+
+        context = protocol.build_frame(
+            protocol.MSG_STATUS_CONTEXT, 17, bytes.fromhex("002a000d02030000")
+        )
+        status = protocol.stm_status_frame(17, 2, 22, 14000, 9, 0)
+        decoded = protocol.parse_stm_status_pair(context + status)
+        self.assertEqual((decoded["task_id"], decoded["action_id"]), (42, 13))
+        self.assertEqual((decoded["accepted_opcode"], decoded["action_status"]), (2, 3))
+        self.assertEqual((decoded["mode"], decoded["acknowledged_sequence"]), (22, 9))
+
     def test_calibrated_approach_distance_contract(self) -> None:
         flags = protocol.CMD_VALID | protocol.CMD_DISTANCE_VALID | protocol.CMD_APPROACH_RANGE
         for pitch in (10500,12000):
