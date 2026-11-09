@@ -32,8 +32,8 @@ void Claw_RestartAction(void)
 
 void Claw_SetSeparationHold(uint8_t extra_close_deg)
 {
-  if (extra_close_deg > APP_CLAW_SEPARATE_SINGLE_CLOSE_DEG) {
-    extra_close_deg = APP_CLAW_SEPARATE_SINGLE_CLOSE_DEG;
+  if (extra_close_deg > APP_CLAW_SEPARATE_ONE_OR_TWO_CLOSE_DEG) {
+    extra_close_deg = APP_CLAW_SEPARATE_ONE_OR_TWO_CLOSE_DEG;
   }
   if (extra_close_deg != separation_extra_close_deg) {
     separation_extra_close_deg = extra_close_deg;

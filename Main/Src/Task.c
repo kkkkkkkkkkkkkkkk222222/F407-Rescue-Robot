@@ -346,6 +346,7 @@ static bool cluster_target_active;
 static bool cluster_claws_ready;
 /* +1 keeps the left cargo, -1 keeps the right cargo. */
 static int8_t separation_keep_side;
+static float separation_turn_deg;
 static uint8_t audit_consistent_count;
 static uint8_t audit_seen_ids[APP_AUDIT_REQUIRED_SAMPLES];
 static uint8_t audit_single_side_mask;
@@ -1596,6 +1597,7 @@ static void task_initialize(uint32_t now_ms)
   cluster_target_active = false;
   cluster_claws_ready = false;
   separation_keep_side = 0;
+  separation_turn_deg = APP_CARGO_SEPARATE_ONE_OR_TWO_TURN_DEG;
   audit_consistent_count = 0U;
   audit_single_side_mask = 0U;
   audit_last_left_class = 0U;
@@ -2314,17 +2316,26 @@ static bool task_prepare_separation(int8_t keep_side, uint32_t now_ms)
     task_begin_capture_escape(now_ms);
     return false;
   }
-  /* Both attempts belong to the batch, even when the retained side changes. */
-  Claw_SetSeparationHold(separation_total_attempts == 0U ?
-      APP_CLAW_SEPARATE_SINGLE_CLOSE_DEG : APP_CLAW_SEPARATE_RETRY_CLOSE_DEG);
-  /* Alternative grip policy. Replace the call above to enable it.
-   * A confirmed single eligible object gets 10 degrees. Multiple or
-   * unconfirmed objects on the retained side get 5 degrees.
-   *
-   * const uint8_t side_bit = keep_side > 0 ? 1U : 2U;
-   * Claw_SetSeparationHold((audit_single_side_mask & side_bit) != 0U ?
-   *     APP_CLAW_SEPARATE_SINGLE_CLOSE_DEG : APP_CLAW_SEPARATE_RETRY_CLOSE_DEG);
-   */
+  const uint8_t left_count = audit_last_counts & 0x03U;
+  const uint8_t right_count = (audit_last_counts >> 2U) & 0x03U;
+  const uint8_t release_count = keep_side > 0 ? right_count : left_count;
+  /* A clipped or unassigned count cannot select a stronger grip or turn. */
+  const bool counts_known = left_count != 0U && right_count != 0U &&
+      audit_last_total_count == left_count + right_count &&
+      (audit_last_flags & VISION_AUDIT_UNKNOWN_PRESENT) == 0U;
+  const bool release_three = counts_known && release_count == 3U;
+  separation_turn_deg = release_three ? APP_CARGO_SEPARATE_THREE_TURN_DEG :
+      APP_CARGO_SEPARATE_ONE_OR_TWO_TURN_DEG;
+
+  /* Keep the soft grip on retries and on anything except a confirmed singleton. */
+  const uint8_t keep_bit = keep_side > 0 ? 1U : 2U;
+  uint8_t close_deg = APP_CLAW_SEPARATE_SOFT_CLOSE_DEG;
+  if (counts_known && separation_total_attempts == 0U &&
+      (audit_single_side_mask & keep_bit) != 0U) {
+    close_deg = release_three ? APP_CLAW_SEPARATE_THREE_CLOSE_DEG :
+        APP_CLAW_SEPARATE_ONE_OR_TWO_CLOSE_DEG;
+  }
+  Claw_SetSeparationHold(close_deg);
   separation_keep_side = keep_side;
   ++separation_total_attempts;
   capture_wait_active = false;
@@ -3999,15 +4010,13 @@ static bool task_remote_separation_curve(uint32_t distance_mm, uint32_t now_ms)
   const float side_sign = separation_keep_side > 0 ? 1.0f : -1.0f;
   const uint8_t retry = separation_total_attempts > 0U ? separation_total_attempts - 1U : 0U;
   if (!separation_motion.active) {
-    const float turn = APP_CARGO_SEPARATE_TURN_FIRST_DEG +
-                       retry * APP_CARGO_SEPARATE_TURN_STEP_DEG;
     separation_motion = (SeparationMotion){
       .active = true, .stage = SEPARATION_PREPULL,
       .start_path_mm = pose.path_mm, .last_update_ms = now_ms,
       .started_ms = now_ms, .progress_ms = now_ms, .progress_path_mm = pose.path_mm,
       .progress_heading_deg = heading, .stage_path_mm = pose.path_mm,
       .origin_pose = pose, .start_heading_deg = heading,
-      .target_heading_deg = task_heading_360(heading - side_sign * turn)
+      .target_heading_deg = task_heading_360(heading - side_sign * separation_turn_deg)
     };
   }
   const float heading_rad = separation_motion.start_heading_deg *
@@ -4044,7 +4053,7 @@ static bool task_remote_separation_curve(uint32_t distance_mm, uint32_t now_ms)
     return true;
   }
   const float turned = task_abs(task_wrap_angle(heading - separation_motion.start_heading_deg));
-  const bool turn_limit = turned >= APP_CARGO_SEPARATE_TURN_LIMIT_DEG;
+  const bool turn_limit = turned >= separation_turn_deg;
   const uint32_t arc_limit = APP_CARGO_SEPARATE_ARC_MAX_MM +
                              retry * APP_CARGO_SEPARATE_ARC_RETRY_STEP_MM;
   const float arc_error = task_wrap_angle(separation_motion.target_heading_deg - heading);
@@ -4055,9 +4064,8 @@ static bool task_remote_separation_curve(uint32_t distance_mm, uint32_t now_ms)
   }
   if (separation_motion.stage == SEPARATION_ARC &&
       (pose.path_mm - separation_motion.stage_path_mm >= arc_limit ||
-       side_remaining <= 10.0f || turn_limit ||
-       (pose.path_mm - separation_motion.stage_path_mm >= APP_CARGO_SEPARATE_ARC_MIN_MM &&
-        task_abs(arc_error) <= APP_NAV_HEADING_TOLERANCE_DEG))) {
+        side_remaining <= 10.0f || turn_limit ||
+        task_abs(arc_error) <= APP_NAV_HEADING_TOLERANCE_DEG)) {
     separation_motion.stage = SEPARATION_BLEND;
   }
   if (separation_motion.stage == SEPARATION_PULL &&

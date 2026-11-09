@@ -1,6 +1,6 @@
 # 两端当前要求与回执
 
-更新日期为 2026-11-08，时区 Asia/Shanghai。
+更新日期为 2026-11-09，时区 Asia/Shanghai。
 
 ## 固定入口与协作方式
 
@@ -15,6 +15,38 @@
 人保留知情、拒绝和选择权。已经明确批准的范围直接推进，超范围的重要取舍先由人决定，AI 不能互相授权。
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
+
+## NormalRun 分离数量档
+
+用户批准先用现有审核报文的单侧 0–3 块。RDK 参考提交为
+`347d787c6b42471d1265380141e1b77a540bd81c`，待 RDK 同学审查和适配。
+
+- F405 从已接受的审核锁定释放侧数量和保留侧，第一次有明确合格单件可保留时，
+  释放侧 1–2 块用额外夹紧 20°、向释放侧转 10°，释放侧 3 块用额外夹紧 10°、转 15°。
+  保留侧多件或单件证据不足时，额外夹紧为 5°。第二次按复审重选转角，额外夹紧为 5°。
+- 双侧非空、左右计数之和等于真实总数且没有 UNKNOWN 标记，才使用精确数量档。
+  已接受的带侧动作若证据不足，采用 5° 夹紧与 10° 转向。每批最多两次。
+- 带侧 DISPERSE 与 RELEASE 加 YIELD 共用该选择。20 mm 直退后起弯，
+  达到该档航向就收转向，沿用 70 mm 尾段和现有侧偏预算。角度是目标值，实车待验证。
+
+给 RDK 的适配建议如下。
+
+1. 沿用 `CargoAudit.to_protocol()` 的真实总数、侧计数与溢出标志。
+   单侧超过 3 块继续饱和为 3 并置 UNKNOWN，选边时看饱和前的计数和分类。
+   归边不明或超出档位时走现有观察或放弃分支，使用该场景允许的入口。
+2. 在 `_preferred_keep_side()` 的合格候选里优先选有间隔的独立单件，再选较不拥挤的一侧。
+   首件、类别、危险物、伤员及运输许可沿用原业务规则。现有危险物释放路径独立处理。
+   在已有保留侧投票中核对该侧和对侧的数量，确保发出的 STABLE 审核与动作选择来自同一批证据。
+3. 带侧 `DISPERSE_PILE` 的 TARGET_RIGHT 表示保留右侧。
+   `RELEASE_LEFT/RIGHT` 表示放开对应的一侧，原路径等释放完成后再发 `YIELD_BACKOFF`。
+   F405 由审核计数算角度，RDK 继续使用原动作距离和上下文配对。
+4. 动作完成后用 140° 新画面复审。数量减少或出现明确分界且仍有合格候选时，可再发一次带侧 DISPERSE。
+   若确认整团没有松动，沿用 `_start_capture_abandon()` 的双开退让流程。
+   用现有动作接受回执计数，重复发送同一动作只计一次，换侧仍共用两次预算。
+
+代码参考 [RDK 审核编码](https://github.com/danmo-teng/shijue_fangan/blob/347d787c6b42471d1265380141e1b77a540bd81c/competition_rescue/state_machine.py#L295)、
+[RDK 选边](https://github.com/danmo-teng/shijue_fangan/blob/347d787c6b42471d1265380141e1b77a540bd81c/competition_rescue/state_machine.py#L3059)、
+[F405 分离准备](../Main/Src/Task.c#L2309)。
 
 ## UART-100HZ-01 的来源与审核
 

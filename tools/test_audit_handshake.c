@@ -209,19 +209,25 @@ static void test_quantity_grip_and_retry_budget(void)
     prepare(); separation_audit(single, false);
     for (uint8_t attempt = 0U; attempt < 2U; ++attempt) {
       assert(task_prepare_separation(1, 400U + attempt));
-      assert(separation_extra_close_deg == 10U - 5U * attempt);
+      assert(separation_extra_close_deg == (single && attempt == 0U ? 20U : 5U));
+      assert(separation_turn_deg == 10.0f);
     }
     assert(!task_prepare_separation(-1, 410U) && separation_total_attempts == 2U);
     assert(capture_escape_return_center && capture_escape_reclose);
   }
   prepare(); separation_audit(false, false);
-  assert(task_prepare_separation(1, 400U) && separation_extra_close_deg == 10U);
+  assert(task_prepare_separation(1, 400U) && separation_extra_close_deg == 5U);
   separation_audit_at(true, false, 400U);
   assert(task_prepare_separation(-1, 800U) && separation_extra_close_deg == 5U);
   assert(separation_total_attempts == 2U && separation_keep_side == -1);
   prepare(); separation_audit(true, true);
   assert(audit_single_side_mask == 0U);
+  assert(task_prepare_separation(1, 400U) && separation_extra_close_deg == 5U);
+  prepare(); separation_audit(true, false);
+  audit_last_counts = 1U | (3U << 2U);
+  audit_last_total_count = 4U;
   assert(task_prepare_separation(1, 400U) && separation_extra_close_deg == 10U);
+  assert(separation_turn_deg == 15.0f);
   prepare();
   task_enter(TASK_GRAB_OBSERVE, 0U);
   for (uint8_t id = 1U; id <= 3U; ++id) {
@@ -233,7 +239,8 @@ static void test_quantity_grip_and_retry_budget(void)
   }
   (void)task_capture_observe(400U);
   assert(state == TASK_GRAB_OBSERVE && !capture_escape_active);
-  assert(task_prepare_separation(1, 410U) && separation_extra_close_deg == 10U);
+  assert(task_prepare_separation(1, 410U) && separation_extra_close_deg == 5U);
+  assert(separation_turn_deg == 10.0f);
   VisionMissionCommand c = injury_audit(1U);
   assert(task_single_side_mask(&c) == 1U);
   c.audit_left_class = VISION_CARGO_GREEN;
@@ -580,18 +587,19 @@ static void test_distance_search_accumulation_and_transport_sort(void)
 
 static void test_new_curve_targets_and_bounded_exit(void)
 {
-  for (int side=-1;side<=1;side+=2) for(unsigned retry=1;retry<=2;++retry) {
-    prepare(); separation_keep_side=side;separation_total_attempts=retry;
+  for (int side=-1;side<=1;side+=2) for(unsigned count=2;count<=3;++count) {
+    prepare(); separation_keep_side=side;separation_total_attempts=1;
+    const float wanted=count==2?10.0f:15.0f;
+    separation_turn_deg=wanted;
     task_start_remote_action(REMOTE_ACTION_DISPERSE,&(VisionMissionCommand){.command=VISION_CMD_DISPERSE_PILE},0);
     remote_action.phase=1;
     assert(!task_remote_separation_curve(APP_SELECTIVE_DISPERSE_CURVE_MM,0));
     assert(separation_motion.stage==SEPARATION_PREPULL);
     assert(!task_remote_separation_curve(APP_SELECTIVE_DISPERSE_CURVE_MM,20));
     assert(reverse_output<0 && lateral_output==0 && yaw_output==0);
-    test_pose.path_mm=60;test_pose.y_mm=-60;
+    test_pose.path_mm=20;test_pose.y_mm=-20;
     assert(!task_remote_separation_curve(APP_SELECTIVE_DISPERSE_CURVE_MM,200));
     assert(side*yaw_output*APP_OMNI_FIELD_YAW_TO_DRIVE_SIGN<0 && lateral_output==0);
-    const float wanted=retry==1?30.0f:45.0f;
     assert(fabsf(task_wrap_angle(separation_motion.target_heading_deg-90.0f)+side*wanted)<.01f);
     test_pose.path_mm=150;test_pose.heading_mdeg=90000-side*(int)(wanted*1000);
     for(unsigned t=220;t<700;t+=20) (void)task_remote_separation_curve(APP_SELECTIVE_DISPERSE_CURVE_MM,t);
@@ -614,8 +622,9 @@ static void test_new_curve_targets_and_bounded_exit(void)
   task_process_remote_action(&repeat,5100);
   assert(separation_motion.active && separation_motion.started_ms==5000 && remote_action.phase==1);
   assert(separation_total_attempts==1);
-  for(int side=-1;side<=1;side+=2) for(unsigned retry=1;retry<=2;++retry) {
-    prepare(); separation_keep_side=side;separation_total_attempts=retry;remote_action.phase=1;
+  for(int side=-1;side<=1;side+=2) for(unsigned count=2;count<=3;++count) {
+    prepare(); separation_keep_side=side;separation_total_attempts=1;remote_action.phase=1;
+    separation_turn_deg=count==2?10.0f:15.0f;
     float x=0,y=0,heading=90,path=0;
     bool done=false;
     for(unsigned t=0;t<=8000 && !done;t+=20) {
@@ -628,7 +637,7 @@ static void test_new_curve_targets_and_bounded_exit(void)
       heading+=yaw_output*APP_OMNI_FIELD_YAW_TO_DRIVE_SIGN/APP_MOTION_DEBUG_TURN_RADIUS_MM*.02f*180/3.14159265f;
     }
     assert(done && reverse_output==0 && path<=APP_SELECTIVE_DISPERSE_CURVE_MM+5);
-    assert(side*(90-heading)>=(retry==1?26.0f:41.0f));
+    assert(side*(90-heading)>=separation_turn_deg-2.0f);
     assert(fabsf(x)<=APP_CARGO_SEPARATE_SIDE_BUDGET_MM+5);
   }
 }
@@ -638,7 +647,7 @@ int main(void)
 #ifdef FLOW_20261019_CHECK
   test_distance_search_accumulation_and_transport_sort();
   test_new_curve_targets_and_bounded_exit();
-  puts("105/120 range handoff, cumulative audits, mode48 sort/resume, mirrored 30/45 curves and finite exits PASS");
+  puts("105/120 range handoff, cumulative audits, mode48 sort/resume, mirrored 10/15 curves and finite exits PASS");
   return 0;
 #endif
 #ifdef CAPTURE_HEADING_REVIEW_CHECK
