@@ -1463,7 +1463,7 @@ static void task_enter(TaskState next, uint32_t now_ms)
     task_reset_turn_tracker();
   } else if (next == TASK_EXIT_SAFE_ZONE) {
     delivery_exit_phase = 0U;
-    delivery_exit_phase_ready_ms = now_ms + Lift_StartPositionWaitMs();
+    delivery_exit_phase_ready_ms = now_ms + Lift_PositionWaitMs(APP_LIFT_START_ANGLE);
     Lift_SetStartPosition();
     Camera_SetAngle(APP_DELIVERY_CAMERA_ANGLE);
     camera_angle = (float)APP_DELIVERY_CAMERA_ANGLE;
@@ -6832,8 +6832,8 @@ void Task_Process(uint32_t now_ms)
       task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
       if (result == MOTOR_DISTANCE_DONE) {
         Motor_Stop();
+        delivery_exit_phase_ready_ms = now_ms + Lift_PositionWaitMs(APP_LIFT_TRAVEL_ANGLE);
         Lift_SetTravelPosition();
-        delivery_exit_phase_ready_ms = now_ms + APP_DELIVERY_EXIT_LIFT_RETURN_SETTLE_MS;
         delivery_exit_phase = 2U;
       } else if (distance_failed(result)) {
         task_stop(TASK_FAULT_MOTOR, now_ms);

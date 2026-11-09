@@ -8,8 +8,8 @@ void Mechanism_Init(void);
 void Camera_SetAngle(uint8_t angle);
 uint8_t Camera_GetAngle(void);
 void Lift_SetStartPosition(void);
-/* Estimate the wait before commanding the start position. */
-uint32_t Lift_StartPositionWaitMs(void);
+/* Estimate the wait before commanding the given angle. */
+uint32_t Lift_PositionWaitMs(uint8_t angle);
 void Lift_SetTravelPosition(void);
 void Claw_SetSeparationHold(uint8_t extra_close_deg);
 void Claw_RestartAction(void);

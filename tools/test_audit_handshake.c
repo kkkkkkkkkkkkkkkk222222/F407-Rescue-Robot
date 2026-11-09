@@ -685,7 +685,8 @@ static void test_normalrun_start_and_delivery_exit(void)
   task_process_delivery_verify(&complete, verify_done);
   assert(state == TASK_EXIT_SAFE_ZONE && first_delivery_done);
   assert(servo_angles[0] == APP_LIFT_START_ANGLE);
-  const uint32_t reverse_start = verify_done + 108U;
+  const uint32_t lift_wait_ms = 108U;
+  const uint32_t reverse_start = verify_done + lift_wait_ms;
   Task_Process(reverse_start - 1U);
   assert(state == TASK_EXIT_SAFE_ZONE && delivery_exit_phase == 0U);
   Task_Process(reverse_start);
@@ -693,9 +694,10 @@ static void test_normalrun_start_and_delivery_exit(void)
   Task_Process(reverse_start + 20U);
   assert(state == TASK_EXIT_SAFE_ZONE && delivery_exit_phase == 2U);
   assert(servo_angles[0] == APP_LIFT_TRAVEL_ANGLE);
-  Task_Process(reverse_start + 20U + APP_DELIVERY_EXIT_LIFT_RETURN_SETTLE_MS - 1U);
+  const uint32_t return_ready = reverse_start + 20U + lift_wait_ms;
+  Task_Process(return_ready - 1U);
   assert(state == TASK_EXIT_SAFE_ZONE);
-  Task_Process(reverse_start + 20U + APP_DELIVERY_EXIT_LIFT_RETURN_SETTLE_MS);
+  Task_Process(return_ready);
   assert(state == TASK_FACE_FIELD_CENTER);
 }
 
