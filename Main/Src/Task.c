@@ -287,9 +287,6 @@ static float injury_backoff_heading_deg;
 static uint32_t capture_forward_used_mm, capture_wait_started_ms;
 static LocationPose capture_budget_pose;
 static uint8_t capture_escape_phase, separation_total_attempts;
-static uint8_t separation_side_attempts;
-static int8_t progressive_keep_side;
-static uint8_t progressive_close_deg;
 static uint32_t capture_escape_path_mm;
 static float capture_escape_heading_deg, capture_escape_turn_deg;
 static void task_capture_budget_begin(void);
@@ -1230,9 +1227,7 @@ static void task_enter(TaskState next, uint32_t now_ms)
   if (state == TASK_FACE_FIELD_CENTER && next == TASK_SEARCH &&
       accepted_context.opcode == VISION_CMD_RETURN_CENTER) {
     accepted_context.completed = true;
-    separation_total_attempts = separation_side_attempts = 0U;
-    progressive_keep_side = 0;
-    progressive_close_deg = 0U;
+    separation_total_attempts = 0U;
     Claw_SetSeparationHold(0U);
   }
   if (accepted_context.valid &&
@@ -1537,9 +1532,6 @@ static void task_initialize(uint32_t now_ms)
   injury_recheck_pending = false;
   audit_watch_active = false;
   separation_total_attempts = 0U;
-  separation_side_attempts = 0U;
-  progressive_keep_side = 0;
-  progressive_close_deg = 0U;
   Claw_SetSeparationHold(0U);
   pose_invalid_started_ms = now_ms;
   nav_terminal_candidate_ms = now_ms;
@@ -2318,27 +2310,23 @@ static bool task_prepare_separation(int8_t keep_side, uint32_t now_ms)
     return false;
   }
   /* A further request cannot evade the final-failure decision by changing side. */
-  if (audit_received && !audit_valid &&
-      separation_total_attempts >= APP_SEPARATION_MAX_ATTEMPTS) {
-    task_begin_capture_escape(now_ms);
-    return false;
-  }
-  const uint8_t side_bit = keep_side > 0 ? 1U : 2U;
-  const uint8_t base_close = (audit_single_side_mask & side_bit) != 0U ?
-      APP_CLAW_SEPARATE_SINGLE_CLOSE_DEG : APP_CLAW_SEPARATE_MULTI_CLOSE_DEG;
-  if (progressive_keep_side != keep_side || progressive_close_deg != base_close) {
-    progressive_keep_side = keep_side;
-    progressive_close_deg = base_close;
-    separation_side_attempts = 0U;
-  }
   if (separation_total_attempts >= APP_SEPARATION_MAX_ATTEMPTS) {
     task_begin_capture_escape(now_ms);
     return false;
   }
+  /* Both attempts belong to the batch, even when the retained side changes. */
+  Claw_SetSeparationHold(separation_total_attempts == 0U ?
+      APP_CLAW_SEPARATE_SINGLE_CLOSE_DEG : APP_CLAW_SEPARATE_RETRY_CLOSE_DEG);
+  /* Alternative grip policy. Replace the call above to enable it.
+   * A confirmed single eligible object gets 10 degrees. Multiple or
+   * unconfirmed objects on the retained side get 5 degrees.
+   *
+   * const uint8_t side_bit = keep_side > 0 ? 1U : 2U;
+   * Claw_SetSeparationHold((audit_single_side_mask & side_bit) != 0U ?
+   *     APP_CLAW_SEPARATE_SINGLE_CLOSE_DEG : APP_CLAW_SEPARATE_RETRY_CLOSE_DEG);
+   */
+  separation_keep_side = keep_side;
   ++separation_total_attempts;
-  ++separation_side_attempts;
-  const uint8_t relax = (separation_side_attempts - 1U) * APP_SEPARATION_RELAX_STEP_DEG;
-  Claw_SetSeparationHold(base_close > relax ? base_close - relax : 0U);
   capture_wait_active = false;
   return true;
 }
@@ -5052,8 +5040,6 @@ static void task_process_remote_action(const VisionMissionCommand *command,
   switch (remote_action.type) {
     case REMOTE_ACTION_RELEASE_LEFT:
       if (Claw_OpenLeft(now_ms)) {
-        /* Left opens; the retained right uses this attempt's latched hold. */
-        separation_keep_side = -1;
         task_status.gripper_closed = false;
         cargo_recheck_pending = true;
         task_clear_audit_result();
@@ -5063,8 +5049,6 @@ static void task_process_remote_action(const VisionMissionCommand *command,
 
     case REMOTE_ACTION_RELEASE_RIGHT:
       if (Claw_OpenRight(now_ms)) {
-        /* Right opens; the retained left uses this attempt's latched hold. */
-        separation_keep_side = 1;
         task_status.gripper_closed = false;
         cargo_recheck_pending = true;
         task_clear_audit_result();
@@ -5883,8 +5867,6 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
       first_green_bump_done = true;
     } else if ((command->flags & VISION_CMD_SIDE_VALID) != 0U) {
       remote_action.arg_b = 0;
-      separation_keep_side =
-          ((command->flags & VISION_CMD_TARGET_RIGHT) != 0U) ? -1 : 1;
     } else {
       /* Marker for the observation-turn variant. It deliberately retains no
        * side until the upper computer has received a new audit. */
@@ -6203,9 +6185,6 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
   if (new_target) {
     capture_budget_active = capture_wait_active = false;
     separation_total_attempts = 0U;
-    separation_side_attempts = 0U;
-    progressive_keep_side = 0;
-    progressive_close_deg = 0U;
     Claw_SetSeparationHold(0U);
     accepted_context = (TaskContext){0};
     if (incoming.command != VISION_CMD_CARGO_AUDIT) {

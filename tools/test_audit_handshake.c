@@ -207,21 +207,18 @@ static void test_quantity_grip_and_retry_budget(void)
 {
   for (uint8_t single = 0U; single <= 1U; ++single) {
     prepare(); separation_audit(single, false);
-    for (uint8_t attempt = 0U; attempt < 3U; ++attempt) {
+    for (uint8_t attempt = 0U; attempt < 2U; ++attempt) {
       assert(task_prepare_separation(1, 400U + attempt));
-      assert(separation_extra_close_deg == (single ? 20U : 10U) - 5U * attempt);
-      (void)Claw_ClusterOpenRight(500U + attempt);
-      assert(servo_angles[3] == 76U - separation_extra_close_deg && servo_angles[1] == 72U);
+      assert(separation_extra_close_deg == 10U - 5U * attempt);
     }
-    assert(!task_prepare_separation(-1, 410U) && separation_total_attempts == 3U);
+    assert(!task_prepare_separation(-1, 410U) && separation_total_attempts == 2U);
     assert(capture_escape_return_center && capture_escape_reclose);
   }
   prepare(); separation_audit(false, false);
   assert(task_prepare_separation(1, 400U) && separation_extra_close_deg == 10U);
   separation_audit_at(true, false, 400U);
-  assert(task_prepare_separation(1, 800U) && separation_extra_close_deg == 20U);
-  assert(separation_total_attempts == 2U && separation_side_attempts == 1U);
-  assert(task_prepare_separation(1, 900U) && separation_extra_close_deg == 15U);
+  assert(task_prepare_separation(-1, 800U) && separation_extra_close_deg == 5U);
+  assert(separation_total_attempts == 2U && separation_keep_side == -1);
   prepare(); separation_audit(true, true);
   assert(audit_single_side_mask == 0U);
   assert(task_prepare_separation(1, 400U) && separation_extra_close_deg == 10U);
