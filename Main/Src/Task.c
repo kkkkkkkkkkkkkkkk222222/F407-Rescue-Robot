@@ -259,7 +259,6 @@ static float filtered_target_y;
 static float remote_speed_mm_s;
 static float remote_yaw_mm_s;
 static float nav_locked_heading_deg;
-static float safe_align_target_deg;
 static uint32_t tracking_tick_ms;
 static uint32_t approach_report_generation;
 static uint32_t approach_phase_path_mm;
@@ -327,8 +326,7 @@ static bool safe_enter_path_valid;
 static bool delivery_exit_path_valid;
 static bool delivery_stage_only;
 static bool safe_align_done;
-static float safe_align_entry_deg;
-static bool safe_align_visual_started;
+static bool safe_align_visual_confirmed;
 static bool delivery_enter_active;
 static bool first_delivery_done;
 static bool first_green_bump_done;
@@ -1287,7 +1285,6 @@ static void task_enter(TaskState next, uint32_t now_ms)
   remote_speed_mm_s = 0.0f;
   remote_yaw_mm_s = 0.0f;
   nav_locked_heading_deg = 0.0f;
-  safe_align_target_deg = 0.0f;
   nav_heading_locked = false;
   nav_final_push_active = false;
   nav_final_push_done = false;
@@ -1299,7 +1296,7 @@ static void task_enter(TaskState next, uint32_t now_ms)
   delivery_exit_start_path_mm = 0U;
   delivery_stage_only = false;
   safe_align_done = false;
-  safe_align_visual_started = false;
+  safe_align_visual_confirmed = false;
   delivery_enter_active = false;
   nav_terminal_candidate = false;
   nav_terminal_latched = false;
@@ -3024,19 +3021,6 @@ static bool task_safe_sweep_command_valid(
          (command->heading_cdeg == 0U);
 }
 
-static float task_visual_heading_correction(int16_t pixel_error)
-{
-  float correction_deg = APP_SAFE_VISUAL_YAW_SIGN *
-      atanf((float)pixel_error / APP_SAFE_VISUAL_FOCAL_LENGTH_PX) *
-      (180.0f / 3.14159265358979323846f);
-  if (correction_deg > APP_SAFE_VISUAL_MAX_CORRECTION_DEG) {
-    correction_deg = APP_SAFE_VISUAL_MAX_CORRECTION_DEG;
-  } else if (correction_deg < -APP_SAFE_VISUAL_MAX_CORRECTION_DEG) {
-    correction_deg = -APP_SAFE_VISUAL_MAX_CORRECTION_DEG;
-  }
-  return correction_deg;
-}
-
 static float nav_end_speed(float cruise_speed_mm_s)
 {
   const float scaled_speed = cruise_speed_mm_s * APP_NAV_END_SPEED_RATIO;
@@ -3557,6 +3541,16 @@ static RemoteRouteStatus nav_follow(
   return REMOTE_ROUTE_RUNNING;
 }
 
+static void task_begin_safe_align(uint32_t now_ms)
+{
+  task_enter(TASK_ALIGN_SAFE_ZONE, now_ms);
+  Camera_SetAngle(APP_SAFE_ALIGN_CAMERA_ANGLE);
+  camera_angle = (float)APP_SAFE_ALIGN_CAMERA_ANGLE;
+  nav_ready = false;
+  task_status.nav_locked_heading_deg =
+      (uint16_t)(task_safe_zone_heading() + 0.5f) % 360U;
+}
+
 static void task_process_safe_align(uint32_t now_ms)
 {
   if (safe_align_done) {
@@ -3569,20 +3563,17 @@ static void task_process_safe_align(uint32_t now_ms)
   if (!task_get_location_pose(&pose, now_ms)) {
     return;
   }
+  const float target_heading_deg = task_safe_zone_heading();
   const float current_heading_deg = (float)pose.heading_mdeg * 0.001f;
-  const float error_deg = task_wrap_angle(
-      safe_align_target_deg - current_heading_deg);
+  const float error_deg = task_wrap_angle(target_heading_deg - current_heading_deg);
 
-  /* Enter the aligned window at 1.5 degrees, but use a wider hold window
-   * during the 300 ms camera/IMU settling period. Without this hysteresis a
-   * small IMU oscillation repeatedly restarted ALIGN and left both computers
-   * waiting at the staging point. */
+  /* Use the wider hold window while the camera and chassis settle. */
   if (nav_ready &&
       (task_abs(error_deg) > APP_SAFE_ALIGN_HOLD_TOLERANCE_DEG)) {
     nav_ready = false;
   }
   if (!nav_ready) {
-    if (!turn_to(safe_align_target_deg, current_heading_deg,
+    if (!turn_to(target_heading_deg, current_heading_deg,
                  APP_SAFE_ALIGN_TOLERANCE_DEG, now_ms)) {
       task_stop(TASK_FAULT_MOTOR, now_ms);
     }
@@ -3600,7 +3591,7 @@ static void task_process_safe_align(uint32_t now_ms)
   safe_align_done = true;
   task_status.nav_heading_locked = true;
   task_status.nav_locked_heading_deg =
-      (uint16_t)(safe_align_target_deg + 0.5f) % 360U;
+      (uint16_t)(target_heading_deg + 0.5f) % 360U;
 }
 
 static float safe_enter_speed(int16_t fence_distance_mm)
@@ -4260,7 +4251,6 @@ static bool task_safe_sweep_move(float forward_mm_s, float lateral_mm_s,
 static void task_begin_safe_sweep(const VisionMissionCommand *command,
                                   uint32_t now_ms)
 {
-  const float locked_heading = safe_align_target_deg;
   const LocationPose pose = Location_GetPose();
   sweep_original_injury = audit_destination_injury;
   sweep_original_left = audit_last_left_class;
@@ -4272,7 +4262,7 @@ static void task_begin_safe_sweep(const VisionMissionCommand *command,
   task_enter(TASK_SAFE_SWEEP, now_ms);
   safe_sweep_forward_mm = command->target_x_mm;
   safe_sweep_lateral_mm = command->target_y_mm;
-  safe_sweep_heading_deg = task_heading_360(locked_heading);
+  safe_sweep_heading_deg = task_safe_zone_heading();
   safe_sweep_visual_pickup = command->target_x_mm == 0;
   safe_sweep_center_x_mm = pose.x_mm;
   safe_sweep_center_y_mm = pose.y_mm;
@@ -5697,88 +5687,38 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
      * destination must use a fresh STAGE NAV instead of entering this zone. */
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
-    task_enter(TASK_ALIGN_SAFE_ZONE, now_ms);
-    Camera_SetAngle(APP_SAFE_ALIGN_CAMERA_ANGLE);
-    camera_angle = (float)APP_SAFE_ALIGN_CAMERA_ANGLE;
-    safe_align_target_deg = task_heading_360(
-        (float)command->heading_cdeg * 0.01f);
-    safe_align_entry_deg = safe_align_target_deg;
-    safe_align_done = false;
-    safe_align_visual_started = false;
-    nav_ready = false;
-    task_status.nav_locked_heading_deg =
-        (uint16_t)(safe_align_target_deg + 0.5f) % 360U;
+    task_begin_safe_align(now_ms);
   } else if ((command->command == VISION_CMD_ALIGN_SAFE_ZONE) &&
              (state == TASK_ALIGN_SAFE_ZONE) &&
              task_align_command_valid(command, false) &&
-             !safe_align_visual_started) {
-    /* A new pose ALIGN may select another viewing heading. Repeated finite
-     * action IDs are already acknowledged by task_accept_mission. */
-    const float requested = task_heading_360((float)command->heading_cdeg * 0.01f);
-    if (task_abs(task_wrap_angle(requested - safe_align_target_deg)) > 0.005f) {
-      if (!safe_align_done) { return; }
-      safe_align_target_deg = requested;
-      safe_align_done = nav_ready = false;
-      task_status.nav_heading_locked = false;
-      task_status.nav_locked_heading_deg = (uint16_t)(requested + 0.5f) % 360U;
-    }
+             !safe_align_visual_confirmed) {
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
   } else if ((command->command == VISION_CMD_ALIGN_SAFE_ZONE) &&
              (state == TASK_ALIGN_SAFE_ZONE) && safe_align_done &&
-             safe_align_target_deg == safe_align_entry_deg &&
              task_align_command_valid(command, true)) {
+    /* Keep the RDK visual confirmation and its completion reply. The
+     * gyro alignment to the team heading has already finished. */
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
-    if (!safe_align_visual_started) {
-      safe_align_target_deg = task_heading_360(
-          safe_align_target_deg +
-          task_visual_heading_correction(command->target_x_mm));
-      safe_align_visual_started = true;
-      safe_align_done = false;
-      nav_ready = false;
-      task_status.nav_heading_locked = false;
-      task_status.nav_locked_heading_deg =
-          (uint16_t)(safe_align_target_deg + 0.5f) % 360U;
-    }
-  } else if ((command->command == VISION_CMD_ALIGN_SAFE_ZONE) &&
-             (state == TASK_ALIGN_SAFE_ZONE) &&
-             safe_align_visual_started &&
-             task_align_command_valid(command, true)) {
-    /* Repeated visual ALIGN frames are idempotent: never add the same frozen
-     * pixel correction more than once. */
-    task_status.acknowledged_sequence = command->sequence;
-    command_accepted = true;
+    safe_align_visual_confirmed = true;
   } else if ((command->command == VISION_CMD_ALIGN_SAFE_ZONE) &&
              (state == TASK_SAFE_SWEEP_DONE) &&
              task_status.gripper_closed &&
              task_align_command_valid(command, false)) {
-    /* Sweeping returns the recovered cargo to the original staging centre.
-     * Re-run pose and visual ALIGN before ENTER; never reuse the heading from
-     * a long lateral/forward obstacle-clearing motion. */
+    /* Re-align to the team heading after retrieving the staged cargo. */
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
     safe_sweep_recheck_pending = false;
-    task_enter(TASK_ALIGN_SAFE_ZONE, now_ms);
-    Camera_SetAngle(APP_SAFE_ALIGN_CAMERA_ANGLE);
-    camera_angle = (float)APP_SAFE_ALIGN_CAMERA_ANGLE;
-    safe_align_target_deg = task_heading_360(
-        (float)command->heading_cdeg * 0.01f);
-    safe_align_entry_deg = safe_align_target_deg;
-    safe_align_done = false;
-    safe_align_visual_started = false;
-    nav_ready = false;
-    task_status.nav_locked_heading_deg =
-        (uint16_t)(safe_align_target_deg + 0.5f) % 360U;
+    task_begin_safe_align(now_ms);
   } else if ((command->command == VISION_CMD_CLEAR_SAFE_ZONE) &&
              (state == TASK_ALIGN_SAFE_ZONE) && safe_align_done &&
-             safe_align_visual_started &&
+             safe_align_visual_confirmed &&
              task_status.gripper_closed &&
              ((command->target_x_mm != 0) ||
               ((command->target_y_mm < 0) == audit_destination_injury)) &&
              task_safe_sweep_command_valid(command)) {
-    /* The upper computer may request this only after its final visual ALIGN
-     * has identified an obstacle outside the safe-zone polygon. */
+    /* The RDK sends this after the visual confirmation and obstacle check. */
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
     task_begin_safe_sweep(command, now_ms);
@@ -5799,17 +5739,14 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
              task_status.gripper_closed &&
              (state == TASK_ALIGN_SAFE_ZONE) && safe_align_done &&
              delivery_enter_command_ok(command) &&
-             ((((command->flags & VISION_CMD_VISUAL_CORRECTION_VALID) != 0U) &&
-               safe_align_visual_started) ||
-              (((command->flags & VISION_CMD_VISUAL_CORRECTION_VALID) == 0U) &&
-               !safe_align_visual_started && safe_align_target_deg == safe_align_entry_deg))) {
-    const float final_heading_deg = safe_align_target_deg;
+             (((command->flags & VISION_CMD_VISUAL_CORRECTION_VALID) != 0U) ==
+              safe_align_visual_confirmed)) {
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
     task_enter(TASK_NAVIGATE, now_ms);
     delivery_enter_active = true;
     delivery_stage_only = false;
-    nav_locked_heading_deg = task_heading_360(final_heading_deg);
+    nav_locked_heading_deg = task_safe_zone_heading();
     nav_heading_locked = true;
     nav_ready = true;
     task_status.nav_heading_locked = true;

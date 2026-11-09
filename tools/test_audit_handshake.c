@@ -81,14 +81,20 @@ static void wire_prepare(TaskState target, uint32_t now)
   command_generation_seen = 0U;
 }
 
-static void wire_send(VisionMissionCommand command, uint32_t now, uint32_t generation)
+static void wire_send_action(VisionMissionCommand command, uint16_t action_id,
+                             uint32_t now, uint32_t generation)
 {
   command.received = command.context_valid = command.payload_valid = true;
-  command.task_id = 7U; command.action_id = 11U;
+  command.task_id = 7U; command.action_id = action_id;
   command.tick_ms = now; command.generation = generation; command.sequence = generation;
   VisionData vision = {.config_ready = true, .mission = command};
   command_accepted = false;
   task_accept_mission(&vision, now);
+}
+
+static void wire_send(VisionMissionCommand command, uint32_t now, uint32_t generation)
+{
+  wire_send_action(command, 11U, now, generation);
 }
 
 static VisionMissionCommand placeholder(void)
@@ -803,12 +809,54 @@ static void test_normalrun_navigation_handoffs_and_abort(void)
          reverse_output == 0.0f && lateral_output == 0.0f && yaw_output == 0.0f);
 }
 
+static void test_normalrun_safe_zone_team_heading(void)
+{
+  for (unsigned i = 0; i < 2U; ++i) {
+    const bool red = i == 0U;
+    const uint16_t heading = red ? 90U : 270U;
+    const uint8_t flags = VISION_CMD_VALID | (red ? VISION_CMD_RED_SIDE : 0U);
+    wire_prepare(TASK_TRANSPORT_AUDIT, 1000U);
+    configured_color = red ? VISION_COLOR_RED : VISION_COLOR_BLUE;
+    task_status.gripper_closed = true;
+    audit_received = audit_valid = true;
+    VisionMissionCommand align = {.command = VISION_CMD_ALIGN_SAFE_ZONE,
+        .flags = flags | VISION_CMD_USE_FINAL_HEADING, .heading_cdeg = 18000U};
+    wire_send_action(align, 11U, 1020U, 1U);
+    assert(command_accepted && task_protocol_mode() == 10U);
+    assert(task_status.nav_locked_heading_deg == heading);
+
+    test_pose.heading_mdeg = (int32_t)heading * 1000;
+    task_process_safe_align(1040U);
+    const uint32_t aligned_ms = 1040U + APP_SAFE_ALIGN_CAMERA_SETTLE_MS;
+    task_process_safe_align(aligned_ms);
+    assert(task_protocol_mode() == 11U && task_context_complete());
+
+    align.flags = flags | VISION_CMD_VISUAL_CORRECTION_VALID;
+    align.heading_cdeg = 0U;
+    align.target_x_mm = red ? -105 : 146;
+    wire_send_action(align, 12U, aligned_ms + 20U, 2U);
+    wire_send_action(align, 12U, aligned_ms + 40U, 3U);
+    assert(command_accepted && accepted_context.action_id == 12U);
+    assert(safe_align_visual_confirmed && task_context_complete());
+    assert(task_protocol_mode() == 11U && task_status.nav_locked_heading_deg == heading);
+
+    const VisionMissionCommand enter = {.command = VISION_CMD_ENTER_SAFE_ZONE,
+        .flags = flags | VISION_CMD_DRIVE_STRAIGHT | VISION_CMD_VISUAL_CORRECTION_VALID};
+    wire_send_action(enter, 13U, aligned_ms + 60U, 4U);
+    assert(command_accepted && state == TASK_NAVIGATE && delivery_enter_active);
+    assert(nav_locked_heading_deg == (float)heading);
+    assert(safe_enter_follow(&active_mission, aligned_ms + 80U) == REMOTE_ROUTE_RUNNING);
+    assert(heading_output == (float)heading && reverse_output > 0.0f);
+  }
+}
+
 int main(void)
 {
 #ifdef NORMALRUN_FLOW_REVIEW_CHECK
   test_normalrun_start_and_delivery_exit();
   test_normalrun_start_center_approach();
   test_normalrun_navigation_handoffs_and_abort();
+  test_normalrun_safe_zone_team_heading();
   test_sweep_placeholder_ack_and_real_role_validation();
   test_injury_retrieve_placeholder_does_not_change_destination();
   test_recoverable_wait();
