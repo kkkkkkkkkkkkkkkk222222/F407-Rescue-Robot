@@ -52,37 +52,6 @@ static uint8_t claw_relaxed_right(void)
   return APP_CLAW_RIGHT_FROM_LEFT(claw_relaxed_left());
 }
 
-static bool claw_move_sequential(ClawAction action, uint32_t now_ms,
-                                 uint8_t first_servo, uint8_t first_angle,
-                                 uint8_t second_servo, uint8_t second_angle)
-{
-  if (claw_action != action) {
-    claw_action = action;
-    claw_step = 1U;
-    claw_step_ms = now_ms;
-    claw_done = false;
-    Servo_SetAngle(first_servo, first_angle);
-    return false;
-  }
-
-  if (claw_done) {
-    return true;
-  }
-  if ((uint32_t)(now_ms - claw_step_ms) < 1000U) {
-    return false;
-  }
-
-  if (claw_step == 1U) {
-    Servo_SetAngle(second_servo, second_angle);
-    claw_step = 2U;
-    claw_step_ms = now_ms;
-    return false;
-  }
-
-  claw_done = true;
-  return true;
-}
-
 static uint32_t servo_travel_wait_ms(uint8_t from_deg, uint8_t to_deg)
 {
   const uint32_t travel_deg = from_deg > to_deg ? from_deg - to_deg : to_deg - from_deg;
@@ -259,9 +228,29 @@ bool Claw_ClusterOpenRight(uint32_t now_ms)
 bool Claw_Retract(uint32_t now_ms)
 {
   /* Fold the left claw first, then place the right claw on the outside. */
-  return claw_move_sequential(CLAW_ACTION_RETRACT, now_ms,
-                              4U, APP_CLAW_LEFT_RETRACT_ANGLE,
-                              2U, APP_CLAW_RIGHT_RETRACT_ANGLE);
+  if (claw_action != CLAW_ACTION_RETRACT) {
+    claw_action = CLAW_ACTION_RETRACT;
+    claw_step = 1U;
+    claw_step_ms = now_ms;
+    claw_done = false;
+    claw_wait_ms = claw_limit_wait_ms(4U, APP_CLAW_LEFT_RETRACT_ANGLE,
+        APP_CLAW_LEFT_LIMIT_MIN_DEG, APP_CLAW_LEFT_LIMIT_MAX_DEG);
+    Servo_SetAngle(4U, APP_CLAW_LEFT_RETRACT_ANGLE);
+    return false;
+  }
+  if (claw_done) { return true; }
+  if ((uint32_t)(now_ms - claw_step_ms) < claw_wait_ms) { return false; }
+  if (claw_step == 1U) {
+    claw_wait_ms = claw_limit_wait_ms(2U, APP_CLAW_RIGHT_RETRACT_ANGLE,
+        APP_CLAW_RIGHT_FROM_LEFT(APP_CLAW_LEFT_LIMIT_MAX_DEG),
+        APP_CLAW_RIGHT_FROM_LEFT(APP_CLAW_LEFT_LIMIT_MIN_DEG));
+    Servo_SetAngle(2U, APP_CLAW_RIGHT_RETRACT_ANGLE);
+    claw_step = 2U;
+    claw_step_ms = now_ms;
+    return false;
+  }
+  claw_done = true;
+  return true;
 }
 
 bool Claw_Touch(uint32_t now_ms)

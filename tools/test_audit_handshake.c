@@ -646,25 +646,42 @@ static void test_normalrun_start_and_delivery_exit(void)
 {
   prepare();
   task_enter(TASK_WAIT_CONFIG, 0U);
+  initial_claw_ready = false;
+  const uint8_t right_before_retract = Servo_GetAngle(2U);
+  for (uint32_t now = 0U; now < 620U; now += APP_TASK_PERIOD_MS) {
+    Task_Process(now);
+    assert(!initial_claw_ready);
+    assert(Servo_GetAngle(4U) == APP_CLAW_LEFT_RETRACT_ANGLE);
+    assert(Servo_GetAngle(2U) ==
+        (now < 320U ? right_before_retract : APP_CLAW_RIGHT_RETRACT_ANGLE));
+  }
+  Task_Process(620U);
+  assert(initial_claw_ready && state == TASK_WAIT_CONFIG);
+
+  prepare();
+  task_enter(TASK_WAIT_CONFIG, 0U);
   initial_claw_ready = true;
   Task_Process(20U);
   assert(state == TASK_WAIT_CONFIG && distance_calls == 0U);
   test_vision.config_ready = true;
   test_vision.start_zone = LOCATION_START_1;
-  test_pose.heading_mdeg = 45000;
+  test_pose.heading_mdeg = 135000;
   Task_Process(40U);
   assert(state == TASK_START && start_motion_phase == START_REVERSE);
   Task_Process(60U);
   assert(start_motion_phase == START_REVERSE_SETTLE &&
          fabsf(distance_request + APP_START_CLEARANCE_DISTANCE_M) < 0.001f &&
-         fabsf(heading_output - 45.0f) < 0.001f);
+         fabsf(heading_output - 135.0f) < 0.001f);
   Task_Process(60U + APP_START_SETTLE_MS);
   assert(start_motion_phase == START_TURN);
   Task_Process(80U + APP_START_SETTLE_MS);
   assert(start_motion_phase == START_TURN_SETTLE);
-  test_pose.heading_mdeg = 225000;
-  const uint32_t open_at = 80U + 2U * APP_START_SETTLE_MS;
-  Task_Process(open_at);
+  const uint32_t open_at = 80U + APP_START_SETTLE_MS;
+  assert(Servo_GetAngle(4U) == APP_CLAW_LEFT_OPEN_ANGLE &&
+         Servo_GetAngle(2U) == APP_CLAW_RIGHT_OPEN_ANGLE);
+  test_pose.heading_mdeg = 343500;
+  Task_Process(open_at + APP_START_SETTLE_MS);
+  assert(start_motion_phase == START_TURN_SETTLE);
   Task_Process(open_at + 302U);
   assert(start_motion_phase == START_TURN_SETTLE);
   Task_Process(open_at + 303U);
@@ -672,7 +689,7 @@ static void test_normalrun_start_and_delivery_exit(void)
   Task_Process(open_at + 323U);
   assert(state == TASK_OPEN_CLAW &&
          fabsf(distance_request - APP_START_FORWARD_DISTANCE_M) < 0.001f &&
-         fabsf(task_wrap_angle(heading_output - 225.0f)) < 0.001f);
+         fabsf(task_wrap_angle(heading_output - 315.0f)) < 0.001f);
   Task_Process(open_at + 343U);
   assert(state == TASK_SEARCH);
 

@@ -1900,6 +1900,7 @@ static void task_process_start(const VisionFusedPose *fused_pose, uint32_t now_m
     task_status.motors_active = result == MOTOR_TURN_RUNNING;
     if (result == MOTOR_TURN_DONE) {
       Motor_Stop();
+      (void)Claw_Open(now_ms);
       start_motion_phase = START_TURN_SETTLE;
       step_started_ms = now_ms;
     } else if (result == MOTOR_TURN_FAULT || result == MOTOR_TURN_INVALID) {
@@ -1910,7 +1911,8 @@ static void task_process_start(const VisionFusedPose *fused_pose, uint32_t now_m
   if (start_motion_phase == START_TURN_SETTLE) {
     Motor_Stop();
     task_status.motors_active = false;
-    if (now_ms - step_started_ms >= APP_START_SETTLE_MS && Claw_Open(now_ms)) {
+    const bool claws_ready = Claw_Open(now_ms);
+    if (now_ms - step_started_ms >= APP_START_SETTLE_MS && claws_ready) {
       start_motion_phase = START_FORWARD;
     }
     return;
