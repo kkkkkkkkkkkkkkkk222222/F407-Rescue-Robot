@@ -19,7 +19,7 @@
 ## NormalRun 分离数量档
 
 用户批准先用现有审核报文的单侧 0–3 块。RDK 参考提交为
-`347d787c6b42471d1265380141e1b77a540bd81c`，待 RDK 同学审查和适配。
+`347d787c6b42471d1265380141e1b77a540bd81c`。RDK 现有审核包已提供分档所需字段，可直接联调。
 F405 实现提交为 `62be90bfb5c295bbc759740143e8c3928b587b4b`，NormalRun 已编译并链接成功。
 本地镜像 `source_dirty=1` 来自原有的 Task.c 两行空白。本次未烧录，分离角度和成功率待实车验证。
 
@@ -31,20 +31,14 @@ F405 实现提交为 `62be90bfb5c295bbc759740143e8c3928b587b4b`，NormalRun 已�
 - 带侧 DISPERSE 与 RELEASE 加 YIELD 共用该选择。20 mm 直退后起弯，
   达到该档航向就收转向，沿用 70 mm 尾段和现有侧偏预算。角度是目标值，实车待验证。
 
-给 RDK 的适配建议如下。
+RDK 可沿用当前代码直接联调。现有 `CARGO_AUDIT` 携带左右计数、真实总数和 UNKNOWN 标记，
+单侧超过 3 块时现有编码已将侧计数饱和为 3 并置 UNKNOWN。
+F405 在接受分离动作时，从已审核的左右计数和现有选边命令推算释放侧，内部计算夹角及转角。
 
-1. 沿用 `CargoAudit.to_protocol()` 的真实总数、侧计数与溢出标志。
-   单侧超过 3 块继续饱和为 3 并置 UNKNOWN，选边时看饱和前的计数和分类。
-   归边不明或超出档位时走现有观察或放弃分支，使用该场景允许的入口。
-2. 在 `_preferred_keep_side()` 的合格候选里优先选有间隔的独立单件，再选较不拥挤的一侧。
-   首件、类别、危险物、伤员及运输许可沿用原业务规则。现有危险物释放路径独立处理。
-   在已有保留侧投票中核对该侧和对侧的数量，确保发出的 STABLE 审核与动作选择来自同一批证据。
-3. 带侧 `DISPERSE_PILE` 的 TARGET_RIGHT 表示保留右侧。
-   `RELEASE_LEFT/RIGHT` 表示放开对应的一侧，原路径等释放完成后再发 `YIELD_BACKOFF`。
-   F405 由审核计数算角度，RDK 继续使用原动作距离和上下文配对。
-4. 动作完成后用 140° 新画面复审。数量减少或出现明确分界且仍有合格候选时，可再发一次带侧 DISPERSE。
-   若确认整团没有松动，沿用 `_start_capture_abandon()` 的双开退让流程。
-   用现有动作接受回执计数，重复发送同一动作只计一次，换侧仍共用两次预算。
+联调时用现有日志核对稳定审核的左右计数、总数和动作方向是否对应。
+带侧 `DISPERSE_PILE` 的 TARGET_RIGHT 表示保留右侧，`RELEASE_RIGHT` 表示放开右侧，
+后者沿用原流程，开爪完成后发 `YIELD_BACKOFF`。分离后沿用现有 140° 复审和两次预算。
+优先保留堆边独立单件、整团未松动时提前退让可作为后续优化，等实际画面证实需要再讨论。
 
 代码参考 [RDK 审核编码](https://github.com/danmo-teng/shijue_fangan/blob/347d787c6b42471d1265380141e1b77a540bd81c/competition_rescue/state_machine.py#L295)、
 [RDK 选边](https://github.com/danmo-teng/shijue_fangan/blob/347d787c6b42471d1265380141e1b77a540bd81c/competition_rescue/state_machine.py#L3059)、
