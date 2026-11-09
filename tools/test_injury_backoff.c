@@ -42,6 +42,8 @@ bool Motor_MoveHeading(float forward, float heading)
   if (heading_rejected) { return false; }
   reverse_output=forward; lateral_output=yaw_output=0.0f; return true;
 }
+bool Motor_MoveHeadingLowRearDeadband(float forward, float heading)
+{ return Motor_MoveHeading(forward, heading); }
 MotorStatus Motor_GetStatus(uint8_t id)
 { (void)id; return (MotorStatus){.stall_fault = motor_fault}; }
 LocationPose Location_GetPose(void) { return test_pose; }
@@ -68,6 +70,9 @@ MotorDistanceStatus Motor_MoveDistanceHeading(float distance, float speed, float
   ++distance_calls;
   return distance_result;
 }
+MotorDistanceStatus Motor_MoveDistanceHeadingLowRearDeadband(
+    float distance, float speed, float heading)
+{ return Motor_MoveDistanceHeading(distance, speed, heading); }
 MotorDistanceStatus Motor_MoveDistanceLinear(float distance, float speed, float slow, float end)
 {
   distance_request=distance; ++distance_calls;

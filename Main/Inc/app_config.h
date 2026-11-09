@@ -289,6 +289,7 @@
 /* Three-motor speed loop, updated every 10 ms. */
 #define APP_MOTOR_ZERO_ENTER_MM_S          3.0f
 #define APP_MOTOR_ZERO_EXIT_MM_S           6.0f
+#define APP_MOTOR_REAR_HEADING_ZERO_MM_S   0.5f
 /* F405 debug MOVE trial: gate yaw before mixing, not individual wheels. */
 #define APP_DEBUG_MOVE_YAW_SLEW_MM_S2     80.0f
 #define APP_DEBUG_MOVE_HEADING_RATE_KD    0.20f /* (mm/s) / (deg/s), D on measurement */
