@@ -218,8 +218,8 @@ static void test_quantity_grip_and_retry_budget(void)
       assert(separation_extra_close_deg == (single && attempt == 0U ? 20U : 5U));
       assert(separation_turn_deg == 10.0f);
     }
-    assert(!task_prepare_separation(-1, 410U) && separation_total_attempts == 2U);
-    assert(capture_escape_return_center && capture_escape_reclose);
+    assert(task_prepare_separation(-1, 410U) && separation_total_attempts == 3U);
+    assert(separation_extra_close_deg == 5U && !capture_escape_active);
   }
   prepare(); separation_audit(false, false);
   assert(task_prepare_separation(1, 400U) && separation_extra_close_deg == 5U);
@@ -922,9 +922,13 @@ int main(void)
   assert(task_capture_observe(5000));
   assert(state == TASK_POST_GRAB_AUDIT);
   separation_total_attempts=2;
-  task_capture_observe(5100);
-  assert(state == TASK_APPROACH_RECOVER && capture_escape_return_center);
-  puts("two-frame cadence/STABLE, disabled escape, two separation attempts PASS");
+  assert(task_capture_observe(5100));
+  assert(state == TASK_POST_GRAB_AUDIT && !capture_escape_active);
+  audit_host_stable = true;
+  audit_evidence_ms = 5100U;
+  assert(task_prepare_separation(1, 5100U) && separation_total_attempts == 3U);
+  assert(separation_extra_close_deg == 5U);
+  puts("two-frame cadence/STABLE, disabled escape, progressive separation PASS");
   return 0;
 #endif
   test_recoverable_wait();

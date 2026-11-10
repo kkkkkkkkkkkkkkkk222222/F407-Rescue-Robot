@@ -2207,8 +2207,8 @@ static bool task_capture_has_eligible(void)
 
 static void task_begin_capture_escape(uint32_t now_ms)
 {
-  /* Only a completed final illegal re-audit selects return-to-centre.
-   * Other abandonment reasons retain their existing 90-degree SEARCH path. */
+  /* Once abandonment has been selected, the original threshold chooses
+   * the return-to-centre route. It does not limit separation commands. */
   const bool final_illegal = audit_received && !audit_valid &&
       separation_total_attempts >= APP_SEPARATION_MAX_ATTEMPTS;
   task_enter(TASK_APPROACH_RECOVER, now_ms);
@@ -2347,13 +2347,11 @@ static bool task_capture_observe(uint32_t now_ms)
   const bool ambiguous_multi = audit_last_total_count > 1U &&
       (((audit_last_counts & 0x03U) > 1U) || (((audit_last_counts >> 2) & 0x03U) > 1U) ||
        ((audit_last_flags & (VISION_AUDIT_UNKNOWN_PRESENT | VISION_AUDIT_INJURY_MIXED)) != 0U));
-  /* A fresh, separable first failure gets another decision; the broad audit
-   * watchdog still handles a host that never sends its next action. */
+  /* A separable re-audit waits for the host's next decision. The existing
+   * audit watchdog still bounds the wait if the host sends no action. */
   if (audit_received && separation_total_attempts > 0U &&
-      separation_total_attempts < APP_SEPARATION_MAX_ATTEMPTS &&
       (task_capture_has_eligible() || ambiguous_multi)) { return true; }
-  if ((audit_received && ((!task_capture_has_eligible() && !ambiguous_multi) ||
-                           separation_total_attempts >= APP_SEPARATION_MAX_ATTEMPTS)) ||
+  if ((audit_received && !task_capture_has_eligible() && !ambiguous_multi) ||
       (uint32_t)(now_ms - capture_wait_started_ms) >= APP_CAPTURE_DECISION_WAIT_MS) {
     task_begin_capture_escape(now_ms);
     return true;
@@ -2367,11 +2365,6 @@ static bool task_prepare_separation(int8_t keep_side, uint32_t now_ms)
   if (!audit_received || !audit_host_stable || audit_consistent_count < APP_AUDIT_REQUIRED_SAMPLES ||
       now_ms - audit_evidence_ms > APP_AUDIT_EVIDENCE_MAX_GAP_MS) {
     task_status.command_reject_reason = TASK_COMMAND_REJECT_AUDIT;
-    return false;
-  }
-  /* A further request cannot evade the final-failure decision by changing side. */
-  if (separation_total_attempts >= APP_SEPARATION_MAX_ATTEMPTS) {
-    task_begin_capture_escape(now_ms);
     return false;
   }
   const uint8_t left_count = audit_last_counts & 0x03U;
@@ -2395,7 +2388,7 @@ static bool task_prepare_separation(int8_t keep_side, uint32_t now_ms)
   }
   Claw_SetSeparationHold(close_deg);
   separation_keep_side = keep_side;
-  ++separation_total_attempts;
+  if (separation_total_attempts < UINT8_MAX) { ++separation_total_attempts; }
   capture_wait_active = false;
   return true;
 }
@@ -4069,7 +4062,6 @@ static bool task_remote_separation_curve(uint32_t distance_mm, uint32_t now_ms)
   if (!task_get_location_pose(&pose, now_ms)) { return false; }
   const float heading = (float)pose.heading_mdeg * 0.001f;
   const float side_sign = separation_keep_side > 0 ? 1.0f : -1.0f;
-  const uint8_t retry = separation_total_attempts > 0U ? separation_total_attempts - 1U : 0U;
   if (!separation_motion.active) {
     separation_motion = (SeparationMotion){
       .active = true, .stage = SEPARATION_PREPULL,
@@ -4115,8 +4107,9 @@ static bool task_remote_separation_curve(uint32_t distance_mm, uint32_t now_ms)
   }
   const float turned = task_abs(task_wrap_angle(heading - separation_motion.start_heading_deg));
   const bool turn_limit = turned >= separation_turn_deg;
+  /* Every retry uses the original second-attempt arc limit. */
   const uint32_t arc_limit = APP_CARGO_SEPARATE_ARC_MAX_MM +
-                             retry * APP_CARGO_SEPARATE_ARC_RETRY_STEP_MM;
+      (separation_total_attempts > 1U ? APP_CARGO_SEPARATE_ARC_RETRY_STEP_MM : 0U);
   const float arc_error = task_wrap_angle(separation_motion.target_heading_deg - heading);
   if (separation_motion.stage == SEPARATION_PREPULL &&
       travelled >= APP_CARGO_SEPARATE_PREPULL_MM) {

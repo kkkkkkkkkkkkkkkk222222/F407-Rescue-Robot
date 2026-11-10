@@ -1,6 +1,6 @@
 # 两端当前要求与回执
 
-更新日期为 2026-11-09，时区 Asia/Shanghai。
+更新日期为 2026-11-10，时区 Asia/Shanghai。
 
 ## 固定入口与协作方式
 
@@ -15,6 +15,25 @@
 人保留知情、拒绝和选择权。已经明确批准的范围直接推进，超范围的重要取舍先由人决定，AI 不能互相授权。
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
+
+## SORT-01-20261110 渐进分离实施回执
+
+RDK 实现为 `afe28fbe5138f2d8019f248e0d4f43142bc31e0f`。F405 从 `b56bc80` 起实施本回执所在提交。
+已核对两端的保留侧语义和放弃交接，并经用户确认第三次起沿用第二次的弧线长度上限。
+[RDK 请求](https://github.com/danmo-teng/shijue_fangan/blob/afe28fbe5138f2d8019f248e0d4f43142bc31e0f/docs/CROSS_REPO_REQUESTS.md#L23) ·
+[RDK 实现说明](https://github.com/danmo-teng/shijue_fangan/blob/afe28fbe5138f2d8019f248e0d4f43142bc31e0f/docs/COMPETITION_SORTING_20261110.md)
+
+- 抓前、合爪后及运输复审的已有带侧分离入口允许第三次及后续动作。F405 已移除接受时的总次数拒绝和可分离复审的总次数放弃。
+  每次仍需本轮稳定审核和原任务/动作配对，重发沿用原去重。F405 总次数用于首次/后续夹紧档、诊断和原恢复分流，
+  连续无进展由 RDK 根据动作前后的稳定审核计算。
+- 弧线段里程上限为首轮 250 mm、第二轮及以后 300 mm。仍按审核选择 10° 或 15°，后续额外夹紧为 5°，
+  复用原单侧开爪、20 mm 直退、退转、70 mm 尾段及 140° 复审。实际行程仍受原角度、侧偏和动作预算约束。
+- RDK 连续两次无进展时仍走 `RELEASE_BOTH`。F405 沿原放弃路径双开、退让 300 mm、收爪并在 mode47 接原
+  `RETURN_CENTER`。合爪业务审核、原无审核超时、正式单件运输、扫障/伤员/藏点规则及 mode51 继续走现有入口。
+  `TARGET_RIGHT` 表示保留右侧，`RELEASE_RIGHT` 表示释放右侧。线上字段沿用现有协议。
+- `NormalRun` 固件目标编译和链接通过。现有主机检查的累计两帧/第三次分离、mode48 分离后复审及退转退出通过。
+  本机编译同时包含工作区里独立的 S2/S4 倒装修改，`source_dirty=1`。本回执的提交仅包含分离及对应断言，
+  本轮未烧录，板端身份未重新读取，地面分离效果待验证。
 
 ## TRAJECTORY-20261109 审核回执
 
@@ -40,7 +59,7 @@ NormalRun/TASK 和 RDK `4cfaba9`。新版行为待实车验证。
 
 本条为源码核对和提案回执。运行代码沿用已有提交，实烧身份沿用最近有证据的记录。
 
-## NormalRun 分离数量档
+## NormalRun 分离数量档（沿用的机械参数）
 
 用户批准先用现有审核报文的单侧 0–3 块。RDK 参考提交为
 `347d787c6b42471d1265380141e1b77a540bd81c`。RDK 现有审核包已提供分档所需字段，可直接联调。
@@ -51,7 +70,7 @@ F405 实现提交为 `62be90bfb5c295bbc759740143e8c3928b587b4b`，NormalRun 已�
   释放侧 1–2 块用额外夹紧 20°、向释放侧转 10°，释放侧 3 块用额外夹紧 10°、转 15°。
   保留侧多件或单件证据不足时，额外夹紧为 5°。第二次按复审重选转角，额外夹紧为 5°。
 - 双侧非空、左右计数之和等于真实总数且没有 UNKNOWN 标记，才使用精确数量档。
-  已接受的带侧动作若证据不足，采用 5° 夹紧与 10° 转向。每批最多两次。
+  已接受的带侧动作若证据不足，采用 5° 夹紧与 10° 转向。继续或放弃见上方 SORT-01-20261110。
 - 带侧 DISPERSE 与 RELEASE 加 YIELD 共用该选择。20 mm 直退后起弯，
   达到该档航向就收转向，沿用 70 mm 尾段和现有侧偏预算。角度是目标值，实车待验证。
 
@@ -61,8 +80,8 @@ F405 在接受分离动作时，从已审核的左右计数和现有选边命令
 
 联调时用现有日志核对稳定审核的左右计数、总数和动作方向是否对应。
 带侧 `DISPERSE_PILE` 的 TARGET_RIGHT 表示保留右侧，`RELEASE_RIGHT` 表示放开右侧，
-后者沿用原流程，开爪完成后发 `YIELD_BACKOFF`。分离后沿用现有 140° 复审和两次预算。
-优先保留堆边独立单件、整团未松动时提前退让可作为后续优化，等实际画面证实需要再讨论。
+后者沿用原流程，开爪完成后发 `YIELD_BACKOFF`。分离后沿用现有 140° 复审。
+上位机保留侧的独立单件例外已见上方 SORT-01-20261110。物堆边缘/缝隙靠近仍是独立提案。
 
 代码参考 [RDK 审核编码](https://github.com/danmo-teng/shijue_fangan/blob/347d787c6b42471d1265380141e1b77a540bd81c/competition_rescue/state_machine.py#L295)、
 [RDK 选边](https://github.com/danmo-teng/shijue_fangan/blob/347d787c6b42471d1265380141e1b77a540bd81c/competition_rescue/state_machine.py#L3059)、
