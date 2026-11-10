@@ -268,7 +268,7 @@ static float start_target_heading_deg;
 static uint32_t scan_entry_report_generation;
 static uint32_t nav_final_push_start_path_mm;
 static uint32_t safe_enter_start_path_mm;
-static uint32_t safe_enter_resume_mm;
+static uint32_t safe_enter_resume_mm, safe_enter_resume_push_ms;
 static uint32_t delivery_exit_start_path_mm;
 static uint8_t delivery_exit_phase;
 static uint32_t delivery_exit_phase_ready_ms;
@@ -1349,7 +1349,7 @@ static void task_enter(TaskState next, uint32_t now_ms)
         (float)pose.heading_mdeg * 0.001f + APP_START_TURN_DEG);
     start_motion_phase = START_REVERSE;
   } else if (next == TASK_SEARCH) {
-    safe_enter_resume_mm = 0U;
+    safe_enter_resume_mm = safe_enter_resume_push_ms = 0U;
     transport_sort_active = false;
     cluster_recovery_latched = false;
     cluster_recovery_hold_seen = false;
@@ -1444,7 +1444,7 @@ static void task_enter(TaskState next, uint32_t now_ms)
   } else if (next == TASK_INJURY_RECLOSE) {
     task_status.gripper_closed = false;
   } else if (next == TASK_TRANSPORT_AUDIT) {
-    safe_enter_resume_mm = 0U;
+    safe_enter_resume_mm = safe_enter_resume_push_ms = 0U;
     empty_load_reobserved = false;
     transport_sort_active = false;
     Motor_Stop();
@@ -1596,7 +1596,7 @@ static void task_initialize(uint32_t now_ms)
   scan_entry_report_generation = 0U;
   nav_final_push_start_path_mm = 0U;
   safe_enter_start_path_mm = 0U;
-  safe_enter_resume_mm = 0U;
+  safe_enter_resume_mm = safe_enter_resume_push_ms = 0U;
   delivery_exit_start_path_mm = 0U;
   locked_cargo_counts = 0U;
   configured_color = 0U;
@@ -3700,7 +3700,8 @@ static RemoteRouteStatus safe_enter_follow(
       (enter_travelled_mm >= contact_start_mm)) {
     nav_final_push_active = true;
     nav_final_push_paused = false;
-    nav_final_push_started_ms = now_ms;
+    nav_final_push_started_ms = now_ms - safe_enter_resume_push_ms;
+    safe_enter_resume_push_ms = 0U;
     nav_final_push_start_path_mm = pose.path_mm;
     task_status.nav_final_push = true;
     /* Local odometry/IMU remains required. Map-edge recovery is exempted
@@ -4300,12 +4301,15 @@ static void task_begin_safe_sweep(const VisionMissionCommand *command,
 {
   const LocationPose pose = Location_GetPose();
   if (state == TASK_NAVIGATE && delivery_enter_active && safe_enter_path_valid) {
-    /* Sweep returns to the interruption point. Credit the ENTER approach
-     * already travelled, excluding odometry accumulated by the sweep. */
-    const uint32_t approach_mm = APP_SAFE_ENTER_TOTAL_DISTANCE_MM -
-        APP_SAFE_FINAL_PUSH_DISTANCE_MM;
+    /* Sweep returns to the interruption point. Credit completed ENTER travel
+     * without adding the distance or time spent on the sweep. */
     const uint32_t travelled_mm = pose.path_mm - safe_enter_start_path_mm;
-    safe_enter_resume_mm = travelled_mm < approach_mm ? travelled_mm : approach_mm;
+    safe_enter_resume_mm = travelled_mm < APP_SAFE_ENTER_TOTAL_DISTANCE_MM ?
+        travelled_mm : APP_SAFE_ENTER_TOTAL_DISTANCE_MM;
+    if (nav_final_push_active) {
+      const uint32_t push_end_ms = nav_final_push_paused ? nav_final_push_paused_ms : now_ms;
+      safe_enter_resume_push_ms = push_end_ms - nav_final_push_started_ms;
+    }
   }
   sweep_original_injury = audit_destination_injury;
   sweep_original_left = audit_last_left_class;
@@ -5772,13 +5776,12 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
     task_begin_safe_align(now_ms);
   } else if ((command->command == VISION_CMD_CLEAR_SAFE_ZONE) &&
              ((state == TASK_ALIGN_SAFE_ZONE && safe_align_done && safe_align_visual_confirmed) ||
-              (state == TASK_NAVIGATE && delivery_enter_active &&
-               !nav_final_push_active && !nav_final_push_done)) &&
+              (state == TASK_NAVIGATE && delivery_enter_active)) &&
              task_status.gripper_closed &&
              ((command->target_x_mm != 0) ||
               ((command->target_y_mm < 0) == audit_destination_injury)) &&
              task_safe_sweep_command_valid(command)) {
-    /* A newly seen obstacle may replace ENTER before the final push. */
+    /* A newly seen obstacle may replace ENTER while the load is still held. */
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
     task_begin_safe_sweep(command, now_ms);
@@ -6264,7 +6267,7 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
   if (new_target) {
     capture_budget_active = capture_wait_active = false;
     separation_total_attempts = 0U;
-    safe_enter_resume_mm = 0U;
+    safe_enter_resume_mm = safe_enter_resume_push_ms = 0U;
     Claw_SetSeparationHold(0U);
     accepted_context = (TaskContext){0};
     if (incoming.command != VISION_CMD_CARGO_AUDIT) {
