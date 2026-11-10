@@ -626,7 +626,7 @@
 #define APP_BOUNDARY_RECOVERY_SPEED_MM_S     300.0f
 #define APP_POSE_WAIT_TIMEOUT_MS          1500U
 #define APP_LIFT_START_ANGLE              55U
-#define APP_LIFT_TRAVEL_ANGLE             88U
+#define APP_LIFT_TRAVEL_ANGLE             86U
 /* F405 installation offsets in degrees, added at PWM output. */
 #define APP_SERVO_S1_OFFSET_DEG            0  /* Lift */
 #define APP_SERVO_S2_OFFSET_DEG            2  /* Right claw */
