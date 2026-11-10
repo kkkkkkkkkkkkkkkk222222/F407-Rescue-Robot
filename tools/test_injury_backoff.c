@@ -162,7 +162,9 @@ static void test_complete_injury_sequence(void)
   audit_at(1U, 10U); audit_at(1U, 20U);
   assert(state == TASK_POST_GRAB_AUDIT && !audit_received);
   audit_at(2U, 110U);
-  assert(state == TASK_INJURY_BACKOFF && !audit_valid);
+  assert(state == TASK_WAIT_NAVIGATION && audit_valid && task_status.gripper_closed);
+  /* Continue exercising the retained legacy backoff independently. */
+  task_enter(TASK_INJURY_BACKOFF, 110U);
   VisionMissionCommand grab = {.received = true, .flags = VISION_CMD_VALID,
     .command = VISION_CMD_GRAB_CONFIRMED};
   task_accept_mission_legacy(&grab, 211U);

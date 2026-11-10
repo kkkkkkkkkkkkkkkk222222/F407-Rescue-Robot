@@ -281,17 +281,20 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
     }
   }
   if (code == VISION_CMD_ALIGN_SAFE_ZONE) {
+    if (arg_b != 0 && arg_b != APP_SAFE_ALIGN_RAISED_CAMERA_ANGLE * 100) {
+      goto rejected_payload;
+    }
     const bool visual =
         (flags & VISION_CMD_VISUAL_CORRECTION_VALID) != 0U;
     if (visual) {
       if (((flags & VISION_CMD_USE_FINAL_HEADING) != 0U) ||
           (arg_a < -(int16_t)APP_VISION_MAX_X) ||
           (arg_a > (int16_t)APP_VISION_MAX_X) ||
-          (arg_b != 0) || (heading != 0U)) {
+          (heading != 0U)) {
         goto rejected_payload;
       }
     } else if (((flags & VISION_CMD_USE_FINAL_HEADING) == 0U) ||
-               (arg_a != 0) || (arg_b != 0) || (heading >= 36000U)) {
+               (arg_a != 0) || (heading >= 36000U)) {
       goto rejected_payload;
     }
   }

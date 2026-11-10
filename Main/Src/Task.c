@@ -268,6 +268,7 @@ static float start_target_heading_deg;
 static uint32_t scan_entry_report_generation;
 static uint32_t nav_final_push_start_path_mm;
 static uint32_t safe_enter_start_path_mm;
+static uint32_t safe_enter_resume_mm;
 static uint32_t delivery_exit_start_path_mm;
 static uint8_t delivery_exit_phase;
 static uint32_t delivery_exit_phase_ready_ms;
@@ -277,6 +278,7 @@ static bool capture_escape_reclose;
 static bool capture_return_closed;
 static bool capture_return_opening;
 static bool transport_audit_camera_ready;
+static bool empty_load_reobserved;
 static bool transport_stage_injury;
 static uint8_t transport_audit_phase, transport_audit_attempt;
 static bool injury_recheck_pending;
@@ -930,6 +932,27 @@ static TaskCommandReject task_disperse_reject_reason(
   return TASK_COMMAND_REJECT_NONE;
 }
 
+static void task_nudge_load_camera(uint32_t now_ms)
+{
+  const bool transport = state == TASK_TRANSPORT_AUDIT;
+  const bool high = transport ? transport_audit_attempt != 0U :
+      post_grab_audit_phase == POST_AUDIT_WAIT_LOW;
+  Camera_SetAngle(high ? APP_GRAB_VIEW_ANGLE + APP_POST_GRAB_CAMERA_NUDGE_DEG :
+      APP_GRAB_VIEW_ANGLE - APP_POST_GRAB_CAMERA_NUDGE_DEG);
+  camera_angle = (float)Camera_GetAngle();
+  task_clear_audit_result();
+  task_status.claw_visible = false;
+  if (transport) {
+    transport_audit_camera_ready = false;
+    ++transport_audit_attempt;
+    transport_audit_phase = 2U;
+    step_started_ms = now_ms;
+  } else {
+    post_grab_audit_phase = high ? POST_AUDIT_NUDGE_HIGH : POST_AUDIT_NUDGE_LOW;
+    post_grab_audit_phase_started_ms = now_ms;
+  }
+}
+
 static void task_latch_audit(const VisionMissionCommand *command, uint32_t now_ms)
 {
   if (Camera_GetAngle() != APP_GRAB_VIEW_ANGLE) {
@@ -966,6 +989,19 @@ static void task_latch_audit(const VisionMissionCommand *command, uint32_t now_m
     }
     TaskDiag_Event("AUDIT_SAME_FRAME", audit_received, accepted_context.task_id,
                    accepted_context.action_id, command->vision_frame, audit_consistent_count, audit_host_stable);
+    return;
+  }
+  if (!empty_load_reobserved && task_status.gripper_closed &&
+      !(audit_received && audit_valid) && command->vision_frame != 0U &&
+      (command->audit_flags & VISION_AUDIT_STABLE) == 0U && task_audit_is_empty(command) &&
+      ((state == TASK_POST_GRAB_AUDIT &&
+        (post_grab_audit_phase == POST_AUDIT_WAIT_PRIMARY ||
+         post_grab_audit_phase == POST_AUDIT_WAIT_LOW)) ||
+       (state == TASK_TRANSPORT_AUDIT && transport_audit_attempt < 2U))) {
+    /* Spend one existing camera recheck on a real empty view. A non-STABLE
+     * observation can request a new view, but never authorizes opening. */
+    empty_load_reobserved = true;
+    task_nudge_load_camera(now_ms);
     return;
   }
   if (accepted_context.opcode == VISION_CMD_CARGO_AUDIT) {
@@ -1313,6 +1349,7 @@ static void task_enter(TaskState next, uint32_t now_ms)
         (float)pose.heading_mdeg * 0.001f + APP_START_TURN_DEG);
     start_motion_phase = START_REVERSE;
   } else if (next == TASK_SEARCH) {
+    safe_enter_resume_mm = 0U;
     transport_sort_active = false;
     cluster_recovery_latched = false;
     cluster_recovery_hold_seen = false;
@@ -1390,6 +1427,7 @@ static void task_enter(TaskState next, uint32_t now_ms)
   } else if (next == TASK_GRAB_OBSERVE) {
     task_reset_tracking();
   } else if (next == TASK_POST_GRAB_AUDIT) {
+    empty_load_reobserved = false;
     post_grab_audit_phase = POST_AUDIT_WAIT_PRIMARY;
     post_grab_audit_phase_started_ms = now_ms;
     post_grab_invalid_started_ms = now_ms;
@@ -1406,6 +1444,8 @@ static void task_enter(TaskState next, uint32_t now_ms)
   } else if (next == TASK_INJURY_RECLOSE) {
     task_status.gripper_closed = false;
   } else if (next == TASK_TRANSPORT_AUDIT) {
+    safe_enter_resume_mm = 0U;
+    empty_load_reobserved = false;
     transport_sort_active = false;
     Motor_Stop();
     nav_ready = false;
@@ -1556,6 +1596,7 @@ static void task_initialize(uint32_t now_ms)
   scan_entry_report_generation = 0U;
   nav_final_push_start_path_mm = 0U;
   safe_enter_start_path_mm = 0U;
+  safe_enter_resume_mm = 0U;
   delivery_exit_start_path_mm = 0U;
   locked_cargo_counts = 0U;
   configured_color = 0U;
@@ -1806,7 +1847,12 @@ static float task_track_target(const VisionData *vision, bool track_camera)
     Pid_Reset(&camera_pid);
   }
 
-  const float x_error = (float)APP_VISION_TARGET_X - filtered_target_x;
+  const float raw_error = (float)APP_VISION_TARGET_X - vision->x;
+  const bool near_track_center = state == TASK_APPROACH &&
+      approach_phase == APPROACH_TRACK && !cluster_target_active &&
+      task_abs(raw_error) <= 2.0f * APP_APPROACH_TRACK_CENTER_TOLERANCE_PX;
+  const float steering_x = near_track_center ? (float)vision->x : filtered_target_x;
+  const float x_error = (float)APP_VISION_TARGET_X - steering_x;
   const float magnitude = task_abs(x_error);
   if ((steering_active &&
        (magnitude <= APP_STEERING_EXIT_DEAD_ZONE)) ||
@@ -1821,8 +1867,18 @@ static float task_track_target(const VisionData *vision, bool track_camera)
   steering_active = true;
   steering_target_mm_s = Pid_UpdateDt(&steering_pid,
                                       (float)APP_VISION_TARGET_X,
-                                      filtered_target_x, dt_s) *
+                                      steering_x, dt_s) *
                          APP_STEERING_DIRECTION;
+  if (near_track_center && magnitude > APP_APPROACH_TRACK_CENTER_TOLERANCE_PX) {
+    /* Ease from 60 to 30 mm/s as the actual image reaches the centre band.
+     * A lagging filtered coordinate or slew state must not turn past it. */
+    const float turn = APP_APPROACH_ALIGN_MIN_TURN_MM_S * magnitude /
+        (2.0f * APP_APPROACH_TRACK_CENTER_TOLERANCE_PX);
+    steering_target_mm_s = copysignf(turn, x_error * APP_STEERING_DIRECTION);
+    steering_mm_s = steering_mm_s * steering_target_mm_s < 0.0f ? 0.0f :
+        fmaxf(-turn, fminf(turn, steering_mm_s));
+    return steering_target_mm_s;
+  }
   const bool stationary_alignment = state == TASK_APPROACH &&
       (approach_phase == APPROACH_TRACK ||
        approach_phase == APPROACH_CLUSTER_ALIGN ||
@@ -2435,8 +2491,9 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
         task_status.found = true;
         (void)task_track_target(vision, false);
         const float tolerance = cluster_target_active ?
-            APP_DISPERSE_ALIGN_X_ERROR_PX : APP_GRAB_ALIGN_X_ERROR_PX;
-        if (task_abs(filtered_target_x - APP_VISION_TARGET_X) <= tolerance) {
+            APP_DISPERSE_ALIGN_X_ERROR_PX : APP_APPROACH_TRACK_CENTER_TOLERANCE_PX;
+        const float target_x = cluster_target_active ? filtered_target_x : (float)vision->x;
+        if (task_abs(target_x - APP_VISION_TARGET_X) <= tolerance) {
           Motor_Stop();
           task_status.motors_active = false;
           approach_phase = APPROACH_RANGE_WAIT;
@@ -2792,11 +2849,7 @@ static void task_process_post_grab_audit(uint32_t now_ms)
       Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
       if ((uint32_t)(now_ms - post_grab_audit_phase_started_ms) >=
           APP_POST_GRAB_AUDIT_WINDOW_MS) {
-        Camera_SetAngle((uint8_t)(APP_GRAB_VIEW_ANGLE -
-                                  APP_POST_GRAB_CAMERA_NUDGE_DEG));
-        task_clear_audit_result();
-        post_grab_audit_phase = POST_AUDIT_NUDGE_LOW;
-        post_grab_audit_phase_started_ms = now_ms;
+        task_nudge_load_camera(now_ms);
       }
       break;
 
@@ -2816,11 +2869,7 @@ static void task_process_post_grab_audit(uint32_t now_ms)
       Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
       if ((uint32_t)(now_ms - post_grab_audit_phase_started_ms) >=
           APP_POST_GRAB_AUDIT_WINDOW_MS) {
-        Camera_SetAngle((uint8_t)(APP_GRAB_VIEW_ANGLE +
-                                  APP_POST_GRAB_CAMERA_NUDGE_DEG));
-        task_clear_audit_result();
-        post_grab_audit_phase = POST_AUDIT_NUDGE_HIGH;
-        post_grab_audit_phase_started_ms = now_ms;
+        task_nudge_load_camera(now_ms);
       }
       break;
 
@@ -2979,7 +3028,9 @@ static bool task_align_command_valid(const VisionMissionCommand *command,
 {
   if (!task_mission_valid(command) ||
       (command->command != VISION_CMD_ALIGN_SAFE_ZONE) ||
-      !task_side_flag_valid(command->flags)) {
+      !task_side_flag_valid(command->flags) ||
+      (command->target_y_mm != 0 &&
+       command->target_y_mm != APP_SAFE_ALIGN_RAISED_CAMERA_ANGLE * 100)) {
     return false;
   }
   const bool command_visual =
@@ -2989,10 +3040,10 @@ static bool task_align_command_valid(const VisionMissionCommand *command,
   }
   if (visual) {
     return ((command->flags & VISION_CMD_USE_FINAL_HEADING) == 0U) &&
-           (command->target_y_mm == 0) && (command->heading_cdeg == 0U);
+           (command->heading_cdeg == 0U);
   }
   return ((command->flags & VISION_CMD_USE_FINAL_HEADING) != 0U) &&
-         (command->target_x_mm == 0) && (command->target_y_mm == 0) &&
+         (command->target_x_mm == 0) &&
          (command->heading_cdeg < 36000U);
 }
 
@@ -3634,7 +3685,8 @@ static RemoteRouteStatus safe_enter_follow(
   if (!safe_enter_path_valid) {
     /* ENTER is repeated with new SEQs, but this encoder origin belongs to the
      * physical action and is latched exactly once on its first valid pose. */
-    safe_enter_start_path_mm = pose.path_mm;
+    safe_enter_start_path_mm = pose.path_mm - safe_enter_resume_mm;
+    safe_enter_resume_mm = 0U;
     safe_enter_path_valid = true;
   }
 
@@ -4247,6 +4299,14 @@ static void task_begin_safe_sweep(const VisionMissionCommand *command,
                                   uint32_t now_ms)
 {
   const LocationPose pose = Location_GetPose();
+  if (state == TASK_NAVIGATE && delivery_enter_active && safe_enter_path_valid) {
+    /* Sweep returns to the interruption point. Credit the ENTER approach
+     * already travelled, excluding odometry accumulated by the sweep. */
+    const uint32_t approach_mm = APP_SAFE_ENTER_TOTAL_DISTANCE_MM -
+        APP_SAFE_FINAL_PUSH_DISTANCE_MM;
+    const uint32_t travelled_mm = pose.path_mm - safe_enter_start_path_mm;
+    safe_enter_resume_mm = travelled_mm < approach_mm ? travelled_mm : approach_mm;
+  }
   sweep_original_injury = audit_destination_injury;
   sweep_original_left = audit_last_left_class;
   sweep_original_right = audit_last_right_class;
@@ -5488,9 +5548,6 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
       } else if (audit_valid) {
         if (injury_recheck_pending) {
           task_enter(TASK_INJURY_RECLOSE, now_ms);
-        } else if (!safe_sweep_recheck_pending && !audit_initial_stash &&
-                   audit_last_semantic == AUDIT_SEMANTIC_INJURY_SINGLE) {
-          task_enter(TASK_INJURY_BACKOFF, now_ms);
         } else {
           task_enter(safe_sweep_recheck_pending ?
                      TASK_SAFE_SWEEP_DONE : TASK_WAIT_NAVIGATION, now_ms);
@@ -5553,6 +5610,13 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
     if (cluster != cluster_target_active) {
       task_enter(TASK_APPROACH, now_ms);
       cluster_target_active = cluster;
+    } else if (!cluster && approach_phase == APPROACH_RANGE_WAIT && command_visual_new &&
+               task_abs((float)command->target_x_mm - APP_VISION_TARGET_X) >
+                   APP_APPROACH_TRACK_CENTER_TOLERANCE_PX) {
+      approach_phase = APPROACH_TRACK;
+      approach_deadline_ms = now_ms;
+      approach_report_generation_valid = false;
+      task_reset_tracking();
     }
   } else if ((command->command == VISION_CMD_APPROACH_TARGET) &&
              (state == TASK_DISPERSE_READY)) {
@@ -5707,13 +5771,14 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
     safe_sweep_recheck_pending = false;
     task_begin_safe_align(now_ms);
   } else if ((command->command == VISION_CMD_CLEAR_SAFE_ZONE) &&
-             (state == TASK_ALIGN_SAFE_ZONE) && safe_align_done &&
-             safe_align_visual_confirmed &&
+             ((state == TASK_ALIGN_SAFE_ZONE && safe_align_done && safe_align_visual_confirmed) ||
+              (state == TASK_NAVIGATE && delivery_enter_active &&
+               !nav_final_push_active && !nav_final_push_done)) &&
              task_status.gripper_closed &&
              ((command->target_x_mm != 0) ||
               ((command->target_y_mm < 0) == audit_destination_injury)) &&
              task_safe_sweep_command_valid(command)) {
-    /* The RDK sends this after the visual confirmation and obstacle check. */
+    /* A newly seen obstacle may replace ENTER before the final push. */
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
     task_begin_safe_sweep(command, now_ms);
@@ -6186,6 +6251,12 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     task_accept_mission_legacy(&incoming, now_ms);
   }
   if (!command_accepted) goto rejected;
+  if (state == TASK_ALIGN_SAFE_ZONE && incoming.command == VISION_CMD_ALIGN_SAFE_ZONE) {
+    const uint8_t pitch = incoming.target_y_mm == APP_SAFE_ALIGN_RAISED_CAMERA_ANGLE * 100 ?
+        APP_SAFE_ALIGN_RAISED_CAMERA_ANGLE : APP_SAFE_ALIGN_CAMERA_ANGLE;
+    if (Camera_GetAngle() != pitch) { Camera_SetAngle(pitch); }
+    camera_angle = (float)pitch;
+  }
   ++diag_accept_count;
   TaskDiag_Event("ACCEPT", incoming.task_id, incoming.action_id, incoming.command,
                  incoming.sequence, incoming.vision_frame, incoming.flags);
@@ -6193,6 +6264,7 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
   if (new_target) {
     capture_budget_active = capture_wait_active = false;
     separation_total_attempts = 0U;
+    safe_enter_resume_mm = 0U;
     Claw_SetSeparationHold(0U);
     accepted_context = (TaskContext){0};
     if (incoming.command != VISION_CMD_CARGO_AUDIT) {
@@ -6445,15 +6517,7 @@ static void task_process_transport_audit(uint32_t now_ms)
     }
   } else if (transport_audit_attempt < 2U &&
              now_ms - step_started_ms >= APP_POST_GRAB_AUDIT_WINDOW_MS) {
-    transport_audit_camera_ready = false;
-    task_status.claw_visible = false;
-    task_clear_audit_result();
-    Camera_SetAngle(transport_audit_attempt == 0U ?
-        APP_GRAB_VIEW_ANGLE - APP_POST_GRAB_CAMERA_NUDGE_DEG :
-        APP_GRAB_VIEW_ANGLE + APP_POST_GRAB_CAMERA_NUDGE_DEG);
-    ++transport_audit_attempt;
-    transport_audit_phase = 2U;
-    step_started_ms = now_ms;
+    task_nudge_load_camera(now_ms);
   }
   camera_angle = (float)Camera_GetAngle();
 }

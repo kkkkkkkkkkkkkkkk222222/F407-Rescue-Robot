@@ -16,6 +16,33 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## COMP-FLOW-20261110 实施回执
+
+RDK 源提交为 `2046c0104311a5c5b958c72c0f8a8bd3b5df7a19`，F405 修改基线为
+`2d12dca9480927287ea5e398a4cfdb693a2598cb`。[上位机交接](https://github.com/danmo-teng/shijue_fangan/blob/2046c0104311a5c5b958c72c0f8a8bd3b5df7a19/docs/COMPETITION_DELIVERY_FIX_20261110.md)
+
+- mode23/48 已合爪且相机审核就绪时，首个 `vision_frame>0` 的真实非 STABLE 空画面提前使用一次尚可用的
+  原换视角步骤。保持夹爪闭合，回 140° 后沿原审核。占位帧、重发和随后用于复审的空帧不会重复触发换角。
+- 合法单伤员仍完成正常合爪审核，随后直接进入 `WAIT_NAVIGATION`。扫障原载荷的合法审核仍进入 `SAFE_SWEEP_DONE`。
+- 普通 105°/120° 对准使用原始图像 X 的 576～704 px 含边界。刚出中心带时减小原地旋转请求，远处沿用原滤波。
+  mode52 可凭新像素帧回原地对准；已接受的 mode53 定距沿用原去重及抬相机交接。
+- 原 `0x18` 的 `ALIGN_SAFE_ZONE=0x04` 仍用原标志、像素和航向字段。`arg_b` 是大端有符号 16 位，
+  `0` 选 120°，`11500`（`2c ec`）选 115°。定位和视觉两种 ALIGN 均接受，同动作的换视角更新复用当前对准结果。
+- 原 mode11 的 `CLEAR_SAFE_ZONE=0x13` 入口保留。mode10 中只允许闭爪且尚在 ENTER 前 40 cm 接近阶段切入扫障。
+  接受扫障即停原推进，并由扫障流程暂放、取回原载荷。后续 ENTER 扣除已走的推进里程，扫障走过的里程单独计算，
+  继续按 40 cm 接近和 27 cm 直推的目标执行。普通 STAGE 和末段直推期间的扫障请求走原拒绝回执，保留已接受的动作。
+
+**上位机尚需处理迟到扫障的拒绝。** `2046c01` 在 ENTER 状态看到 mode10 和闭爪即可能发 CLEAR，
+而 mode10 也用于末段直推。匹配到该次 CLEAR 的 `rejected_action_id`、且板端仍确认原 ENTER 时，RDK 应继续原入区交接，
+若已到 mode15 则接续投送确认。现有 `_reconcile_sweep_rejection` 未覆盖这个情形，离线已复现随后上报 mode15 时
+仍停在 `CLEAR_SAFE_ZONE`。该问题可复用原拒绝回执及动作身份。
+
+`NormalRun` 编译、链接通过。下位机针对性离线检查通过，覆盖空框/占位/重发、伤员、±64 px 边界、mode52/53、
+两种 ALIGN、提前扫障及按剩余距离推进、末段拒绝后继续原动作。RDK 四项直接相关状态机检查和本端 24 项协议检查通过，
+四组 ALIGN 报文逐字节相同。已有 `NORMALRUN_FLOW_REVIEW_CHECK` 在侧边倒装标定下的固定收纳时刻断言失败，
+在修改前 `2d12dca` 的 Task 和相同标定上复现。本轮未烧录或进行实车试跑，交接场次实报 `d93367e/source_dirty=1`。
+本机新构建包含工作区独立的倒装标定，`source_dirty=1`。
+
 ## SORT-01-20261110 渐进分离实施回执
 
 RDK 实现为 `afe28fbe5138f2d8019f248e0d4f43142bc31e0f`。F405 从 `b56bc80` 起实施本回执所在提交。

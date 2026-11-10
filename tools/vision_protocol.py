@@ -347,12 +347,13 @@ def mission_frame(
     if not 0 <= heading_cdeg <= 65535 or (heading_command and heading_cdeg >= 36000):
         raise ValueError("invalid mission auxiliary/heading value")
     if command == CMD_ALIGN_SAFE_ZONE:
+        if target_y_mm not in (0, 11500):
+            raise ValueError("ALIGN camera pitch must be 0 or 11500 cdeg")
         visual = bool(flags & CMD_VISUAL_CORRECTION_VALID)
         if visual:
-            if flags & CMD_USE_FINAL_HEADING or target_y_mm or heading_cdeg:
+            if flags & CMD_USE_FINAL_HEADING or heading_cdeg:
                 raise ValueError("invalid visual ALIGN payload")
-        elif (not flags & CMD_USE_FINAL_HEADING or target_x_mm or
-              target_y_mm):
+        elif not flags & CMD_USE_FINAL_HEADING or target_x_mm:
             raise ValueError("invalid pose ALIGN payload")
     if command == CMD_ENTER_SAFE_ZONE:
         visual = bool(flags & CMD_VISUAL_CORRECTION_VALID)
