@@ -1,5 +1,11 @@
 # 当前状态：F405 烧录入口
 
+2026-11-11 合法载荷等待保持。
+- 已读取 RDK `97235a3` 的载荷换角关联和重复拒绝回执修复，本端基于 `41f23a6` 修复审核失败看门狗对合法闭爪载荷的自动开爪。
+  已合法的抓后/运输审核保留结果，mode22/48/40 保持载荷，后续 NAV/ALIGN 正常接续；原无合法审核和人工 ABORT 路径经离线检查通过。
+- `NormalRun` 构建通过，本地镜像含独立倒装标定，`source_dirty=1`。本轮未烧录，现场报告的 `41f23a/dirty1` 沿用 RDK 日志证据。
+  当前跨端回执见 [CROSS_REPO_REQUESTS](CROSS_REPO_REQUESTS.md)。
+
 2026-11-08 UART-100HZ-01。
 - RDK 固定入口核对至 `347791666cd3d32ecfe157979fe8e772ff30f4a8`，本端从 `6302bf2` 增量实施。
   当前跨端要求与回执集中在 [CROSS_REPO_REQUESTS](CROSS_REPO_REQUESTS.md)，AGENTS 已加入两端固定入口。

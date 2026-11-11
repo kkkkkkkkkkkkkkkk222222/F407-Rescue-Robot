@@ -2821,6 +2821,10 @@ static void task_process_post_grab_audit(uint32_t now_ms)
   task_status.motors_active = false;
   task_status.gripper_closed = !injury_recheck_pending;
   task_status.claw_visible = true;
+  if (audit_received && audit_valid && task_status.gripper_closed) {
+    post_grab_invalid_waiting = false;
+    return;
+  }
   if ((post_grab_audit_phase == POST_AUDIT_WAIT_LOW ||
        post_grab_audit_phase == POST_AUDIT_WAIT_HIGH) &&
       now_ms - post_grab_audit_phase_started_ms < APP_GRAB_CAMERA_SETTLE_MS) {
@@ -6478,7 +6482,11 @@ static void task_audit_watchdog(uint32_t now_ms)
       state == TASK_SAFE_SWEEP_DONE ||
       (state == TASK_APPROACH && approach_phase == APPROACH_CLUSTER_CAPTURE) ||
       (state == TASK_REMOTE_ACTION && remote_action.done && cargo_recheck_pending);
-  if (!waiting) { audit_watch_active = false; return; }
+  /* An acknowledged, closed load stays held while its next command is prepared. */
+  if (!waiting || (task_status.gripper_closed && audit_received && audit_valid)) {
+    audit_watch_active = false;
+    return;
+  }
   if (!audit_watch_active || audit_watch_state != state) {
     audit_watch_active = true;
     audit_watch_state = state;
@@ -6500,6 +6508,7 @@ static void task_process_transport_audit(uint32_t now_ms)
   Motor_Stop();
   task_status.motors_active = false;
   task_status.gripper_closed = true;
+  if (audit_received && audit_valid) { return; }
   if (transport_audit_phase == 2U) {
     task_status.claw_visible = false;
     if (now_ms - step_started_ms >= APP_POST_GRAB_CAMERA_NUDGE_MS) {

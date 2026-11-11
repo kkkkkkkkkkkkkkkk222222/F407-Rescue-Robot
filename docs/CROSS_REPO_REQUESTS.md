@@ -1,6 +1,6 @@
 # 两端当前要求与回执
 
-更新日期为 2026-11-10，时区 Asia/Shanghai。
+更新日期为 2026-11-11，时区 Asia/Shanghai。
 
 ## 固定入口与协作方式
 
@@ -15,6 +15,22 @@
 人保留知情、拒绝和选择权。已经明确批准的范围直接推进，超范围的重要取舍先由人决定，AI 不能互相授权。
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
+
+## 2026-11-11 合法载荷等待保持
+
+本轮读取 RDK 最新 `97235a3cb1dfdcabef8c4ac52399ea4841ea5a46`，其载荷换角关联和重复拒绝回执修复沿用现有接口，
+无需新增 F405 协议。RDK 记录的 competition_10 实跑为 F405 `41f23a/source_dirty=1`，这是现场日志提供的身份。
+[RDK 修复与录像依据](https://github.com/danmo-teng/shijue_fangan/blob/97235a3cb1dfdcabef8c4ac52399ea4841ea5a46/docs/COMPETITION_CARGO_SWEEP_FIX_20261111.md)
+
+用户在 F405 侧确认继续修复上轮分析的合法载荷自动开爪问题。基于 `41f23a6`，`task_audit_watchdog` 复用原
+`gripper_closed`、`audit_received`、`audit_valid`：已经确认合法且闭爪时结束当前审核失败倒计时，继续保持载荷和处理后续命令。
+已完成的抓后/运输审核也保持结果，原定时换角流程只处理尚未形成合法审核的情况，避免先清空合法结果再触发放弃。
+无合法审核或后来合法性被撤回时，仍走原有审核业务及恢复路径。
+
+`NormalRun` 构建通过。现有夹具的合法等待检查已按新行为更新；针对 mode22、48、40 的离线核对确认，
+合法载荷等待超过 60 秒保持闭爪，随后 NAV/ALIGN 可正常接受；无合法审核时原 15 秒恢复、合法性撤回后原倒计时及 ABORT 通过。
+本机镜像同时包含工作区中独立的倒装标定，`source_dirty=1`。本轮未烧录、未重新读取板端身份或执行实车动作，
+实际误扫减少和连续运输效果仍需现场复核。RDK 本轮修复在重新启动正式程序后加载。
 
 ## COMP-FLOW-20261110 实施回执
 

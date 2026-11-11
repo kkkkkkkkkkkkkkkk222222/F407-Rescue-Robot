@@ -156,7 +156,7 @@ static void test_placeholder_never_means_empty_or_resets_deadline(void)
   assert(state == TASK_APPROACH_RECOVER);
 }
 
-static void test_final_wait_keeps_snapshot_and_expires(void)
+static void test_final_wait_keeps_valid_load(void)
 {
   for (uint8_t sweep = 0U; sweep <= 1U; ++sweep) {
     prepare();
@@ -170,9 +170,23 @@ static void test_final_wait_keeps_snapshot_and_expires(void)
     task_accept_mission_legacy(&empty, 500U);
     assert(audit_valid && audit_received && audit_host_stable);
     task_audit_watchdog(15400U);
-    assert(state == TASK_APPROACH_RECOVER);
-    assert(capture_escape_return_center == (sweep != 0U));
+    assert(state == (sweep ? TASK_SAFE_SWEEP_DONE : TASK_WAIT_NAVIGATION));
+    assert(audit_valid && task_status.gripper_closed && !capture_escape_active);
+    assert(!audit_watch_active);
   }
+  prepare();
+  task_enter(TASK_TRANSPORT_AUDIT, 400U);
+  task_process_transport_audit(400U + APP_GRAB_CAMERA_SETTLE_MS);
+  for (uint8_t id = 1U; id <= APP_AUDIT_REQUIRED_SAMPLES; ++id) {
+    VisionMissionCommand c = injury_audit(id);
+    command_visual_new = true;
+    task_latch_audit(&c, 700U + id * APP_AUDIT_SAMPLE_INTERVAL_MS);
+  }
+  assert(audit_valid && transport_audit_camera_ready);
+  task_process_transport_audit(16000U);
+  task_audit_watchdog(16000U);
+  assert(state == TASK_TRANSPORT_AUDIT && audit_valid && task_status.claw_visible);
+  assert(Camera_GetAngle() == APP_GRAB_VIEW_ANGLE && transport_audit_attempt == 0U);
 }
 
 static void test_zero_frame_stable_is_rejected(void)
@@ -939,7 +953,7 @@ int main(void)
   test_sweep_placeholder_ack_and_real_role_validation();
   test_injury_retrieve_placeholder_does_not_change_destination();
   test_placeholder_never_means_empty_or_resets_deadline();
-  test_final_wait_keeps_snapshot_and_expires();
+  test_final_wait_keeps_valid_load();
   test_zero_frame_stable_is_rejected();
   test_quantity_grip_and_retry_budget();
   test_ready_mode_reaudit_and_stale_grip_rejection();
