@@ -105,6 +105,24 @@ static VisionMissionCommand placeholder(void)
 
 static void test_sweep_placeholder_ack_and_real_role_validation(void)
 {
+  for (unsigned visual = 0U; visual <= 1U; ++visual) {
+    prepare();
+    task_enter(TASK_SAFE_SWEEP, 1000U);
+    safe_sweep_visual_pickup = visual != 0U;
+    Camera_SetAngle(APP_SAFE_ALIGN_CAMERA_ANGLE);
+    if (visual) {
+      task_sweep_next(VS_POST_AUDIT, 1000U);
+    } else {
+      safe_sweep_phase = SAFE_SWEEP_RECENTER_LOAD;
+      task_safe_sweep_advance(1000U);
+    }
+    assert(Camera_GetAngle() == APP_GRAB_VIEW_ANGLE && !task_status.claw_visible);
+    task_process_safe_sweep(1000U + APP_SAFE_SWEEP_MODE39_HOLD_MS - 1U);
+    assert(state == TASK_SAFE_SWEEP && !task_status.claw_visible);
+    task_process_safe_sweep(1000U + APP_SAFE_SWEEP_MODE39_HOLD_MS);
+    assert(state == TASK_POST_GRAB_AUDIT && task_status.claw_visible);
+    assert(Camera_GetAngle() == APP_GRAB_VIEW_ANGLE);
+  }
   wire_prepare(TASK_SAFE_SWEEP_AUDIT, 1000U);
   task_reset_sweep_audit(1000U);
   wire_send(placeholder(), 1050U, 1U);

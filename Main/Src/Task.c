@@ -4265,6 +4265,11 @@ static void task_safe_sweep_advance(uint32_t now_ms)
   safe_sweep_phase = (SafeSweepPhase)((uint8_t)safe_sweep_phase + 1U);
   safe_sweep_phase_path_mm = 0U;
   safe_sweep_phase_path_valid = false;
+  if (safe_sweep_phase == SAFE_SWEEP_MODE39_HOLD) {
+    Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
+    camera_angle = (float)APP_GRAB_VIEW_ANGLE;
+    task_status.claw_visible = false;
+  }
   step_started_ms = now_ms;
 }
 
@@ -4354,6 +4359,12 @@ static void task_sweep_next(VisualSweepPhase next, uint32_t now_ms)
   task_status.motors_active = false;
   sweep_forward_commanded = false;
   visual_sweep_phase = next;
+  if (next == VS_POST_AUDIT) {
+    /* Lower the camera during the existing mode39 hold, before audit-ready. */
+    Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
+    camera_angle = (float)APP_GRAB_VIEW_ANGLE;
+    task_status.claw_visible = false;
+  }
   if ((next == VS_BACK_OBSTACLE) || (next == VS_BACK_LOAD) ||
       (next == VS_FAILED_BACK)) {
     const LocationPose pose = Location_GetPose();
@@ -4712,7 +4723,6 @@ static void task_process_visual_sweep(uint32_t now_ms)
       break;
     case VS_POST_AUDIT:
       if (now_ms - step_started_ms >= APP_SAFE_SWEEP_MODE39_HOLD_MS) {
-        Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
         task_reset_sweep_audit(now_ms);
         task_clear_audit_result();
         task_enter(TASK_POST_GRAB_AUDIT, now_ms);
@@ -4819,8 +4829,6 @@ static void task_process_safe_sweep(uint32_t now_ms)
       task_status.gripper_closed = true;
       if ((uint32_t)(now_ms - step_started_ms) >=
           APP_SAFE_SWEEP_MODE39_HOLD_MS) {
-        Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
-        camera_angle = (float)APP_GRAB_VIEW_ANGLE;
         task_reset_sweep_audit(now_ms);
         task_clear_audit_result();
         task_enter(TASK_POST_GRAB_AUDIT, now_ms);
