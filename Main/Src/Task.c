@@ -736,12 +736,12 @@ static AuditSemantic task_audit_semantic(
         AUDIT_SEMANTIC_STASH_NONEMPTY : AUDIT_SEMANTIC_INVALID;
   }
 
-  if ((total != 1U) ||
+  if ((total == 0U) || (total > 2U) ||
       ((uint8_t)(left_count + right_count) != total) ||
       ((left_count == 0U) != (left == VISION_CARGO_NONE)) ||
       ((right_count == 0U) != (right == VISION_CARGO_NONE)) ||
-      (left == VISION_CARGO_MIXED_MATERIAL) ||
-      (right == VISION_CARGO_MIXED_MATERIAL) ||
+      ((left == VISION_CARGO_MIXED_MATERIAL) && (left_count != 2U)) ||
+      ((right == VISION_CARGO_MIXED_MATERIAL) && (right_count != 2U)) ||
       dangerous || unknown || injury_mixed) {
     return AUDIT_SEMANTIC_INVALID;
   }
@@ -757,16 +757,18 @@ static AuditSemantic task_audit_semantic(
     return (destination_injury && (total == 1U)) ?
         AUDIT_SEMANTIC_INJURY_SINGLE : AUDIT_SEMANTIC_INVALID;
   }
-  /* Formal transport is exactly one GREEN or CORE, never MIXED_MATERIAL.
-   * Selection priority belongs to the host; a legal held CORE remains legal. */
+  /* After the first single GREEN, transport at most two GREEN/CORE objects.
+   * MIXED_MATERIAL encodes GREEN+CORE on one claw with count exactly two. */
   const bool material =
          !destination_injury &&
          ((left == VISION_CARGO_NONE) ||
           (left == VISION_CARGO_GREEN) ||
-          (left == VISION_CARGO_CORE)) &&
+          (left == VISION_CARGO_CORE) ||
+          (left == VISION_CARGO_MIXED_MATERIAL)) &&
          ((right == VISION_CARGO_NONE) ||
           (right == VISION_CARGO_GREEN) ||
-          (right == VISION_CARGO_CORE));
+          (right == VISION_CARGO_CORE) ||
+          (right == VISION_CARGO_MIXED_MATERIAL));
   return material ? AUDIT_SEMANTIC_MATERIAL_LEGAL :
                     AUDIT_SEMANTIC_INVALID;
 }
@@ -4603,18 +4605,26 @@ static bool task_sweep_reverse_trace(uint32_t now_ms)
         sweep_reverse.phase = SWEEP_REVERSE_DONE;
         return false;
       }
-      float correction = atanf(cross / APP_SAFE_SWEEP_SEGMENT_LOOKAHEAD_MM) *
-                         (180.0f / 3.14159265358979323846f);
-      correction = fmaxf(-15.0f, fminf(15.0f, correction));
-      const float error = task_wrap_angle(sweep_reverse.heading + correction -
-                                          pose.heading_mdeg * 0.001f);
-      /* Positive cross requires a positive body yaw when travelling BACK. */
-      task_status.sweep_reverse_forward_mm_s =
-          -fminf(120.0f, fmaxf(20.0f, remaining * 4.0f));
-      task_status.sweep_reverse_yaw_mm_s = nav_yaw(error);
-      task_move_body(task_status.sweep_reverse_forward_mm_s, 0.0f,
-                 task_status.sweep_reverse_yaw_mm_s);
-      task_status.motors_active = true;
+      /* Once the endpoint plane is reached, correct only excess cross-track
+       * error instead of continuing to back away while steering. */
+      const float along_error = remaining > end_tolerance ? remaining : 0.0f;
+      const float cross_error = task_abs(cross) > cross_tolerance ? cross : 0.0f;
+      const float vx = -along_error * sweep_reverse.ux + cross_error * sweep_reverse.uy;
+      const float vy = -along_error * sweep_reverse.uy - cross_error * sweep_reverse.ux;
+      const float error_mm = sqrtf(vx * vx + vy * vy);
+      const float direction_deg = task_wrap_angle(
+          atan2f(vy, vx) * (180.0f / 3.14159265358979323846f) -
+          pose.heading_mdeg * 0.001f);
+      const float speed_mm_s = fminf(120.0f,
+          fmaxf(APP_NAV_FINE_MIN_SPEED_MM_S, error_mm * 4.0f));
+      const bool move_accepted = Motor_MoveAngleHeading(speed_mm_s, direction_deg,
+                                                       sweep_reverse.heading);
+      task_status.sweep_reverse_forward_mm_s = move_accepted ?
+          speed_mm_s * cosf(direction_deg * (3.14159265358979323846f / 180.0f)) : 0.0f;
+      /* The existing heading-hold API owns yaw correction and its ramp.
+       * Acceptance is not measured wheel motion or endpoint completion. */
+      task_status.sweep_reverse_yaw_mm_s = 0.0f;
+      task_status.motors_active = move_accepted;
       return false;
     }
 
@@ -5681,7 +5691,7 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
              (state == TASK_DISPERSE_READY) &&
              audit_received && audit_valid &&
              (audit_consistent_count >= APP_AUDIT_REQUIRED_SAMPLES)) {
-    /* A clustered target that proves to contain one legal retained cargo no
+    /* A clustered target that proves to contain a legal retained batch no
      * longer needs separation. Close normally and continue to navigation. */
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;

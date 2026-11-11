@@ -51,7 +51,7 @@ static void test_invalid_histogram_and_side_jitter(void)
   prepare();
   VisionMissionCommand c = injury_audit(1U);
   c.audit_left_class = VISION_CARGO_GREEN;
-  c.audit_counts = c.audit_total_count = 2U;
+  c.audit_counts = c.audit_total_count = 3U;
   c.audit_flags = VISION_AUDIT_STABLE;
   for (uint8_t id = 1U; id <= 3U; ++id) {
     c.audit_id = id;
@@ -61,12 +61,12 @@ static void test_invalid_histogram_and_side_jitter(void)
   }
   c.audit_id = 4U;
   c.audit_left_class = VISION_CARGO_NONE; c.audit_right_class = VISION_CARGO_GREEN;
-  c.audit_counts = 2U << 2;
+  c.audit_counts = 3U << 2;
   task_latch_audit(&c, 400U);
   assert(audit_consistent_count == 2U);
   c.audit_id = 5U;
   c.audit_left_class = VISION_CARGO_GREEN; c.audit_right_class = VISION_CARGO_NONE;
-  c.audit_counts = 2U;
+  c.audit_counts = 3U;
   task_latch_audit(&c, 500U);
   assert(audit_received && audit_host_stable && !audit_valid);
 }
@@ -593,7 +593,7 @@ static void test_distance_search_accumulation_and_transport_sort(void)
 
   prepare();task_enter(TASK_TRANSPORT_AUDIT,0);task_process_transport_audit(250);
   c=injury_audit(1);c.audit_left_class=VISION_CARGO_GREEN;c.audit_flags=VISION_AUDIT_STABLE;
-  c.audit_counts=c.audit_total_count=2;
+  c.audit_counts=c.audit_total_count=3;
   command_visual_new=true;task_latch_audit(&c,300);
   c.audit_id=2;c.vision_frame=3;task_latch_audit(&c,400);
   VisionMissionCommand split={.received=true,.command=VISION_CMD_DISPERSE_PILE,
