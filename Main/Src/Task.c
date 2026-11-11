@@ -343,6 +343,7 @@ static bool audit_observation_gap;
 static bool audit_initial_stash;
 static bool audit_destination_injury;
 static bool cargo_recheck_pending;
+static bool opening_claw_probe_active;
 static bool route_to_stash;
 static bool stash_backoff_pending;
 static bool cluster_target_active;
@@ -1295,6 +1296,9 @@ static void task_enter(TaskState next, uint32_t now_ms)
       (state == TASK_FACE_FIELD_CENTER) && (next == TASK_SEARCH);
   Motor_Stop();
   state = next;
+  if (next != TASK_GRAB_OBSERVE) {
+    opening_claw_probe_active = false;
+  }
   if (next != TASK_APPROACH_RECOVER) capture_escape_active = false;
   if (next == TASK_STOPPED) {
     task_clear_audit_result();
@@ -1563,6 +1567,7 @@ static void task_initialize(uint32_t now_ms)
   status_sent_ms = now_ms - APP_TASK_STATUS_PERIOD_MS;
   delivery_exit_phase = 0U;
   capture_budget_active = capture_wait_active = capture_escape_active = false;
+  opening_claw_probe_active = false;
   capture_escape_return_center = false;
   capture_escape_reclose = capture_return_closed = capture_return_opening = false;
   separation_motion = (SeparationMotion){0};
@@ -2371,10 +2376,31 @@ static bool task_capture_observe(uint32_t now_ms)
       audit_last_left_class == VISION_CARGO_NONE && audit_last_right_class == VISION_CARGO_NONE &&
       (audit_last_flags & (VISION_AUDIT_DANGER_PRESENT | VISION_AUDIT_UNKNOWN_PRESENT |
                            VISION_AUDIT_INJURY_MIXED)) == 0U;
-  /* An initially empty claw has not reached its target yet. Keep the shared
-   * path/time budgets; post-grab and post-separation emptiness still means loss. */
+  /* Opening inspection is stationary; only a real stable empty audit
+   * completes it. A zero-frame request is never an empty-claw result. */
+  if (opening_claw_probe_active) {
+    Motor_Stop();
+    task_status.motors_active = false;
+    if (audit_received && empty) {
+      capture_budget_active = capture_wait_active = false;
+      task_clear_audit_result();
+      task_enter(TASK_SEARCH, now_ms);
+      accepted_context.cancelled = false;
+      accepted_context.completed = true;
+    }
+    return true;
+  }
+  /* Keep the existing empty-pickup decision clock running across reports,
+   * even when the wheels gain no distance. */
   if (initial_capture && capture_budget_active && !limit && empty) {
-    capture_wait_active = false;
+    if (!capture_wait_active) {
+      capture_wait_active = true;
+      capture_wait_started_ms = now_ms;
+    }
+    if ((uint32_t)(now_ms - capture_wait_started_ms) >= APP_CAPTURE_DECISION_WAIT_MS) {
+      task_begin_capture_escape(now_ms);
+      return true;
+    }
     return false;
   }
   if (initial_capture && limit && empty && audit_received) {
@@ -2670,7 +2696,7 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
            * requiring the old target track to reappear at 140 degrees. */
           task_clear_audit_result();
           task_enter(TASK_GRAB_OBSERVE, now_ms);
-          task_capture_budget_begin();
+          if (!opening_claw_probe_active) { task_capture_budget_begin(); }
         }
       }
       return;
@@ -5343,6 +5369,16 @@ static void task_process_remote_action(const VisionMissionCommand *command,
   }
 }
 
+static bool task_opening_claw_probe_request(const VisionMissionCommand *command)
+{
+  return command->command == VISION_CMD_CARGO_AUDIT &&
+      command->flags == VISION_CMD_VALID &&
+      command->audit_flags == VISION_AUDIT_INITIAL_STASH &&
+      command->vision_frame == 0U && task_audit_is_placeholder(command) &&
+      !first_delivery_done && !task_status.gripper_closed &&
+      !cargo_recheck_pending && !stash_backoff_pending && !route_to_stash;
+}
+
 static void task_accept_mission_legacy(const VisionMissionCommand *command,
                                 uint32_t now_ms)
 {
@@ -5397,6 +5433,21 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
     }
     /* No blind replay of an interrupted sweep, release, or navigation. */
     if (command_accepted) { accepted_context.cancelled = false; }
+  } else if (task_opening_claw_probe_request(command) &&
+             (state == TASK_SEARCH ||
+              (state == TASK_APPROACH && opening_claw_probe_active))) {
+    task_status.acknowledged_sequence = command->sequence;
+    command_accepted = true;
+    if (state == TASK_SEARCH) {
+      task_enter(TASK_APPROACH, now_ms);
+      opening_claw_probe_active = true;
+      cluster_target_active = false;
+      approach_phase = APPROACH_CAMERA_TO_140;
+      capture_budget_active = capture_wait_active = false;
+      task_clear_audit_result();
+    }
+    /* Same-action requests acknowledge camera travel without restarting it
+     * or contributing any visual evidence. */
   } else if (command->command == VISION_CMD_PAUSE) {
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;

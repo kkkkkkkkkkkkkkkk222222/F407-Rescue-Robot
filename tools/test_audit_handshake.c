@@ -459,14 +459,15 @@ static void test_initial_empty_capture_and_heading(void)
     }
     assert(audit_received && !audit_valid);
     assert(!task_capture_observe(220U));
-    assert(!capture_wait_active && capture_forward_used_mm == 0U);
+    assert(capture_wait_active && capture_wait_started_ms == 220U && capture_forward_used_mm == 0U);
     test_vision.mission=empty;
     if (cluster) { task_process_approach(&test_vision, 240U); }
     else { task_process_grab_observe(&test_vision, 240U); }
     assert(heading_calls == 1U && heading_output == 90.0f && reverse_output > 0.0f);
     task_audit_watchdog(240U);
-    assert(!task_capture_observe(6000U)); /* Empty reports do not renew the total watchdog. */
-    task_audit_watchdog(240U+APP_AUDIT_STATE_TIMEOUT_MS);
+    assert(!task_capture_observe(220U + APP_CAPTURE_DECISION_WAIT_MS - 1U));
+    assert(capture_wait_started_ms == 220U);
+    assert(task_capture_observe(220U + APP_CAPTURE_DECISION_WAIT_MS));
     assert(state == TASK_APPROACH_RECOVER && capture_escape_active);
   }
   prepare(); task_enter(TASK_GRAB_OBSERVE, 0U);

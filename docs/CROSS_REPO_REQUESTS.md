@@ -16,6 +16,52 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-OPENING-CAPTURE-20261111 实施回执
+
+本轮按用户要求读取 RDK 最新固定入口与实际实现，源提交为
+`bf92176fc28f5954a17d757e374a6f010ab37abe`，本端从
+`7653af9b5f44ff18a1aa268eaf70d125ff0ee389` 增量修改。
+[源交接](https://github.com/danmo-teng/shijue_fangan/blob/bf92176fc28f5954a17d757e374a6f010ab37abe/docs/CROSS_REPO_REQUESTS.md)
+[上位机实现与证据](https://github.com/danmo-teng/shijue_fangan/blob/bf92176fc28f5954a17d757e374a6f010ab37abe/docs/OPENING_CAPTURE_FIX_20261111.md)
+
+本端审查后接受两项，沿用已有相机、审核和恢复流程。
+
+- 开局张爪的 SEARCH 接收原 CARGO_AUDIT 视角请求后，静止走原 mode20→21、140°观察。
+  不启动200 mm补进、不猜载荷、不自主合爪。重复请求只确认，不重启相机或增加样本。
+  真实两帧/STABLE非空后等原GRAB、合爪后复审及藏点NAV；真实稳定空爪则回SEARCH，原action为completed、非cancelled。
+  同action的完成重发不重开观察，旧action继续按原身份规则拒绝。
+- 初次普通/cluster空爪补进原来每周期清掉 `capture_wait_active`，使原4秒出口无法在持续空爪时运行。
+  现在首次空爪时启动原 `capture_wait_started_ms`，后续空帧不重置，达到原 `APP_CAPTURE_DECISION_WAIT_MS=4000` 后走原恢复。
+  原200 mm行程额度保留。代价是持续无货/无位移时更早放弃重找，不再等待原更长审核期限。
+- 预检状态在初始化和离开预检流程时清理；进入普通接近不继承预检静止标志。
+  本轮只改Task运行逻辑及既有夹具的4秒预期，不改电机PID、全局速度、两件审核、返程、ROI或模型，未新增计时器/握手/FAULT。
+
+原线上入口的扩展语义
+
+- 仍使用15字节原0x18及0x1D同SEQ配对。opcode=0x12，command flags仅VALID=0x01，audit flags仅INITIAL_STASH=0x01。
+  左右类别/计数/总数全0，STABLE为0、source frame=0。audit_id不作为观察样本。
+  仅本轮规定的开局SEARCH/张爪入口启动观察，不把运输或抓后审核的占位解释成预检。
+- SEQ=0、task=7、action=11、frame=0、audit_id=0的已编码示例，先发context再发audit，CRC沿原MODBUS低字节在前。
+
+```text
+context  a3 b3 1d 00 00 07 00 0b 00 00 00 00 33 69 c3
+audit    a3 b3 18 00 12 01 00 00 00 01 00 00 31 ad c3
+```
+
+必要检查实际结果
+
+- `cmake --build --preset NormalRun --target NormalRun` 构建通过，F405 / mode5 / TASK，UART4 921600/8N1。
+- 复用原Task/mechanism夹具及Task_Process，预检相机推进/重发保持静止、真实空爪完成及旧action拒绝、新目标交接通过。
+  真实非空→GRAB→mode23复审→mode22→藏点NAV，零frame/STABLE拒绝、ABORT/初始化复位及非开局/运输入口不误启动均通过。
+  原普通/cluster补进4秒与200 mm边界、航向路径及5项已有扫障/合法载荷/导航/ABORT/恢复回归通过。
+- 固定源上位机7项状态机相关检查在本机通过，覆盖开局空/非空、藏点、原启动、定距、mode51及运输回执。
+  没有新增独立测试程序或把对端自行报告的真实发布器检查冒充本机执行。
+
+本轮未烧录、未打开串口或启动车轮，未亲自读回当前实板身份。RDK晚间日志提供的7653af9/dirty1只是该两场历史实跑身份。
+本机完整构建保留工作区独立舵机倒装/标定，`source_dirty=1`；这些侧边改动未夹带进本轮提交。
+旧固件没有开局SEARCH观察入口，需与RDK本轮实现同步部署后联调。现场相机图像和开局收益尚未验收。
+690条零轮增量/gyro静止期间的具体电机输出或机械原因仍缺PWM证据，不能将本轮流程出口修复写成已查明该唯一根因。
+
 ## MATCH-ABE-20261111 实施回执
 
 用户本轮要求读取上位机最新交接并适配。本端核对 RDK
