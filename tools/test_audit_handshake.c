@@ -891,19 +891,27 @@ static void test_normalrun_safe_zone_team_heading(void)
     task_process_safe_align(aligned_ms + 40U);
     assert(task_status.motors_active && heading_output == (float)heading);
     assert(red ? lateral_output > 0.0f : lateral_output < 0.0f);
+    test_pose.heading_mdeg = ((int32_t)heading + 15) * 1000;
+    task_process_safe_align(aligned_ms + 60U);
+    assert(!safe_align_done && !task_status.motors_active && !nav_ready);
+    assert(lateral_output == 0.0f && safe_align_lateral_active);
+    test_pose.heading_mdeg = (int32_t)heading * 1000;
+    task_process_safe_align(aligned_ms + 80U);
+    assert(nav_ready && !safe_align_done);
     align.target_x_mm = 32;
     align.vision_frame = 902U;
-    wire_send_action(align, 12U, aligned_ms + 50U, 4U);
-    task_process_safe_align(aligned_ms + 50U);
+    wire_send_action(align, 12U, aligned_ms + 100U, 4U);
+    assert(command_accepted && !task_context_complete());
+    task_process_safe_align(aligned_ms + 100U);
     assert(safe_align_visual_confirmed && task_context_complete());
     assert(task_protocol_mode() == 11U && task_status.nav_locked_heading_deg == heading);
 
     const VisionMissionCommand enter = {.command = VISION_CMD_ENTER_SAFE_ZONE,
         .flags = flags | VISION_CMD_DRIVE_STRAIGHT | VISION_CMD_VISUAL_CORRECTION_VALID};
-    wire_send_action(enter, 13U, aligned_ms + 60U, 5U);
+    wire_send_action(enter, 13U, aligned_ms + 120U, 5U);
     assert(command_accepted && state == TASK_NAVIGATE && delivery_enter_active);
     assert(nav_locked_heading_deg == (float)heading);
-    assert(safe_enter_follow(&active_mission, aligned_ms + 80U) == REMOTE_ROUTE_RUNNING);
+    assert(safe_enter_follow(&active_mission, aligned_ms + 140U) == REMOTE_ROUTE_RUNNING);
     assert(heading_output == (float)heading && reverse_output > 0.0f);
   }
 }

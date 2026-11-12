@@ -3590,46 +3590,64 @@ static void task_begin_safe_align(uint32_t now_ms)
 
 static void task_process_safe_align(uint32_t now_ms)
 {
-  if (safe_align_visual_confirmed && safe_align_lateral_active) {
-    const float speed_mm_s = fminf(APP_NAV_FINE_MAX_SPEED_MM_S,
-        fmaxf(APP_NAV_FINE_MIN_SPEED_MM_S,
-            task_abs((float)safe_align_pixel_error_px) * APP_SAFE_ALIGN_LATERAL_MM_S_PER_PX));
-    /* MoveAngle's +90 is body-left. A target to the right needs -90. */
-    task_status.motors_active = Motor_MoveAngleHeading(speed_mm_s,
-        safe_align_pixel_error_px > 0 ? -90.0f : 90.0f, task_safe_zone_heading());
-    return;
-  }
-  if (safe_align_done) {
-    Motor_Stop();
-    task_status.motors_active = false;
-    return;
-  }
-
   LocationPose pose;
   if (!task_get_location_pose(&pose, now_ms)) {
     return;
   }
   const float target_heading_deg = task_safe_zone_heading();
-  const float current_heading_deg = (float)pose.heading_mdeg * 0.001f;
+  const float current_heading_deg = (float)pose.heading_mdeg / 1000.0f;
   const float error_deg = task_wrap_angle(target_heading_deg - current_heading_deg);
 
-  /* Use the wider hold window while the camera and chassis settle. */
-  if (nav_ready &&
-      (task_abs(error_deg) > APP_SAFE_ALIGN_HOLD_TOLERANCE_DEG)) {
+  /* Translation may hold within 6 degrees, but initial alignment and final
+   * completion both need the original 3-degree arrival window. */
+  const float tolerance_deg =
+      safe_align_visual_confirmed && safe_align_lateral_active && nav_ready ?
+          APP_SAFE_ALIGN_HOLD_TOLERANCE_DEG : APP_SAFE_ALIGN_TOLERANCE_DEG;
+  if (nav_ready && task_abs(error_deg) > tolerance_deg) {
+    safe_align_done = false;
+    accepted_context.completed = false;
     nav_ready = false;
+    Motor_Stop();
+    task_status.motors_active = false;
+    return;
   }
   if (!nav_ready) {
-    if (!turn_to(target_heading_deg, current_heading_deg,
-                 APP_SAFE_ALIGN_TOLERANCE_DEG, now_ms)) {
-      task_stop(TASK_FAULT_MOTOR, now_ms);
+    safe_align_done = false;
+    accepted_context.completed = false;
+    if (task_abs(error_deg) > APP_SAFE_ALIGN_TOLERANCE_DEG) {
+      /* ALIGN is a continuous heading goal, not another finite TURN with
+       * its own timeout. Keep the existing slow/fast turn speed bounds. */
+      const float yaw_mm_s = fminf(APP_MOTOR_TURN_FAST_MM_S,
+          fmaxf(APP_MOTOR_TURN_SLOW_MM_S, task_abs(nav_yaw(error_deg))));
+      task_move_body(0.0f, 0.0f, copysignf(yaw_mm_s, error_deg));
+      task_status.motors_active = true;
+    } else {
+      Motor_Stop();
+      task_status.motors_active = false;
+      nav_ready = true;
+      step_started_ms = now_ms;
     }
     return;
   }
-  const uint32_t settle_ms =
-      (APP_SAFE_ALIGN_CAMERA_SETTLE_MS > APP_NAV_TURN_SETTLE_MS) ?
-      APP_SAFE_ALIGN_CAMERA_SETTLE_MS : APP_NAV_TURN_SETTLE_MS;
-  if ((uint32_t)(now_ms - step_started_ms) < settle_ms) {
+
+  if (safe_align_visual_confirmed && safe_align_lateral_active) {
+    safe_align_done = false;
+    accepted_context.completed = false;
+    const float speed_mm_s = fminf(APP_NAV_FINE_MAX_SPEED_MM_S,
+        fmaxf(APP_NAV_FINE_MIN_SPEED_MM_S,
+            task_abs((float)safe_align_pixel_error_px) * APP_SAFE_ALIGN_LATERAL_MM_S_PER_PX));
+    /* MoveAngle's +90 is body-left. A target to the right needs -90. */
+    task_status.motors_active = Motor_MoveAngleHeading(speed_mm_s,
+        safe_align_pixel_error_px > 0 ? -90.0f : 90.0f, target_heading_deg);
     return;
+  }
+  if (!safe_align_visual_confirmed) {
+    /* Keep the original initial camera preparation; yaw recovery during a
+     * visual action does not restart this wait or the camera action. */
+    const uint32_t settle_ms =
+        (APP_SAFE_ALIGN_CAMERA_SETTLE_MS > APP_NAV_TURN_SETTLE_MS) ?
+        APP_SAFE_ALIGN_CAMERA_SETTLE_MS : APP_NAV_TURN_SETTLE_MS;
+    if ((uint32_t)(now_ms - step_started_ms) < settle_ms) { return; }
   }
 
   Motor_Stop();
@@ -5812,10 +5830,10 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
     command_accepted = true;
   } else if ((command->command == VISION_CMD_ALIGN_SAFE_ZONE) &&
              (state == TASK_ALIGN_SAFE_ZONE) &&
-             (safe_align_done || safe_align_visual_confirmed) &&
+             (task_status.nav_heading_locked || safe_align_visual_confirmed) &&
              task_align_command_valid(command, true)) {
-    /* Keep one visual action while its real image error changes. The
-     * original gyro alignment has already established the field normal. */
+    /* Initial pose/camera preparation has passed once. Later yaw recovery
+     * must not reject or restart this visual action's live pixel updates. */
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
     safe_align_visual_confirmed = true;
@@ -5826,8 +5844,10 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
     } else if (error_px <= APP_SAFE_ALIGN_LATERAL_STOP_PX) {
       safe_align_lateral_active = false;
     }
-    safe_align_done = !safe_align_lateral_active;
-    if (!safe_align_done) { accepted_context.completed = false; }
+    /* Input updates the request only. The controller must verify the main
+     * yaw as well as the pixel condition before reporting completion. */
+    safe_align_done = false;
+    accepted_context.completed = false;
   } else if ((command->command == VISION_CMD_ALIGN_SAFE_ZONE) &&
              (state == TASK_SAFE_SWEEP_DONE) &&
              task_status.gripper_closed &&
@@ -6148,6 +6168,15 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     task_reset_sweep_audit(now_ms);
     audit_frame_floor_valid = false;
     app_visual_valid = false;
+  }
+  if (state == TASK_ALIGN_SAFE_ZONE && safe_align_done) {
+    const LocationPose pose = Location_GetPose();
+    if (!pose.valid || task_abs(task_wrap_angle(task_safe_zone_heading() -
+            pose.heading_mdeg / 1000.0f)) > APP_SAFE_ALIGN_TOLERANCE_DEG) {
+      /* Revoke stale ALIGN completion before a queued ENTER can consume it. */
+      safe_align_done = false;
+      accepted_context.completed = false;
+    }
   }
   accepted_context.completed = accepted_context.completed || task_context_complete();
   if (!incoming.received || incoming.generation == command_generation_seen) {
