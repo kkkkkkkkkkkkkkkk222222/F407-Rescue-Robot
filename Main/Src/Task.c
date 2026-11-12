@@ -3376,8 +3376,13 @@ static RemoteRouteStatus nav_follow_coarse(
     task_status.motors_active = Motor_MoveAngleFine(speed_mm_s, body_angle);
     return REMOTE_ROUTE_RUNNING;
   }
-  const float speed_mm_s = fminf(APP_NAV_FINAL_APPROACH_SPEED_MM_S,
-      fmaxf(APP_NAV_MIN_END_SPEED_MM_S, (float)command->target_x_mm));
+  const bool return_route = command->command == VISION_CMD_RETURN_CENTER;
+  const float min_speed_mm_s = return_route ? APP_RETURN_FINE_MIN_SPEED_MM_S :
+                                             APP_NAV_MIN_END_SPEED_MM_S;
+  const float max_speed_mm_s = return_route ? APP_RETURN_FINE_MAX_SPEED_MM_S :
+                                             APP_NAV_FINAL_APPROACH_SPEED_MM_S;
+  const float speed_mm_s = fminf(max_speed_mm_s,
+      fmaxf(min_speed_mm_s, (float)command->target_x_mm));
   (void)Motor_MoveAngle(speed_mm_s, body_angle);
   task_status.motors_active = true;
   return REMOTE_ROUTE_RUNNING;
@@ -3615,10 +3620,13 @@ static void task_process_safe_align(uint32_t now_ms)
     safe_align_done = false;
     accepted_context.completed = false;
     if (task_abs(error_deg) > APP_SAFE_ALIGN_TOLERANCE_DEG) {
-      /* ALIGN is a continuous heading goal, not another finite TURN with
-       * its own timeout. Keep the existing slow/fast turn speed bounds. */
-      const float yaw_mm_s = fminf(APP_MOTOR_TURN_FAST_MM_S,
-          fmaxf(APP_MOTOR_TURN_SLOW_MM_S, task_abs(nav_yaw(error_deg))));
+      /* Keep the existing heading gain, with ALIGN's independent limits.
+       * Do not inherit nav_yaw's unrelated 300 mm/s output ceiling. */
+      const float yaw_request_mm_s =
+          (task_abs(error_deg) - APP_NAV_HEADING_TOLERANCE_DEG) *
+          APP_NAV_HEADING_KP_MM_S_PER_DEG;
+      const float yaw_mm_s = fminf(APP_SAFE_ALIGN_YAW_MAX_MM_S,
+          fmaxf(APP_SAFE_ALIGN_YAW_MIN_MM_S, yaw_request_mm_s));
       task_move_body(0.0f, 0.0f, copysignf(yaw_mm_s, error_deg));
       task_status.motors_active = true;
     } else {
@@ -4628,7 +4636,7 @@ static bool task_sweep_reverse_trace(uint32_t now_ms)
           atan2f(vy, vx) * (180.0f / 3.14159265358979323846f) -
           pose.heading_mdeg * 0.001f);
       const float speed_mm_s = fminf(120.0f,
-          fmaxf(APP_NAV_FINE_MIN_SPEED_MM_S, error_mm * 4.0f));
+          fmaxf(APP_SAFE_SWEEP_REVERSE_MIN_SPEED_MM_S, error_mm * 4.0f));
       const bool move_accepted = Motor_MoveAngleHeading(speed_mm_s, direction_deg,
                                                        sweep_reverse.heading);
       task_status.sweep_reverse_forward_mm_s = move_accepted ?

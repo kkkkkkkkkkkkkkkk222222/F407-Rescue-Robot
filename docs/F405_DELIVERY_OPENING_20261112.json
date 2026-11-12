@@ -1,6 +1,6 @@
 {
   "request_id": "MATCH-DELIVERY-OPENING-20261112",
-  "semantic_revision": "2026-11-12.yaw-first",
+  "semantic_revision": "2026-11-12.yaw-first.speed-limits",
   "upper_source_commit": "c907be05ecd8231c3b372b7593565948597bd376",
   "lower_base_commit": "19ec9f718d0cdb9431748c89d18b229d9251063b",
   "build": {
@@ -33,7 +33,7 @@
     "same_action_live_updates": true,
     "lateral_start_abs_error_px_exclusive": 64,
     "lateral_stop_abs_error_px_inclusive": 32,
-    "speed_mm_s": {"gain_per_px": 1.0, "minimum": 110.0, "maximum": 180.0},
+    "speed_mm_s": {"gain_per_px": 1.0, "minimum": 220.0, "maximum": 380.0},
     "move_angle_deg": {"positive_error": -90, "negative_error": 90},
     "field_heading_deg": {"red": 90, "blue": 270},
     "moving_mode": 10,
@@ -47,7 +47,8 @@
       "arrival_and_completion_max_abs_error_deg": 3.0,
       "lateral_hold_max_abs_error_deg": 6.0,
       "recovery_translation_mm_s": 0.0,
-      "yaw_request": "existing nav_yaw magnitude clamped to existing slow120/fast250 mm/s bounds; field-yaw sign converted once",
+      "yaw_request": "existing heading gain20 mm/s/degree and deadband1 degree, clamped to ALIGN-only 240..450 mm/s bounds without the generic nav_yaw300 cap; field-yaw sign converted once",
+      "yaw_speed_mm_s": {"minimum": 240.0, "maximum": 450.0, "meaning": "wheel tangential speed, not degrees/second"},
       "initial_camera_preparation": "unchanged",
       "recovery": "same task/action, latest pixel request retained, camera/audit not restarted, no added settle timer",
       "hard_block": "keeps bounded yaw request without a new finite-turn timeout; physical recovery is not guaranteed; existing manual STOP/ABORT and other task rules remain",
@@ -59,6 +60,16 @@
       "context_hex": "a3 b3 1d 00 00 07 00 0b 00 00 03 e9 f2 17 c3",
       "command_hex": "a3 b3 18 00 04 49 00 c9 00 00 00 00 f5 5f c3"
     }
+  },
+  "user_speed_update": {
+    "date": "2026-11-12",
+    "lower_base_commit": "ea99f310f9aa8237c20dd8c8b70ace1dd06795a1",
+    "authorization": "double the previously listed correction speed minima and add200 mm/s to their maxima",
+    "stage_fine_mm_s": {"minimum": 220.0, "maximum": 380.0},
+    "return_fine_mm_s": {"minimum": 240.0, "maximum": 400.0, "motor_api": "existing Motor_MoveAngle"},
+    "unchanged": ["PID", "PWM formula and60 percent cap", "coarse navigation", "stash terminal speed120..200 mm/s", "sweep reverse speed110..120 mm/s", "ordinary finite TURN", "670mm ENTER", "wire layout and action pairing"],
+    "bounds_meaning": "controller requests before the existing ramp and wheel decomposition; not measured per-wheel minima or fixed PWM",
+    "field_validated": false
   },
   "platform_reaudit": {
     "opcode": 18,
