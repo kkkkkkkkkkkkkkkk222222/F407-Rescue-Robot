@@ -1,6 +1,6 @@
 # 两端当前要求与回执
 
-更新日期为 2026-11-11，时区 Asia/Shanghai。
+更新日期为 2026-11-12，时区 Asia/Shanghai。
 
 ## 固定入口与协作方式
 
@@ -15,6 +15,44 @@
 人保留知情、拒绝和选择权。已经明确批准的范围直接推进，超范围的重要取舍先由人决定，AI 不能互相授权。
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
+
+## MATCH-DELIVERY-OPENING-20261112 实施回执
+
+本轮已核对 RDK `c907be05ecd8231c3b372b7593565948597bd376` 的固定入口、正式实现、接口JSON及检查说明，
+从本端 `19ec9f718d0cdb9431748c89d18b229d9251063b` 增量实施三项。
+[源交接](https://github.com/danmo-teng/shijue_fangan/blob/c907be05ecd8231c3b372b7593565948597bd376/docs/CROSS_REPO_REQUESTS.md)
+[本端机器合同](F405_DELIVERY_OPENING_20261112.json)
+
+- 开局接受取消地图中心收敛前提。原后退、180°、开爪、1.10 m本地轮程保留；快速前行的本地DONE后直接走原开爪/SEARCH，
+  原140°静止预检接手。地图位置不能提前截断轮程，也不再产生START_CENTER_APPROACH或要求中心80 mm内。
+  原速度/PID/超时保持；粗段后的位置偏差交给视觉，不把轮程DONE当成地图中心/地面距离真值。
+- 视觉ALIGN改为实际横移。先沿原定位ALIGN由主gyro对红90°/蓝270°法向；随后正像素误差请求MoveAngle -90°右移，
+  负误差+90°左移，原 `Motor_MoveAngleHeading` 负责斜坡和锁法向。速度夹在已有110～180 mm/s，1 mm/s/px是工程初值。
+  初始绝对偏差≤64 px不启动，>64 px启动后≤32 px结束，完成后64 px内不重开。
+  对准中报mode10，完成报mode11；新大偏更新清旧completed。ALIGN复用动态命令及原源帧序处理，
+  同task/action更新像素和源frame，定位ALIGN重发不重开，相机0/11500选择保持；PAUSE后原动作接续。
+  未加入第二套航向PID或ENTER融合XY纠偏，原0.67 m直推与扫障恢复保持。
+- 推进前闭爪的真实TASK_ALIGN_SAFE_ZONE可用原CARGO_AUDIT占位请求回mode48，包含横移中的mode10。
+  仅接受零frame/零证据/非STABLE及原目的地角色，进入即停横移并保持载荷，沿原相机准备和真实两帧复审。
+  同动作重发不重启相机；非法载荷沿原分离，合法后重新ALIGN。未扩展任意未完成NAV、ENTER或已开爪/放货状态。
+
+旧0x18/0x1D布局、CRC、task/action和串口波特率均保持。视觉ALIGN执行语义变更及示例见机器合同，RDK须配套部署。
+本轮新增3个独立像素/速度映射参数，原电机PID、全局速度、位置/轮速输入和两件/伤员审核保持；无新鲜度/年龄门、握手、
+定时等待、ISR、遥测、保护停车或永久FAULT。工作区独立舵机倒装/标定和工具/IDE改动保留，没有夹带提交。
+
+必要检查实际结果
+
+- NormalRun完整编译/链接通过，F405 / mode5 / TASK / UART4 921600/8N1，本机完整镜像含独立舵机设置，dirty1。
+- 原Task/mechanism夹具通过开局轮程完成才交接、地图114 mm/中心/缺失均不改变轮程、红蓝两侧横移/原ENTER交接。
+  正负像素、64/65/32 px滞回、同动作实时帧、原帧序去重、旧completed撤回、PAUSE/恢复和未完成不可ENTER均通过。
+- 真实ALIGN的mode10/11回140°/mode48、目的地/重复请求、真实审核再ALIGN和不相关NAV/ENTER/开爪负例通过。
+  伤员＋绿色在复审中仍非法，并进入原运输分离。原空爪、扫障、载荷保持、导航/ABORT和mode51相关回归通过。
+- 固定提交上位机9项相关状态机检查在本机通过，覆盖实时横移/局部直推、平台混装、开局、运输、mode51及两件找回。
+  上位机原始图像/历史异类证据的21项整组检查只据其报告，本机未把这些图像回放写成实车验证。
+
+本轮未烧录、未开串口/设备或启动车轮，未亲自读取板端actual。本场RDK报告的19ec9f7/dirty1为该场日志身份，
+不能替代此刻实板读取。必须同时部署RDK本轮实现与新NormalRun，旧固件的ACK不代表执行横移。
+实际横移方向/速度/阈值及粗段后视觉拾取仍待原入口实车确认；定位跳变、弱雷达约束及mode22尾部等待未在本轮解决。
 
 ## MATCH-OPENING-CAPTURE-20261111 实施回执
 

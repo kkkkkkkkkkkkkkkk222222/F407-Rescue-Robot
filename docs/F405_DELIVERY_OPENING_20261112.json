@@ -1,0 +1,64 @@
+{
+  "request_id": "MATCH-DELIVERY-OPENING-20261112",
+  "semantic_revision": "2026-11-12",
+  "upper_source_commit": "c907be05ecd8231c3b372b7593565948597bd376",
+  "lower_base_commit": "19ec9f718d0cdb9431748c89d18b229d9251063b",
+  "build": {
+    "preset": "NormalRun",
+    "board": "F405",
+    "mode": 5,
+    "service": 2,
+    "uart4_baud": 921600
+  },
+  "transport": {
+    "command_type": 24,
+    "context_type": 29,
+    "frame_bytes": 15,
+    "layout_changed": false,
+    "pairing": "existing same-SEQ context then command, task/action ownership unchanged",
+    "crc": "CRC16/MODBUS over bytes2..11, initial0xFFFF, little-endian bytes12..13"
+  },
+  "opening": {
+    "forward_local_wheel_distance_m": 1.10,
+    "map_center_position_gate": false,
+    "handoff": "original open-claw and SEARCH, then existing 140-degree inspection; wheel DONE is not proof of map-centre arrival"
+  },
+  "visual_align": {
+    "opcode": 4,
+    "flags": {"VALID": 1, "RED_SIDE": 8, "VISUAL_CORRECTION_VALID": 64},
+    "arg_a": "signed int16 big-endian pixels, subsection point minus640; positive requests body-right",
+    "arg_b": {"0": "camera120 degrees", "11500": "camera115 degrees"},
+    "aux": 0,
+    "source_frame": "existing uint32 big-endian bytes8..11 of 0x1D; existing frame-order handling, no age gate",
+    "same_action_live_updates": true,
+    "lateral_start_abs_error_px_exclusive": 64,
+    "lateral_stop_abs_error_px_inclusive": 32,
+    "speed_mm_s": {"gain_per_px": 1.0, "minimum": 110.0, "maximum": 180.0},
+    "move_angle_deg": {"positive_error": -90, "negative_error": 90},
+    "field_heading_deg": {"red": 90, "blue": 270},
+    "moving_mode": 10,
+    "completed_mode": 11,
+    "completion": "original gyro alignment must finish first; lateral hysteresis must complete; a new large error clears old completed",
+    "pause": "existing PAUSE stops output and preserves action and lateral hysteresis; same valid ALIGN resumes",
+    "example": {
+      "task": 7, "action": 11, "source_frame": 1001, "error_px": 201,
+      "context_hex": "a3 b3 1d 00 00 07 00 0b 00 00 03 e9 f2 17 c3",
+      "command_hex": "a3 b3 18 00 04 49 00 c9 00 00 00 00 f5 5f c3"
+    }
+  },
+  "platform_reaudit": {
+    "opcode": 18,
+    "request": "source frame0, zero classes/counts/total, non-STABLE, only the current injury-destination bit may be set",
+    "allowed_state": "closed-claw TASK_ALIGN_SAFE_ZONE, moving or complete, before ENTER; formal current destination must match",
+    "target_state": "existing TASK_TRANSPORT_AUDIT/mode48, camera140, original camera preparation and two-frame audit",
+    "repeat": "same action does not restart the camera or sample timer",
+    "no_new_entry": "arbitrary unfinished NAV, ENTER, open claw or released load"
+  },
+  "deployment": {
+    "implemented": true,
+    "normalrun_built": true,
+    "flashed_this_task": false,
+    "actual_board_identity_read_this_task": false,
+    "field_validated": false
+  }
+}

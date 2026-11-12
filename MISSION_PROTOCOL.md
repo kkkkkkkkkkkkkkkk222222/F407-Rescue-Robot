@@ -1,5 +1,7 @@
 # 连续物资抓取与分区投送流程
 
+2026-11-12 当前交接见[MATCH-DELIVERY-OPENING回执](docs/CROSS_REPO_REQUESTS.md)及[机器合同](docs/F405_DELIVERY_OPENING_20261112.json)。开局原1.10 m本地轮程完成即交视觉，不再追地图中心80 mm。原0x04视觉ALIGN以实时像素控制锁法向横移，>64 px启动、≤32 px结束；原对准中mode10、完成mode11及completed反映当前动作。推进前闭爪ALIGN可回原140°/mode48复审，原0.67 m本地直推保持。
+
 2026-11-11 开局夹内优先配套见[当前固定入口](docs/CROSS_REPO_REQUESTS.md)的MATCH-OPENING-CAPTURE回执。开局SEARCH的INITIAL_STASH/frame0全零非STABLE包只请求静止140°观察，不代表真实空爪或合爪授权。真实空爪完成观察回SEARCH，真实非空沿原审核/GRAB；普通初次空爪补进沿用原200 mm及4秒决策出口。
 
 2026-11-11 当前配套为 MATCH-ABE-20261111，完整规则及实施/烧录状态见[固定入口](docs/CROSS_REPO_REQUESTS.md)。首件后材料最多2件、同侧绿黑类别6仅count=2合法；首件单绿及单伤员规则保持。0x18载荷布局、两帧审核及任务配对不变。以下旧日期说明只供历史追溯，不能覆盖当前入口。

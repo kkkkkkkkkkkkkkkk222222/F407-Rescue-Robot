@@ -788,28 +788,27 @@ static void test_normalrun_start_center_approach(void)
   task_enter(TASK_START, 0U);
   start_motion_phase = START_FORWARD;
   test_pose.heading_mdeg = 318000;
-  test_pose.path_mm = 1700U;
   VisionFusedPose pose = {.received = true, .status = VISION_POSE_VALID,
-      .x_mm = -116, .y_mm = 536, .heading_cdeg = 9000U};
+      .x_mm = -114, .y_mm = 0, .heading_cdeg = 9000U};
+  distance_result = MOTOR_DISTANCE_RUNNING;
   task_process_start(&pose, 20U);
-  assert(state == TASK_START && start_motion_phase == START_CENTER_APPROACH);
-  assert(distance_calls == 1U && start_center_origin_path_mm == 1700U);
-
+  assert(state == TASK_START && start_motion_phase == START_FORWARD);
+  assert(distance_calls == 1U && task_status.motors_active);
+  assert(fabsf(distance_request - APP_START_FORWARD_DISTANCE_M) < 0.001f);
+  /* A near/centred map pose must not truncate the local wheel leg. */
+  pose.x_mm = 0;
   task_process_start(&pose, 40U);
+  assert(state == TASK_START && distance_calls == 2U);
   assert(task_abs(task_wrap_angle(heading_output - 315.0f)) < 0.01f);
-  assert(reverse_output > 0.0f && lateral_output < 0.0f);
-  pose.x_mm = -60;
-  pose.y_mm = 40;
+  distance_result = MOTOR_DISTANCE_DONE;
+  pose.x_mm = -114;
   task_process_start(&pose, 60U);
   assert(state == TASK_OPEN_CLAW && !task_status.motors_active);
-
+  /* No fused position is needed for the original post-wheel handoff. */
   task_enter(TASK_START, 100U);
   start_motion_phase = START_FORWARD;
-  pose.y_mm = 220;
+  pose.received = false;
   task_process_start(&pose, 120U);
-  assert(start_motion_phase == START_CENTER_APPROACH && distance_calls == 1U);
-  test_pose.path_mm += APP_START_CENTER_PATH_LIMIT_MM;
-  task_process_start(&pose, 140U);
   assert(state == TASK_OPEN_CLAW && !task_status.motors_active && !distance_command_done);
 }
 
@@ -884,15 +883,24 @@ static void test_normalrun_safe_zone_team_heading(void)
     align.flags = flags | VISION_CMD_VISUAL_CORRECTION_VALID;
     align.heading_cdeg = 0U;
     align.target_x_mm = red ? -105 : 146;
+    align.vision_frame = 901U;
     wire_send_action(align, 12U, aligned_ms + 20U, 2U);
     wire_send_action(align, 12U, aligned_ms + 40U, 3U);
     assert(command_accepted && accepted_context.action_id == 12U);
+    assert(safe_align_visual_confirmed && !task_context_complete() && task_protocol_mode() == 10U);
+    task_process_safe_align(aligned_ms + 40U);
+    assert(task_status.motors_active && heading_output == (float)heading);
+    assert(red ? lateral_output > 0.0f : lateral_output < 0.0f);
+    align.target_x_mm = 32;
+    align.vision_frame = 902U;
+    wire_send_action(align, 12U, aligned_ms + 50U, 4U);
+    task_process_safe_align(aligned_ms + 50U);
     assert(safe_align_visual_confirmed && task_context_complete());
     assert(task_protocol_mode() == 11U && task_status.nav_locked_heading_deg == heading);
 
     const VisionMissionCommand enter = {.command = VISION_CMD_ENTER_SAFE_ZONE,
         .flags = flags | VISION_CMD_DRIVE_STRAIGHT | VISION_CMD_VISUAL_CORRECTION_VALID};
-    wire_send_action(enter, 13U, aligned_ms + 60U, 4U);
+    wire_send_action(enter, 13U, aligned_ms + 60U, 5U);
     assert(command_accepted && state == TASK_NAVIGATE && delivery_enter_active);
     assert(nav_locked_heading_deg == (float)heading);
     assert(safe_enter_follow(&active_mission, aligned_ms + 80U) == REMOTE_ROUTE_RUNNING);

@@ -310,11 +310,9 @@ static bool scan_report_gate_open;
 static bool pose_invalid_pending;
 typedef enum {
   START_REVERSE, START_REVERSE_SETTLE, START_TURN, START_TURN_SETTLE,
-  START_FORWARD, START_CENTER_APPROACH
+  START_FORWARD
 } StartMotionPhase;
 static StartMotionPhase start_motion_phase;
-static uint32_t start_center_origin_path_mm;
-static float start_center_speed_mm_s;
 static bool distance_command_done;
 static bool nav_terminal_candidate;
 static bool nav_terminal_latched;
@@ -329,6 +327,8 @@ static bool delivery_exit_path_valid;
 static bool delivery_stage_only;
 static bool safe_align_done;
 static bool safe_align_visual_confirmed;
+static bool safe_align_lateral_active;
+static int16_t safe_align_pixel_error_px;
 static bool delivery_enter_active;
 static bool first_delivery_done;
 static bool first_green_bump_done;
@@ -1339,6 +1339,8 @@ static void task_enter(TaskState next, uint32_t now_ms)
   delivery_stage_only = false;
   safe_align_done = false;
   safe_align_visual_confirmed = false;
+  safe_align_lateral_active = false;
+  safe_align_pixel_error_px = 0;
   delivery_enter_active = false;
   nav_terminal_candidate = false;
   nav_terminal_latched = false;
@@ -1629,6 +1631,8 @@ static void task_initialize(uint32_t now_ms)
   safe_enter_path_valid = false;
   delivery_exit_path_valid = false;
   first_delivery_done = false;
+  safe_align_done = safe_align_visual_confirmed = safe_align_lateral_active = false;
+  safe_align_pixel_error_px = 0;
   first_green_bump_done = false;
   complete_flow_active = false;
   mission_paused = false;
@@ -1912,12 +1916,9 @@ static void task_finish_start(uint32_t now_ms, bool center_reached)
 
 static void task_process_start(const VisionFusedPose *fused_pose, uint32_t now_ms)
 {
+  (void)fused_pose;
   if ((uint32_t)(now_ms - state_started_ms) >= APP_START_TIMEOUT_MS) {
-    if (start_motion_phase == START_CENTER_APPROACH) {
-      task_finish_start(now_ms, false);
-    } else {
-      task_stop(TASK_FAULT_START_TIMEOUT, now_ms);
-    }
+    task_stop(TASK_FAULT_START_TIMEOUT, now_ms);
     return;
   }
 
@@ -1980,60 +1981,18 @@ static void task_process_start(const VisionFusedPose *fused_pose, uint32_t now_m
     }
     return;
   }
-  const bool center_position_valid =
-      fused_pose->received && (fused_pose->status & VISION_POSE_VALID) != 0U;
-  const float center_dx_mm = -(float)fused_pose->x_mm;
-  const float center_dy_mm = -(float)fused_pose->y_mm;
-  const float center_remaining_mm = center_position_valid ?
-      sqrtf(center_dx_mm * center_dx_mm + center_dy_mm * center_dy_mm) : 0.0f;
-  const bool center_reached = center_position_valid &&
-      center_remaining_mm <= APP_START_CENTER_ARRIVAL_MM;
-
   if (start_motion_phase == START_FORWARD) {
-    if (!center_position_valid ||
-        center_remaining_mm > APP_START_CENTER_APPROACH_MM) {
-      const MotorDistanceStatus result = Motor_MoveStartForward(start_target_heading_deg);
-      task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
-      if (distance_failed(result)) {
-        task_stop(TASK_FAULT_MOTOR, now_ms);
-      }
-      if (result != MOTOR_DISTANCE_DONE) { return; }
+    const MotorDistanceStatus result = Motor_MoveStartForward(start_target_heading_deg);
+    task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
+    if (distance_failed(result)) {
+      task_stop(TASK_FAULT_MOTOR, now_ms);
+    } else if (result == MOTOR_DISTANCE_DONE) {
+      /* The local wheel leg is complete; vision now owns cargo acquisition.
+       * This is not a claim that the fused map pose reached its centre. */
+      task_finish_start(now_ms, false);
     }
-    if (!center_position_valid || center_reached) {
-      task_finish_start(now_ms, center_reached);
-      return;
-    }
-
-    /* The wheel-distance leg only limits the fast part of the opening. */
-    Motor_Stop();
-    task_status.motors_active = false;
-    start_center_origin_path_mm = pose.path_mm;
-    start_center_speed_mm_s = 0.0f;
-    start_motion_phase = START_CENTER_APPROACH;
     return;
   }
-
-  if (!center_position_valid || center_reached ||
-      pose.path_mm - start_center_origin_path_mm >= APP_START_CENTER_PATH_LIMIT_MM) {
-    task_finish_start(now_ms, center_reached);
-    return;
-  }
-  if (Motor_IsBraking()) { return; }
-
-  /* Position sets translation. Local gyro feedback keeps the opening heading. */
-  const float bearing_deg = atan2f(center_dy_mm, center_dx_mm) *
-      (180.0f / 3.14159265358979323846f);
-  const float body_angle_deg = task_wrap_angle(bearing_deg - pose.heading_mdeg * 0.001f);
-  const float speed_mm_s = fminf(APP_START_CENTER_MAX_SPEED_MM_S,
-      fmaxf(APP_START_CENTER_MIN_SPEED_MM_S, center_remaining_mm));
-  start_center_speed_mm_s = fminf(speed_mm_s, start_center_speed_mm_s +
-      APP_START_FORWARD_ACCEL_MM_S2 * APP_TASK_PERIOD_MS * 0.001f);
-  if (!Motor_MoveAngleHeading(start_center_speed_mm_s, body_angle_deg,
-                              start_target_heading_deg)) {
-    task_stop(TASK_FAULT_MOTOR, now_ms);
-    return;
-  }
-  task_status.motors_active = true;
 }
 
 static void task_process_search(const VisionData *vision, uint32_t now_ms)
@@ -3631,6 +3590,15 @@ static void task_begin_safe_align(uint32_t now_ms)
 
 static void task_process_safe_align(uint32_t now_ms)
 {
+  if (safe_align_visual_confirmed && safe_align_lateral_active) {
+    const float speed_mm_s = fminf(APP_NAV_FINE_MAX_SPEED_MM_S,
+        fmaxf(APP_NAV_FINE_MIN_SPEED_MM_S,
+            task_abs((float)safe_align_pixel_error_px) * APP_SAFE_ALIGN_LATERAL_MM_S_PER_PX));
+    /* MoveAngle's +90 is body-left. A target to the right needs -90. */
+    task_status.motors_active = Motor_MoveAngleHeading(speed_mm_s,
+        safe_align_pixel_error_px > 0 ? -90.0f : 90.0f, task_safe_zone_heading());
+    return;
+  }
   if (safe_align_done) {
     Motor_Stop();
     task_status.motors_active = false;
@@ -5542,6 +5510,18 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
   } else if ((command->command == VISION_CMD_CARGO_AUDIT) &&
+             (state == TASK_ALIGN_SAFE_ZONE) && task_status.gripper_closed &&
+             !audit_initial_stash && task_audit_is_placeholder(command) &&
+             (command->audit_flags & (uint8_t)~VISION_AUDIT_DESTINATION_INJURY) == 0U &&
+             (((command->audit_flags & VISION_AUDIT_DESTINATION_INJURY) != 0U) ==
+              audit_destination_injury)) {
+    /* Platform cargo needs the original 140-degree audit before ENTER.
+     * This view request is not a measured empty load. */
+    task_status.acknowledged_sequence = command->sequence;
+    command_accepted = true;
+    transport_stage_injury = audit_destination_injury;
+    task_enter(TASK_TRANSPORT_AUDIT, now_ms);
+  } else if ((command->command == VISION_CMD_CARGO_AUDIT) &&
              (state == TASK_NAVIGATE) && delivery_stage_only &&
              !route_to_stash && distance_command_done && task_status.gripper_closed &&
              command->vision_frame == 0U && command->audit_left_class == VISION_CARGO_NONE &&
@@ -5831,13 +5811,23 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
   } else if ((command->command == VISION_CMD_ALIGN_SAFE_ZONE) &&
-             (state == TASK_ALIGN_SAFE_ZONE) && safe_align_done &&
+             (state == TASK_ALIGN_SAFE_ZONE) &&
+             (safe_align_done || safe_align_visual_confirmed) &&
              task_align_command_valid(command, true)) {
-    /* Keep the RDK visual confirmation and its completion reply. The
-     * gyro alignment to the team heading has already finished. */
+    /* Keep one visual action while its real image error changes. The
+     * original gyro alignment has already established the field normal. */
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
     safe_align_visual_confirmed = true;
+    safe_align_pixel_error_px = command->target_x_mm;
+    const float error_px = task_abs((float)safe_align_pixel_error_px);
+    if (error_px > APP_SAFE_ALIGN_LATERAL_START_PX) {
+      safe_align_lateral_active = true;
+    } else if (error_px <= APP_SAFE_ALIGN_LATERAL_STOP_PX) {
+      safe_align_lateral_active = false;
+    }
+    safe_align_done = !safe_align_lateral_active;
+    if (!safe_align_done) { accepted_context.completed = false; }
   } else if ((command->command == VISION_CMD_ALIGN_SAFE_ZONE) &&
              (state == TASK_SAFE_SWEEP_DONE) &&
              task_status.gripper_closed &&
@@ -6103,7 +6093,9 @@ static bool task_context_complete(void)
     case VISION_CMD_NAVIGATE_WAYPOINT:
       return state == TASK_NAVIGATE && distance_command_done;
     case VISION_CMD_ALIGN_SAFE_ZONE:
-      return state == TASK_ALIGN_SAFE_ZONE && safe_align_done;
+      return state == TASK_ALIGN_SAFE_ZONE && safe_align_done &&
+          (((accepted_context.flags & VISION_CMD_VISUAL_CORRECTION_VALID) == 0U) ||
+           safe_align_visual_confirmed);
     case VISION_CMD_ENTER_SAFE_ZONE:
       return state == TASK_RAM_VERIFY;
     case VISION_CMD_TASK_COMPLETE:
@@ -6137,7 +6129,8 @@ static bool task_audit_state(void)
 static bool task_dynamic_opcode(uint8_t opcode)
 {
   return opcode == VISION_CMD_APPROACH_TARGET || opcode == VISION_CMD_CARGO_AUDIT ||
-         opcode == VISION_CMD_NAVIGATE_WAYPOINT || opcode == VISION_CMD_RETURN_CENTER;
+         opcode == VISION_CMD_NAVIGATE_WAYPOINT || opcode == VISION_CMD_RETURN_CENTER ||
+         opcode == VISION_CMD_ALIGN_SAFE_ZONE;
 }
 
 static void task_accept_mission(VisionData *vision, uint32_t now_ms)
@@ -6255,7 +6248,9 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
         incoming.command != VISION_CMD_STOP) goto rejected;
   }
   const bool visual = incoming.command == VISION_CMD_APPROACH_TARGET ||
-                      incoming.command == VISION_CMD_CARGO_AUDIT;
+                      incoming.command == VISION_CMD_CARGO_AUDIT ||
+                      (incoming.command == VISION_CMD_ALIGN_SAFE_ZONE &&
+                       (incoming.flags & VISION_CMD_VISUAL_CORRECTION_VALID) != 0U);
   reject_stage = 6U;
   if (visual && !new_target && incoming.vision_frame != 0U &&
       accepted_context.visual_valid &&

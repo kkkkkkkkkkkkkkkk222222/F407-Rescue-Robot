@@ -576,15 +576,17 @@
 #define APP_NAV_FINAL_REALIGN_DEG          3.0f
 #define APP_NAV_FINAL_REALIGN_HOLD_MS      150U
 #define APP_NAV_TURN_SETTLE_MS            100U
-/* Updated safe-zone flow: stop at the 0.60 m staging point, align once from
- * pose and once from a frozen image, then approach the fence while holding
- * the latched heading. The upper computer sends signed pixel error; the
- * equivalent focal length and sign are kept here for field calibration. */
+/* Align to the field normal, then translate laterally from live pixel error.
+ * The original gyro hold also owns the subsequent local-wheel ENTER stroke. */
 #define APP_SAFE_ALIGN_TOLERANCE_DEG        3.0f
 #define APP_SAFE_ALIGN_HOLD_TOLERANCE_DEG   6.0f
 #define APP_SAFE_ALIGN_CAMERA_ANGLE           120U
 #define APP_SAFE_ALIGN_RAISED_CAMERA_ANGLE    115U
 #define APP_SAFE_ALIGN_CAMERA_SETTLE_MS       300U
+/* Visual error controls lateral speed, never a pixel-to-distance estimate. */
+#define APP_SAFE_ALIGN_LATERAL_START_PX      64.0f
+#define APP_SAFE_ALIGN_LATERAL_STOP_PX       32.0f
+#define APP_SAFE_ALIGN_LATERAL_MM_S_PER_PX    1.0f
 #define APP_SAFE_ENTER_CRUISE_SPEED_MM_S   400.0f
 #define APP_SAFE_ENTER_MIN_SPEED_MM_S      200.0f
 #define APP_SAFE_ENTER_SLOWDOWN_MM         300.0f
