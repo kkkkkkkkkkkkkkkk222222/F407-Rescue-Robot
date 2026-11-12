@@ -41,35 +41,51 @@ if errorlevel 1 pause
 "@
     [IO.File]::WriteAllText((Join-Path $DataDirectory 'Start.cmd'), $launcher, [Text.Encoding]::ASCII)
     $readme = @'
-F405 双爪微调窗口
+[[F405-CALIBRATOR-BEGIN]]
+F405 四路舵机滚轮微调
 
-双击 Start.cmd。仅调双爪，不发车轮、升降、相机指令，不烧录。
-保留程序器的USB、SWD和COM18接线。窗口开启时不会自动连接或移动。
+双击 Start.cmd，点一次“连接并读取”。以后鼠标停在哪一行，滚轮就调哪一行。
+保留程序器USB、SWD和COM18接线。打开窗口不自动连接、移动或烧录，不发车轮动作。
+MotionDebug保持原服务；NormalRun会使用原DEBUG进入维护。
 
-1. 点“连接并读取”，读取当前两爪脉宽，不把它当实际角度反馈。
-   MotionDebug保持原服务；NormalRun会发DEBUG进入维护。
-2. 当前从旧合爪S4=86、S2=90开始。需要重回起点，点“恢复旧合爪”。
-3. “双爪内收/外展”改变统一动作开度；左右offset保持。
-   左右各自的“内收/外展”只调该侧安装offset。
-4. 步长默认1微秒，约等于0.09度指令分度；也能选2/5/10/20微秒。
-   舵机实际最小响应由实物决定。0度仅是内收参考，不代表机械可达。
-5. 点“保存标定”保存calibration.json；每次调节另记JSONL。
-   保存不会自动改固件。调好后把这个文件交给Codex固化。
-6. “断开并保持”或关窗口都保持最后脉宽，释放COM18与SWD；不自动归位。
+滚轮默认每格1微秒，约0.09度指令分度，不需要点增减按钮。
+鼠标停在：
+- 统一动作开度行：同时微调双爪，上滚外展、下滚内收。
+- 左S4或右S2行：只微调该侧安装offset，上滚外展、下滚内收。
+- S1升降或S3相机行：只微调该路PWM，上滚增加输出、下滚减小输出。
+  未启用的S1/S3在滚动时会按显示值启用本路，先看清目标。
 
-S命令含义未变。这里的统一开度两侧都是小值内收、大值外展。
-窗口分开显示统一开度与左右offset。初次读入的offset只是维持当前姿态的起始值，
-不能由软件自动证明安装已校准。可以在任意开度检查两爪实际对称性。
+空格：全开请求180度，再回到当前合爪目标；默认一次，可设置重复次数。
+F2：全开并保持。F3或Esc：回到面板合爪，并结束复测。
+Ctrl+S：保存标定到calibration.json，同时生成当前标定.txt。
+已有84度、左0/右45微秒的保存结果保留，不因全开而重算安装offset。
+全开输出仍遵守原500至2500微秒范围，触限会记日志；不把端点输出冒充实测机械180度。
 
-临时微调会被新的S指令、重启或恢复Task覆盖；保存文件可用于再次应用。
-原S/Task目标角不会随临时PWM表覆盖更新，请看窗口脉宽读回及保存文件。
-需要重新连接/启用PWM时，可点“恢复旧合爪”，它只发原S2/S4命令。
-25齿齿距14.4度；具体offset要按当前实物调，不能拿齿距代替实测。
+两爪设计是90度各内收6度，即统一动作开度84度。左右offset单独调整。
+每次先全开、再从外侧回到合爪，观察重复性，不把极小PWM步长当机械精度。
+复测按0.13秒/60度乘1.5估时，再加可设的到位后停留；不改比赛的等待时间。
+全开期间面板保留合爪目标，滚轮修改将用于下一次合爪。
+
+保存含四路读回和启用状态，兼容旧版双爪JSON。保存不自动修改比赛固件。
+“应用已保存姿态”恢复保存的双爪及当时已启用的S1/S3；旧版文件只影响双爪。
+关窗口或断开保持最后输出，释放COM18和本窗口的SWD进程，不自动归位。
+新S命令、重启或恢复Task可能覆盖临时微调；S/Task角度记录不会随直接PWM覆盖更新。
+S命令含义保持原样，S1/S3的窗口角度标为PWM等效角，不冒充原S逻辑角或机械实测角。
+[[F405-CALIBRATOR-END]]
 '@
     $readmePath = Join-Path $DataDirectory '使用说明.txt'
-    if (!(Test-Path -LiteralPath $readmePath)) {
-        [IO.File]::WriteAllText($readmePath, $readme, [Text.UTF8Encoding]::new($true))
+    $currentReadme = if (Test-Path -LiteralPath $readmePath) { [IO.File]::ReadAllText($readmePath) } else { '' }
+    $blockPattern = '(?s)\[\[F405-CALIBRATOR-BEGIN\]\].*?\[\[F405-CALIBRATOR-END\]\]'
+    if ([regex]::IsMatch($currentReadme, $blockPattern)) {
+        $updatedReadme = [regex]::Replace($currentReadme, $blockPattern, [Text.RegularExpressions.MatchEvaluator]{ param($match) $readme })
+    } else {
+        if ($currentReadme.Length -gt 0) {
+            $oldReadme = Join-Path $DataDirectory '使用说明_升级前备份.txt'
+            if (!(Test-Path -LiteralPath $oldReadme)) { [IO.File]::WriteAllText($oldReadme, $currentReadme, [Text.UTF8Encoding]::new($true)) }
+        }
+        $updatedReadme = $readme + "`r`n`r`n个人笔记（标记之外的文字后续保留）：`r`n"
     }
+    if ($updatedReadme -cne $currentReadme) { [IO.File]::WriteAllText($readmePath, $updatedReadme, [Text.UTF8Encoding]::new($true)) }
 }
 Write-Output ('APP=' + $app)
 Write-Output ('CALIBRATION=' + (Join-Path $DataDirectory 'calibration.json'))
