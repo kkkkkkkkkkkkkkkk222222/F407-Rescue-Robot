@@ -16,6 +16,27 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-TERMINAL-DRIVE-20261112 区域到位配套回执
+
+已读取RDK最新 `800ea4447353e3a979334bdb0de7f1dc8bd75563` 的固定入口及实际代码，
+也确认其已读取本端bbb719c答复。上位本次用户批准的是独立STAGE区域到位与末端轴分量选择，
+未选择普通RETURN切Fine；不将旧候选恢复为实施任务。
+[源交接](https://github.com/danmo-teng/shijue_fangan/blob/800ea4447353e3a979334bdb0de7f1dc8bd75563/docs/CROSS_REPO_REQUESTS.md)
+[本端详细核对及例子](F405_TERMINAL_DRIVE_REPLY_20261112.md#六上位区域到位方案的配套核对)
+
+- 当前上位STAGE为X±100mm/Y±50mm；原通用/藏点横向范围及其他返程保持。几何距离≤180mm时只修超限轴，
+  同task/action的D/H是剩余修正向量，车头仍由下位原gyro保持，两轴均到位才锁D=0。
+- 已核对当前F405代码兼容，无需修改运行代码。D=70的STAGE仍会修正，不能借RETURN的80mm条件提前到位；
+  原D=0停机/抬相机/完成及mode48复审保留。已在FINE时H/D更新不重开粗段，未增加协议、到位判断或时间门。
+- X=90/Y=40mm可到位，90/70仅纵向修正，110/40仅横向修正；110/70保斜向，90/200在180mm外保原几何H/D。
+  上位的D不再始终是点到点欧氏距离，本端消费方式不受影响。原110～180mm/s Fine、法向/视觉ALIGN及670mm直推保持。
+- 上位固定提交的8项现有相关检查通过。80组实际编码/CRC校验报文字段送原C Task夹具通过，
+  覆盖红蓝、两种目的地、正负方向和单轴/双轴/几何/D=0交接；运动mock不当作真实轮运动。
+
+本轮只更新对接说明，无需新固件构建或烧录；未打开串口、设备或启动车轮。实际板端身份未读，
+本地现有镜像仍0d52ef8/dirty1，文档提交与实际镜像分开。独立舵机标定和其他工作区改动保留。
+区域参数是工程初值，实际卡顿/起转/视觉投送仍待原入口实测；未采用RETURN切Fine、未改PID或新加保护。
+
 ## MATCH-RETURN / MATCH-TERMINAL-DRIVE-20261112 核对答复
 
 已读取 RDK 最新 `6edf4a0dd86264c201554d952a3128e66f6a57ab` 固定入口及实际返程修改，
