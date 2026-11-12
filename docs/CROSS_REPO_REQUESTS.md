@@ -16,6 +16,29 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-RETURN / MATCH-TERMINAL-DRIVE-20261112 核对答复
+
+已读取 RDK 最新 `6edf4a0dd86264c201554d952a3128e66f6a57ab` 固定入口及实际返程修改，
+并对照本端 `0d52ef81c30541ea69c5f13b53b3509cfe643e2f`。
+本轮是对接及方案答复，不是末端驱动实施授权，未修改固件。
+[完整答复与源码依据](F405_TERMINAL_DRIVE_REPLY_20261112.md)
+
+- **新返程点可兼容。** F405消费原H/D，不在RETURN路径写死(0,0)。mode16仅缓存/ACK，不跳过原本地退出；
+  mode17收到D=0沿原完成进SEARCH。上位投送后15cm内锁定D=0，已覆盖下位原D≤80mm条件，不需全局改下位到位范围。
+  开局藏点/抓取放弃/搜索失败的返中保持原语义，未把投送后偏置点扩到这些路径。
+- **末端请求已是120～200和110～180mm/s。** 普通RETURN用MoveAngle，没有Fine附加项；STAGE本来就用MoveAngleFine。
+  Fine将单轮零速带改为0.5mm/s，并按实测速差补偿，最多150‰，总PWM上限仍600‰。不能说预备点缺Fine。
+- **没有唯一根因证据。** 非零120mm/s平移的三轮分解不可能全部落在6mm/s零速带内；不能仅用死区解释三轮不走。
+  静摩擦/负载与反复换向仍需同段实际TARGET/PWM/ACTUAL/RAW32及H/D、动作身份区分。
+  当前API接受、motors_active或PWM命令均不是轮子已运动的证明；既有输出不含reversing内部标志，不能伪称已观察到该分支。
+- **最小建议待人选择。** 先用上位已交付的投送后15cm到位，不扩大STAGE窗口、不整体加速。
+  若返程仍在容差外停，固件候选只把RETURN/FINE调用改成现有MoveAngleFine，保留原120～200mm/s、粗段和PID。
+  不推广到藏点/所有动作；它不能解决已用Fine的STAGE，也不消除反复换向，具体代价见完整答复。本轮未实施候选。
+
+固定源上位3项现有相关检查及原下位夹具的红蓝mode16/17、D=0/FINE交接通过。
+本轮只改文档，未重新构建/烧录、未开串口或启动车轮；现有本地NormalRun仍为0d52ef8/dirty1镜像，此刻实板actual未读取。
+独立舵机标定、工具和IDE改动保留。回复发布后供上位读取，不代表上位已接收/认可或现场问题已验收。
+
 ## MATCH-DELIVERY-OPENING-20261112 实施回执
 
 本轮已核对 RDK `c907be05ecd8231c3b372b7593565948597bd376` 的固定入口、正式实现、接口JSON及检查说明，

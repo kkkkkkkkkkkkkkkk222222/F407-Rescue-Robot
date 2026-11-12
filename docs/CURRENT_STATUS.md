@@ -1,5 +1,11 @@
 # 当前状态：F405 烧录入口
 
+2026-11-12 MATCH-RETURN / MATCH-TERMINAL-DRIVE对接答复。
+- 已核对RDK `6edf4a0`，现有下位H/D和D=0消费兼容投送后己方偏30cm、15cm锁定到位，不需改固件。
+- 末端不动仅分析，RETURN 120～200mm/s缺Fine附加项，STAGE 110～180mm/s已有Fine；缺实际PWM，不认定唯一根因。
+  建议先保留已实现返程范围，必要时仅RETURN末段复用Fine，未实施、待人决定。完整依据见[固定入口](CROSS_REPO_REQUESTS.md)。
+- 本轮只改文档，原入口相关检查通过；未构建/烧录/实车。现有本地镜像仍0d52ef8/dirty1，文档HEAD不是新实烧身份。
+
 2026-11-12 MATCH-DELIVERY-OPENING-20261112。
 - 基于本端 `19ec9f7` 配套RDK `c907be0`。开局原1.10 m本地轮程完成后直接交视觉预检，取消地图中心80 mm收敛前提。
 - 视觉ALIGN保持红90°/蓝270°，仅横移修正，>64 px启动、≤32 px结束，110～180 mm/s；动态同动作更新，移动mode10、完成mode11。
