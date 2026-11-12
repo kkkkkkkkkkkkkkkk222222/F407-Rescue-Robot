@@ -52,25 +52,31 @@ static uint8_t claw_relaxed_right(void)
   return APP_CLAW_RIGHT_FROM_LEFT(claw_relaxed_left());
 }
 
-static uint32_t servo_travel_wait_ms(uint8_t from_deg, uint8_t to_deg)
+static uint32_t servo_pulse_wait_ms(uint16_t from_us, uint16_t to_us)
 {
-  const uint32_t travel_deg = from_deg > to_deg ? from_deg - to_deg : to_deg - from_deg;
-  /* 130 ms per 60 degrees, times 1.5, rounded up to a whole millisecond. */
-  return (travel_deg * 195U + 59U) / 60U;
+  const uint32_t travel_us = from_us > to_us ? from_us - to_us : to_us - from_us;
+  /* 130ms/60deg *1.5, with0.09deg/us; ceil(delta_us *117/400). */
+  return (travel_us * 117U + 399U) / 400U;
 }
 
 static uint32_t claw_limit_wait_ms(uint8_t id, uint8_t angle, uint8_t min_deg, uint8_t max_deg)
 {
-  const uint8_t target_deg = Servo_OutputAngle(id, angle);
-  const uint32_t from_min_ms = servo_travel_wait_ms(min_deg, target_deg);
-  const uint32_t from_max_ms = servo_travel_wait_ms(max_deg, target_deg);
-  return from_min_ms > from_max_ms ? from_min_ms : from_max_ms;
+  const uint16_t target_us = Servo_OutputPulseUs(id, angle);
+  const uint16_t min_us = 500U + (uint32_t)APP_CLAW_MOUNT_ANGLE(min_deg) * 2000U / 180U;
+  const uint16_t max_us = 500U + (uint32_t)APP_CLAW_MOUNT_ANGLE(max_deg) * 2000U / 180U;
+  const uint32_t from_min_ms = servo_pulse_wait_ms(min_us, target_us);
+  const uint32_t from_max_ms = servo_pulse_wait_ms(max_us, target_us);
+  const uint32_t from_limits_ms = from_min_ms > from_max_ms ? from_min_ms : from_max_ms;
+  /* A single-claw release can leave the last target outside the ordinary range. */
+  const uint16_t current_us = Servo_OutputPulseUs(id, Servo_GetAngle(id));
+  const uint32_t from_current_ms = servo_pulse_wait_ms(current_us, target_us);
+  return from_current_ms > from_limits_ms ? from_current_ms : from_limits_ms;
 }
 
-static bool claw_move_together(ClawAction action, uint32_t now_ms, uint8_t left_angle)
+static bool claw_move_together(ClawAction action, uint32_t now_ms,
+                               uint8_t left_angle, uint8_t right_angle)
 {
   if (claw_action != action) {
-    const uint8_t right_angle = APP_CLAW_RIGHT_FROM_LEFT(left_angle);
     if (action == CLAW_ACTION_HALF_TOUCH) {
       claw_wait_ms = APP_INJURY_CLAW_SETTLE_MS;
     } else {
@@ -132,8 +138,8 @@ void Lift_SetStartPosition(void)
 
 uint32_t Lift_PositionWaitMs(uint8_t angle)
 {
-  return servo_travel_wait_ms(Servo_OutputAngle(1U, Servo_GetAngle(1U)),
-                              Servo_OutputAngle(1U, angle));
+  return servo_pulse_wait_ms(Servo_OutputPulseUs(1U, Servo_GetAngle(1U)),
+                            Servo_OutputPulseUs(1U, angle));
 }
 
 void Lift_SetTravelPosition(void)
@@ -141,9 +147,15 @@ void Lift_SetTravelPosition(void)
   Servo_SetAngle(1U, APP_LIFT_TRAVEL_ANGLE);
 }
 
+void Lift_SetFirstGreenFilterPosition(void)
+{
+  Servo_SetAngle(1U, APP_LIFT_FIRST_GREEN_FILTER_ANGLE);
+}
+
 bool Claw_Open(uint32_t now_ms)
 {
-  return claw_move_together(CLAW_ACTION_OPEN, now_ms, APP_CLAW_LEFT_OPEN_ANGLE);
+  return claw_move_together(CLAW_ACTION_OPEN, now_ms,
+                            APP_CLAW_LEFT_OPEN_ANGLE, APP_CLAW_RIGHT_OPEN_ANGLE);
 }
 
 static bool claw_step_to(uint8_t id, uint8_t target)
@@ -197,7 +209,7 @@ bool Claw_OpenLeft(uint32_t now_ms)
 {
   /* Release left and use the task's latched baseline/attempt relaxation. */
   return claw_move_separation(CLAW_ACTION_OPEN_LEFT, now_ms,
-                              APP_CLAW_LEFT_OPEN_ANGLE, claw_relaxed_right(),
+                              APP_CLAW_LEFT_RELEASE_ANGLE, claw_relaxed_right(),
                               APP_CLAW_SEPARATE_SETTLE_MS);
 }
 
@@ -205,7 +217,7 @@ bool Claw_OpenRight(uint32_t now_ms)
 {
   /* Mirror of Claw_OpenLeft: a smaller left-servo angle closes it farther. */
   return claw_move_separation(CLAW_ACTION_OPEN_RIGHT, now_ms,
-                              claw_relaxed_left(), APP_CLAW_RIGHT_OPEN_ANGLE,
+                              claw_relaxed_left(), APP_CLAW_RIGHT_RELEASE_ANGLE,
                               APP_CLAW_SEPARATE_SETTLE_MS);
 }
 
@@ -213,7 +225,7 @@ bool Claw_ClusterOpenLeft(uint32_t now_ms)
 {
   /* Selective separation uses the same retained-side profile across retries. */
   return claw_move_separation(CLAW_ACTION_CLUSTER_OPEN_LEFT, now_ms,
-                              APP_CLAW_LEFT_OPEN_ANGLE, claw_relaxed_right(),
+                              APP_CLAW_LEFT_RELEASE_ANGLE, claw_relaxed_right(),
                               APP_CLAW_SEPARATE_SETTLE_MS);
 }
 
@@ -221,7 +233,7 @@ bool Claw_ClusterOpenRight(uint32_t now_ms)
 {
   /* Mirror of Claw_ClusterOpenLeft for a retained left-side target. */
   return claw_move_separation(CLAW_ACTION_CLUSTER_OPEN_RIGHT, now_ms,
-                              claw_relaxed_left(), APP_CLAW_RIGHT_OPEN_ANGLE,
+                              claw_relaxed_left(), APP_CLAW_RIGHT_RELEASE_ANGLE,
                               APP_CLAW_SEPARATE_SETTLE_MS);
 }
 
@@ -255,11 +267,13 @@ bool Claw_Retract(uint32_t now_ms)
 
 bool Claw_Touch(uint32_t now_ms)
 {
-  return claw_move_together(CLAW_ACTION_TOUCH, now_ms, APP_CLAW_LEFT_TOUCH_ANGLE);
+  return claw_move_together(CLAW_ACTION_TOUCH, now_ms,
+                            APP_CLAW_LEFT_TOUCH_ANGLE, APP_CLAW_RIGHT_TOUCH_ANGLE);
 }
 
 bool Claw_HalfTouch(uint32_t now_ms)
 {
   return claw_move_together(CLAW_ACTION_HALF_TOUCH, now_ms,
-                            APP_CLAW_LEFT_TOUCH_ANGLE + APP_INJURY_CLAW_RELAX_DEG);
+                            APP_CLAW_LEFT_TOUCH_ANGLE + APP_INJURY_CLAW_RELAX_DEG,
+                            APP_CLAW_RIGHT_TOUCH_ANGLE - APP_INJURY_CLAW_RELAX_DEG);
 }

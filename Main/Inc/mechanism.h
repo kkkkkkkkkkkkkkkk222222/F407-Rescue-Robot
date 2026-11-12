@@ -11,6 +11,8 @@ void Lift_SetStartPosition(void);
 /* Estimate the wait before commanding the given angle. */
 uint32_t Lift_PositionWaitMs(uint8_t angle);
 void Lift_SetTravelPosition(void);
+/* Explicit maintenance preset; no autonomous filter sequence implied. */
+void Lift_SetFirstGreenFilterPosition(void);
 void Claw_SetSeparationHold(uint8_t extra_close_deg);
 void Claw_RestartAction(void);
 bool Claw_Open(uint32_t now_ms);

@@ -77,7 +77,7 @@
 #define APP_GAMEPAD_CAMERA_MIN_ANGLE 0.0f
 #define APP_GAMEPAD_CAMERA_MAX_ANGLE 165.0f
 #define APP_GAMEPAD_LIFT_RATE_DEG_S 45.0f
-#define APP_GAMEPAD_LIFT_MIN_ANGLE 45.0f
+#define APP_GAMEPAD_LIFT_MIN_ANGLE 61.0f
 #define APP_GAMEPAD_LIFT_MAX_ANGLE 120.0f
 #define APP_GAMEPAD_CLAW_RATE_DEG_S 35.0f
 #define APP_GAMEPAD_CLAW_LEFT_CLOSED_ANGLE ((float)APP_CLAW_LEFT_TOUCH_ANGLE)
@@ -629,13 +629,23 @@
 #define APP_BOUNDARY_TURN_TOLERANCE_DEG        5.0f
 #define APP_BOUNDARY_RECOVERY_SPEED_MM_S     300.0f
 #define APP_POSE_WAIT_TIMEOUT_MS          1500U
-#define APP_LIFT_START_ANGLE              55U
-#define APP_LIFT_TRAVEL_ANGLE             86U
-/* F405 installation offsets in degrees, added at PWM output. */
+#define APP_LIFT_START_ANGLE              61U
+#define APP_LIFT_TRAVEL_ANGLE             85U
+/* Calibrated pose only; the autonomous first-green filter is not enabled here. */
+#define APP_LIFT_FIRST_GREEN_FILTER_ANGLE 82U
+/* S2/S4 mounting: 1 mirrors the PWM angle, 0 selects the original mounting. */
+#define APP_CLAW_SERVOS_INVERTED           1
+#define APP_CLAW_MOUNT_ANGLE(deg) (APP_CLAW_SERVOS_INVERTED ? (180U - (deg)) : (deg))
+/* F405 installation offsets in degrees, added after the mounting transform. */
 #define APP_SERVO_S1_OFFSET_DEG            0  /* Lift */
-#define APP_SERVO_S2_OFFSET_DEG            2  /* Right claw */
+#define APP_SERVO_S2_OFFSET_DEG            0  /* Right claw, recalibrate after remount */
 #define APP_SERVO_S3_OFFSET_DEG            0  /* Camera */
-#define APP_SERVO_S4_OFFSET_DEG            5  /* Left claw */
+#define APP_SERVO_S4_OFFSET_DEG            0  /* Left claw, recalibrate after remount */
+/* Fine installation trims are added after angle-to-pulse conversion. */
+#define APP_SERVO_S1_OFFSET_US             0
+#define APP_SERVO_S2_OFFSET_US            32
+#define APP_SERVO_S3_OFFSET_US             0
+#define APP_SERVO_S4_OFFSET_US             8
 #define APP_DELIVERY_CAMERA_ANGLE         120U
 #define APP_DELIVERY_CAMERA_SETTLE_MS     300U
 #define APP_DELIVERY_VERIFY_WAIT_MS       1000U
@@ -652,18 +662,21 @@
 #define APP_STASH_RETURN_BACKOFF_M           0.35f
 #define APP_STASH_RETURN_BACKOFF_SPEED_MM_S 650.0f
 #define APP_REMOTE_YIELD_SPEED_MM_S          750.0f
-/* The left claw defines each mirrored logical pose. PWM trim is per servo. */
+/* Opening targets and ordinary wait ranges mirror between the claws. */
 #define APP_CLAW_RIGHT_FROM_LEFT(left_deg) (180U - (left_deg))
-/* Mechanical limits in output degrees. The right claw mirrors the left. */
+/* Original-mount output range used to estimate waits for ordinary claw moves. */
 #define APP_CLAW_LEFT_LIMIT_MIN_DEG              20U
 #define APP_CLAW_LEFT_LIMIT_MAX_DEG             120U
 #define APP_CLAW_LEFT_OPEN_ANGLE                108U
-#define APP_CLAW_LEFT_TOUCH_ANGLE                76U
 #define APP_CLAW_RIGHT_OPEN_ANGLE  APP_CLAW_RIGHT_FROM_LEFT(APP_CLAW_LEFT_OPEN_ANGLE)
+#define APP_CLAW_LEFT_RELEASE_ANGLE             180U
+#define APP_CLAW_RIGHT_RELEASE_ANGLE APP_CLAW_RIGHT_FROM_LEFT(APP_CLAW_LEFT_RELEASE_ANGLE)
+/* Both claws close6deg inward from90; installation error belongs in offsets. */
+#define APP_CLAW_LEFT_TOUCH_ANGLE                84U
 #define APP_CLAW_RIGHT_TOUCH_ANGLE APP_CLAW_RIGHT_FROM_LEFT(APP_CLAW_LEFT_TOUCH_ANGLE)
 /* Stow folds the left claw inside before bringing the right claw around it. */
-#define APP_CLAW_LEFT_RETRACT_ANGLE              18U
-#define APP_CLAW_RIGHT_RETRACT_ANGLE            147U
+#define APP_CLAW_LEFT_RETRACT_ANGLE              32U
+#define APP_CLAW_RIGHT_RETRACT_ANGLE            132U
 #define APP_CLAW_SEPARATE_ONE_OR_TWO_CLOSE_DEG    20U
 #define APP_CLAW_SEPARATE_THREE_CLOSE_DEG         10U
 #define APP_CLAW_SEPARATE_SOFT_CLOSE_DEG           5U

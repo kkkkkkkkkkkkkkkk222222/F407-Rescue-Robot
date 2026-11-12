@@ -34,6 +34,7 @@ internal sealed class CalibratorForm : Form, IMessageFilter
 {
     private readonly string repo, openOcdExe, dataDirectory;
     private readonly bool inverted;
+    private readonly string configText;
     private readonly TextBox port = new TextBox();
     private readonly NumericUpDown opening = new NumericUpDown();
     private readonly NumericUpDown leftOffset = new NumericUpDown();
@@ -45,6 +46,7 @@ internal sealed class CalibratorForm : Form, IMessageFilter
     private readonly NumericUpDown repeatCount = new NumericUpDown();
     private readonly NumericUpDown extraDwell = new NumericUpDown();
     private readonly System.Windows.Forms.Timer repeatTimer = new System.Windows.Forms.Timer();
+    private readonly System.Windows.Forms.Timer presetTimer = new System.Windows.Forms.Timer();
     private readonly Dictionary<Control, int> wheelZones = new Dictionary<Control, int>();
     private readonly int[] livePulses = new int[5];
     private readonly bool[] servoEnabled = new bool[5];
@@ -67,6 +69,17 @@ internal sealed class CalibratorForm : Form, IMessageFilter
     private int liveLeft, liveRight;
     private bool clawsAtOpen, repeatActive;
     private int repeatCompleted, repeatTotal, wheelRemainder, lastWheelZone = -1;
+    private decimal closedOpening;
+    private int poseRightDeltaCdeg;
+    private bool closedPose = true, presetSequencing;
+    private string poseName = "合爪";
+
+    private sealed class Pose
+    {
+        public string Name;
+        public int Left, Right, Lift, Camera;
+        public bool Stow, Closed;
+    }
 
     public CalibratorForm(string repository, string openOcd, string directory, string portName)
     {
@@ -74,20 +87,22 @@ internal sealed class CalibratorForm : Form, IMessageFilter
         openOcdExe = Path.GetFullPath(openOcd);
         dataDirectory = Path.GetFullPath(directory);
         Directory.CreateDirectory(dataDirectory);
-        inverted = Regex.IsMatch(File.ReadAllText(Path.Combine(repo, "Main/Inc/app_config.h")),
+        configText = File.ReadAllText(Path.Combine(repo, "Main/Inc/app_config.h"));
+        inverted = Regex.IsMatch(configText,
             @"(?m)^\s*#define\s+APP_CLAW_SERVOS_INVERTED\s+1\b");
+        closedOpening = Define("APP_CLAW_LEFT_TOUCH_ANGLE");
         session = new StreamWriter(Path.Combine(dataDirectory,
             "adjust_" + DateTime.Now.ToString("yyyyMMdd_HHmmss_fff") + ".jsonl"), true, new UTF8Encoding(false));
         session.AutoFlush = true;
         Text = "F405 四路舵机滚轮微调 · 1 µs分度";
         Font = new Font("Microsoft YaHei UI", 10F);
-        Size = new Size(1080, 900);
+        Size = new Size(1080, 960);
         MinimumSize = new Size(960, 760);
         StartPosition = FormStartPosition.CenterScreen;
         AutoScaleMode = AutoScaleMode.Dpi;
 
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 13, Padding = new Padding(12), AutoScroll = true };
-        for (int row = 0; row < 12; ++row) layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 14, Padding = new Padding(12), AutoScroll = true };
+        for (int row = 0; row < 13; ++row) layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         Controls.Add(layout);
         layout.Controls.Add(Note("鼠标停在哪一行，滚轮就调哪一行；默认1 µs/格。只调舵机，不烧录、不动车轮，关闭窗口保持最后脉宽。"), 0, 0);
@@ -96,14 +111,22 @@ internal sealed class CalibratorForm : Form, IMessageFilter
         port.Text = portName; port.Width = 90; connection.Controls.Add(port);
         connection.Controls.Add(Button("连接并读取", delegate { ConnectBoard(); }));
         connection.Controls.Add(Button("断开并保持", delegate { DisconnectBoard(); Log("已断开，保持最后脉宽。"); }));
-        connection.Controls.Add(Button("恢复旧合爪 S4=86 / S2=90", delegate { RestoreOldClosed(); }));
+        connection.Controls.Add(Button("启用双爪/标定合爪", delegate { RestoreCalibratedClosed(); }));
         layout.Controls.Add(connection, 0, 1);
+        var presetRow = Row();
+        presetRow.MaximumSize = new Size(1000, 0);
+        foreach (Pose configured in Presets())
+        {
+            Pose selected = configured;
+            presetRow.Controls.Add(Button(selected.Name, delegate { ApplyPreset(selected); }));
+        }
+        layout.Controls.Add(presetRow, 0, 2);
 
         state.AutoSize = true; state.Text = "未连接；打开窗口不会自动移动。"; state.Margin = new Padding(3, 8, 3, 8);
-        layout.Controls.Add(state, 0, 2);
+        layout.Controls.Add(state, 0, 3);
         var movement = Row();
         movement.Controls.Add(new Label { Text = "统一动作开度 A", AutoSize = true, Margin = new Padding(3, 10, 3, 3) });
-        ConfigureNumber(opening, 0, 180, 2, 0.09M, 84M); movement.Controls.Add(opening);
+        ConfigureNumber(opening, 0, 180, 2, 0.09M, closedOpening); movement.Controls.Add(opening);
         movement.Controls.Add(new Label { Text = "度   步长", AutoSize = true, Margin = new Padding(3, 10, 3, 3) });
         step.DropDownStyle = ComboBoxStyle.DropDownList; step.Width = 70;
         foreach (int value in new int[] { 1, 2, 5, 10, 20 }) step.Items.Add(value);
@@ -111,36 +134,36 @@ internal sealed class CalibratorForm : Form, IMessageFilter
         movement.Controls.Add(new Label { Text = "µs", AutoSize = true, Margin = new Padding(3, 10, 3, 3) });
         movement.Controls.Add(Button("双爪内收", delegate { NudgeOpening(-1); }));
         movement.Controls.Add(Button("双爪外展", delegate { NudgeOpening(1); }));
-        layout.Controls.Add(movement, 0, 3);
+        layout.Controls.Add(movement, 0, 4);
         wheelZones.Add(movement, 0);
         var left = Row();
         left.Controls.Add(new Label { Text = "左 S4 安装offset", AutoSize = true, Width = 165, Margin = new Padding(3, 10, 3, 3) });
-        ConfigureNumber(leftOffset, -2000, 2000, 0, 1, 0); left.Controls.Add(leftOffset);
+        ConfigureNumber(leftOffset, -2000, 2000, 0, 1, Define("APP_SERVO_S4_OFFSET_US")); left.Controls.Add(leftOffset);
         left.Controls.Add(new Label { Text = "µs", AutoSize = true, Margin = new Padding(3, 10, 3, 3) });
         left.Controls.Add(Button("仅左内收", delegate { NudgeOffset(leftOffset, inverted ? 1 : -1); }));
         left.Controls.Add(Button("仅左外展", delegate { NudgeOffset(leftOffset, inverted ? -1 : 1); }));
-        layout.Controls.Add(left, 0, 4);
+        layout.Controls.Add(left, 0, 5);
         wheelZones.Add(left, 4);
         var right = Row();
         right.Controls.Add(new Label { Text = "右 S2 安装offset", AutoSize = true, Width = 165, Margin = new Padding(3, 10, 3, 3) });
-        ConfigureNumber(rightOffset, -2000, 2000, 0, 1, 0); right.Controls.Add(rightOffset);
+        ConfigureNumber(rightOffset, -2000, 2000, 0, 1, Define("APP_SERVO_S2_OFFSET_US")); right.Controls.Add(rightOffset);
         right.Controls.Add(new Label { Text = "µs", AutoSize = true, Margin = new Padding(3, 10, 3, 3) });
         right.Controls.Add(Button("仅右内收", delegate { NudgeOffset(rightOffset, inverted ? -1 : 1); }));
         right.Controls.Add(Button("仅右外展", delegate { NudgeOffset(rightOffset, inverted ? 1 : -1); }));
-        layout.Controls.Add(right, 0, 5);
+        layout.Controls.Add(right, 0, 6);
         wheelZones.Add(right, 2);
         var lift = Row();
         lift.Controls.Add(new Label { Text = "升降 S1 PWM等效角", AutoSize = true, Margin = new Padding(3, 10, 3, 3) });
-        ConfigureNumber(liftOutput, 0, 180, 2, 0.09M, 90M); lift.Controls.Add(liftOutput);
+        ConfigureNumber(liftOutput, (ConfigPulse(1, Define("APP_LIFT_START_ANGLE")) - 500) * 0.09M, 180, 2, 0.09M, 90M); lift.Controls.Add(liftOutput);
         lift.Controls.Add(Button("S1启用/应用", delegate { ApplyOther(1); }));
         liftReadback.AutoSize = true; liftReadback.Margin = new Padding(6, 10, 3, 3); lift.Controls.Add(liftReadback);
-        layout.Controls.Add(lift, 0, 6); wheelZones.Add(lift, 1);
+        layout.Controls.Add(lift, 0, 7); wheelZones.Add(lift, 1);
         var camera = Row();
         camera.Controls.Add(new Label { Text = "相机 S3 PWM等效角", AutoSize = true, Margin = new Padding(3, 10, 3, 3) });
         ConfigureNumber(cameraOutput, 0, 180, 2, 0.09M, 90M); camera.Controls.Add(cameraOutput);
         camera.Controls.Add(Button("S3启用/应用", delegate { ApplyOther(3); }));
         cameraReadback.AutoSize = true; cameraReadback.Margin = new Padding(6, 10, 3, 3); camera.Controls.Add(cameraReadback);
-        layout.Controls.Add(camera, 0, 7); wheelZones.Add(camera, 3);
+        layout.Controls.Add(camera, 0, 8); wheelZones.Add(camera, 3);
         var repeat = Row();
         repeat.Controls.Add(Button("全开180°→合爪 [空格]", delegate { StartRepeat(); }));
         repeat.Controls.Add(Button("全开保持 [F2]", delegate { FullOpenHold(); }));
@@ -149,19 +172,19 @@ internal sealed class CalibratorForm : Form, IMessageFilter
         ConfigureNumber(repeatCount, 1, 1000, 0, 1, 1); repeatCount.Width = 65; repeat.Controls.Add(repeatCount);
         repeat.Controls.Add(new Label { Text = "到位后停留ms", AutoSize = true, Margin = new Padding(3, 10, 3, 3) });
         ConfigureNumber(extraDwell, 0, 10000, 0, 50, 200); extraDwell.Width = 80; repeat.Controls.Add(extraDwell);
-        layout.Controls.Add(repeat, 0, 8);
+        layout.Controls.Add(repeat, 0, 9);
         preview.AutoSize = true; preview.Margin = new Padding(3, 8, 3, 8);
-        preview.Font = new Font("Consolas", 11F); layout.Controls.Add(preview, 0, 9);
+        preview.Font = new Font("Consolas", 11F); layout.Controls.Add(preview, 0, 10);
         var saveRow = Row();
         saveRow.Controls.Add(Button("保存标定", delegate { SaveCalibration(); }));
         saveRow.Controls.Add(Button("应用已保存姿态", delegate { ApplySaved(); }));
         saveRow.Controls.Add(Button("只读四路脉宽", delegate { RefreshAll(true); }));
         referenceConfirmed.Text = "已人工确认安装基准/对称性"; referenceConfirmed.AutoSize = true;
         referenceConfirmed.Margin = new Padding(10, 8, 3, 3); saveRow.Controls.Add(referenceConfirmed);
-        layout.Controls.Add(saveRow, 0, 10);
-        layout.Controls.Add(Note("合爪设计开度84°=90°内收6°，左右offset另算。滚轮上滚：外展/输出增加；下滚反向。\nS1/S3未启用时，滚轮会按显示值启用该路。空格复测全开→合爪；Ctrl+S保存。1 µs不代表实际精度。"), 0, 11);
+        layout.Controls.Add(saveRow, 0, 11);
+        layout.Controls.Add(Note("状态预设取自当前代码；收纳和单侧分离有意不对称，其余姿态共用开度和独立offset。\n滚轮默认1µs/格；S1/S3未启用时会按显示值启用。空格全开复测，F3回合爪，Ctrl+S保存。"), 0, 12);
         history.Multiline = true; history.ReadOnly = true; history.ScrollBars = ScrollBars.Vertical;
-        history.Dock = DockStyle.Fill; history.MinimumSize = new Size(100, 90); history.Font = new Font("Consolas", 9F); layout.Controls.Add(history, 0, 12);
+        history.Dock = DockStyle.Fill; history.MinimumSize = new Size(100, 90); history.Font = new Font("Consolas", 9F); layout.Controls.Add(history, 0, 13);
 
         opening.ValueChanged += delegate { ValuesChanged(); };
         leftOffset.ValueChanged += delegate { ValuesChanged(); };
@@ -169,10 +192,101 @@ internal sealed class CalibratorForm : Form, IMessageFilter
         liftOutput.ValueChanged += delegate { if (!loading && connected) Execute(delegate { ApplyOther(1); }); };
         cameraOutput.ValueChanged += delegate { if (!loading && connected) Execute(delegate { ApplyOther(3); }); };
         repeatTimer.Tick += delegate { Execute(RepeatTick); };
+        presetTimer.Tick += delegate {
+            presetTimer.Stop(); presetSequencing = false;
+            Execute(delegate { ApplyCurrent(); Log("收纳完成：左爪先到内侧，再收右爪。"); });
+        };
         Application.AddMessageFilter(this);
-        FormClosing += delegate { DisconnectBoard(); repeatTimer.Dispose(); Application.RemoveMessageFilter(this); session.Dispose(); };
+        FormClosing += delegate { DisconnectBoard(); repeatTimer.Dispose(); presetTimer.Dispose(); Application.RemoveMessageFilter(this); session.Dispose(); };
         LoadSaved(); UpdatePreview();
         Log("先连接读取当前姿态。初次折算offset只是保持原姿态的起点，不是自动测得的安装误差。");
+    }
+
+    private int Define(string name)
+    {
+        Match entry = Regex.Match(configText, @"(?m)^\s*#define\s+" + Regex.Escape(name) + @"\s+([^\r\n]+)");
+        if (!entry.Success) throw new IOException("当前配置缺少 " + name);
+        string value = Regex.Replace(entry.Groups[1].Value, @"/\*.*?\*/|//.*", "").Trim();
+        Match number = Regex.Match(value, @"^([+-]?\d+)[uUlL]*$");
+        if (number.Success) return int.Parse(number.Groups[1].Value, CultureInfo.InvariantCulture);
+        Match mirrored = Regex.Match(value, @"^APP_CLAW_RIGHT_FROM_LEFT\((\w+)\)$");
+        if (mirrored.Success) return 180 - Define(mirrored.Groups[1].Value);
+        if (Regex.IsMatch(value, @"^\w+$")) return Define(value);
+        throw new IOException("无法读取配置整数 " + name + "=" + value);
+    }
+    private int ConfigPulse(int id, int angle)
+    {
+        int mounted = (id == 2 || id == 4) && inverted ? 180 - angle : angle;
+        if ((id == 4 && angle == 180) || (id == 2 && angle == 0)) return 500 + mounted * 2000 / 180;
+        int whole = Math.Max(0, Math.Min(180, mounted + Define("APP_SERVO_S" + id + "_OFFSET_DEG")));
+        return Math.Max(500, Math.Min(2500, 500 + whole * 2000 / 180 + Define("APP_SERVO_S" + id + "_OFFSET_US")));
+    }
+    private IEnumerable<Pose> Presets()
+    {
+        string console = File.ReadAllText(Path.Combine(repo, "Main/Src/DebugConsole.c"));
+        MatchCollection entries = Regex.Matches(console, @"\{\s*""(?<name>[A-Z_]+)""\s*,\s*(?<lift>\w+)\s*,\s*(?<cam>\w+)\s*,\s*(?<claw>\w+)\s*\}");
+        var labels = new Dictionary<string, string> { {"START","起步收纳"}, {"SEARCH","高位搜索"}, {"LOW","低位搜索"},
+            {"OBSERVE","开爪观察"}, {"AUDIT","合爪复审"}, {"HALF","半闭后退"}, {"STAGE","安全区预备"},
+            {"DROP","投送开爪"}, {"FILTER","首绿抬升82°"} };
+        foreach (Match entry in entries)
+        {
+            string key = entry.Groups["name"].Value, claw = entry.Groups["claw"].Value;
+            string lift = entry.Groups["lift"].Value;
+            int height = Define(lift == "Lift_SetStartPosition" ? "APP_LIFT_START_ANGLE" :
+                lift == "Lift_SetFirstGreenFilterPosition" ? "APP_LIFT_FIRST_GREEN_FILTER_ANGLE" : "APP_LIFT_TRAVEL_ANGLE");
+            int camera = Regex.IsMatch(entry.Groups["cam"].Value, @"^\d+U?$") ?
+                int.Parse(entry.Groups["cam"].Value.TrimEnd('U')) : Define(entry.Groups["cam"].Value);
+            int left = claw == "Claw_Retract" ? Define("APP_CLAW_LEFT_RETRACT_ANGLE") :
+                claw == "Claw_Open" ? Define("APP_CLAW_LEFT_OPEN_ANGLE") : Define("APP_CLAW_LEFT_TOUCH_ANGLE");
+            int right = claw == "Claw_Retract" ? 180 - Define("APP_CLAW_RIGHT_RETRACT_ANGLE") : left;
+            if (claw == "Claw_HalfTouch") left = right = left + Define("APP_INJURY_CLAW_RELAX_DEG");
+            yield return new Pose { Name = labels.ContainsKey(key) ? labels[key] : key, Left = left, Right = right,
+                Lift = height, Camera = camera, Stow = claw == "Claw_Retract", Closed = claw == "Claw_Touch" };
+        }
+        foreach (int tighten in new int[] { Define("APP_CLAW_SEPARATE_ONE_OR_TWO_CLOSE_DEG"),
+            Define("APP_CLAW_SEPARATE_THREE_CLOSE_DEG"), Define("APP_CLAW_SEPARATE_SOFT_CLOSE_DEG") })
+        {
+            int retained = Define("APP_CLAW_LEFT_TOUCH_ANGLE") - tighten;
+            yield return new Pose { Name = "保左/夹紧" + tighten + "°", Left = retained, Right = 180,
+                Lift = Define("APP_LIFT_TRAVEL_ANGLE"), Camera = Define("APP_GRAB_VIEW_ANGLE") };
+            yield return new Pose { Name = "保右/夹紧" + tighten + "°", Left = 180, Right = retained,
+                Lift = Define("APP_LIFT_TRAVEL_ANGLE"), Camera = Define("APP_GRAB_VIEW_ANGLE") };
+        }
+    }
+    private void SelectClosedPose()
+    {
+        loading = true;
+        try { poseRightDeltaCdeg = 0; opening.Value = closedOpening; closedPose = true; poseName = "合爪"; }
+        finally { loading = false; }
+        UpdatePreview();
+    }
+    private void ApplyPreset(Pose selected)
+    {
+        if (!connected) throw new IOException("先连接读取；点击预设只执行机构姿态，不运行比赛动作。");
+        CancelRepeat(); loading = true;
+        try
+        {
+            poseName = selected.Name; closedPose = selected.Closed;
+            poseRightDeltaCdeg = (selected.Right - selected.Left) * 100;
+            opening.Value = selected.Closed ? closedOpening : selected.Left;
+            liftOutput.Value = (ConfigPulse(1, selected.Lift) - 500) * 0.09M;
+            cameraOutput.Value = (ConfigPulse(3, selected.Camera) - 500) * 0.09M;
+        }
+        finally { loading = false; }
+        clawsAtOpen = false;
+        ApplyOther(1); ApplyOther(3);
+        ApplyPoseClaws(selected.Stow);
+        state.Text = "当前预设：" + selected.Name + "；可继续滚轮微调。首绿预设只抬机构，不后退或启动Task。";
+        Log("预设 " + selected.Name + "，S1=" + selected.Lift + "°，S3=" + selected.Camera + "°；安装offset保留。");
+    }
+    private void ApplyPoseClaws(bool stow)
+    {
+        if (!stow) { ApplyCurrent(); return; }
+        int previousLeft = liveLeft;
+        SetClawPair(LeftPulse, liveRight);
+        presetSequencing = true;
+        presetTimer.Interval = Math.Max(1, (int)Math.Ceiling(Math.Abs(liveLeft - previousLeft) * 0.2925));
+        presetTimer.Start();
     }
 
     private static FlowLayoutPanel Row()
@@ -211,22 +325,24 @@ internal sealed class CalibratorForm : Form, IMessageFilter
     private int StepUs { get { return Convert.ToInt32(step.SelectedItem, CultureInfo.InvariantCulture); } }
     private int OpeningCdeg { get { return (int)(opening.Value * 100M); } }
     private int BaseLeft { get { return 500 + (inverted ? 18000 - OpeningCdeg : OpeningCdeg) / 9; } }
-    private int BaseRight { get { return 500 + (inverted ? OpeningCdeg : 18000 - OpeningCdeg) / 9; } }
-    private int LeftPulse { get { return BaseLeft + (int)leftOffset.Value; } }
-    private int RightPulse { get { return BaseRight + (int)rightOffset.Value; } }
+    private int RightOpeningCdeg { get { return Math.Max(0, Math.Min(18000, OpeningCdeg + poseRightDeltaCdeg)); } }
+    private int BaseRight { get { return 500 + (inverted ? RightOpeningCdeg : 18000 - RightOpeningCdeg) / 9; } }
+    private int LeftPulse { get { return OpeningCdeg >= 18000 ? (inverted ? 500 : 2500) : Math.Max(500, Math.Min(2500, BaseLeft + (int)leftOffset.Value)); } }
+    private int RightPulse { get { return RightOpeningCdeg >= 18000 ? (inverted ? 2500 : 500) : Math.Max(500, Math.Min(2500, BaseRight + (int)rightOffset.Value)); } }
     private void UpdatePreview()
     {
         preview.Text = String.Format(CultureInfo.InvariantCulture,
             "目标PWM L(S4)={0}us  R(S2)={1}us    最近表读回 L={2}us R={3}us\nS逻辑等效 L≈{4:0.00}° R≈{5:0.00}°（offset另算）",
-            LeftPulse, RightPulse, liveLeft, liveRight, opening.Value, 180M - opening.Value);
+            LeftPulse, RightPulse, liveLeft, liveRight, opening.Value, 180M - RightOpeningCdeg / 100M);
         liftReadback.Text = hasRead ? String.Format("{0}，表读回{1}µs", servoEnabled[1] ? "已启用" : "未启用，滚动后启用", livePulses[1]) : "待连接读取";
         cameraReadback.Text = hasRead ? String.Format("{0}，表读回{1}µs", servoEnabled[3] ? "已启用" : "未启用，滚动后启用", livePulses[3]) : "待连接读取";
     }
     private void ValuesChanged()
     {
         if (loading) return;
+        if (closedPose) closedOpening = opening.Value;
         UpdatePreview();
-        if (connected && !clawsAtOpen) Execute(ApplyCurrent);
+        if (connected && !clawsAtOpen && !presetSequencing) Execute(ApplyCurrent);
     }
     private void NudgeOpening(int direction)
     {
@@ -282,6 +398,7 @@ internal sealed class CalibratorForm : Form, IMessageFilter
     private void CancelRepeat()
     {
         repeatTimer.Stop(); repeatActive = false;
+        presetTimer.Stop(); presetSequencing = false;
     }
     private int MovementWait(int beforeLeft, int beforeRight)
     {
@@ -293,30 +410,26 @@ internal sealed class CalibratorForm : Form, IMessageFilter
     {
         int left = inverted ? 500 : 2500;
         int right = inverted ? 2500 : 500;
-        int desiredLeft = left + (int)leftOffset.Value;
-        int desiredRight = right + (int)rightOffset.Value;
-        left = Math.Max(500, Math.Min(2500, desiredLeft));
-        right = Math.Max(500, Math.Min(2500, desiredRight));
         SetClawPair(left, right); clawsAtOpen = true;
         state.Text = "双爪180°全开；面板仍保留合爪目标，F3回合爪。滚轮修改用于下次合爪。";
-        Log(String.Format("全开A=180°，脉宽{0}/{1}us；保留合爪A={2:0.00}°和offset。{3}",
-            left, right, opening.Value, left != desiredLeft || right != desiredRight ? "端点按原输出范围截限，不改offset。" : ""));
+        Log(String.Format("全开A=180°直接用物理端点{0}/{1}us，不加offset；合爪目标A={2:0.00}°及offset保留用于回合爪。",
+            left, right, opening.Value));
     }
     private void FullOpenHold()
     {
         if (!connected) throw new IOException("先连接读取。");
-        CancelRepeat(); ApplyFullOpen();
+        CancelRepeat(); SelectClosedPose(); ApplyFullOpen();
     }
     private void ReturnClosed()
     {
         if (!connected) throw new IOException("先连接读取。");
-        CancelRepeat(); ApplyCurrent(); clawsAtOpen = false;
+        CancelRepeat(); SelectClosedPose(); ApplyCurrent(); clawsAtOpen = false;
         state.Text = "已返回当前面板合爪目标；可继续滚轮微调。";
     }
     private void StartRepeat()
     {
         if (!connected) throw new IOException("先连接读取。");
-        CancelRepeat(); repeatCompleted = 0; repeatTotal = (int)repeatCount.Value;
+        CancelRepeat(); SelectClosedPose(); repeatCompleted = 0; repeatTotal = (int)repeatCount.Value;
         if (LeftPulse < 500 || LeftPulse > 2500 || RightPulse < 500 || RightPulse > 2500)
             throw new IOException("合爪目标超出原输出范围，未开始复测。");
         int left = liveLeft, right = liveRight;
@@ -518,7 +631,7 @@ internal sealed class CalibratorForm : Form, IMessageFilter
         if (adoptOtherTargets)
         {
             loading = true;
-            try { liftOutput.Value = (livePulses[1] - 500) * 0.09M; cameraOutput.Value = (livePulses[3] - 500) * 0.09M; }
+            try { liftOutput.Value = Clamp(liftOutput, (livePulses[1] - 500) * 0.09M); cameraOutput.Value = (livePulses[3] - 500) * 0.09M; }
             finally { loading = false; }
         }
         UpdatePreview();
@@ -546,20 +659,21 @@ internal sealed class CalibratorForm : Form, IMessageFilter
         servoEnabled[id] = true; UpdatePreview();
         Log(String.Format("仅S{0}细调，表读回{1}us；PWM等效角{2:0.00}°，不冒充实际轴角或原S逻辑角。", id, livePulses[id], (livePulses[id] - 500) * 0.09));
     }
-    private void RestoreOldClosed()
+    private void RestoreCalibratedClosed()
     {
         DisconnectBoard();
         try
         {
             OpenConsole();
-            foreach (string command in new string[] { "S 2 72", "S 4 86", "S 2 90" })
+            foreach (string command in new string[] { "S 2 " + Define("APP_CLAW_RIGHT_OPEN_ANGLE"),
+                "S 4 " + Define("APP_CLAW_LEFT_TOUCH_ANGLE"), "S 2 " + Define("APP_CLAW_RIGHT_TOUCH_ANGLE") })
             {
                 string reply = ConsoleCommand(command, motionService ? @"SERVO ID=\d+ TARGET_DEG=\d+ PWM=ON" : @"(?m)^OK\r?$");
                 Log(command + " 已确认。"); Thread.Sleep(400);
             }
-            loading = true; opening.Value = 86M; referenceConfirmed.Checked = false; loading = false;
-            StartHelper(); connected = true; AdoptLive();
-            state.Text = "已恢复旧合爪；A=86°为微调起点，offset待按实物确认。";
+            SelectClosedPose();
+            StartHelper(); connected = true; RefreshAll(true); ApplyCurrent();
+            state.Text = "已启用双爪并应用当前标定，闭合设计84°、offset单独保留。";
         }
         catch { DisconnectBoard(); throw; }
     }
@@ -592,6 +706,7 @@ internal sealed class CalibratorForm : Form, IMessageFilter
             saved = json.Deserialize<Dictionary<string, object>>(File.ReadAllText(path));
             loading = true;
             opening.Value = SavedInt("opening_cdeg") / 100M;
+            closedOpening = opening.Value;
             leftOffset.Value = SavedInt("left_offset_us");
             rightOffset.Value = SavedInt("right_offset_us");
             loading = false;
@@ -602,14 +717,17 @@ internal sealed class CalibratorForm : Form, IMessageFilter
     private void SaveCalibration()
     {
         if (!hasRead) throw new IOException("先连接读取当前姿态。");
-        if (repeatActive || clawsAtOpen) throw new IOException("先F3回到合爪，再保存闭合参数。");
+        if (repeatActive || presetSequencing) throw new IOException("机构动作完成后再保存，或先F3回合爪。");
         if (connected) RefreshAll(false);
-        if (LeftPulse != liveLeft || RightPulse != liveRight)
+        if (!clawsAtOpen && (LeftPulse != liveLeft || RightPulse != liveRight))
             throw new IOException("当前面板目标与最后读回不同，请先应用或重新读取，再保存。");
         saved = new Dictionary<string, object> {
-            { "schema_version", 2 }, { "saved_at", DateTimeOffset.Now.ToString("o") },
+            { "schema_version", 3 }, { "saved_at", DateTimeOffset.Now.ToString("o") },
             { "board", "F405" }, { "calibration_kind", "manual_four_servo_adjustment" },
-            { "opening_cdeg", OpeningCdeg }, { "opening_deg", opening.Value },
+            { "opening_cdeg", (int)(closedOpening * 100M) }, { "opening_deg", closedOpening },
+            { "pose_opening_cdeg", clawsAtOpen ? 18000 : OpeningCdeg },
+            { "pose_right_delta_cdeg", clawsAtOpen ? 0 : poseRightDeltaCdeg },
+            { "pose_name", clawsAtOpen ? "全开" : poseName }, { "claws_full_open", clawsAtOpen },
             { "left_offset_us", (int)leftOffset.Value }, { "right_offset_us", (int)rightOffset.Value },
             { "left_pulse_us", liveLeft }, { "right_pulse_us", liveRight },
             { "s1_pulse_us", livePulses[1] }, { "s1_enabled", servoEnabled[1] },
@@ -624,8 +742,8 @@ internal sealed class CalibratorForm : Form, IMessageFilter
         string path = Path.Combine(dataDirectory, "calibration.json");
         File.WriteAllText(path, json.Serialize(saved), new UTF8Encoding(false));
         string summary = String.Format(CultureInfo.InvariantCulture,
-            "F405四路人工微调结果\r\n保存时间：{0}\r\n统一动作开度：{1:0.00}°\r\n左S4 offset：{2} µs\r\n右S2 offset：{3} µs\r\n左/右PWM：{4}/{5} µs\r\n人工确认安装基准/对称性：{6}\r\n未写入固件；重启或新S指令可能覆盖临时脉宽。\r\n",
-            DateTimeOffset.Now.ToString("o"), opening.Value, leftOffset.Value, rightOffset.Value,
+            "F405四路人工微调结果\r\n保存时间：{0}\r\n合爪标定开度：{1:0.00}°\r\n左S4 offset：{2} µs\r\n右S2 offset：{3} µs\r\n左/右当前PWM：{4}/{5} µs\r\n人工确认安装基准/对称性：{6}\r\n临时脉宽未写入板端；重启或新S指令可能覆盖微调。\r\n",
+            DateTimeOffset.Now.ToString("o"), closedOpening, leftOffset.Value, rightOffset.Value,
             liveLeft, liveRight, referenceConfirmed.Checked);
         summary += String.Format("S1升降：{0}us，启用={1}\r\nS3相机：{2}us，启用={3}\r\n",
             livePulses[1], servoEnabled[1], livePulses[3], servoEnabled[3]);
@@ -642,15 +760,21 @@ internal sealed class CalibratorForm : Form, IMessageFilter
         try
         {
             opening.Value = SavedInt("opening_cdeg") / 100M;
+            closedOpening = opening.Value;
+            if (saved.ContainsKey("pose_opening_cdeg")) opening.Value = SavedInt("pose_opening_cdeg") / 100M;
+            poseRightDeltaCdeg = saved.ContainsKey("pose_right_delta_cdeg") ? SavedInt("pose_right_delta_cdeg") : 0;
+            closedPose = poseRightDeltaCdeg == 0 && opening.Value == closedOpening;
+            poseName = saved.ContainsKey("pose_name") ? Convert.ToString(saved["pose_name"]) : "合爪";
             leftOffset.Value = SavedInt("left_offset_us");
             rightOffset.Value = SavedInt("right_offset_us");
-            if (saved.ContainsKey("s1_pulse_us")) liftOutput.Value = (SavedInt("s1_pulse_us") - 500) * 0.09M;
+            if (saved.ContainsKey("s1_pulse_us")) liftOutput.Value = Clamp(liftOutput, (SavedInt("s1_pulse_us") - 500) * 0.09M);
             if (saved.ContainsKey("s3_pulse_us")) cameraOutput.Value = (SavedInt("s3_pulse_us") - 500) * 0.09M;
             referenceConfirmed.Checked = saved.ContainsKey("installation_reference_user_confirmed") &&
                 Convert.ToBoolean(saved["installation_reference_user_confirmed"]);
         }
         finally { loading = false; }
-        ApplyCurrent(); clawsAtOpen = false;
+        if (saved.ContainsKey("claws_full_open") && Convert.ToBoolean(saved["claws_full_open"])) ApplyFullOpen();
+        else { ApplyPoseClaws(poseName == "起步收纳"); clawsAtOpen = false; }
         if (saved.ContainsKey("s1_enabled") && Convert.ToBoolean(saved["s1_enabled"])) ApplyOther(1);
         if (saved.ContainsKey("s3_enabled") && Convert.ToBoolean(saved["s3_enabled"])) ApplyOther(3);
     }

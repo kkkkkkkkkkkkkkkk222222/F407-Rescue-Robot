@@ -396,25 +396,30 @@ static void test_third_failure_recloses_and_reopens_at_center(void)
   test_pose.path_mm = 300U;
   task_process_capture_escape(1100U);
   task_process_capture_escape(1200U);
-  assert(state == TASK_APPROACH_RECOVER && servo_angles[3] == 76U && servo_angles[1] == 104U);
-  task_process_capture_escape(1398U);
+  assert(state == TASK_APPROACH_RECOVER && servo_angles[3] == APP_CLAW_LEFT_TOUCH_ANGLE &&
+         servo_angles[1] == APP_CLAW_RIGHT_TOUCH_ANGLE);
+  const uint32_t close_done_at = 1200U + claw_wait_ms;
+  task_process_capture_escape(close_done_at - 1U);
   assert(state == TASK_APPROACH_RECOVER);
-  task_process_capture_escape(1399U);
+  task_process_capture_escape(close_done_at);
   assert(state == TASK_CAPTURE_RETURN_WAIT && capture_return_closed && task_status.gripper_closed);
   initial_claw_ready = true;
-  Task_Process(1419U);
+  Task_Process(close_done_at + APP_TASK_PERIOD_MS);
   assert(state == TASK_CAPTURE_RETURN_WAIT && task_status.gripper_closed && !audit_valid);
   configured_color = VISION_COLOR_BLUE;
   VisionData v = {.mission = {.received = true, .command = VISION_CMD_RETURN_CENTER,
       .flags = VISION_CMD_VALID | VISION_CMD_DISTANCE_VALID | VISION_CMD_DRIVE_STRAIGHT |
                VISION_CMD_USE_FINAL_HEADING, .heading_cdeg = 9000U}};
-  task_accept_mission_legacy(&v.mission, 1439U);
+  const uint32_t return_at = close_done_at + 2U * APP_TASK_PERIOD_MS;
+  task_accept_mission_legacy(&v.mission, return_at);
   assert(state == TASK_FACE_FIELD_CENTER);
-  task_process_face_center(&v, 1459U);
+  const uint32_t open_at = return_at + APP_TASK_PERIOD_MS;
+  task_process_face_center(&v, open_at);
   assert(capture_return_opening && !distance_command_done);
-  task_process_face_center(&v, 1761U);
+  const uint32_t open_done_at = open_at + claw_wait_ms;
+  task_process_face_center(&v, open_done_at - 1U);
   assert(state == TASK_FACE_FIELD_CENTER);
-  task_process_face_center(&v, 1762U);
+  task_process_face_center(&v, open_done_at);
   assert(state == TASK_SEARCH && !task_status.gripper_closed && !capture_return_closed);
 }
 
@@ -741,7 +746,9 @@ static void test_normalrun_start_and_delivery_exit(void)
   task_process_delivery_verify(&complete, verify_done);
   assert(state == TASK_EXIT_SAFE_ZONE && first_delivery_done);
   assert(servo_angles[0] == APP_LIFT_START_ANGLE);
-  const uint32_t lift_wait_ms = 108U;
+  const uint32_t lift_wait_ms = servo_pulse_wait_ms(
+      Servo_OutputPulseUs(1U, APP_LIFT_START_ANGLE),
+      Servo_OutputPulseUs(1U, APP_LIFT_TRAVEL_ANGLE));
   const uint32_t reverse_start = verify_done + lift_wait_ms;
   Task_Process(reverse_start - 1U);
   assert(state == TASK_EXIT_SAFE_ZONE && delivery_exit_phase == 0U);
@@ -770,13 +777,17 @@ static void test_normalrun_separation_settle(void)
   assert(!Claw_ClusterOpenRight(APP_TASK_PERIOD_MS));
   assert(servo_angles[3] == APP_CLAW_LEFT_TOUCH_ANGLE - 4U &&
          servo_angles[1] == APP_CLAW_RIGHT_TOUCH_ANGLE - 4U);
-  const uint32_t open_steps = (APP_CLAW_RIGHT_TOUCH_ANGLE - APP_CLAW_RIGHT_OPEN_ANGLE +
-      APP_CLAW_SEPARATE_STEP_DEG - 1U) / APP_CLAW_SEPARATE_STEP_DEG;
+  const uint32_t right_travel = APP_CLAW_RIGHT_TOUCH_ANGLE - APP_CLAW_RIGHT_RELEASE_ANGLE;
+  const uint32_t max_travel = right_travel > APP_CLAW_SEPARATE_ONE_OR_TWO_CLOSE_DEG ?
+      right_travel : APP_CLAW_SEPARATE_ONE_OR_TWO_CLOSE_DEG;
+  const uint32_t open_steps = (max_travel + APP_CLAW_SEPARATE_STEP_DEG - 1U) /
+      APP_CLAW_SEPARATE_STEP_DEG;
   const uint32_t final_step = open_steps * APP_TASK_PERIOD_MS;
   for (uint32_t now = 2U * APP_TASK_PERIOD_MS; now <= final_step; now += APP_TASK_PERIOD_MS) {
     assert(!Claw_ClusterOpenRight(now));
   }
-  assert(servo_angles[3] == 56U && servo_angles[1] == 72U);
+  assert(servo_angles[3] == APP_CLAW_LEFT_TOUCH_ANGLE - APP_CLAW_SEPARATE_ONE_OR_TWO_CLOSE_DEG &&
+         servo_angles[1] == APP_CLAW_RIGHT_RELEASE_ANGLE);
   assert(!Claw_ClusterOpenRight(final_step + 259U));
   assert(Claw_ClusterOpenRight(final_step + 260U));
 }

@@ -28,8 +28,20 @@ uint8_t Servo_OutputAngle(uint8_t id, uint8_t angle)
       APP_SERVO_S3_OFFSET_DEG, APP_SERVO_S4_OFFSET_DEG
   };
   assert(id >= 1U && id <= 4U && angle <= 180U);
-  const int output = (int)angle + offsets[id - 1U];
+  const uint8_t mounted = (id == 2U || id == 4U) ? APP_CLAW_MOUNT_ANGLE(angle) : angle;
+  if ((id == 4U && angle == 180U) || (id == 2U && angle == 0U)) { return mounted; }
+  const int output = (int)mounted + offsets[id - 1U];
   return (uint8_t)(output < 0 ? 0 : output > 180 ? 180 : output);
+}
+uint16_t Servo_OutputPulseUs(uint8_t id, uint8_t angle)
+{
+  if ((id == 4U && angle == 180U) || (id == 2U && angle == 0U)) {
+    return 500U + (uint32_t)APP_CLAW_MOUNT_ANGLE(angle) * 2000U / 180U;
+  }
+  static const int trim[] = {APP_SERVO_S1_OFFSET_US, APP_SERVO_S2_OFFSET_US,
+                            APP_SERVO_S3_OFFSET_US, APP_SERVO_S4_OFFSET_US};
+  const int pulse = 500 + Servo_OutputAngle(id, angle) * 2000 / 180 + trim[id - 1U];
+  return pulse < 500 ? 500 : pulse > 2500 ? 2500 : pulse;
 }
 void Motor_Stop(void) { reverse_output = lateral_output = yaw_output = 0.0f; }
 void Motor_PauseFiniteMotion(void) { ++finite_pauses; Motor_Stop(); }
@@ -170,7 +182,8 @@ static void test_complete_injury_sequence(void)
   task_accept_mission_legacy(&grab, 211U);
   assert(state == TASK_INJURY_BACKOFF && injury_backoff_elapsed_ms == 0U);
   tick(250U);
-  assert(servo_angles[3] == 81U && servo_angles[1] == 99U);
+  assert(servo_angles[3] == APP_CLAW_LEFT_TOUCH_ANGLE + APP_INJURY_CLAW_RELAX_DEG &&
+         servo_angles[1] == APP_CLAW_RIGHT_TOUCH_ANGLE - APP_INJURY_CLAW_RELAX_DEG);
   assert(reverse_output == 0.0f);
   audit_at(4U, 260U);
   assert(state == TASK_INJURY_BACKOFF && audit_consistent_count == 0U);
@@ -192,8 +205,10 @@ static void test_complete_injury_sequence(void)
   task_accept_mission_legacy(&nav, 3561U);
   assert(!command_accepted && state == TASK_INJURY_RECLOSE);
   assert(!Claw_Touch(3600U));
-  assert(servo_angles[3] == 76U && servo_angles[1] == 104U);
-  assert(!Claw_Touch(3798U)); assert(Claw_Touch(3799U));
+  assert(servo_angles[3] == APP_CLAW_LEFT_TOUCH_ANGLE &&
+         servo_angles[1] == APP_CLAW_RIGHT_TOUCH_ANGLE);
+  const uint32_t close_done_at = 3600U + claw_wait_ms;
+  assert(!Claw_Touch(close_done_at - 1U)); assert(Claw_Touch(close_done_at));
 }
 
 static void test_pause_does_not_consume_reverse_time(void)

@@ -9,6 +9,10 @@ static int16_t offsets_deg[4] = {
     APP_SERVO_S1_OFFSET_DEG, APP_SERVO_S2_OFFSET_DEG,
     APP_SERVO_S3_OFFSET_DEG, APP_SERVO_S4_OFFSET_DEG
 };
+static const int16_t offsets_us[4] = {
+    APP_SERVO_S1_OFFSET_US, APP_SERVO_S2_OFFSET_US,
+    APP_SERVO_S3_OFFSET_US, APP_SERVO_S4_OFFSET_US
+};
 static bool started;
 static volatile uint16_t pending_pins, armed_pins;
 
@@ -25,15 +29,34 @@ uint8_t Servo_OutputAngle(uint8_t id, uint8_t angle)
 {
   if (id < 1U || id > 4U) { return 0U; }
   if (angle > 180U) { angle = 180U; }
-  int32_t output_deg = (int32_t)angle + offsets_deg[id - 1U];
+  const uint8_t mounted_deg = (id == 2U || id == 4U) ? APP_CLAW_MOUNT_ANGLE(angle) : angle;
+  /* A released claw uses the physical fully-open endpoint, not an offset pose. */
+  if ((id == 4U && angle == 180U) || (id == 2U && angle == 0U)) {
+    return mounted_deg;
+  }
+  int32_t output_deg = (int32_t)mounted_deg + offsets_deg[id - 1U];
   if (output_deg < 0) { output_deg = 0; }
   if (output_deg > 180) { output_deg = 180; }
   return (uint8_t)output_deg;
 }
 
+uint16_t Servo_OutputPulseUs(uint8_t id, uint8_t angle)
+{
+  if (id < 1U || id > 4U) { return 0U; }
+  if (angle > 180U) { angle = 180U; }
+  if ((id == 4U && angle == 180U) || (id == 2U && angle == 0U)) {
+    return 500U + (uint32_t)APP_CLAW_MOUNT_ANGLE(angle) * 2000U / 180U;
+  }
+  int32_t pulse = 500 + (int32_t)Servo_OutputAngle(id, angle) * 2000 / 180 +
+                  offsets_us[id - 1U];
+  if (pulse < 500) { pulse = 500; }
+  if (pulse > 2500) { pulse = 2500; }
+  return (uint16_t)pulse;
+}
+
 static uint32_t servo_pulse_for_angle(uint8_t index, uint8_t angle)
 {
-  return 500U + (uint32_t)Servo_OutputAngle(index + 1U, angle) * 2000U / 180U;
+  return Servo_OutputPulseUs(index + 1U, angle);
 }
 
 void BoardF405_ServoIRQ(void)

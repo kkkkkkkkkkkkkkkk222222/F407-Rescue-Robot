@@ -43,3 +43,9 @@ uint8_t Servo_OutputAngle(uint8_t id, uint8_t angle)
   if (id < 1U || id > 4U) { return 0U; }
   return angle > 180U ? 180U : angle;
 }
+
+uint16_t Servo_OutputPulseUs(uint8_t id, uint8_t angle)
+{
+  if (id < 1U || id > 4U) { return 0U; }
+  return 500U + (uint32_t)Servo_OutputAngle(id, angle) * 2000U / 180U;
+}
