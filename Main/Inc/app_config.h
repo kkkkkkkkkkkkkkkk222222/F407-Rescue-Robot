@@ -534,9 +534,6 @@
 #define APP_NAV_FAST_SPEED_MM_S          600.0f
 #define APP_NAV_FINAL_APPROACH_DISTANCE_MM 300U
 #define APP_NAV_FINAL_APPROACH_SPEED_MM_S 200.0f
-/* RETURN's terminal correction is independent of stash/coarse navigation. */
-#define APP_RETURN_FINE_MIN_SPEED_MM_S   240.0f
-#define APP_RETURN_FINE_MAX_SPEED_MM_S   400.0f
 #define APP_NAV_LINEAR_SLOWDOWN_MM       600.0f
 /* End the encoder-bounded coarse leg before the global waypoint. */
 #define APP_NAV_COARSE_RESERVE_MM        250.0f
@@ -545,8 +542,8 @@
 #define APP_NAV_STAGE_COARSE_RESERVE_MM  150.0f
 #define APP_NAV_STAGE_FINE_ENTRY_MM      180.0f
 /* STAGE FINE tuning for low-speed closed-loop translation. */
-#define APP_NAV_FINE_MIN_SPEED_MM_S      220.0f
-#define APP_NAV_FINE_MAX_SPEED_MM_S      380.0f
+#define APP_NAV_FINE_MIN_SPEED_MM_S      110.0f
+#define APP_NAV_FINE_MAX_SPEED_MM_S      180.0f
 #define APP_NAV_FINE_DISTANCE_GAIN_S_INV   1.0f
 #define APP_NAV_FINE_WHEEL_ZERO_MM_S       0.5f
 #define APP_NAV_FINE_ASSIST_PWM_PER_MM_S   2.0f
@@ -590,9 +587,6 @@
 #define APP_SAFE_ALIGN_LATERAL_START_PX      64.0f
 #define APP_SAFE_ALIGN_LATERAL_STOP_PX       32.0f
 #define APP_SAFE_ALIGN_LATERAL_MM_S_PER_PX    1.0f
-/* ALIGN yaw limits do not change finite TURN or MotionDebug turn speeds. */
-#define APP_SAFE_ALIGN_YAW_MIN_MM_S        240.0f
-#define APP_SAFE_ALIGN_YAW_MAX_MM_S        450.0f
 #define APP_SAFE_ENTER_CRUISE_SPEED_MM_S   400.0f
 #define APP_SAFE_ENTER_MIN_SPEED_MM_S      200.0f
 #define APP_SAFE_ENTER_SLOWDOWN_MM         300.0f
@@ -626,7 +620,6 @@
 #define APP_SAFE_SWEEP_SEARCH_SPEED_MM_S      160.0f
 #define APP_SAFE_SWEEP_APPROACH_SPEED_MM_S    250.0f
 #define APP_SAFE_SWEEP_RETURN_TOLERANCE_MM     30.0f
-#define APP_SAFE_SWEEP_REVERSE_MIN_SPEED_MM_S 110.0f
 #define APP_SAFE_SWEEP_RETURN_REALIGN_DEG       8.0f
 #define APP_SAFE_SWEEP_AUDIT_TIMEOUT_MS       3500U
 /* Normal autonomous motion turns back at 30 cm from the 3 m x 3 m map edge.
