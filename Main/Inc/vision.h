@@ -157,8 +157,28 @@ typedef enum {
   /* Safe-zone-only obstacle clearing. P2/P3=0 selects pixel-guided pickup;
    * P4/P5=+/-200 selects right/left 90-deg turn then a 200 mm forward stroke.
    * Legacy P2/P3=80..600 retains P4/P5=+/-150 lateral parking. P6/P7=0. */
-  VISION_CMD_CLEAR_SAFE_ZONE = 19
+  VISION_CMD_CLEAR_SAFE_ZONE = 19,
+  /* P1 high nibble is a step, never the legacy flag meanings. */
+  VISION_CMD_BULLDOZER_STEP = 20
 } VisionMissionCode;
+
+typedef enum {
+  VISION_BULLDOZER_TURN_RIGHT = 0,
+  VISION_BULLDOZER_FORWARD_PARK,
+  VISION_BULLDOZER_RELEASE_LOAD,
+  VISION_BULLDOZER_BACK_200,
+  VISION_BULLDOZER_TURN_LEFT,
+  VISION_BULLDOZER_BACK_TO_SWEEP,
+  VISION_BULLDOZER_LEFT_TO_SWEEP,
+  VISION_BULLDOZER_FULL_OPEN,
+  VISION_BULLDOZER_SWEEP_1000,
+  VISION_BULLDOZER_RAISE_RETURN,
+  VISION_BULLDOZER_BACK_TO_STAGE,
+  VISION_BULLDOZER_RIGHT_TO_STAGE,
+  VISION_BULLDOZER_PICKUP_READY
+} VisionBulldozerStep;
+
+#define VISION_BULLDOZER_STEP(flags) ((uint8_t)((flags) >> 4U))
 
 #define VISION_AUDIT_INITIAL_STASH      0x01U
 #define VISION_AUDIT_DANGER_PRESENT     0x02U

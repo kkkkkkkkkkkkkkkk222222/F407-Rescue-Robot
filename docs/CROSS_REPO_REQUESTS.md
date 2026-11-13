@@ -16,6 +16,40 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-BULLDOZER-20261113：已实现分段接口，未烧录
+
+本端基于`1b74001bb05e6ce0487fe9a96c0214b61ac72776`增量实现，保留该提交的找物近中心减旋及新机械标定。
+已读取RDK固定入口、详细流程/机器合同，并核对固定源码快照`4e9ff10f50f1e9e6eeb77ecee9b6ff3d286ac296`。
+合同blob为`fc72bed22425e3e628108a1cffff5c11137d9b8d`；本端实际板端身份本轮未读取，不能把该源码或构建当actual。
+
+**审查结论：接受原0x18/opcode0x14的13步及原0x1D/0x1E配对，不更换编号、布局或双方分工。**
+
+- 接收器独立解释P1高四位step，不套旧聚堆/STAGE/左右标志；26组合同示例保持原字节。
+- TASK_REMOTE_ACTION/mode25执行；本地200mm/-200mm/1000mm轮程和连续yaw各只启动本次动作，重复不重开。
+  四个动态段同action更新A=D、B=场地H；U为固定车头航向，不混用。D>0不报完成，D=0结束，不伪造到点。
+- 现有Fine没有显式U输入，补共用Fine+绝对航向薄封装，继续原向量斜坡/换向/航向PI/PWM，旧调用仍fine=false。
+  平移沿原200～350mm/s范围，固定段前进300、倒退350；连续yaw沿原120～250mm/s轮周速度/3°条件。
+- step2只普通开爪120°放货，完成才清原审核/STABLE/旧扫障角色及已放弃批次预算，不自动后退/转弯/合爪。
+  step7全开180°直接物理端点500/2500µs；step9原S1=61°抬起；step12恢复S1=85°、普通开爪120°、相机120°。
+  复用原舵机到位估算，已完成姿态不重新启动等待；角度/READY是命令状态，不冒充轴角反馈。
+- step12回mode3并保留本次task/action/opcode/COMPLETED，重复只ACK；原0x09→整爪审核→GRAB继续。
+  空爪SEARCH可接受新的step0，包括旧RETURN上下文已取消的交接；不解除其他取消条件或从mode51重放旧动作。
+- 不自动调用旧0x13，不新增时间资格、新鲜度门、握手、ISR、遥测或永久故障；不改PID、占空比、其他导航/审核/计数。
+  人工STOP/ABORT/PAUSE及原mode51保留；新连续转向不套旧有限TURN/远程宏整体超时，有限轮程沿原失败恢复。
+
+必要结果：NormalRun/MotionDebug构建通过；复用原Task夹具直接调试调用红蓝13步及合同26组CRC/字段，
+重复/实时H-D/D=0、放货清审核、全开/抬爪/READY/APP、取消RETURN后的SEARCH、PAUSE继续及ABORT符合预期。
+原测距/复审流程及motor绝对航向检查通过；新Fine保留绝对目标，旧接口fine=false。未新增测试程序，原夹具仅补共用API替身。
+原完整NORMALRUN_FLOW_REVIEW_CHECK在固定320ms收爪断言失败，修改前1b74001同样重现；本轮未改该旧断言，不称整套全过。
+
+**未烧录、未启设备或执行动作，板端actual未知。** 最终源码见本文件对应Git提交；本机保留原Task初始化空白，构建如实dirty1。
+部署须使用NormalRun/TASK并读回真实身份，RDK再显式启用`RDK_ENABLE_BULLDOZER=1`或`--enable-bulldozer`；本端未修改上位开关。
+20cm/1m、±3cm及贴栏扫除/正常找回、联合mode51恢复待人安排实车，不把软件DONE当精度证明。
+
+- [完整下位合同及检查边界](F405_BULLDOZER_STEP_20261113.md)
+- [机器合同、字段、动作参数及原26组报文](contracts/f405_bulldozer_step_20261113.json)
+- [固定上位任务](https://github.com/danmo-teng/shijue_fangan/blob/4e9ff10f50f1e9e6eeb77ecee9b6ff3d286ac296/docs/COMPETITION_BULLDOZER_20261113.md)
+
 ## 2026-11-13 RDK661bdf7固定矩形过道配套审查回执
 
 已直接读取RDK固定入口，并通过实时Git核对`codex/gamepad-teleop`最新为

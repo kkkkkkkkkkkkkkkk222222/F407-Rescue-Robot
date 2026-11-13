@@ -2560,7 +2560,8 @@ bool Motor_MoveAngleFine(float speed_mm_s, float angle_deg)
 }
 
 static bool motor_move_angle_heading(float speed_mm_s, float angle_deg,
-                                     float field_heading_deg, bool low_rear_deadband)
+                                      float field_heading_deg, bool low_rear_deadband,
+                                      bool fine_correction)
 {
   if (!isfinite(speed_mm_s) || !isfinite(angle_deg) || !isfinite(field_heading_deg) ||
       motor_abs_float(speed_mm_s) > MOTOR_MAX_SPEED) { return false; }
@@ -2577,7 +2578,7 @@ static bool motor_move_angle_heading(float speed_mm_s, float angle_deg,
       motor_abs_float(motor_wrap_angle_deg(heading - direction_move.field_heading_deg)) > 0.05f;
   /* MoveAngle owns ramping and the same 10 ms heading PI as distance moves.
    * Its return value means ramp-complete, not command-accepted. */
-  (void)Motor_MoveAngle(speed_mm_s, angle_deg);
+  (void)motor_move_angle(speed_mm_s, angle_deg, fine_correction);
   if (direction_move.active) {
     if (new_goal) {
       const float error_deg = motor_wrap_angle_deg(heading - pose.heading_mdeg * 0.001f);
@@ -2596,17 +2597,22 @@ static bool motor_move_angle_heading(float speed_mm_s, float angle_deg,
 
 bool Motor_MoveHeading(float forward_mm_s, float field_heading_deg)
 {
-  return motor_move_angle_heading(forward_mm_s, 0.0f, field_heading_deg, false);
+  return motor_move_angle_heading(forward_mm_s, 0.0f, field_heading_deg, false, false);
 }
 
 bool Motor_MoveHeadingLowRearDeadband(float forward_mm_s, float field_heading_deg)
 {
-  return motor_move_angle_heading(forward_mm_s, 0.0f, field_heading_deg, true);
+  return motor_move_angle_heading(forward_mm_s, 0.0f, field_heading_deg, true, false);
 }
 
 bool Motor_MoveAngleHeading(float speed_mm_s, float angle_deg, float field_heading_deg)
 {
-  return motor_move_angle_heading(speed_mm_s, angle_deg, field_heading_deg, true);
+  return motor_move_angle_heading(speed_mm_s, angle_deg, field_heading_deg, true, false);
+}
+
+bool Motor_MoveAngleFineHeading(float speed_mm_s, float angle_deg, float field_heading_deg)
+{
+  return motor_move_angle_heading(speed_mm_s, angle_deg, field_heading_deg, true, true);
 }
 
 bool Motor_MoveSpin(float speed_mm_s, float direction_deg, float yaw_tangent_mm_s)

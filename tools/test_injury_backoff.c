@@ -113,6 +113,11 @@ bool Motor_MoveAngleHeading(float speed, float angle, float heading)
   lateral_output = speed * sinf(angle_rad);
   return true;
 }
+bool Motor_MoveAngleFineHeading(float speed, float angle, float heading)
+{
+  fine_speed_request = speed;
+  return Motor_MoveAngleHeading(speed, angle, heading);
+}
 bool Motor_IsBraking(void) { return false; }
 bool Motor_MoveSpin(float speed, float angle, float yaw)
 { (void)speed; (void)angle; (void)yaw; return true; }

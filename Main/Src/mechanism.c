@@ -16,7 +16,8 @@ typedef enum {
   CLAW_ACTION_BUMP_OPEN,
   CLAW_ACTION_RETRACT,
   CLAW_ACTION_TOUCH,
-  CLAW_ACTION_HALF_TOUCH
+  CLAW_ACTION_HALF_TOUCH,
+  CLAW_ACTION_FULL_OPEN
 } ClawAction;
 
 static ClawAction claw_action;
@@ -131,6 +132,12 @@ uint8_t Camera_GetAngle(void)
   return camera_angle;
 }
 
+uint32_t Camera_PositionWaitMs(uint8_t angle)
+{
+  return servo_pulse_wait_ms(Servo_OutputPulseUs(3U, Servo_GetAngle(3U)),
+                            Servo_OutputPulseUs(3U, angle));
+}
+
 void Lift_SetStartPosition(void)
 {
   Servo_SetAngle(1U, APP_LIFT_START_ANGLE);
@@ -156,6 +163,27 @@ bool Claw_Open(uint32_t now_ms)
 {
   return claw_move_together(CLAW_ACTION_OPEN, now_ms,
                             APP_CLAW_LEFT_OPEN_ANGLE, APP_CLAW_RIGHT_OPEN_ANGLE);
+}
+
+bool Claw_FullOpen(uint32_t now_ms)
+{
+  if (claw_action != CLAW_ACTION_FULL_OPEN && claw_done &&
+      Servo_GetAngle(4U) == APP_CLAW_LEFT_RELEASE_ANGLE &&
+      Servo_GetAngle(2U) == APP_CLAW_RIGHT_RELEASE_ANGLE) {
+    /* A completed pose need not start another actuator wait. */
+    return true;
+  }
+  return claw_move_together(CLAW_ACTION_FULL_OPEN, now_ms,
+                            APP_CLAW_LEFT_RELEASE_ANGLE, APP_CLAW_RIGHT_RELEASE_ANGLE);
+}
+
+bool Claw_OpenIfNeeded(uint32_t now_ms)
+{
+  if (claw_done && Servo_GetAngle(4U) == APP_CLAW_LEFT_OPEN_ANGLE &&
+      Servo_GetAngle(2U) == APP_CLAW_RIGHT_OPEN_ANGLE) {
+    return true;
+  }
+  return Claw_Open(now_ms);
 }
 
 static bool claw_step_to(uint8_t id, uint8_t target)

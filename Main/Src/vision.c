@@ -210,7 +210,38 @@ static bool vision_mission_code_valid(uint8_t command)
   return (command == VISION_CMD_STOP) ||
          (command == VISION_CMD_PAUSE) ||
          ((command >= VISION_CMD_GRAB_CONFIRMED) &&
-          (command <= VISION_CMD_CLEAR_SAFE_ZONE));
+           (command <= VISION_CMD_BULLDOZER_STEP));
+}
+
+static bool vision_bulldozer_payload_valid(uint8_t flags, int16_t a, int16_t b,
+                                          uint16_t heading)
+{
+  const uint16_t sweep_heading = (flags & VISION_CMD_RED_SIDE) ? 0U : 18000U;
+  switch (VISION_BULLDOZER_STEP(flags)) {
+    case VISION_BULLDOZER_TURN_RIGHT:
+      return a == 0 && b == 0 && heading == sweep_heading;
+    case VISION_BULLDOZER_TURN_LEFT:
+      return a == 0 && b == 0 && heading == sweep_heading + 9000U;
+    case VISION_BULLDOZER_FORWARD_PARK:
+      return a == 200 && b == 0 && heading == sweep_heading;
+    case VISION_BULLDOZER_BACK_200:
+      return a == -200 && b == 0 && heading == sweep_heading;
+    case VISION_BULLDOZER_SWEEP_1000:
+      return a == 1000 && b == 0 && heading == sweep_heading;
+    case VISION_BULLDOZER_BACK_TO_SWEEP:
+    case VISION_BULLDOZER_LEFT_TO_SWEEP:
+    case VISION_BULLDOZER_BACK_TO_STAGE:
+    case VISION_BULLDOZER_RIGHT_TO_STAGE:
+      return a >= 0 && a <= APP_NAV_REMOTE_MAX_DISTANCE_MM &&
+          b >= -18000 && b <= 18000 && heading == sweep_heading;
+    case VISION_BULLDOZER_RELEASE_LOAD:
+    case VISION_BULLDOZER_FULL_OPEN:
+    case VISION_BULLDOZER_RAISE_RETURN:
+    case VISION_BULLDOZER_PICKUP_READY:
+      return a == 0 && b == 0 && heading == 0U;
+    default:
+      return false;
+  }
 }
 
 static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
@@ -223,7 +254,8 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
   const uint8_t code = payload[0];
   const uint8_t flags = payload[1];
   const uint16_t heading = vision_u16_be(&payload[6]);
-  const uint8_t allowed_flags = (uint8_t)(
+  const uint8_t allowed_flags = code == VISION_CMD_BULLDOZER_STEP ?
+      (VISION_CMD_VALID | VISION_CMD_RED_SIDE | 0xF0U) : (uint8_t)(
       VISION_CMD_VALID | VISION_CMD_DRIVE_STRAIGHT |
       VISION_CMD_USE_FINAL_HEADING | VISION_CMD_RED_SIDE |
       VISION_CMD_DISTANCE_VALID |
@@ -244,6 +276,10 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
 
   const int16_t arg_a = (int16_t)vision_u16_be(&payload[2]);
   const int16_t arg_b = (int16_t)vision_u16_be(&payload[4]);
+  if (code == VISION_CMD_BULLDOZER_STEP &&
+      !vision_bulldozer_payload_valid(flags, arg_a, arg_b, heading)) {
+    goto rejected_payload;
+  }
   if (code == VISION_CMD_APPROACH_TARGET) {
     if ((flags & VISION_CMD_APPROACH_RANGE) != 0U) {
       const uint8_t permitted = VISION_CMD_VALID | VISION_CMD_RED_SIDE |

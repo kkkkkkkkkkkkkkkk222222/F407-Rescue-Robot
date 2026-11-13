@@ -59,7 +59,8 @@ typedef enum {
   REMOTE_ACTION_RELEASE_RIGHT,
   REMOTE_ACTION_RELEASE_BOTH,
   REMOTE_ACTION_DISPERSE,
-  REMOTE_ACTION_LANE
+  REMOTE_ACTION_LANE,
+  REMOTE_ACTION_BULLDOZER
 } RemoteAction;
 
 typedef struct {
@@ -68,6 +69,9 @@ typedef struct {
   uint8_t command;
   int16_t arg_a;
   int16_t arg_b;
+  uint16_t heading_cdeg;
+  uint8_t step;
+  uint32_t actuator_wait_ms;
   uint32_t started_ms;
   uint32_t phase_path_mm;
   bool done;
@@ -1208,6 +1212,8 @@ static void task_start_remote_action(RemoteAction type,
     .command = command->command,
     .arg_a = command->target_x_mm,
     .arg_b = command->target_y_mm,
+    .heading_cdeg = command->heading_cdeg,
+    .step = VISION_BULLDOZER_STEP(command->flags),
     .started_ms = now_ms,
     .phase_path_mm = pose.path_mm,
     .done = false,
@@ -4046,6 +4052,183 @@ static void task_remote_action_finish(void)
   }
 }
 
+static bool task_bulldozer_live_step(uint8_t step)
+{
+  return step == VISION_BULLDOZER_BACK_TO_SWEEP ||
+      step == VISION_BULLDOZER_LEFT_TO_SWEEP ||
+      step == VISION_BULLDOZER_BACK_TO_STAGE ||
+      step == VISION_BULLDOZER_RIGHT_TO_STAGE;
+}
+
+static void task_bulldozer_clear_load(void)
+{
+  task_status.gripper_closed = false;
+  task_status.claw_visible = false;
+  locked_cargo_counts = 0U;
+  cargo_recheck_pending = stash_backoff_pending = route_to_stash = false;
+  transport_sort_active = injury_recheck_pending = false;
+  safe_sweep_recheck_pending = safe_sweep_visual_pickup = false;
+  sweep_pickup_target_active = sweep_retrieving = sweep_trace_recording = false;
+  sweep_forward_commanded = false;
+  capture_budget_active = capture_wait_active = capture_escape_active = false;
+  separation_total_attempts = 0U;
+  Claw_SetSeparationHold(0U);
+  task_clear_audit_result();
+  task_clear_sweep_audit_evidence();
+}
+
+static void task_process_bulldozer(const VisionMissionCommand *command,
+                                   uint32_t now_ms)
+{
+  const float heading_deg = remote_action.heading_cdeg * 0.01f;
+  if (task_bulldozer_live_step(remote_action.step)) {
+    /* A/B are current remaining D/field translation H. U remains the original
+     * chassis heading; neither a heartbeat nor a new D can relatch that goal. */
+    if (command->target_x_mm == 0) {
+      task_remote_action_finish();
+      return;
+    }
+    const LocationPose pose = Location_GetPose();
+    if (!pose.valid) {
+      Motor_Stop();
+      task_status.motors_active = false;
+      return;
+    }
+    const float body_angle = task_wrap_angle(command->target_y_mm * 0.01f -
+                                             pose.heading_mdeg * 0.001f);
+    const float speed = fminf(APP_SAFE_SWEEP_RETURN_SPEED_MM_S,
+        fmaxf(APP_NAV_TERMINAL_MIN_SPEED_MM_S, (float)command->target_x_mm));
+    task_status.motors_active = Motor_MoveAngleFineHeading(speed, body_angle, heading_deg);
+    return;
+  }
+
+  switch (remote_action.step) {
+    case VISION_BULLDOZER_TURN_RIGHT:
+    case VISION_BULLDOZER_TURN_LEFT: {
+      const LocationPose pose = Location_GetPose();
+      if (!pose.valid) {
+        Motor_Stop();
+        task_status.motors_active = false;
+        return;
+      }
+      const float error = task_wrap_angle(heading_deg - pose.heading_mdeg * 0.001f);
+      if (task_abs(error) <= APP_SAFE_ALIGN_TOLERANCE_DEG) {
+        task_remote_action_finish();
+      } else {
+        const float yaw = fminf(APP_MOTOR_TURN_FAST_MM_S,
+            fmaxf(APP_MOTOR_TURN_SLOW_MM_S, task_abs(nav_yaw(error))));
+        task_move_body(0.0f, 0.0f, copysignf(yaw, error));
+        task_status.motors_active = true;
+      }
+      return;
+    }
+
+    case VISION_BULLDOZER_FORWARD_PARK:
+    case VISION_BULLDOZER_BACK_200:
+    case VISION_BULLDOZER_SWEEP_1000: {
+      const float speed = remote_action.arg_a < 0 ?
+          APP_SAFE_SWEEP_RETURN_SPEED_MM_S : APP_SAFE_SWEEP_FORWARD_SPEED_MM_S;
+      const MotorDistanceStatus result = Motor_MoveDistanceHeading(
+          remote_action.arg_a * 0.001f, speed, heading_deg);
+      task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
+      if (result == MOTOR_DISTANCE_DONE) {
+        task_remote_action_finish();
+      } else if (distance_failed(result)) {
+        /* Keep the existing finite-distance recovery, not a new latch. */
+        task_stop(TASK_FAULT_MOTOR, now_ms);
+      }
+      return;
+    }
+
+    case VISION_BULLDOZER_RELEASE_LOAD:
+      Motor_Stop();
+      task_status.motors_active = false;
+      if (Claw_OpenIfNeeded(now_ms)) {
+        task_bulldozer_clear_load();
+        task_remote_action_finish();
+      }
+      return;
+
+    case VISION_BULLDOZER_FULL_OPEN:
+      Motor_Stop();
+      task_status.motors_active = false;
+      if (Claw_FullOpen(now_ms)) {
+        task_remote_action_finish();
+      }
+      return;
+
+    case VISION_BULLDOZER_RAISE_RETURN:
+      Motor_Stop();
+      task_status.motors_active = false;
+      if (remote_action.phase == 0U) {
+        remote_action.actuator_wait_ms = Lift_PositionWaitMs(APP_LIFT_START_ANGLE);
+        Lift_SetStartPosition();
+        step_started_ms = now_ms;
+        remote_action.phase = 1U;
+      }
+      if ((uint32_t)(now_ms - step_started_ms) >= remote_action.actuator_wait_ms) {
+        task_remote_action_finish();
+      }
+      return;
+
+    case VISION_BULLDOZER_PICKUP_READY:
+      Motor_Stop();
+      task_status.motors_active = false;
+      if (remote_action.phase == 0U) {
+        const uint32_t lift_wait = Lift_PositionWaitMs(APP_LIFT_TRAVEL_ANGLE);
+        const uint32_t camera_wait = Camera_PositionWaitMs(APP_SEARCH_HIGH_CAMERA_ANGLE);
+        remote_action.actuator_wait_ms = lift_wait > camera_wait ? lift_wait : camera_wait;
+        Lift_SetTravelPosition();
+        Camera_SetAngle(APP_SEARCH_HIGH_CAMERA_ANGLE);
+        camera_angle = (float)APP_SEARCH_HIGH_CAMERA_ANGLE;
+        step_started_ms = now_ms;
+        remote_action.phase = 1U;
+      }
+      if (Claw_OpenIfNeeded(now_ms) &&
+          (uint32_t)(now_ms - step_started_ms) >= remote_action.actuator_wait_ms) {
+        task_bulldozer_clear_load();
+        task_enter(TASK_SEARCH, now_ms);
+        /* SEARCH normally cancels an old action. This transition is the
+         * explicit completion of step12, whose paired receipt must survive. */
+        accepted_context.cancelled = false;
+        accepted_context.completed = true;
+        remote_action.done = true;
+        remote_action.type = REMOTE_ACTION_NONE;
+      }
+      return;
+
+    default:
+      return; /* Illegal steps are rejected by the payload parser. */
+  }
+}
+
+static bool task_accept_bulldozer(const VisionMissionCommand *command,
+                                  uint32_t now_ms)
+{
+  const bool same_action = accepted_context.valid &&
+      accepted_context.opcode == VISION_CMD_BULLDOZER_STEP &&
+      command->task_id == accepted_context.task_id &&
+      command->action_id == accepted_context.action_id;
+  if (same_action) {
+    return remote_action.command == VISION_CMD_BULLDOZER_STEP &&
+        remote_action.step == VISION_BULLDOZER_STEP(command->flags);
+  }
+  const bool previous_step_done = state == TASK_REMOTE_ACTION &&
+      remote_action.type == REMOTE_ACTION_BULLDOZER && remote_action.done;
+  const bool first_step = VISION_BULLDOZER_STEP(command->flags) == VISION_BULLDOZER_TURN_RIGHT;
+  const bool start = first_step &&
+      ((state == TASK_ALIGN_SAFE_ZONE && safe_align_done &&
+        task_status.gripper_closed && audit_received && audit_valid) ||
+       (state == TASK_SEARCH && !task_status.gripper_closed));
+  if (!previous_step_done && !start) {
+    return false;
+  }
+  task_start_remote_action(REMOTE_ACTION_BULLDOZER, command, now_ms);
+  /* A new owned step0 may follow RETURN's cancelled SEARCH context. */
+  accepted_context.cancelled = false;
+  return true;
+}
+
 static void task_pause_action(uint32_t now_ms, bool cancel_disperse)
 {
   Motor_PauseFiniteMotion();
@@ -5231,6 +5414,11 @@ static void task_process_remote_action(const VisionMissionCommand *command,
     }
     remote_action.paused = false;
   }
+  if (remote_action.type == REMOTE_ACTION_BULLDOZER) {
+    Motor_ResumeFiniteMotion();
+    task_process_bulldozer(command, now_ms);
+    return;
+  }
   const uint32_t action_timeout_ms =
       (remote_action.type == REMOTE_ACTION_DISPERSE) ?
           APP_REMOTE_DISPERSE_TIMEOUT_MS : APP_REMOTE_ACTION_TIMEOUT_MS;
@@ -5760,6 +5948,12 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
     task_stop(TASK_FAULT_REMOTE_STOP, now_ms);
   } else if (state == TASK_STOPPED) {
     return;
+  } else if (command->command == VISION_CMD_BULLDOZER_STEP) {
+    if (!task_accept_bulldozer(command, now_ms)) {
+      return;
+    }
+    task_status.acknowledged_sequence = command->sequence;
+    command_accepted = true;
   } else if ((command->command == VISION_CMD_GRAB_CONFIRMED) &&
              (state == TASK_SAFE_SWEEP_RETRIEVE_AUDIT) &&
              !task_sweep_retrieve_expired(now_ms) &&
@@ -6173,6 +6367,7 @@ static bool task_context_complete(void)
     case VISION_CMD_RELEASE_BOTH: case VISION_CMD_DISPERSE_PILE:
     case VISION_CMD_YIELD_BACKOFF:
     case VISION_CMD_CHANGE_LANE:
+    case VISION_CMD_BULLDOZER_STEP:
       return state == TASK_REMOTE_ACTION && remote_action.done &&
              remote_action.command == accepted_context.opcode;
     default: return false;
@@ -6288,6 +6483,8 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
   const bool new_action = new_task || incoming.action_id != accepted_context.action_id;
   const bool range_request = incoming.command == VISION_CMD_APPROACH_TARGET &&
       (incoming.flags & VISION_CMD_APPROACH_RANGE) != 0U;
+  const bool live_bulldozer = incoming.command == VISION_CMD_BULLDOZER_STEP &&
+      task_bulldozer_live_step(VISION_BULLDOZER_STEP(incoming.flags));
   reject_stage = 4U;
   if (state == TASK_RECOVERY_WAIT && !overlay && !new_action &&
       (incoming.command != VISION_CMD_CARGO_AUDIT ||
@@ -6318,9 +6515,17 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     }
     if (!new_target && accepted_context.cancelled && !overlay &&
         !(state == TASK_RECOVERY_WAIT && new_action) &&
+        !(state == TASK_SEARCH && new_action && !task_status.gripper_closed &&
+          incoming.command == VISION_CMD_BULLDOZER_STEP &&
+          VISION_BULLDOZER_STEP(incoming.flags) == VISION_BULLDOZER_TURN_RIGHT) &&
         incoming.command != VISION_CMD_RETURN_CENTER &&
         incoming.command != VISION_CMD_STOP) goto rejected;
   }
+  if (!new_action && incoming.command == VISION_CMD_BULLDOZER_STEP &&
+      (remote_action.command != VISION_CMD_BULLDOZER_STEP ||
+       incoming.heading_cdeg != remote_action.heading_cdeg ||
+       (!live_bulldozer && (incoming.target_x_mm != remote_action.arg_a ||
+                            incoming.target_y_mm != remote_action.arg_b)))) goto rejected;
   const bool visual = incoming.command == VISION_CMD_APPROACH_TARGET ||
                       incoming.command == VISION_CMD_CARGO_AUDIT ||
                       (incoming.command == VISION_CMD_ALIGN_SAFE_ZONE &&
@@ -6382,7 +6587,7 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
   }
   command_accepted = false;
   reject_stage = 9U;
-  if (!new_action && !overlay && !task_dynamic_opcode(incoming.command)) {
+  if (!new_action && !overlay && !task_dynamic_opcode(incoming.command) && !live_bulldozer) {
     /* A finite action is an epoch, not a pulse repeated at 100 Hz. */
     task_status.acknowledged_sequence = incoming.sequence;
     command_accepted = true;
