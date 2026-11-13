@@ -3093,6 +3093,10 @@ static float nav_speed(int16_t remaining_mm, float cruise_speed_mm_s)
       (speed_mm_s > APP_NAV_FINAL_APPROACH_SPEED_MM_S)) {
     speed_mm_s = APP_NAV_FINAL_APPROACH_SPEED_MM_S;
   }
+  if ((remaining_mm <= (int16_t)APP_NAV_FINAL_APPROACH_DISTANCE_MM) &&
+      speed_mm_s < APP_NAV_TERMINAL_MIN_SPEED_MM_S) {
+    speed_mm_s = APP_NAV_TERMINAL_MIN_SPEED_MM_S;
+  }
   return speed_mm_s;
 }
 
@@ -3377,7 +3381,7 @@ static RemoteRouteStatus nav_follow_coarse(
     return REMOTE_ROUTE_RUNNING;
   }
   const float speed_mm_s = fminf(APP_NAV_FINAL_APPROACH_SPEED_MM_S,
-      fmaxf(APP_NAV_MIN_END_SPEED_MM_S, (float)command->target_x_mm));
+      fmaxf(APP_NAV_TERMINAL_MIN_SPEED_MM_S, (float)command->target_x_mm));
   (void)Motor_MoveAngle(speed_mm_s, body_angle);
   task_status.motors_active = true;
   return REMOTE_ROUTE_RUNNING;
@@ -3551,7 +3555,7 @@ static RemoteRouteStatus nav_follow(
      * RDK bearing stays in the field frame as the target crosses the chassis. */
     const float body_angle = task_wrap_angle(command_heading_deg - current_heading_deg);
     const float speed = fminf(route_speed_mm_s,
-        fmaxf(APP_NAV_MIN_END_SPEED_MM_S, (float)command->target_x_mm));
+        fmaxf(APP_NAV_TERMINAL_MIN_SPEED_MM_S, (float)command->target_x_mm));
     (void)Motor_MoveAngle(speed, body_angle);
     task_status.motors_active = true;
     return REMOTE_ROUTE_RUNNING;
@@ -4627,8 +4631,8 @@ static bool task_sweep_reverse_trace(uint32_t now_ms)
       const float direction_deg = task_wrap_angle(
           atan2f(vy, vx) * (180.0f / 3.14159265358979323846f) -
           pose.heading_mdeg * 0.001f);
-      const float speed_mm_s = fminf(120.0f,
-          fmaxf(APP_NAV_FINE_MIN_SPEED_MM_S, error_mm * 4.0f));
+      const float speed_mm_s = fminf(APP_SAFE_SWEEP_RETURN_FINE_MAX_MM_S,
+          fmaxf(APP_SAFE_SWEEP_RETURN_FINE_MIN_MM_S, error_mm * 4.0f));
       const bool move_accepted = Motor_MoveAngleHeading(speed_mm_s, direction_deg,
                                                        sweep_reverse.heading);
       task_status.sweep_reverse_forward_mm_s = move_accepted ?

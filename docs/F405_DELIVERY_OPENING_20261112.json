@@ -1,6 +1,6 @@
 {
   "request_id": "MATCH-DELIVERY-OPENING-20261112",
-  "semantic_revision": "2026-11-12.yaw-first.speed-restored",
+  "semantic_revision": "2026-11-13.terminal-translation150",
   "upper_source_commit": "c907be05ecd8231c3b372b7593565948597bd376",
   "lower_base_commit": "19ec9f718d0cdb9431748c89d18b229d9251063b",
   "build": {
@@ -33,7 +33,7 @@
     "same_action_live_updates": true,
     "lateral_start_abs_error_px_exclusive": 64,
     "lateral_stop_abs_error_px_inclusive": 32,
-    "speed_mm_s": {"gain_per_px": 1.0, "minimum": 110.0, "maximum": 180.0},
+    "speed_mm_s": {"gain_per_px": 1.0, "minimum": 150.0, "maximum": 360.0},
     "move_angle_deg": {"positive_error": -90, "negative_error": 90},
     "field_heading_deg": {"red": 90, "blue": 270},
     "moving_mode": 10,
@@ -59,6 +59,21 @@
       "context_hex": "a3 b3 1d 00 00 07 00 0b 00 00 03 e9 f2 17 c3",
       "command_hex": "a3 b3 18 00 04 49 00 c9 00 00 00 00 f5 5f c3"
     }
+  },
+  "translation_speed_update": {
+    "date": "2026-11-13",
+    "lower_base_commit": "5ac69330f1fdc7a56848ec30541b5b64ff09574d",
+    "authorization": "terminal translation requests: minimum150mm/s, double each previous maximum; yaw explicitly unchanged",
+    "stage_fine_mm_s": {"minimum": 150.0, "maximum": 360.0},
+    "visual_lateral_mm_s": {"minimum": 150.0, "maximum": 360.0},
+    "return_stash_terminal_mm_s": {"minimum": 150.0, "maximum": 400.0},
+    "sweep_return_terminal_mm_s": {"minimum": 150.0, "maximum": 240.0},
+    "coarse_speed_base_and_max_mm_s": {"minimum_base": 120.0, "maximum": 600.0, "changed": false},
+    "align_yaw_tangential_mm_s": {"minimum": 120.0, "maximum": 250.0, "changed": false},
+    "pid_pwm_assist_and_arrival_rules_changed": false,
+    "motiondebug_assist_migrated": false,
+    "flashed_this_task": false,
+    "field_validated": false
   },
   "speed_rollback": {
     "date": "2026-11-12",

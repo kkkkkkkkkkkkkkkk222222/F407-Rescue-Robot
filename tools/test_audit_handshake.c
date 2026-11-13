@@ -847,7 +847,7 @@ static void test_normalrun_navigation_handoffs_and_abort(void)
   route.target_x_mm = 75;
   assert(nav_follow(&route, route.command, APP_NAV_FAST_SPEED_MM_S, 80U) ==
          REMOTE_ROUTE_RUNNING);
-  assert(nav_coarse.phase == NAV_COARSE_FINE && fine_speed_request == 110.0f);
+  assert(nav_coarse.phase == NAV_COARSE_FINE && fine_speed_request == 150.0f);
   route.target_x_mm = 0;
   assert(nav_follow(&route, route.command, APP_NAV_FAST_SPEED_MM_S, 100U) ==
          REMOTE_ROUTE_REACHED);
