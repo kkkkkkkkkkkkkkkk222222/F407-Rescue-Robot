@@ -553,16 +553,16 @@
       5000
     ],
     "live_speed_range_mm_s": [
-      200,
+      250,
       350
     ],
     "live_completion": "Only accepted D=0 finishes. D>0 never sets DONE. After DONE the same action cannot restart.",
     "yaw_tangent_speed_mm_s": [
-      120,
-      250
+      200,
+      400
     ],
     "yaw_tolerance_deg": 3,
-    "turn_control": "Existing continuous yaw/nav_yaw. No finite TURN or outer remote-action timeout for this opcode.",
+    "turn_control": "Existing continuous yaw with NAV's angular P/dead band and an independent200..400mm/s positioning cap. No finite TURN or outer remote-action timeout for this opcode.",
     "fine_heading": "Existing motor vector ramp, heading PI and STAGE FINE assistance combined by a thin API; all previous callers keep fine=false.",
     "actuators": {
       "normal_claw_opening_deg": 120,

@@ -538,7 +538,7 @@
 #define APP_NAV_FINAL_APPROACH_DISTANCE_MM 300U
 #define APP_NAV_FINAL_APPROACH_SPEED_MM_S 400.0f
 /* Terminal XY correction only; keep the coarse-leg120mm/s base separate. */
-#define APP_NAV_TERMINAL_MIN_SPEED_MM_S   200.0f
+#define APP_NAV_TERMINAL_MIN_SPEED_MM_S   250.0f
 #define APP_NAV_LINEAR_SLOWDOWN_MM       600.0f
 /* End the encoder-bounded coarse leg before the global waypoint. */
 #define APP_NAV_COARSE_RESERVE_MM        250.0f
@@ -547,7 +547,7 @@
 #define APP_NAV_STAGE_COARSE_RESERVE_MM  150.0f
 #define APP_NAV_STAGE_FINE_ENTRY_MM      180.0f
 /* STAGE FINE tuning for low-speed closed-loop translation. */
-#define APP_NAV_FINE_MIN_SPEED_MM_S      200.0f
+#define APP_NAV_FINE_MIN_SPEED_MM_S      250.0f
 #define APP_NAV_FINE_MAX_SPEED_MM_S      360.0f
 #define APP_NAV_FINE_DISTANCE_GAIN_S_INV   1.0f
 #define APP_NAV_FINE_WHEEL_ZERO_MM_S       0.5f
@@ -585,6 +585,9 @@
  * The original gyro hold also owns the subsequent local-wheel ENTER stroke. */
 #define APP_SAFE_ALIGN_TOLERANCE_DEG        3.0f
 #define APP_SAFE_ALIGN_HOLD_TOLERANCE_DEG   6.0f
+/* Positioning/sweep absolute-yaw alignment only; keep finite TURN unchanged. */
+#define APP_POSITION_ALIGN_TURN_MIN_MM_S  200.0f
+#define APP_POSITION_ALIGN_TURN_MAX_MM_S  400.0f
 #define APP_SAFE_ALIGN_CAMERA_ANGLE           120U
 #define APP_SAFE_ALIGN_RAISED_CAMERA_ANGLE    115U
 #define APP_SAFE_ALIGN_CAMERA_SETTLE_MS       300U
@@ -621,8 +624,8 @@
 #define APP_SAFE_SWEEP_LATERAL_SPEED_MM_S   350.0f
 #define APP_SAFE_SWEEP_FORWARD_SPEED_MM_S   300.0f
 #define APP_SAFE_SWEEP_RETURN_SPEED_MM_S    350.0f
-#define APP_SAFE_SWEEP_RETURN_FINE_MIN_MM_S 200.0f
-#define APP_SAFE_SWEEP_RETURN_FINE_MAX_MM_S 240.0f
+#define APP_SAFE_SWEEP_RETURN_FINE_MIN_MM_S 250.0f
+#define APP_SAFE_SWEEP_RETURN_FINE_MAX_MM_S 250.0f
 #define APP_SAFE_SWEEP_MODE39_HOLD_MS         500U
 #define APP_SAFE_SWEEP_SEARCH_SPEED_MM_S      160.0f
 #define APP_SAFE_SWEEP_APPROACH_SPEED_MM_S    250.0f

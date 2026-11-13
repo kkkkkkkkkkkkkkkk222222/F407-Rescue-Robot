@@ -3205,6 +3205,16 @@ static float nav_yaw(float heading_error_deg)
   return correction;
 }
 
+static float task_position_align_speed(float heading_error_deg)
+{
+  /* Reuse NAV's angular P/dead band, without its unrelated 300 mm/s cap. */
+  const float requested =
+      (task_abs(heading_error_deg) - APP_NAV_HEADING_TOLERANCE_DEG) *
+      APP_NAV_HEADING_KP_MM_S_PER_DEG;
+  return fminf(APP_POSITION_ALIGN_TURN_MAX_MM_S,
+      fmaxf(APP_POSITION_ALIGN_TURN_MIN_MM_S, requested));
+}
+
 static bool nav_realign_due(float heading_error_deg, float threshold_deg,
                             uint32_t hold_ms, uint32_t now_ms)
 {
@@ -3666,10 +3676,9 @@ static void task_process_safe_align(uint32_t now_ms)
     safe_align_done = false;
     accepted_context.completed = false;
     if (task_abs(error_deg) > APP_SAFE_ALIGN_TOLERANCE_DEG) {
-      /* ALIGN is a continuous heading goal, not another finite TURN with
-       * its own timeout. Keep the existing slow/fast turn speed bounds. */
-      const float yaw_mm_s = fminf(APP_MOTOR_TURN_FAST_MM_S,
-          fmaxf(APP_MOTOR_TURN_SLOW_MM_S, task_abs(nav_yaw(error_deg))));
+      /* ALIGN is continuous; its positioning speed bounds are independent
+       * of finite TURN's speed profile and timeout. */
+      const float yaw_mm_s = task_position_align_speed(error_deg);
       task_move_body(0.0f, 0.0f, copysignf(yaw_mm_s, error_deg));
       task_status.motors_active = true;
     } else {
@@ -4115,8 +4124,7 @@ static void task_process_bulldozer(const VisionMissionCommand *command,
       if (task_abs(error) <= APP_SAFE_ALIGN_TOLERANCE_DEG) {
         task_remote_action_finish();
       } else {
-        const float yaw = fminf(APP_MOTOR_TURN_FAST_MM_S,
-            fmaxf(APP_MOTOR_TURN_SLOW_MM_S, task_abs(nav_yaw(error))));
+        const float yaw = task_position_align_speed(error);
         task_move_body(0.0f, 0.0f, copysignf(yaw, error));
         task_status.motors_active = true;
       }
