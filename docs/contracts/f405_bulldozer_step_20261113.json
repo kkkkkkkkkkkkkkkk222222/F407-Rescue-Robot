@@ -548,6 +548,17 @@
     },
     "local_forward_speed_mm_s": 300,
     "local_reverse_speed_mm_s": 350,
+    "step8_straight_control": {
+      "function": "Motor_MoveHeadingLowRearDeadband",
+      "reference": "FixedU red0deg/blue180deg; never relatch the current yaw on repeats.",
+      "rear_zero_threshold_mm_s": 0.5,
+      "distance": "Same signed front-wheel encoder difference as the original distance controller; origin latched once after the existing brake.",
+      "completion_tolerance_mm": 3,
+      "cruise_mm_s": 300,
+      "slowdown_mm": 100,
+      "end_speed_mm_s": 120,
+      "verification": "NormalRun build and direct calls in the existing Task fixture; no hardware/ground accuracy check. Other steps unchanged."
+    },
     "live_D_range_mm": [
       0,
       5000

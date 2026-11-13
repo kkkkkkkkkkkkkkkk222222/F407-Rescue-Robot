@@ -11,6 +11,7 @@ static float reverse_output;
 static float lateral_output, yaw_output;
 static VisionData test_vision;
 static LocationPose test_pose = {.valid = true, .heading_mdeg = 90000};
+static EncoderStatus test_wheel_encoder[3];
 static bool motor_fault;
 static bool heading_rejected;
 static float heading_output;
@@ -68,7 +69,7 @@ void Vision_QueueStmStatus(const VisionStmStatus *value) { (void)value; }
 IMUData IMU_GetData(void) { return (IMUData){.ready = true}; }
 void IMU_ConfirmHeadingReference(void) {}
 void Encoder_GetAll(EncoderStatus out[3])
-{ for (uint8_t i=0;i<3;++i) out[i]=(EncoderStatus){0}; }
+{ for (uint8_t i=0;i<3;++i) out[i]=test_wheel_encoder[i]; }
 bool Vision_FusedPoseIsFresh(const VisionFusedPose *p, uint32_t now, uint32_t timeout)
 { return p && p->received && (p->status & VISION_POSE_VALID) && now-p->tick_ms <= timeout; }
 void Location_Reanchor(int32_t x, int32_t y, int32_t heading)
@@ -147,6 +148,7 @@ static void prepare(void)
   first_delivery_done = true;
   test_pose = (LocationPose){.valid = true, .heading_mdeg = 90000};
   test_vision = (VisionData){0};
+  for (uint8_t i=0;i<3;++i) test_wheel_encoder[i]=(EncoderStatus){0};
   motor_fault = false;
   heading_rejected = false;
   heading_calls = 0U;

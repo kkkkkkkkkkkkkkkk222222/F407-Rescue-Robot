@@ -72,6 +72,7 @@ typedef struct {
   uint16_t heading_cdeg;
   uint8_t step;
   uint32_t actuator_wait_ms;
+  int64_t straight_start_counts[2];
   uint32_t started_ms;
   uint32_t phase_path_mm;
   bool done;
@@ -4132,8 +4133,7 @@ static void task_process_bulldozer(const VisionMissionCommand *command,
     }
 
     case VISION_BULLDOZER_FORWARD_PARK:
-    case VISION_BULLDOZER_BACK_200:
-    case VISION_BULLDOZER_SWEEP_1000: {
+    case VISION_BULLDOZER_BACK_200: {
       const float speed = remote_action.arg_a < 0 ?
           APP_SAFE_SWEEP_RETURN_SPEED_MM_S : APP_SAFE_SWEEP_FORWARD_SPEED_MM_S;
       const MotorDistanceStatus result = Motor_MoveDistanceHeading(
@@ -4145,6 +4145,51 @@ static void task_process_bulldozer(const VisionMissionCommand *command,
         /* Keep the existing finite-distance recovery, not a new latch. */
         task_stop(TASK_FAULT_MOTOR, now_ms);
       }
+      return;
+    }
+
+    case VISION_BULLDOZER_SWEEP_1000: {
+      EncoderStatus encoder[3];
+      Encoder_GetAll(encoder);
+      if (remote_action.phase == 0U) {
+        /* Preserve the existing brake before establishing this action's
+         * encoder origin. Do not restart the brake while it is finishing. */
+        if (Motor_IsBraking()) {
+          task_status.motors_active = false;
+          return;
+        }
+        remote_action.straight_start_counts[0] = encoder[0].position;
+        remote_action.straight_start_counts[1] = encoder[1].position;
+        remote_action.phase = 1U;
+      }
+      /* Same signed front-wheel forward distance as the existing distance
+       * controller: rotation/lateral travel must not consume the 1m budget. */
+      const float m1 = (float)(encoder[0].position - remote_action.straight_start_counts[0]) *
+          APP_OMNI_M1_ENCODER_SIGN;
+      const float m2 = (float)(encoder[1].position - remote_action.straight_start_counts[1]) *
+          APP_OMNI_M2_ENCODER_SIGN;
+      const float travelled_mm = APP_OMNI_FORWARD_SIGN * (m1 - m2) *
+          (3.14159265359f * APP_WHEEL_DIAMETER_MM /
+           (1.7320508f * APP_ENCODER_COUNTS_PER_WHEEL_REV));
+      const float remaining_mm = remote_action.arg_a - travelled_mm;
+      if (remaining_mm <= APP_GO_DISTANCE_TOLERANCE_MM) {
+        task_remote_action_finish();
+        return;
+      }
+      const float cruise = APP_SAFE_SWEEP_FORWARD_SPEED_MM_S;
+      const float slowdown = fminf(remote_action.arg_a * 0.5f,
+          APP_GO_DISTANCE_SLOWDOWN_MM * cruise / APP_GO_DISTANCE_SPEED_MM_S);
+      float speed = cruise;
+      if (remaining_mm < slowdown) {
+        const float ratio = fmaxf(0.0f, fminf(1.0f,
+            (remaining_mm - APP_GO_DISTANCE_TOLERANCE_MM) /
+            (slowdown - APP_GO_DISTANCE_TOLERANCE_MM)));
+        const float end_speed = fminf(cruise, APP_GO_DISTANCE_MIN_SPEED_MM_S);
+        speed = end_speed + (cruise - end_speed) * ratio;
+      }
+      /* Use the standard delivery straight-line function for all yaw/ramp
+       * control. U is fixed; repeated requests never lock the current yaw. */
+      task_status.motors_active = Motor_MoveHeadingLowRearDeadband(speed, heading_deg);
       return;
     }
 
