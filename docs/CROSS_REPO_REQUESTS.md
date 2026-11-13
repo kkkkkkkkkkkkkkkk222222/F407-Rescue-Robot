@@ -16,6 +16,38 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## 2026-11-13 RDK661bdf7固定矩形过道配套审查回执
+
+已直接读取RDK固定入口，并通过实时Git核对`codex/gamepad-teleop`最新为
+`661bdf70f0fc1da5792c8cfd9a19da2825de36c4`；本端审查基线为`9b9508660e297c0bc0739c37a75f3df1dcab335f`。
+[上位当前交接](https://github.com/danmo-teng/shijue_fangan/blob/661bdf70f0fc1da5792c8cfd9a19da2825de36c4/docs/CROSS_REPO_REQUESTS.md)
+[固定矩形说明](https://github.com/danmo-teng/shijue_fangan/blob/661bdf70f0fc1da5792c8cfd9a19da2825de36c4/docs/COMPETITION_CLAW_RECTANGLE_20261113.md)
+
+**审查结论：本次上位修改无需下位运行代码配套，现有接口可直接使用；没有为形成代码改动而修改固件。**
+
+- 661bdf7仅改变RDK画面过道：固定爪模板左右边界及near727，取消旧像素障碍自持缓存，修正完成后才判过道。
+  已核对实际diff，protocol.py和state_machine.py相对7240f0c均未变。下位不接收矩形/像素多边形，无需移植此几何。
+- 原0x04视觉ALIGN仍输入像素偏差，原0x05仍为锁航向、本地轮程670mm直推；3°/6°及64/32px完成规则可兼容。
+  不将矩形宽度/near像素变为下位距离，不加新握手、等待、停车或永久FAULT，也不改既有速度/PID/舵机参数。
+- 7240f0c完整爪内审核仍用原0x12类别/数量/危险位及STABLE；现下位已有两帧、至少100ms采样间隔和原非法分离/释放入口。
+  首绿单绿、后续最多两件材料、单伤员及initial-stash非空语义保持，不能以锁定单目标替代审核总数。
+- 正式RDK不再生成opcode0x13旧清障，下位只有收到该命令才进入；保留历史兼容分支，不新增拒绝门或恢复旧清障发起。
+  真实过道仍阻挡时，上位继续保持载荷等待；新绕行/清障未实现，不宣称有障碍也能完成全流程。
+
+仍属上位的问题，不能靠下位放宽条件来修：
+
+1. RETURN恢复观察只检查mode3/RETURN/accepted，未核对本次pending task/action；随后adopt旧context并强置matches，
+   可把旧RETURN完成误作新返程完成。应在上位约束新旧动作身份并处理本次明确拒绝，而非改下位到点条件或伪造DONE。
+   [runner1833](https://github.com/danmo-teng/shijue_fangan/blob/661bdf70f0fc1da5792c8cfd9a19da2825de36c4/competition_rescue/run_competition_rescue.py#L1833)
+   [恢复消费2063](https://github.com/danmo-teng/shijue_fangan/blob/661bdf70f0fc1da5792c8cfd9a19da2825de36c4/competition_rescue/run_competition_rescue.py#L2063)
+2. 视觉ALIGN保存源frame后，组0x1D时仍仅对APPROACH/AUDIT写frame，ALIGN被置0。
+   当前下位兼容0所以不据此断言必然卡住；但真实帧关联丢失，应在上位保留已有ALIGN源frame，不新增字段或时间门。
+   [组包1729](https://github.com/danmo-teng/shijue_fangan/blob/661bdf70f0fc1da5792c8cfd9a19da2825de36c4/competition_rescue/run_competition_rescue.py#L1729)
+
+本次检查为实际源码/diff及现有调用链对照，没有新增测试程序，没有构建、烧录或连接设备。
+仅更新本端固定回执和当前摘要；当前本地NormalRun镜像仍为9b95086/dirty1，文档HEAD不作为新镜像或actual。
+RDK提供的最近实跑13b5cc7/dirty1属于既有会话记录，不冒充本轮板端实读。两端实车效果尚未联合验证。
+
 ## 2026-11-13 定位平移最低请求调整为200mm/s
 
 用户最新要求将已确认的定位平移下限150提高到200，以上一源码`13b5cc7f174dc8746a8395af7a78224eb256f37f`增量修改。
