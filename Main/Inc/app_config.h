@@ -503,6 +503,9 @@
 #define APP_STEERING_MIN_MM_S             10.0f
 /* Pixel-only stationary alignment; engineering starting point, not calibrated. */
 #define APP_APPROACH_ALIGN_MIN_TURN_MM_S  60.0f
+/* Within twice the phase's existing centre tolerance, ease toward 30 mm/s. */
+#define APP_APPROACH_ALIGN_NEAR_MIN_MM_S  30.0f
+#define APP_APPROACH_ALIGN_NEAR_MAX_MM_S  45.0f
 #define APP_STEERING_LIMIT_MM_S           90.0f
 #define APP_STEERING_RATE_MM_S2          400.0f
 #define APP_STEERING_DIRECTION           1.0f

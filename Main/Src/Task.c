@@ -305,6 +305,7 @@ static bool tracking_filter_valid;
 static bool approach_report_generation_valid;
 static bool mission_sequence_valid;
 static bool steering_active;
+static bool steering_uses_raw_x;
 static bool nav_ready;
 static bool scan_report_gate_open;
 static bool pose_invalid_pending;
@@ -585,6 +586,7 @@ static void task_reset_tracking(void)
   tracking_valid = false;
   tracking_filter_valid = false;
   steering_active = false;
+  steering_uses_raw_x = false;
   steering_mm_s = 0.0f;
   steering_target_mm_s = 0.0f;
   Pid_Reset(&steering_pid);
@@ -1615,6 +1617,7 @@ static void task_initialize(uint32_t now_ms)
   approach_report_generation_valid = false;
   mission_sequence_valid = false;
   steering_active = false;
+  steering_uses_raw_x = false;
   nav_ready = false;
   scan_report_gate_open = false;
   pose_invalid_pending = false;
@@ -1805,6 +1808,24 @@ static float task_tracking_dt(uint32_t tick_ms)
   return dt_s;
 }
 
+static float task_approach_alignment_tolerance(void)
+{
+  if (state != TASK_APPROACH) {
+    return 0.0f;
+  }
+  switch (approach_phase) {
+    case APPROACH_TRACK:
+      return cluster_target_active ? APP_DISPERSE_ALIGN_X_ERROR_PX :
+                                     APP_APPROACH_TRACK_CENTER_TOLERANCE_PX;
+    case APPROACH_CLUSTER_ALIGN:
+      return APP_DISPERSE_ALIGN_X_ERROR_PX;
+    case APPROACH_ALIGN_125:
+      return APP_GRAB_ALIGN_X_ERROR_PX;
+    default:
+      return 0.0f;
+  }
+}
+
 static float task_track_target(const VisionData *vision, bool track_camera)
 {
   /* Legacy target reports and TYPE=0x18 APPROACH_TARGET commands both advance
@@ -1859,12 +1880,36 @@ static float task_track_target(const VisionData *vision, bool track_camera)
   }
 
   const float raw_error = (float)APP_VISION_TARGET_X - vision->x;
-  const bool near_track_center = state == TASK_APPROACH &&
-      approach_phase == APPROACH_TRACK && !cluster_target_active &&
-      task_abs(raw_error) <= 2.0f * APP_APPROACH_TRACK_CENTER_TOLERANCE_PX;
-  const float steering_x = near_track_center ? (float)vision->x : filtered_target_x;
+  const float tolerance = task_approach_alignment_tolerance();
+  const bool stationary_alignment = tolerance > 0.0f;
+  const bool near_center = stationary_alignment &&
+      task_abs(raw_error) <= 2.0f * tolerance;
+  /* The filter may trail a target that has already crossed the centre. Keep
+   * far-field smoothing, but never let that lag command the previous side. */
+  const bool use_raw_x = near_center || (stationary_alignment &&
+      raw_error * ((float)APP_VISION_TARGET_X - filtered_target_x) < 0.0f);
+  const float steering_x = use_raw_x ? (float)vision->x : filtered_target_x;
   const float x_error = (float)APP_VISION_TARGET_X - steering_x;
   const float magnitude = task_abs(x_error);
+  const float requested_direction = raw_error * APP_STEERING_DIRECTION;
+  const bool reversing = stationary_alignment &&
+      (steering_mm_s * requested_direction < 0.0f ||
+       steering_target_mm_s * requested_direction < 0.0f);
+  if (use_raw_x != steering_uses_raw_x || reversing) {
+    /* A coordinate-source switch is not a measured derivative. A genuine
+     * reversal must also start without the previous direction's slew state. */
+    Pid_Reset(&steering_pid);
+  }
+  steering_uses_raw_x = use_raw_x;
+  if (reversing) {
+    steering_mm_s = 0.0f;
+  }
+  if (stationary_alignment && task_abs(raw_error) <= tolerance) {
+    steering_active = false;
+    steering_mm_s = steering_target_mm_s = 0.0f;
+    Pid_Reset(&steering_pid);
+    return steering_target_mm_s;
+  }
   if ((steering_active &&
        (magnitude <= APP_STEERING_EXIT_DEAD_ZONE)) ||
       (!steering_active &&
@@ -1880,20 +1925,17 @@ static float task_track_target(const VisionData *vision, bool track_camera)
                                       (float)APP_VISION_TARGET_X,
                                       steering_x, dt_s) *
                          APP_STEERING_DIRECTION;
-  if (near_track_center && magnitude > APP_APPROACH_TRACK_CENTER_TOLERANCE_PX) {
-    /* Ease from 60 to 30 mm/s as the actual image reaches the centre band.
-     * A lagging filtered coordinate or slew state must not turn past it. */
-    const float turn = APP_APPROACH_ALIGN_MIN_TURN_MM_S * magnitude /
-        (2.0f * APP_APPROACH_TRACK_CENTER_TOLERANCE_PX);
+  if (near_center) {
+    /* Use each phase's unchanged centre tolerance: 45 at twice that error,
+     * 30 just outside it. This branch must bypass the far-field 60 minimum. */
+    const float ratio = (magnitude - tolerance) / tolerance;
+    const float turn = APP_APPROACH_ALIGN_NEAR_MIN_MM_S +
+        (APP_APPROACH_ALIGN_NEAR_MAX_MM_S - APP_APPROACH_ALIGN_NEAR_MIN_MM_S) * ratio;
     steering_target_mm_s = copysignf(turn, x_error * APP_STEERING_DIRECTION);
     steering_mm_s = steering_mm_s * steering_target_mm_s < 0.0f ? 0.0f :
         fmaxf(-turn, fminf(turn, steering_mm_s));
     return steering_target_mm_s;
   }
-  const bool stationary_alignment = state == TASK_APPROACH &&
-      (approach_phase == APPROACH_TRACK ||
-       approach_phase == APPROACH_CLUSTER_ALIGN ||
-       approach_phase == APPROACH_ALIGN_125);
   const float minimum_mm_s = stationary_alignment ?
       APP_APPROACH_ALIGN_MIN_TURN_MM_S : APP_STEERING_MIN_MM_S;
   if ((steering_target_mm_s > 0.0f) &&
@@ -2477,9 +2519,8 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
           (int32_t)(vision->tick_ms - state_started_ms) >= (int32_t)APP_GRAB_CAMERA_SETTLE_MS) {
         task_status.found = true;
         (void)task_track_target(vision, false);
-        const float tolerance = cluster_target_active ?
-            APP_DISPERSE_ALIGN_X_ERROR_PX : APP_APPROACH_TRACK_CENTER_TOLERANCE_PX;
-        const float target_x = cluster_target_active ? filtered_target_x : (float)vision->x;
+        const float tolerance = task_approach_alignment_tolerance();
+        const float target_x = (float)vision->x;
         if (task_abs(target_x - APP_VISION_TARGET_X) <= tolerance) {
           Motor_Stop();
           task_status.motors_active = false;
@@ -2532,9 +2573,9 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
         task_status.found = true;
         (void)task_track_target(vision, false);
       }
-      if (tracking_filter_valid &&
-          (task_abs(filtered_target_x - (float)APP_VISION_TARGET_X) <=
-           APP_DISPERSE_ALIGN_X_ERROR_PX)) {
+      if (new_locked_target && tracking_valid &&
+          (task_abs((float)vision->x - (float)APP_VISION_TARGET_X) <=
+           task_approach_alignment_tolerance())) {
         Motor_Stop();
         task_status.motors_active = false;
         task_clear_audit_result();
@@ -2613,9 +2654,9 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
         task_status.found = true;
         (void)task_track_target(vision, false);
       }
-      if (tracking_filter_valid &&
-          (task_abs(filtered_target_x - (float)APP_VISION_TARGET_X) <=
-           APP_GRAB_ALIGN_X_ERROR_PX)) {
+      if (new_locked_target && tracking_valid &&
+          (task_abs((float)vision->x - (float)APP_VISION_TARGET_X) <=
+           task_approach_alignment_tolerance())) {
         Motor_Stop();
         task_status.motors_active = false;
         approach_phase = APPROACH_CAMERA_TO_140;
