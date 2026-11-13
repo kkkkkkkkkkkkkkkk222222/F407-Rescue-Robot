@@ -647,9 +647,9 @@
 #define APP_SERVO_S4_OFFSET_DEG            0  /* Left claw, recalibrate after remount */
 /* Fine installation trims are added after angle-to-pulse conversion. */
 #define APP_SERVO_S1_OFFSET_US             0
-#define APP_SERVO_S2_OFFSET_US            32
+#define APP_SERVO_S2_OFFSET_US            24
 #define APP_SERVO_S3_OFFSET_US             0
-#define APP_SERVO_S4_OFFSET_US             8
+#define APP_SERVO_S4_OFFSET_US             0
 #define APP_DELIVERY_CAMERA_ANGLE         120U
 #define APP_DELIVERY_CAMERA_SETTLE_MS     300U
 #define APP_DELIVERY_VERIFY_WAIT_MS       1000U
@@ -671,12 +671,12 @@
 /* Original-mount output range used to estimate waits for ordinary claw moves. */
 #define APP_CLAW_LEFT_LIMIT_MIN_DEG              20U
 #define APP_CLAW_LEFT_LIMIT_MAX_DEG             120U
-#define APP_CLAW_LEFT_OPEN_ANGLE                108U
+#define APP_CLAW_LEFT_OPEN_ANGLE                120U
 #define APP_CLAW_RIGHT_OPEN_ANGLE  APP_CLAW_RIGHT_FROM_LEFT(APP_CLAW_LEFT_OPEN_ANGLE)
 #define APP_CLAW_LEFT_RELEASE_ANGLE             180U
 #define APP_CLAW_RIGHT_RELEASE_ANGLE APP_CLAW_RIGHT_FROM_LEFT(APP_CLAW_LEFT_RELEASE_ANGLE)
-/* Both claws close6deg inward from90; installation error belongs in offsets. */
-#define APP_CLAW_LEFT_TOUCH_ANGLE                84U
+/* Current mechanism: shared close86deg; installation error belongs in offsets. */
+#define APP_CLAW_LEFT_TOUCH_ANGLE                86U
 #define APP_CLAW_RIGHT_TOUCH_ANGLE APP_CLAW_RIGHT_FROM_LEFT(APP_CLAW_LEFT_TOUCH_ANGLE)
 /* Stow folds the left claw inside before bringing the right claw around it. */
 #define APP_CLAW_LEFT_RETRACT_ANGLE              32U

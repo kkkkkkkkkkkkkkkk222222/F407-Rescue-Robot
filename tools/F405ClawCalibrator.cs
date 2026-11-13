@@ -673,7 +673,7 @@ internal sealed class CalibratorForm : Form, IMessageFilter
             }
             SelectClosedPose();
             StartHelper(); connected = true; RefreshAll(true); ApplyCurrent();
-            state.Text = "已启用双爪并应用当前标定，闭合设计84°、offset单独保留。";
+            state.Text = "已启用双爪并应用当前合爪标定" + closedOpening.ToString("0.00") + "°，offset单独保留。";
         }
         catch { DisconnectBoard(); throw; }
     }
@@ -732,7 +732,7 @@ internal sealed class CalibratorForm : Form, IMessageFilter
             { "left_pulse_us", liveLeft }, { "right_pulse_us", liveRight },
             { "s1_pulse_us", livePulses[1] }, { "s1_enabled", servoEnabled[1] },
             { "s3_pulse_us", livePulses[3] }, { "s3_enabled", servoEnabled[3] },
-            { "design_closed_opening_cdeg", 8400 },
+            { "design_closed_opening_cdeg", Define("APP_CLAW_LEFT_TOUCH_ANGLE") * 100 },
             { "pulse_quantum_us", 1 }, { "pulse_per_degree_nominal", 2000.0 / 180.0 },
             { "claws_inverted", inverted }, { "spline_teeth_user_reported", 25 },
             { "installation_reference_user_confirmed", referenceConfirmed.Checked },

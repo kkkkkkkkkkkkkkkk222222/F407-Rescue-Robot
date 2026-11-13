@@ -94,9 +94,9 @@ $exists = Test-Path -LiteralPath $Destination -PathType Leaf
 $current = if ($exists) { [System.IO.File]::ReadAllText($Destination) } else { $template }
 # Migrate only exact sentences emitted by older versions; retain personal notes.
 $knownLegacy = @{
-    'S 1 88 设升降逻辑角。S 2 90 设右爪逻辑角。S 3 140 设摄像头逻辑角。' = 'S1起步/退出61°、水平85°、首绿静止预设82°；合爪S4=84°、S2=96°；S3=140°复审。'
-    'S 4 18 设左爪逻辑角。O 2 2 和 O 4 5 分别设右爪、左爪总偏移，单位度。' = '收纳先S4=32°后S2=132°。当前微调为S4+8us、S2+32us，O只调额外整数度补偿。'
-    'S 4 18 设左爪逻辑角。O 2 0 和 O 4 0 分别清零右爪、左爪安装偏移，单位度。' = '收纳先S4=32°后S2=132°。O 2 0/O 4 0不清固定32us/8us微调。'
+    'S 1 88 设升降逻辑角。S 2 90 设右爪逻辑角。S 3 140 设摄像头逻辑角。' = 'S1起步/退出61°、水平85°、首绿静止预设82°；合爪S4=86°、S2=94°；S3=140°复审。'
+    'S 4 18 设左爪逻辑角。O 2 2 和 O 4 5 分别设右爪、左爪总偏移，单位度。' = '收纳先S4=32°后S2=132°。当前微调为S4+0us、S2+24us，O只调额外整数度补偿。'
+    'S 4 18 设左爪逻辑角。O 2 0 和 O 4 0 分别清零右爪、左爪安装偏移，单位度。' = '收纳先S4=32°后S2=132°。O 2 0/O 4 0不清固定24us/0us微调。'
     'RDK 使用 JP506 的 UART4，230400 8N1。' = 'RDK 使用 JP506 的 UART4，921600 8N1。'
 }
 foreach ($entry in $knownLegacy.GetEnumerator()) { $current = $current.Replace($entry.Key, $entry.Value) }
