@@ -1,5 +1,9 @@
 # MATCH-ATTACK-RETURN-20261114：step13空载保向平移
 
+2026-11-14后续MATCH-ATTACK-FACING已配套step14：进攻藏点NAV完成后先保持闭爪带载转向，红270°/蓝90°，
+再原RELEASE_BOTH/mode34及本文step13返程。原0..13字段不变，详见[本次增量说明](F405_ATTACK_AUDIT_ADAPTATION_20261114.md)。
+step14和原step13红蓝报文一并记录在本页机器合同，用户自行烧录；未称新转正已上板。
+
 审查接受原0x14/step13布局，基于本端`f1f8f183c5f14fb24462a76834b0ab0613e75967`增量实现。
 已核对RDK固定快照`a8d1242ac19b0e69d9c709be80adcfdafc76e1c5`及机器合同blob`4610fe8cb88e93313087a38e210224c9f57a5972`。
 NormalRun和MotionDebug已编译通过；本轮未烧录、未打开UART或执行任何机构/车轮动作，板端actual未读。

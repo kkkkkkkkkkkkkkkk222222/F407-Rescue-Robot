@@ -116,6 +116,8 @@
 /* APPROACH_TARGET describes the centre of a pile that must be approached
  * before the upper computer requests visual selective separation. */
 #define VISION_CMD_CLUSTER_TARGET    0x20U
+/* STAGE NAV bit5 requests reuse of the task's real post-grab single-injury audit. */
+#define VISION_CMD_REUSE_POST_GRAB_AUDIT 0x20U
 /* APPROACH bit6 + DISTANCE_VALID: P2/P3=latched travel mm,
  * P4/P5=fixed measuring pitch cdeg (10500/12000), P6/P7=0. */
 #define VISION_CMD_APPROACH_RANGE     0x40U
@@ -178,7 +180,8 @@ typedef enum {
   VISION_BULLDOZER_BACK_TO_STAGE,
   VISION_BULLDOZER_RIGHT_TO_STAGE,
   VISION_BULLDOZER_PICKUP_READY,
-  VISION_BULLDOZER_EMPTY_BODY_MOVE
+  VISION_BULLDOZER_EMPTY_BODY_MOVE,
+  VISION_BULLDOZER_ATTACK_FACE_OPPONENT
 } VisionBulldozerStep;
 
 #define VISION_BULLDOZER_STEP(flags) ((uint8_t)((flags) >> 4U))

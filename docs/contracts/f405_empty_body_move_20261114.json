@@ -270,5 +270,54 @@
       "upstream_commit": "8db11ec29b297d8c00173f42ecc6b371c01958dd",
       "contract": "f405_search_station_20261114.json"
     }
-  }
+  },
+  "extensions": {
+    "attack_facing": {
+      "id": "MATCH-ATTACK-FACING-20261114",
+      "status": "lower_implemented_build_checked_not_flashed",
+      "upper_commit": "b1b3531782b95d65cc7b4a24927935344ee98e7d",
+      "upper_contract_blob": "c48a89934dc2aab9fd5988b0d9b0e7131e6f9e1e",
+      "lower_base": "63d75a88c4e13cce11fb8731aca14383269e8ce5"
+    }
+  },
+  "face_before_release": {
+    "opcode": 20,
+    "step": 14,
+    "name": "ATTACK_FACE_OPPONENT",
+    "A": 0,
+    "B": 0,
+    "U_red_cdeg": 27000,
+    "U_blue_cdeg": 9000,
+    "entry": "owned completed initial-stash NAV, closed claws, actual legal initial-stash audit; before RELEASE_BOTH",
+    "implementation": "reuse existing continuous turning controller and arrival window; no servo/release or audit reset",
+    "completion": "same task/action/opcode, original COMPLETED mode25; then existing RELEASE_BOTH action",
+    "preserve": "audit, cargo, route_to_stash and original release acceptance; old step0/4 heading validation unchanged",
+    "not_authorized": "no fresh handshake, time qualification, PID/speed/ISR/telemetry or firmware deployment",
+    "speed_mm_s_wheel_request": [
+      200,
+      400
+    ],
+    "arrival_deg": 3,
+    "duplicate": "same action idempotent while RUNNING/DONE; old NAV DONE is not this turn DONE"
+  },
+  "facing_examples": [
+    {
+      "side": "red",
+      "task_id": 10,
+      "action_id": 99,
+      "sequence": 39,
+      "context_hex": "a3 b3 1d 27 00 0a 00 63 00 00 00 00 31 91 c3",
+      "command_hex": "a3 b3 18 27 14 e9 00 00 00 00 69 78 19 ca c3",
+      "source": "synthetic_offline_not_transmitted"
+    },
+    {
+      "side": "blue",
+      "task_id": 10,
+      "action_id": 99,
+      "sequence": 39,
+      "context_hex": "a3 b3 1d 27 00 0a 00 63 00 00 00 00 31 91 c3",
+      "command_hex": "a3 b3 18 27 14 e1 00 00 00 00 23 28 a7 56 c3",
+      "source": "synthetic_offline_not_transmitted"
+    }
+  ]
 }

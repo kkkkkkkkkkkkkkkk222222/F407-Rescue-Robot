@@ -351,6 +351,7 @@ static bool audit_destination_injury;
 static bool cargo_recheck_pending;
 static bool opening_claw_probe_active;
 static bool route_to_stash;
+static bool nav_reuse_post_grab_audit;
 static bool stash_backoff_pending;
 static bool cluster_target_active;
 static bool cluster_claws_ready;
@@ -845,6 +846,13 @@ static bool task_audit_has_danger(void)
       audit_last_right_class == VISION_CARGO_DANGER;
 }
 
+static bool task_closed_single_injury_audit(void)
+{
+  return task_status.gripper_closed && audit_received && audit_host_stable &&
+      audit_valid && !audit_initial_stash && audit_destination_injury &&
+      audit_last_semantic == AUDIT_SEMANTIC_INJURY_SINGLE;
+}
+
 static bool task_disperse_keep_side_valid(
     const VisionMissionCommand *command)
 {
@@ -1146,6 +1154,7 @@ static void task_latch_audit(const VisionMissionCommand *command, uint32_t now_m
 
 static void task_clear_audit_result(void)
 {
+  nav_reuse_post_grab_audit = false;
   audit_observation_gap = false;
   if (accepted_context.opcode == VISION_CMD_CARGO_AUDIT) {
     accepted_context.completed = false;
@@ -1323,6 +1332,11 @@ static void task_enter(TaskState next, uint32_t now_ms)
       (state == TASK_FACE_FIELD_CENTER) && (next == TASK_SEARCH);
   Motor_Stop();
   state = next;
+  if (next != TASK_NAVIGATE) {
+    /* The grant belongs only to this NAV. ALIGN consumes it while retaining
+     * the real audit; release/recovery/SEARCH must never carry it onward. */
+    nav_reuse_post_grab_audit = false;
+  }
   if (next != TASK_GRAB_OBSERVE) {
     opening_claw_probe_active = false;
   }
@@ -1674,6 +1688,7 @@ static void task_initialize(uint32_t now_ms)
   cargo_recheck_pending = false;
   route_to_stash = false;
   stash_backoff_pending = false;
+  nav_reuse_post_grab_audit = false;
   cluster_target_active = false;
   cluster_claws_ready = false;
   separation_keep_side = 0;
@@ -4142,7 +4157,8 @@ static void task_process_bulldozer(const VisionMissionCommand *command,
 
   switch (remote_action.step) {
     case VISION_BULLDOZER_TURN_RIGHT:
-    case VISION_BULLDOZER_TURN_LEFT: {
+    case VISION_BULLDOZER_TURN_LEFT:
+    case VISION_BULLDOZER_ATTACK_FACE_OPPONENT: {
       const LocationPose pose = Location_GetPose();
       if (!pose.valid) {
         Motor_Stop();
@@ -4300,6 +4316,15 @@ static bool task_accept_bulldozer(const VisionMissionCommand *command,
       (command->task_id == accepted_context.task_id ||
        (command->task_id == (uint16_t)(accepted_context.task_id + 1U) &&
         accepted_context.action_id == UINT16_MAX && command->action_id == 0U));
+  const bool attack_face = VISION_BULLDOZER_STEP(command->flags) ==
+      VISION_BULLDOZER_ATTACK_FACE_OPPONENT;
+  const bool attack_face_entry = attack_face && owned_task &&
+      state == TASK_NAVIGATE && distance_command_done && route_to_stash &&
+      accepted_context.opcode == VISION_CMD_NAVIGATE_WAYPOINT &&
+      task_status.gripper_closed && audit_received && audit_valid && audit_initial_stash;
+  if (attack_face && !attack_face_entry) {
+    return false;
+  }
   const bool empty_move = VISION_BULLDOZER_STEP(command->flags) ==
       VISION_BULLDOZER_EMPTY_BODY_MOVE;
   const bool empty_search_entry = empty_move && state == TASK_SEARCH &&
@@ -4327,7 +4352,8 @@ static bool task_accept_bulldozer(const VisionMissionCommand *command,
       ((state == TASK_ALIGN_SAFE_ZONE && safe_align_done &&
         task_status.gripper_closed && audit_received && audit_valid) ||
        (state == TASK_SEARCH && !task_status.gripper_closed));
-  if (!previous_step_done && !start && !release_done && !empty_search_entry) {
+  if (!previous_step_done && !start && !release_done && !empty_search_entry &&
+      !attack_face_entry) {
     return false;
   }
   task_start_remote_action(REMOTE_ACTION_BULLDOZER, command, now_ms);
@@ -6131,12 +6157,17 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
              audit_received && audit_valid &&
              ((state == TASK_WAIT_NAVIGATION) ||
               ((state == TASK_REMOTE_ACTION) && remote_action.done))) {
+    const bool reuse_audit = state == TASK_WAIT_NAVIGATION &&
+        task_stage_command(command) &&
+        (command->flags & VISION_CMD_REUSE_POST_GRAB_AUDIT) != 0U &&
+        task_closed_single_injury_audit();
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
     route_to_stash = audit_initial_stash;
     task_enter(TASK_NAVIGATE, now_ms);
     route_to_stash = audit_initial_stash;
     delivery_stage_only = !route_to_stash && task_stage_command(command);
+    nav_reuse_post_grab_audit = delivery_stage_only && reuse_audit;
   } else if ((command->command == VISION_CMD_NAVIGATE_WAYPOINT) &&
              !task_status.gripper_closed && (state == TASK_SEARCH) &&
              task_distance_command_valid(command,
@@ -6157,6 +6188,24 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
              (delivery_stage_only == task_stage_command(command))) {
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
+    /* Withdrawal is final for this NAV. Re-adding the bit cannot manufacture
+     * a new post-grab audit or restart an already accepted movement. */
+    if ((command->flags & VISION_CMD_REUSE_POST_GRAB_AUDIT) == 0U ||
+        !task_closed_single_injury_audit()) {
+      nav_reuse_post_grab_audit = false;
+    }
+  } else if ((command->command == VISION_CMD_ALIGN_SAFE_ZONE) &&
+             state == TASK_NAVIGATE && delivery_stage_only && !route_to_stash &&
+             distance_command_done &&
+             accepted_context.opcode == VISION_CMD_NAVIGATE_WAYPOINT &&
+             nav_reuse_post_grab_audit && task_closed_single_injury_audit() &&
+             task_align_command_valid(command, false)) {
+    /* Only the marked NAV that retained its real closed single-injury audit
+     * may consume it here. Ordinary STAGE still uses the existing mode48. */
+    task_status.acknowledged_sequence = command->sequence;
+    command_accepted = true;
+    transport_stage_injury = audit_destination_injury;
+    task_begin_safe_align(now_ms);
   } else if ((command->command == VISION_CMD_ALIGN_SAFE_ZONE) &&
              task_status.gripper_closed &&
              (state == TASK_TRANSPORT_AUDIT) &&
@@ -6588,6 +6637,15 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
       accepted_context.action_id == UINT16_MAX && incoming.action_id == 0U;
   const bool new_target = new_task && !task_rollover;
   const bool new_action = new_task || incoming.action_id != accepted_context.action_id;
+  /* The upper action key includes flags. A withdrawal may therefore allocate
+   * a new action; changing only this NAV bit must not restart its coarse leg.
+   * Enabling a bit during NAV never grants reuse (only mode22 entry does). */
+  const bool reuse_nav_toggle = accepted_context.valid &&
+      (!new_task || task_rollover) && state == TASK_NAVIGATE &&
+      delivery_stage_only && !route_to_stash &&
+      incoming.command == VISION_CMD_NAVIGATE_WAYPOINT &&
+      accepted_context.opcode == VISION_CMD_NAVIGATE_WAYPOINT &&
+      (incoming.flags ^ accepted_context.flags) == VISION_CMD_REUSE_POST_GRAB_AUDIT;
   const bool range_request = incoming.command == VISION_CMD_APPROACH_TARGET &&
       (incoming.flags & VISION_CMD_APPROACH_RANGE) != 0U;
   const bool live_bulldozer = incoming.command == VISION_CMD_BULLDOZER_STEP &&
@@ -6617,7 +6675,7 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
       if (!task_serial16_newer(incoming.action_id, accepted_context.action_id)) goto rejected;
     } else if (!overlay &&
                (incoming.command != accepted_context.opcode ||
-                incoming.flags != accepted_context.flags)) {
+                (incoming.flags != accepted_context.flags && !reuse_nav_toggle))) {
       goto rejected;
     }
     if (!new_target && accepted_context.cancelled && !overlay &&
@@ -6720,6 +6778,7 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
                  incoming.sequence, incoming.vision_frame, incoming.flags);
 
   if (new_target) {
+    nav_reuse_post_grab_audit = false;
     capture_budget_active = capture_wait_active = false;
     separation_total_attempts = 0U;
     safe_enter_resume_mm = safe_enter_resume_push_ms = 0U;
@@ -6734,8 +6793,8 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     app_visual_valid = false;
   }
   if (new_action) {
-    if (incoming.command == VISION_CMD_NAVIGATE_WAYPOINT ||
-        incoming.command == VISION_CMD_RETURN_CENTER) {
+    if (!reuse_nav_toggle && (incoming.command == VISION_CMD_NAVIGATE_WAYPOINT ||
+        incoming.command == VISION_CMD_RETURN_CENTER)) {
       nav_reset_coarse();
     }
     accepted_context.task_id = incoming.task_id;
@@ -6744,6 +6803,8 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     accepted_context.flags = incoming.flags;
     accepted_context.completed = false;
     if (incoming.command == VISION_CMD_APPROACH_TARGET) app_visual_valid = false;
+  } else if (reuse_nav_toggle) {
+    accepted_context.flags = incoming.flags;
   }
   accepted_context.valid = true;
   /* Old accepted-action heartbeats cannot erase a newer rejection. Control

@@ -237,6 +237,9 @@ static bool vision_bulldozer_payload_valid(uint8_t flags, int16_t a, int16_t b,
     case VISION_BULLDOZER_EMPTY_BODY_MOVE:
       return a >= 0 && a <= APP_NAV_REMOTE_MAX_DISTANCE_MM &&
           b >= -18000 && b <= 18000 && heading < 36000U;
+    case VISION_BULLDOZER_ATTACK_FACE_OPPONENT:
+      return a == 0 && b == 0 && heading ==
+          ((flags & VISION_CMD_RED_SIDE) != 0U ? 27000U : 9000U);
     case VISION_BULLDOZER_RELEASE_LOAD:
     case VISION_BULLDOZER_FULL_OPEN:
     case VISION_BULLDOZER_RAISE_RETURN:
@@ -264,6 +267,7 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
       VISION_CMD_DISTANCE_VALID |
       ((code == VISION_CMD_APPROACH_TARGET) ?
           (VISION_CMD_CLUSTER_TARGET | VISION_CMD_APPROACH_RANGE) : 0U) |
+      ((code == VISION_CMD_NAVIGATE_WAYPOINT) ? VISION_CMD_REUSE_POST_GRAB_AUDIT : 0U) |
       (((code == VISION_CMD_NAVIGATE_WAYPOINT) ||
         (code == VISION_CMD_ALIGN_SAFE_ZONE) ||
         (code == VISION_CMD_ENTER_SAFE_ZONE)) ?
@@ -305,6 +309,10 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
         (code == VISION_CMD_NAVIGATE_WAYPOINT) &&
         ((flags & VISION_CMD_STAGE_ONLY) != 0U);
     const uint8_t direction = flags & direction_flags;
+    if (code == VISION_CMD_NAVIGATE_WAYPOINT &&
+        (flags & VISION_CMD_REUSE_POST_GRAB_AUDIT) != 0U && !stage_nav) {
+      goto rejected_payload;
+    }
 
     /* The current host uses the heading field as a field-frame translation
      * direction for STAGE_ONLY NAV, but deliberately omits the two legacy

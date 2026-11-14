@@ -1,5 +1,19 @@
 # 当前状态：F405 烧录入口
 
+2026-11-14 MATCH-ATTACK-FACING / MATCH-RECOVERED-INJURY-AUDIT：进攻带载转正及回抓单伤员审核复用（未烧录）。
+- 已审查RDK b1b3531固定入口/合同和实际runner，接受两项最小配套；旧step13/SEARCH/近爪成果保持。
+- 原0x14追加14：本任务藏点NAV完成、真实initial审核/闭爪后，红270°/蓝90°原连续回正，保留审核和载荷；
+  原mode25 DONE→RELEASE_BOTH/mode34→13→12，同action不重放；旧0/4参数不改，不用有限TURN超时。
+- 原STAGE NAV bit5仅mode22真实合法单伤员、闭爪/非藏点/伤员目的地授权；回抓来源由上位确认。
+  D0仍原mode10/DONE并保留真实审核，授权NAV可沿原pose ALIGN进入，不强制本次重复mode48。
+  普通/物资/缺审核/晚加位沿原0x12→48；不造计数/READY/VALID，不改H/D/粗末段/速度和原15s恢复。
+- 撤销bit5兼容同/新action且不重建导航基准；再加位不恢复资格。原复审、清审核、开爪/分离、恢复、SEARCH、
+  新目标/ABORT清授权；不新增时间/握手/资格/诊断/FAULT。上位缺框缓存与丢失后24/47/3出口无需新下位动作。
+- 两原构建、原测距/审核流程及原Task夹具相关路径、红蓝原报文CRC/字段核对通过，无新增测试源码/独立程序。
+  PID/PWM/速度/舵机、ISR/遥测及原独立工具/IDE改动保留，原Task初始化空白保留，本机构建如实dirty1。
+  未烧录/启设备/动作，actual未新读；用户需烧新NormalRun并重开最新RDK入口，地面/机构结果尚未验收。
+  完整记录/机器合同和两端回执见[固定入口](CROSS_REPO_REQUESTS.md)及[本次说明](F405_ATTACK_AUDIT_ADAPTATION_20261114.md)。
+
 2026-11-14 MATCH-CAPTURE-HANDOFF-20261114：聚堆接近与近爪分离（未烧录）。
 - 审查接受RDK a13a66d配套：mode52新像素偏心>64px时聚堆也回TRACK，不重建Task或清CLUSTER/预算；
   仅mode53结果RUNNING且实测轮程剩余≤10mm复用原完成交接，其他全局3mm及原12s兜底/PID/速度保持。

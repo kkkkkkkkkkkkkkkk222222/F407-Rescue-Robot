@@ -16,6 +16,43 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-ATTACK-FACING / MATCH-RECOVERED-INJURY-AUDIT-20261114：接受并已实现，用户自行烧录
+
+已读取RDK固定入口及详细任务/机器合同，核对protocol/state_machine/runner/路线源码，
+固定快照`b1b3531782b95d65cc7b4a24927935344ee98e7d`，入口blob`813a4503a2afd20eb917c866cf66a9494c329ef2`；
+本端基于`63d75a88c4e13cce11fb8731aca14383269e8ce5`增量配套，不重做此前step13/SEARCH/聚堆近爪实现。
+进攻机器合同blob`c48a89934dc2aab9fd5988b0d9b0e7131e6f9e1e`，回抓机器合同blob`91e7581d72930a1641bef9a59a5bfc108cab0267`。
+
+**接受当前两项最小方案；少一次末端复核的取舍仅限上位确认回抓来源的单伤员，普通运输不变。**
+
+- 原0x18/opcode0x14追加step14：红270°/蓝90°、A=B=0、P1红0xE9/蓝0xE1。
+  只从本任务已完成initial-stash NAV、真实合法审核、闭爪进入，复用原连续回正200～400mm/s及3°窗口，
+  完成仍mode25/本次COMPLETED；旧NAV DONE不能完成新转向，同action重发不重开。
+  带载转正保持真实审核/闭爪/route_to_stash，随后原RELEASE_BOTH→mode34→step13→step12；不重复放货或记送达。
+- STAGE NAV bit5=REUSE_POST_GRAB_AUDIT，仅原mode22真实单伤员、闭爪、非藏点、伤员目的地审核可授权。
+  找回来源由RDK负责，本端无独立来源字段；不能把任意普通伤员都自动复用。
+  D0仍mode10/DONE并保留真实审核，只有获授权的完成NAV能接下一条原pose ALIGN，沿原task_begin_safe_align。
+  普通/不合资格/晚加标志仍原0x12→mode48，不改变H/D/粗末段/速度、容差、制动或伪造READY/VALID。
+- 只变bit5可同action撤销；当前runner按flags换新action也保留原nav_coarse基准/阶段，不重跑高速段。
+  撤销后再加位不能恢复授权；原0x12、清审核、释放/分离、恢复、SEARCH、换目标、ABORT清授权。
+  新旧task/action排序及其他flags不可变规则保留，不加时间窗口/资格等待。
+- 上位两帧缺框ALIGN缓存及确认原伤员/物资丢失后24/47/实际空爪SEARCH出口已有兼容，本端不重复加动作/协议。
+  原15s审核恢复、STOP/PAUSE/mode51、step0..13参数、PID/速度/PWM/舵机/串口/ISR/遥测均保持。
+
+必要结果：两原构建通过，原FLOW_20261019_CHECK通过；原Task夹具直接核对红蓝真实审核到ALIGN/ENTER、
+普通/标记物资/晚加位不能跳mode48及原占位入口，同/新action撤销不重启、各原退出清授权；
+藏点NAV→新转向→原放货mode34→13、重复幂等及错误入口拒绝；原示例CRC/字段核对通过。
+没有新增测试代码/独立程序、时间门、握手、巡检、FAULT或ISR。
+
+**未烧录、未连接设备或发动作，actual未亲自新读；用户自行烧录。** 上位16:40的63d75a8/dirty1仅历史身份。
+本机构建保留原Task初始化空白，如实dirty1；最终源码以本文件Git记录为准。转向/载荷保持和真实比赛仍待人实测。
+需新NormalRun/TASK并重开最新RDK正式入口，旧63d75a8不支持本次新位/step14，不能称已部署。
+
+- [完整实现/调用链/检查边界](F405_ATTACK_AUDIT_ADAPTATION_20261114.md)
+- [step14及原step13机器合同](contracts/f405_empty_body_move_20261114.json)
+- [回抓单伤员机器合同](contracts/f405_recovered_injury_audit_20261114.json)
+- [固定上位入口](https://github.com/danmo-teng/shijue_fangan/blob/b1b3531782b95d65cc7b4a24927935344ee98e7d/docs/CROSS_REPO_REQUESTS.md)
+
 ## MATCH-CAPTURE-HANDOFF-20261114：接受并已实现，用户自行烧录
 
 已读取RDK固定入口、详细说明/机器合同及协议/状态机，并核对固定快照`a13a66d87d55437a542bcc2c5a126a40e8c2c8e9`；
