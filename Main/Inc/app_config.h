@@ -469,6 +469,8 @@
 #define APP_APPROACH_RANGE_SPEED_MM_S   500.0f
 #define APP_APPROACH_RANGE_END_MM_S     200.0f
 #define APP_APPROACH_RANGE_SLOW_MM      250.0f
+/* Mode53 handoff only; all other finite moves retain their 3mm tolerance. */
+#define APP_APPROACH_RANGE_HANDOFF_TOLERANCE_MM 10.0f
 #define APP_AUDIT_ACCUMULATE_WINDOW_MS   500U
 #define APP_CAPTURE_DECISION_WAIT_MS    4000U
 #define APP_CAPTURE_ESCAPE_DISTANCE_MM  300U

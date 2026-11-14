@@ -19,6 +19,7 @@ static float fine_speed_request;
 static unsigned heading_calls;
 static MotorDistanceStatus distance_result;
 static float distance_request;
+static float distance_travelled_mm;
 static unsigned distance_calls, finite_pauses, finite_resumes;
 void Servo_SetAngle(uint8_t id, uint8_t angle) { servo_angles[id - 1U] = angle; }
 uint8_t Servo_GetAngle(uint8_t id) { return servo_angles[id - 1U]; }
@@ -95,6 +96,7 @@ MotorDistanceStatus Motor_MoveDistanceLinear(float distance, float speed, float 
   (void)speed; (void)slow; (void)end;
   return distance_result;
 }
+float Motor_GetDistanceTravelledMm(void) { return distance_travelled_mm; }
 MotorDistanceStatus Motor_MoveDistanceConstant(float distance, float speed)
 { (void)distance; (void)speed; return MOTOR_DISTANCE_DONE; }
 MotorTurnStatus Motor_TurnAngle(float angle) { (void)angle; return MOTOR_TURN_DONE; }
@@ -155,6 +157,7 @@ static void prepare(void)
   heading_output = 0.0f;
   distance_result = MOTOR_DISTANCE_DONE;
   distance_request=0.0f;
+  distance_travelled_mm=0.0f;
   distance_calls=finite_pauses=finite_resumes=0U;
   complete_flow_active = true;
   task_status.gripper_closed = true;

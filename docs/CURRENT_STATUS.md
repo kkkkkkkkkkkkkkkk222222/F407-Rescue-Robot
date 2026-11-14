@@ -1,5 +1,17 @@
 # 当前状态：F405 烧录入口
 
+2026-11-14 MATCH-CAPTURE-HANDOFF-20261114：聚堆接近与近爪分离（未烧录）。
+- 审查接受RDK a13a66d配套：mode52新像素偏心>64px时聚堆也回TRACK，不重建Task或清CLUSTER/预算；
+  仅mode53结果RUNNING且实测轮程剩余≤10mm复用原完成交接，其他全局3mm及原12s兜底/PID/速度保持。
+- 稳定非法非空含蓝审核不再按“无合格载荷”立即自行后退，普通保留21/READY、聚堆沿原分支到37；
+  原4s决策/15s审核兜底不延长，纯蓝仍可接上位原释放，不把非法改VALID或新增最低等待。
+- 原DISPERSE P1 bit4命名NEAR_KEEP，须SIDE_VALID、禁FIRST_GREEN_BUMP、A/B/U零；只允许稳定非法含危险、
+  所选侧真实0且另一侧非空的近爪选侧。数量/单件掩码/首绿不改，counts_known=false复用原5°软握/10°曲线。
+  正式绿色45%阈值及近爪像素判断由上位处理，分离后仍需真实审核/GRAB才能运输；step13/SEARCH及其他流程保持。
+- NormalRun/MotionDebug构建、原测距流程及相关独立条件调用核对通过；原夹具仅补getter链接替身，无新增用例/程序。
+  相关检查不等于地面精度/机械分离通过。用户自行烧录，本端未烧录或启设备/动作，actual未新读，原Task空白保留/构建dirty1。
+  完整合同/机器示例及两端回执见固定入口；原上位14:59实跑6ee665b/dirty1仅作历史身份，不冒充本次新固件。
+
 2026-11-14 MATCH-SEARCH-ROTATION-20261114：空爪SEARCH进入step13（未烧录）。
 - 审查接受RDK 8db11ec的最小配套：只扩task_accept_bulldozer的空爪SEARCH首入口和前置同场景cancelled-context新action例外。
   首次进入清旧放弃批次/审核/退让残留，不重开爪、不记首绿；同段更新或下一段不重复清理，原任务/action与编号回绕保持。

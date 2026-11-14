@@ -838,15 +838,33 @@ static bool task_release_command_valid(uint8_t command)
   return command == VISION_CMD_RELEASE_BOTH;
 }
 
+static bool task_audit_has_danger(void)
+{
+  return (audit_last_flags & VISION_AUDIT_DANGER_PRESENT) != 0U ||
+      audit_last_left_class == VISION_CARGO_DANGER ||
+      audit_last_right_class == VISION_CARGO_DANGER;
+}
+
 static bool task_disperse_keep_side_valid(
     const VisionMissionCommand *command)
 {
-  if ((command == NULL) ||
-      ((command->flags & VISION_CMD_SIDE_VALID) == 0U)) {
+  if (command == NULL) {
     return true;
+  }
+  if ((command->flags & VISION_CMD_SIDE_VALID) == 0U) {
+    return (command->flags & VISION_CMD_DISPERSE_NEAR_KEEP) == 0U;
   }
   const uint8_t left_count = audit_last_counts & 0x03U;
   const uint8_t right_count = (audit_last_counts >> 2) & 0x03U;
+  if ((command->flags & VISION_CMD_DISPERSE_NEAR_KEEP) != 0U) {
+    const bool keep_right = (command->flags & VISION_CMD_TARGET_RIGHT) != 0U;
+    const uint8_t keep_count = keep_right ? right_count : left_count;
+    const uint8_t other_count = keep_right ? left_count : right_count;
+    /* Only the side choice comes from near-claw evidence. Keep the audit
+     * illegal and the selected real count at zero, hence the existing soft grip. */
+    return audit_received && audit_host_stable && !audit_valid &&
+        task_audit_has_danger() && keep_count == 0U && other_count > 0U;
+  }
   const bool selected_nonempty =
       ((command->flags & VISION_CMD_TARGET_RIGHT) != 0U) ?
           (right_count > 0U) : (left_count > 0U);
@@ -2443,7 +2461,12 @@ static bool task_capture_observe(uint32_t now_ms)
    * audit watchdog still bounds the wait if the host sends no action. */
   if (audit_received && separation_total_attempts > 0U &&
       (task_capture_has_eligible() || ambiguous_multi)) { return true; }
-  if ((audit_received && !task_capture_has_eligible() && !ambiguous_multi) ||
+  const bool danger_ready_for_host = audit_received && audit_host_stable && !audit_valid &&
+      audit_last_total_count > 0U && task_audit_has_danger();
+  /* Preserve the original decision deadline; only suppress the immediate
+   * no-eligible-cargo escape while the host chooses near separation/release. */
+  if ((audit_received && !task_capture_has_eligible() && !ambiguous_multi &&
+       !danger_ready_for_host) ||
       (uint32_t)(now_ms - capture_wait_started_ms) >= APP_CAPTURE_DECISION_WAIT_MS) {
     task_begin_capture_escape(now_ms);
     return true;
@@ -2559,7 +2582,11 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
           approach_range_mm * 0.001f, APP_APPROACH_RANGE_SPEED_MM_S,
           APP_APPROACH_RANGE_SLOW_MM, APP_APPROACH_RANGE_END_MM_S);
       task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
-      if (result == MOTOR_DISTANCE_DONE) {
+      const bool range_done = result == MOTOR_DISTANCE_DONE ||
+          (result == MOTOR_DISTANCE_RUNNING &&
+           (float)approach_range_mm - Motor_GetDistanceTravelledMm() <=
+               APP_APPROACH_RANGE_HANDOFF_TOLERANCE_MM);
+      if (range_done) {
         Motor_Stop();
         task_status.motors_active = false;
         approach_phase = cluster_target_active ?
@@ -5998,7 +6025,7 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
     if (cluster != cluster_target_active) {
       task_enter(TASK_APPROACH, now_ms);
       cluster_target_active = cluster;
-    } else if (!cluster && approach_phase == APPROACH_RANGE_WAIT && command_visual_new &&
+    } else if (approach_phase == APPROACH_RANGE_WAIT && command_visual_new &&
                task_abs((float)command->target_x_mm - APP_VISION_TARGET_X) >
                    APP_APPROACH_TRACK_CENTER_TOLERANCE_PX) {
       approach_phase = APPROACH_TRACK;

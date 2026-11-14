@@ -1,0 +1,131 @@
+{
+  "id": "MATCH-CAPTURE-HANDOFF-20261114",
+  "version": 1,
+  "status": "lower_implemented_build_checked_user_flash_pending",
+  "human_decision": "A near-claw keep-side flag; real audit counts unchanged; green qualification45percent",
+  "actual_last_run": {
+    "upper": "8db11ec29b297d8c00173f42ecc6b371c01958dd",
+    "lower": "6ee665b64dceddc36ef9936adfd78f115cdd1ff1",
+    "lower_source_dirty": 1,
+    "identity_source": "20261114_145911_competition_wheel/chassis_identity.json",
+    "requeried_this_turn": false
+  },
+  "wire": {
+    "type": 24,
+    "opcode": 16,
+    "flag_name": "DISPERSE_NEAR_KEEP",
+    "flag_mask": 16,
+    "required_flags": [
+      "VALID",
+      "SIDE_VALID"
+    ],
+    "optional_flags": [
+      "RED_SIDE",
+      "TARGET_RIGHT"
+    ],
+    "forbidden_flag": "FIRST_GREEN_BUMP",
+    "A": 0,
+    "B": 0,
+    "U": 0,
+    "context": {
+      "type": 29,
+      "same_seq": true,
+      "same_task": true,
+      "source_frame": "existing vision_frame, real near-claw evidence frame; provenance only",
+      "new_handshake": false
+    }
+  },
+  "audit": {
+    "opcode": 18,
+    "layout_changed": false,
+    "counts_changed": false,
+    "danger_remains": true,
+    "transport_permission": false
+  },
+  "receiver": {
+    "eligibility": "existing stable invalid danger audit; selected real count0, opposite count>0; explicit near-side flag",
+    "grip": "existing soft grip; never fabricate counts or confirmed-singleton mask",
+    "decision": "original READY goes to host separation/release; no autonomous capture_escape before host choice, no new minimum wait",
+    "range_realign": "remove only !cluster exception in RANGE_WAIT; preserve cluster/action",
+    "range_finish": "mode53 RUNNING with encoder remaining<=10mm -> existing stop/camera140/audit; global3mm unchanged"
+  },
+  "roi": {
+    "green_overlap_min": 0.45,
+    "green_bottom_center_required": false,
+    "other_default_min": 0.6,
+    "near_only": "formal audit all cyan; partial green0<overlap<.45 and foot in original ROI, visible/unclipped/outside safe zone, opposite side from blue",
+    "near_counts_as_real_cargo": false
+  },
+  "scope_exclusions": [
+    "no new opcode/packet",
+    "no fresh/age/handshake/ISR rules",
+    "no new FAULT",
+    "no speed/PID or global navigation tolerance change",
+    "no lower test program",
+    "no model/ROI shape/T265/lidar change"
+  ],
+  "examples": [
+    {
+      "keep_side": "left",
+      "real_green_count": 0,
+      "real_blue_count": 1,
+      "source_frame": 14113,
+      "audit_context_hex": "a3 b3 1d 0a 00 0a 00 64 00 00 37 21 93 28 c3",
+      "audit_command_hex": "a3 b3 18 0a 12 01 00 04 04 12 07 01 8d c8 c3",
+      "disperse_context_hex": "a3 b3 1d 0b 00 0a 00 65 00 00 37 21 a3 78 c3",
+      "disperse_command_hex": "a3 b3 18 0b 10 59 00 00 00 00 00 00 4b 41 c3",
+      "example_kind": "offline_from_logged_geometry",
+      "actual_capture_frame": 14113
+    },
+    {
+      "keep_side": "right",
+      "real_green_count": 0,
+      "real_blue_count": 1,
+      "source_frame": 24113,
+      "audit_context_hex": "a3 b3 1d 0a 00 0a 00 64 00 00 5e 31 bc b4 c3",
+      "audit_command_hex": "a3 b3 18 0a 12 01 04 00 01 12 07 01 7d 40 c3",
+      "disperse_context_hex": "a3 b3 1d 0b 00 0a 00 65 00 00 5e 31 8c e4 c3",
+      "disperse_command_hex": "a3 b3 18 0b 10 d9 00 00 00 00 00 00 ca 89 c3",
+      "example_kind": "mirrored_synthetic_protocol_example",
+      "actual_capture_frame": null
+    }
+  ],
+  "upstream_source": {
+    "repository": "danmo-teng/shijue_fangan",
+    "branch": "codex/gamepad-teleop",
+    "commit": "a13a66d87d55437a542bcc2c5a126a40e8c2c8e9",
+    "contract_blob": "d3d331c9f9c58efa0e96433170497543bd80bf72"
+  },
+  "lower_implementation": {
+    "repository": "kkkkkkkkkkkkkkkk222222/F407-Rescue-Robot",
+    "branch": "main",
+    "source_base_commit": "6ee665b64dceddc36ef9936adfd78f115cdd1ff1",
+    "profile": "NormalRun/TASK",
+    "physical_uart": "UART4 921600 8N1",
+    "mode52": "Fresh pixel error>64 returns TRACK for both ordinary and cluster without resetting task/cluster/capture budget.",
+    "mode53": "DONE or RUNNING with remaining=approach_range_mm-Motor_GetDistanceTravelledMm() <=10mm uses original stop/camera140/audit path; global finite tolerance stays3mm.",
+    "capture_ready": "Stable invalid nonempty danger audit no longer triggers immediate no-eligible-cargo retreat; ordinary stays21/READY and cluster follows existing37 handoff. Original4s decision and15s audit deadlines unchanged.",
+    "near_side": "NEAR_KEEP requires existing stable invalid danger audit, selected real count0 and opposite count>0; real counts, AUDIT_VALID and singleton mask are never changed.",
+    "grip": "Existing counts_known=false gives5deg soft grip and original10deg curve; ordinary confirmed-singleton20deg grip unchanged.",
+    "transport": "Only subsequent real qualified audit/GRAB may authorize transport. The new flag is side evidence only.",
+    "fixture_maintenance": "Existing fixture only gains the Motor_GetDistanceTravelledMm getter substitute needed to link production Task; no new test cases or program.",
+    "flashed_by_this_task": false,
+    "board_actual_requeried": false,
+    "source_dirty": 1,
+    "source_dirty_reason": "Original Task initialization whitespace retained."
+  },
+  "verification": {
+    "builds": [
+      "NormalRun",
+      "MotionDebug"
+    ],
+    "software_only": true,
+    "existing_range_fixture": "Ordinary/cluster mode53 at10.1/10/5.1mm remaining; fault recovery; mode52 fresh74px/exact64px/duplicate frame and preserved cluster/claws/budget checked.",
+    "existing_capture_fixture": "Synthetic2-frame production audit chain, ordinary/cluster left/right near cases: READY21/37, raw total1/danger1/selected0 preserved, invalid and singleton mask0, soft grip5/curve10, duplicate no retry increment, no direct GRAB.",
+    "isolated_existing_cases": "Original4s deadline, pure-blue host release, missing-flag/wrong-side rejection; original ordinary green1+blue1 grip20 checked.",
+    "existing_flow": "FLOW_20261019_CHECK passed; not a full legacy-suite or hardware qualification.",
+    "frame_examples": "Both original upstream audit/disperse context pairs CRC/layout checked; left offline-from-geometry and right synthetic provenance retained.",
+    "global_motion_and_search": "Motor/servo/IMU/UART and step13/executor source unchanged.",
+    "hardware_accuracy_verified": false
+  }
+}

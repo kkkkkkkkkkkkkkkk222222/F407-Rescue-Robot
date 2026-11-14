@@ -16,6 +16,38 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-CAPTURE-HANDOFF-20261114：接受并已实现，用户自行烧录
+
+已读取RDK固定入口、详细说明/机器合同及协议/状态机，并核对固定快照`a13a66d87d55437a542bcc2c5a126a40e8c2c8e9`；
+合同blob`d3d331c9f9c58efa0e96433170497543bd80bf72`，本端基于`6ee665b64dceddc36ef9936adfd78f115cdd1ff1`增量配套。
+上位引用14:59 UART实际6ee665b/dirty1属上场记录，本窗口未新读actual，不能以dirty1认定板内字节与Git完全一致。
+
+**接受本轮五项最小修复，45%绿色ROI与近爪几何仍由RDK负责；下位不接面积、不改真实审核数量/运输规则。**
+
+- mode52去掉!cluster例外，真实新像素>原64px也使聚堆回TRACK；保留CLUSTER/task/action/测距角/预算和已准备爪姿，不重启整个Task。
+- 仅mode53，Linear结果RUNNING且剩余=本次目标-Motor_GetDistanceTravelledMm()≤10mm时走原DONE的Stop/140°/审核交接。
+  全局3mm及其他运动/导航/扫障保持，12s只是原兜底，不用时间/目标速度/T265冒充轮程，不加停滞检测。
+- 原0x18/opcode0x10的P1 bit4=0x10命名DISPERSE_NEAR_KEEP；仅补SIDE_VALID、禁FIRST_GREEN_BUMP及A/B/U零组合校验。
+  通用mask原来已允许bit4，不新增TYPE/opcode或握手；该位不是0x14的step，也不是0x12的audit STABLE。
+- 稳定非法、非空含蓝审核继续输出真实READY，普通mode21、聚堆沿原流程进入37，供上位选择分离或原纯蓝释放。
+  只排除这时“无合格载荷”的立即退让，原4s决策和15s审核兜底不延长，不加最低等待，不置非法VALID。
+- near标志仅在原稳定非法危险审核、所选侧真实计数0且另一侧>0时允许选侧；数量/直方图/单件掩码/首绿不改。
+  保留侧0自然使counts_known=false，沿原5°软握/10°曲线；正常已确认单件20°握持不改，分离后仍须真实合格审核及GRAB才能运输。
+- 既有step13/SEARCH入口、普通DISPERSE/释放、速度/PID/PWM、舵机、串口/ISR/时间政策和STOP/PAUSE/mode51保持。
+  本轮不含mode52取消或其他历史候选，无新时间资格/遥测/永久FAULT/独立测试程序；原夹具只补新增getter的必要链接替身，无新用例。
+
+必要结果：NormalRun/MotionDebug编译通过，原FLOW_20261019_CHECK通过。原夹具独立条件核对普通/聚堆10.1/10/5.1mm、原故障恢复，
+mode52新帧74px/64px/重复帧及预算/CLUSTER保持；两帧非法蓝READY21/37、左右近爪5°/真实计数/掩码/VALID不变、重发不加尝试与直接GRAB拒绝。
+独立核对原4s兜底、纯蓝上位释放、无标志/错侧拒绝和普通20°握持；原成对例CRC/字段核对通过，不宣称整套旧套件或实车精度通过。
+
+**本端未烧录、未打开UART/设备或执行动作，按用户约定自行烧录；actual未新读。** 构建dirty1保留原Task初始化空白，
+最终源码以本文件Git记录为准。需烧新NormalRun/TASK并重开最新正式入口；旧固件无法完整执行本次聚堆复核与近爪标志。
+近爪旁证不保证已夹持，轮滑/卡料、10mm末端及机械分离成功率仍需人安排实跑，不能以软件DONE/编码通过替代。
+
+- [完整下位合同与检查边界](F405_CAPTURE_HANDOFF_20261114.md)
+- [机器合同、原左右成对示例](contracts/f405_near_claw_separation_20261114.json)
+- [固定上位任务](https://github.com/danmo-teng/shijue_fangan/blob/a13a66d87d55437a542bcc2c5a126a40e8c2c8e9/docs/COMPETITION_CAPTURE_HANDOFF_20261114.md)
+
 ## MATCH-SEARCH-ROTATION-20261114：接受并已补空爪SEARCH入口，用户自行烧录
 
 已读取RDK最新固定入口/说明/机器合同并核对源码快照`8db11ec29b297d8c00173f42ecc6b371c01958dd`，

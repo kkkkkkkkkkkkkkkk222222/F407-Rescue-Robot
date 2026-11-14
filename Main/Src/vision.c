@@ -363,6 +363,13 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
                  VISION_CMD_TARGET_RIGHT)) != 0U)) {
     goto rejected_payload;
   }
+  if (code == VISION_CMD_DISPERSE_PILE &&
+      (flags & VISION_CMD_DISPERSE_NEAR_KEEP) != 0U &&
+      (((flags & VISION_CMD_SIDE_VALID) == 0U) ||
+       ((flags & VISION_CMD_FIRST_GREEN_BUMP) != 0U) ||
+       arg_a != 0 || arg_b != 0 || heading != 0U)) {
+    goto rejected_payload;
+  }
   if ((code == VISION_CMD_CARGO_AUDIT) &&
       ((payload[2] > VISION_CARGO_MIXED_MATERIAL) ||
        (payload[3] > VISION_CARGO_MIXED_MATERIAL) ||
