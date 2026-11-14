@@ -1,5 +1,8 @@
 # MATCH-BULLDOZER-20261113：F405分段执行合同
 
+2026-11-14追加step13 EMPTY_BODY_MOVE，原0..12校验和执行保持；见[空载保向移动扩展](F405_EMPTY_BODY_MOVE_20261114.md)。
+当前扫障点由RDK按左59cm/后94cm计算，红(-0.56,+0.91)、蓝(+0.56,-0.91)m；下位无固定点坐标。
+
 2026-11-13。审查基线为本端`1b74001bb05e6ce0487fe9a96c0214b61ac72776`；
 上位机固定快照为`4e9ff10f50f1e9e6eeb77ecee9b6ff3d286ac296`，
 其合同blob为`fc72bed22425e3e628108a1cffff5c11137d9b8d`。
@@ -22,11 +25,11 @@ H表示场地平移方向，U表示固定车头航向。没有迁入旧F407运�
 物理UART4保持921600/8N1。帧固定15字节：`A3 B3 18 SEQ P0 P1 P2 P3 P4 P5 P6 P7 CRClo CRChi C3`。
 CRC16/MODBUS初值FFFF，校验字节2至11，CRC低字节先发。
 
-- P0=0x14；P1仅低位VALID=0x01、红方=0x08，高四位是step0..12。低位0x02/0x04保留，不能套旧高位标志。
+- P0=0x14；P1仅低位VALID=0x01、红方=0x08，高四位是step0..13。低位0x02/0x04保留，不能套旧高位标志。
 - A=P2/P3，B=P4/P5，均有符号int16大端；U=P6/P7，无符号uint16大端。
 - 原0x1D先于0x18，同SEQ、task/action；新step必须使用新action，沿原序号归属/回绕/明确拒绝机制。
 - 原0x1E回执中的accepted_opcode（RDK命名accepted_command）为20，ACCEPTED为bit0，COMPLETED为bit1。
-  step0..11执行和完成均mode25；step12完成为mode3，保留本次task/action/COMPLETED，不产生新的握手。
+  step0..11及13执行和完成均mode25；step12完成为mode3，保留本次task/action/COMPLETED，不产生新的握手。
 
 | step | 动作 | A | B | U |
 |---|---|---|---|---|
@@ -43,6 +46,7 @@ CRC16/MODBUS初值FFFF，校验字节2至11，CRC低字节先发。
 | 10 | 后退返回预备点X | 剩余D | H厘度 | 扫障航向 |
 | 11 | 右移返回预备点Y | 剩余D | H厘度 | 扫障航向 |
 | 12 | 普通开爪/正常高度/相机120°，回SEARCH | 0 | 0 | 0 |
+| 13 | 放货后的空载保向平移，见扩展入口 | 剩余D | H厘度 | 任意固定yaw0..35999 |
 
 动态段D范围0..5000mm，H范围-18000..18000厘度。其余参数须与表一致，非法报文沿原明确拒绝，不改控制状态。
 所有本合同26组红蓝编码示例逐字保留在[机器合同](contracts/f405_bulldozer_step_20261113.json)。例如红方step1：

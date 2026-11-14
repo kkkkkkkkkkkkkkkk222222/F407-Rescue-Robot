@@ -1,6 +1,6 @@
 # 两端当前要求与回执
 
-更新日期为 2026-11-13，时区 Asia/Shanghai。
+更新日期为 2026-11-14，时区 Asia/Shanghai。
 
 ## 固定入口与协作方式
 
@@ -15,6 +15,35 @@
 人保留知情、拒绝和选择权。已经明确批准的范围直接推进，超范围的重要取舍先由人决定，AI 不能互相授权。
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
+
+## MATCH-ATTACK-RETURN-20261114：接受并已实现step13，未烧录
+
+已直接读取RDK固定入口/详细说明/机器合同并核对固定源码快照`a8d1242ac19b0e69d9c709be80adcfdafc76e1c5`；
+机器合同blob为`4610fe8cb88e93313087a38e210224c9f57a5972`。本端从`f1f8f183c5f14fb24462a76834b0ab0613e75967`增量实现。
+
+**审查结论：接受复用原0x18/opcode0x14、追加step13，不调整编号/字段或路线分工。**
+
+- 原枚举末尾追加EMPTY_BODY_MOVE=13，单独允许U0..35999；A剩余D0..5000mm、B场地H±18000厘度，旧0..12验证保持。
+- 复用原task_bulldozer_live_step/Motor_MoveAngleFineHeading，body_angle=wrap(H-当前主yaw)，U独立固定，速度250～350mm/s。
+  不先朝H转头、不套旧粗导航、不按首个D提前完成；同action更新H/D不重启且U不可改，D=0原刹车后mode25/COMPLETED。
+- 首个13仅从本任务已完成RELEASE_BOTH/mode34且逻辑空载进入，只首次清放货审核/STABLE、stash_backoff/旧批次预算，
+  不重新开合爪、不记首绿/送达。后续13由本任务上一13完成后换action，保留原FFFF→0/task+1编号回绕。
+  最后原step12恢复SEARCH并保留成对完成回执。原0..12执行函数、step8标准直行、PID/PWM/速度/舵机/普通RETURN/mode51保持。
+- 已核对RDK runner把返程段index加入action键：同段不换ID、换段新action、task保持；无需新增握手或报文。
+  扫障S上位59cm/94cm及红(-.56,+.91)/蓝(+.56,-.91)仅同步文档/机器样例，固件不硬编码坐标。
+- 无新时间门、年龄/资格检查、反复握手、ISR、遥测、永久FAULT或测试程序；本请求不含mode52取消或旧候选。
+
+必要结果：NormalRun/MotionDebug编译通过；原Task夹具直接调试红蓝四段、固定U/机体系方向、D>0/D0、重复/暂停、
+U不可改、首次清理/首绿不误记与step12 SEARCH符合预期；任意U359.99、入口归属/完成/空载和编号回绕、原测距流程通过。
+12组上位成对原报文CRC/字段核对通过，差异证明旧0..12校验及整个执行函数未变；未新增检查源码或独立测试程序。
+
+**本轮未烧录、未启UART/设备或动作，板端actual未读。** 本机构建dirty1保留原Task初始化空白，最终源码提交以本文件Git记录为准。
+上位旧记录f40b061/dirty1仅属其历史场次，不当作本轮新固件actual。部署需烧新NormalRun/TASK并读真实身份，
+再重开RDK整个正式待机入口；旧0..12固件不能跑13。四段轨迹/打滑/地面5cm精度待人安排实车，不把软件DONE当验收。
+
+- [下位完整step13合同](F405_EMPTY_BODY_MOVE_20261114.md)
+- [机器JSON及12组成对报文](contracts/f405_empty_body_move_20261114.json)
+- [固定上位任务](https://github.com/danmo-teng/shijue_fangan/blob/a8d1242ac19b0e69d9c709be80adcfdafc76e1c5/docs/COMPETITION_ATTACK_RETURN_20261114.md)
 
 ## 2026-11-13 step8清障1m标准直行（未烧录）
 

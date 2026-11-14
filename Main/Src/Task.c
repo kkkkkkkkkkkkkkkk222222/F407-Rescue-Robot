@@ -4067,7 +4067,8 @@ static bool task_bulldozer_live_step(uint8_t step)
   return step == VISION_BULLDOZER_BACK_TO_SWEEP ||
       step == VISION_BULLDOZER_LEFT_TO_SWEEP ||
       step == VISION_BULLDOZER_BACK_TO_STAGE ||
-      step == VISION_BULLDOZER_RIGHT_TO_STAGE;
+      step == VISION_BULLDOZER_RIGHT_TO_STAGE ||
+      step == VISION_BULLDOZER_EMPTY_BODY_MOVE;
 }
 
 static void task_bulldozer_clear_load(void)
@@ -4268,12 +4269,36 @@ static bool task_accept_bulldozer(const VisionMissionCommand *command,
   }
   const bool previous_step_done = state == TASK_REMOTE_ACTION &&
       remote_action.type == REMOTE_ACTION_BULLDOZER && remote_action.done;
+  const bool owned_task = accepted_context.valid &&
+      (command->task_id == accepted_context.task_id ||
+       (command->task_id == (uint16_t)(accepted_context.task_id + 1U) &&
+        accepted_context.action_id == UINT16_MAX && command->action_id == 0U));
+  const bool empty_move = VISION_BULLDOZER_STEP(command->flags) ==
+      VISION_BULLDOZER_EMPTY_BODY_MOVE;
+  const bool release_done = empty_move && state == TASK_REMOTE_ACTION &&
+      remote_action.type == REMOTE_ACTION_RELEASE_BOTH && remote_action.done &&
+      remote_action.command == VISION_CMD_RELEASE_BOTH && accepted_context.valid &&
+      accepted_context.opcode == VISION_CMD_RELEASE_BOTH &&
+      owned_task && !task_status.gripper_closed;
+  if (empty_move) {
+    const bool next_empty_leg = previous_step_done &&
+        remote_action.step == VISION_BULLDOZER_EMPTY_BODY_MOVE &&
+        owned_task && !task_status.gripper_closed;
+    if (!release_done && !next_empty_leg) {
+      return false;
+    }
+    if (release_done) {
+      /* Only this first hand-off abandons the completed stash release's
+       * audit/backoff context. It never counts a delivery or moves a servo. */
+      task_bulldozer_clear_load();
+    }
+  }
   const bool first_step = VISION_BULLDOZER_STEP(command->flags) == VISION_BULLDOZER_TURN_RIGHT;
   const bool start = first_step &&
       ((state == TASK_ALIGN_SAFE_ZONE && safe_align_done &&
         task_status.gripper_closed && audit_received && audit_valid) ||
        (state == TASK_SEARCH && !task_status.gripper_closed));
-  if (!previous_step_done && !start) {
+  if (!previous_step_done && !start && !release_done) {
     return false;
   }
   task_start_remote_action(REMOTE_ACTION_BULLDOZER, command, now_ms);

@@ -10,7 +10,7 @@
       "valid": 1,
       "red": 8
     },
-    "high_nibble": "step number 0..12; not legacy bit flags"
+    "high_nibble": "base steps0..12 plus step13 EMPTY_BODY_MOVE extension; not legacy bit flags"
   },
   "fields": {
     "A": "P2/P3 signed big-endian int16",
@@ -34,14 +34,14 @@
   "sweep_target": {
     "reference": "robot centre, behind/left outer walls after clockwise90 turn",
     "rear_wall_m": 0.94,
-    "left_wall_m": 0.54,
+    "left_wall_m": 0.59,
     "red_xy_m": [
       -0.56,
-      0.96
+      0.91
     ],
     "blue_xy_m": [
       0.56,
-      -0.96
+      -0.91
     ],
     "xy_tolerance_m": [
       0.03,
@@ -493,8 +493,8 @@
   "upstream_source": {
     "repository": "danmo-teng/shijue_fangan",
     "branch": "codex/gamepad-teleop",
-    "commit": "4e9ff10f50f1e9e6eeb77ecee9b6ff3d286ac296",
-    "contract_blob": "fc72bed22425e3e628108a1cffff5c11137d9b8d"
+    "commit": "a8d1242ac19b0e69d9c709be80adcfdafc76e1c5",
+    "contract_blob": "7026a9308d638c570647c104dc80988d8dae0737"
   },
   "lower_source": {
     "repository": "kkkkkkkkkkkkkkkk222222/F407-Rescue-Robot",
@@ -602,5 +602,12 @@
     "known_existing_failure": "NORMALRUN_FLOW_REVIEW_CHECK fails test_audit_handshake.c:693 at hardcoded320ms retraction boundary; reproduced using baseline1b74001. Not changed by this task.",
     "real_hardware": false,
     "accuracy_verified": false
+  },
+  "extensions": {
+    "step13": {
+      "id": "MATCH-ATTACK-RETURN-20261114",
+      "status": "lower_implemented_build_checked_not_flashed",
+      "contract": "f405_empty_body_move_20261114.json"
+    }
   }
 }
