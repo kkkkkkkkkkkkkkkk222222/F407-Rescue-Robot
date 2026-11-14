@@ -16,6 +16,35 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-SEARCH-ROTATION-20261114：接受并已补空爪SEARCH入口，用户自行烧录
+
+已读取RDK最新固定入口/说明/机器合同并核对源码快照`8db11ec29b297d8c00173f42ecc6b371c01958dd`，
+搜索站合同blob为`1ff8bbe3bd026a78f5165f620b83c08fde6c527c`；本端基于`f66edbc0bbaf06d4cfb52c6595fcfda564554107`增量修改。
+
+**审查接受原最小改法，只补Task两处入口；没有重做step13接收/报文/执行器。**
+
+- task_accept_bulldozer允许空爪SEARCH按原step0的编号规则进入13，不要求虚构mode34放货回执；仅首次清放弃批次预算/复审/退让，
+  不开合爪、不记首绿/送达，后续心跳/同actionH-D及换段沿原逻辑，不重复清理。
+- task_accept_mission的空爪SEARCH/new-action/cancelled-context例外从step0扩到0或13，避免前置条件仍拒绝。
+  持货、相同/旧action、STOP/mode51及非SEARCH抓取中不借新入口放行；原任务/编号回绕和新目标预算规则不改。
+- 原step13执行器、U不可变/D-H动态、D0/mode25完成及step12/mode3/COMPLETED保持。途中目标让位的D0只结束移动，
+  不设置NAV到站；原新帧搜索→接近→整爪审核/GRAB保持。PID/速度、标准清障1m、舵机、原0..12/普通RETURN不改。
+- 已核对RDK search_transfer_epoch/index进入action键，且当前点已在目标内时仍先发step13 D0再原step12；无额外下位入口需求。
+  站点±0.30m/侧通道±0.50m、累计搜索及失败历史均由上位实现，下位不硬编码路线、不复制目标黑名单。
+- 没有新时间/新鲜度门、握手、ISR、遥测、FAULT或测试程序；本轮不含mode52取消或其他历史待办。
+
+必要结果：NormalRun/MotionDebug构建通过；原Task夹具核对红蓝空爪SEARCH（含cancelled及遗留预算）、D/H重发、
+途中D0→原step12→正常APP、持货/相同/旧action拒绝、STOP/mode51/APP边界、原step0/mode34及编号回绕符合预期。
+原FLOW_20261019_CHECK及10组成对CRC/字段核对通过，接收/枚举及整个执行函数差异为空，未新增检查源码或独立测试程序。
+
+**用户明确“烧录我自己来”；本端未烧录、未打开UART/设备或执行动作，actual未读。** 本机构建dirty1保留原Task初始化空白，
+源码提交以本文件Git记录为准。仅上一轮step13的mode34入口固件不支持本轮SEARCH入口；需用户烧新NormalRun/TASK，
+再重开完整正式待机入口。地面轮换/碰撞与目标识别效果未验收，不把软件配对/DONE当作实车通过。
+
+- [搜索站机器合同及10组成对报文](contracts/f405_search_station_20261114.json)
+- [step13完整合同与新增入口](F405_EMPTY_BODY_MOVE_20261114.md)
+- [固定上位任务](https://github.com/danmo-teng/shijue_fangan/blob/8db11ec29b297d8c00173f42ecc6b371c01958dd/docs/COMPETITION_SEARCH_ROTATION_20261114.md)
+
 ## MATCH-ATTACK-RETURN-20261114：接受并已实现step13，未烧录
 
 已直接读取RDK固定入口/详细说明/机器合同并核对固定源码快照`a8d1242ac19b0e69d9c709be80adcfdafc76e1c5`；

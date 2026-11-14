@@ -36,7 +36,7 @@
     "transform": "body_angle=wrap(H-current_primary_yaw); hold U, never turn chassis toward H",
     "D_positive": "RUNNING; do not report whole leg done from encoder initial D alone",
     "D_zero": "existing brake then COMPLETED mode25; do not reset to SEARCH or start another action",
-    "first_entry": "owned completed RELEASE_BOTH/mode34 and open claw, without replaying release",
+    "first_entry": "Owned completed RELEASE_BOTH/mode34 and open claw, or empty SEARCH under the original step0 task/action rules; cancelled SEARCH permits only a new step13 action.",
     "next_entry": "owned completed prior step13; existing action IDs distinguish legs",
     "final_search": "after fourth step13 DONE, upper sends existing step12/PICKUP_READY; retain paired DONE through mode3"
   },
@@ -237,7 +237,7 @@
       250,
       350
     ],
-    "cleanup": "Only the first owned RELEASE_BOTH/mode34 -> step13 handoff clears release audit/backoff context. Later step13 actions/repeats do not clear it again.",
+    "cleanup": "Only the first release/empty SEARCH -> step13 handoff clears abandoned batch/audit/backoff context; later accepted repeats and continuation legs do not.",
     "numbering": "Original16-bit action FFFF->0 with task+1 remains the same business task.",
     "old_steps_0_12": "No payload-validation or execution-body change.",
     "sweep_step8": "Existing1m standard Motor_MoveHeadingLowRearDeadband preserved.",
@@ -261,5 +261,14 @@
       "Firmware flash and actual identity readback",
       "Real chassis four-leg run and5cm accuracy"
     ]
+  },
+  "entry_extensions": {
+    "search_station": {
+      "id": "MATCH-SEARCH-ROTATION-20261114",
+      "status": "lower_search_entry_implemented_build_checked_not_flashed",
+      "source_base_commit": "f66edbc0bbaf06d4cfb52c6595fcfda564554107",
+      "upstream_commit": "8db11ec29b297d8c00173f42ecc6b371c01958dd",
+      "contract": "f405_search_station_20261114.json"
+    }
   }
 }

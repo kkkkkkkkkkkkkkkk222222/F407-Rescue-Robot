@@ -4275,6 +4275,8 @@ static bool task_accept_bulldozer(const VisionMissionCommand *command,
         accepted_context.action_id == UINT16_MAX && command->action_id == 0U));
   const bool empty_move = VISION_BULLDOZER_STEP(command->flags) ==
       VISION_BULLDOZER_EMPTY_BODY_MOVE;
+  const bool empty_search_entry = empty_move && state == TASK_SEARCH &&
+      !task_status.gripper_closed;
   const bool release_done = empty_move && state == TASK_REMOTE_ACTION &&
       remote_action.type == REMOTE_ACTION_RELEASE_BOTH && remote_action.done &&
       remote_action.command == VISION_CMD_RELEASE_BOTH && accepted_context.valid &&
@@ -4284,12 +4286,12 @@ static bool task_accept_bulldozer(const VisionMissionCommand *command,
     const bool next_empty_leg = previous_step_done &&
         remote_action.step == VISION_BULLDOZER_EMPTY_BODY_MOVE &&
         owned_task && !task_status.gripper_closed;
-    if (!release_done && !next_empty_leg) {
+    if (!release_done && !next_empty_leg && !empty_search_entry) {
       return false;
     }
-    if (release_done) {
-      /* Only this first hand-off abandons the completed stash release's
-       * audit/backoff context. It never counts a delivery or moves a servo. */
+    if (release_done || empty_search_entry) {
+      /* Only the first release/SEARCH hand-off abandons old batch context.
+       * It never counts a delivery or moves a servo. */
       task_bulldozer_clear_load();
     }
   }
@@ -4298,11 +4300,11 @@ static bool task_accept_bulldozer(const VisionMissionCommand *command,
       ((state == TASK_ALIGN_SAFE_ZONE && safe_align_done &&
         task_status.gripper_closed && audit_received && audit_valid) ||
        (state == TASK_SEARCH && !task_status.gripper_closed));
-  if (!previous_step_done && !start && !release_done) {
+  if (!previous_step_done && !start && !release_done && !empty_search_entry) {
     return false;
   }
   task_start_remote_action(REMOTE_ACTION_BULLDOZER, command, now_ms);
-  /* A new owned step0 may follow RETURN's cancelled SEARCH context. */
+  /* A new owned SEARCH action may follow RETURN's cancelled context. */
   accepted_context.cancelled = false;
   return true;
 }
@@ -6595,7 +6597,8 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
         !(state == TASK_RECOVERY_WAIT && new_action) &&
         !(state == TASK_SEARCH && new_action && !task_status.gripper_closed &&
           incoming.command == VISION_CMD_BULLDOZER_STEP &&
-          VISION_BULLDOZER_STEP(incoming.flags) == VISION_BULLDOZER_TURN_RIGHT) &&
+          (VISION_BULLDOZER_STEP(incoming.flags) == VISION_BULLDOZER_TURN_RIGHT ||
+           VISION_BULLDOZER_STEP(incoming.flags) == VISION_BULLDOZER_EMPTY_BODY_MOVE)) &&
         incoming.command != VISION_CMD_RETURN_CENTER &&
         incoming.command != VISION_CMD_STOP) goto rejected;
   }

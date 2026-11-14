@@ -4,6 +4,10 @@
 已核对RDK固定快照`a8d1242ac19b0e69d9c709be80adcfdafc76e1c5`及机器合同blob`4610fe8cb88e93313087a38e210224c9f57a5972`。
 NormalRun和MotionDebug已编译通过；本轮未烧录、未打开UART或执行任何机构/车轮动作，板端actual未读。
 
+后续MATCH-SEARCH-ROTATION-20261114已补空爪SEARCH入口及同场景cancelled-context例外，基于RDK`8db11ec29b297d8c00173f42ecc6b371c01958dd`。
+只扩入口，不改接收/字段/执行器；两站轮换、侧通道、途中目标让位和失败记录由上位负责。当前配套及10组原报文见
+[搜索轮换机器合同](contracts/f405_search_station_20261114.json)。用户明确自行烧录，本端不烧录或启设备。
+
 ## 分工和兼容
 
 上位机在本次双爪释放完成后冻结实际放货车中心与场地yaw，再编排退10cm、左50cm、退到返程纵向线、右移到己方30cm点。
@@ -38,10 +42,12 @@ a3 b3 18 28 14 d9 00 64 23 28 69 78 92 7d c3
 
 ## 入口、执行和交接
 
-1. 首个13只接受本任务已完成的RELEASE_BOTH/mode34且逻辑空爪。只有这个入口清本次放货残留审核/STABLE、
-   stash_backoff_pending、route_to_stash及原批次预算，不重放松爪、不增加舵机动作，不改first_delivery_done或投送计数。
+1. 首个13接受本任务已完成的RELEASE_BOTH/mode34且逻辑空爪，或按原step0方式从空爪SEARCH进入。
+   仅首次release/SEARCH交接清旧审核/STABLE、stash_backoff_pending、route_to_stash及放弃批次预算；
+   不重放松爪、不增加舵机动作，不改first_delivery_done或投送计数。原编号归属/回绕及新目标预算规则保持。
 2. 后续13从本任务上一段13的完成状态接受新action；沿现有动作ID检查及FFFF→0/task+1编号回绕。
-   不从SEARCH、未完成释放、其他释放或持货状态开启13，也不绕过原mode51恢复。不是新增时间/新鲜度资格。
+   SEARCH只能在空爪时以新action开启，前置cancelled-context例外同步支持step13；未完成释放、其他释放、持货和原mode51不放开。
+   相同/过期action不会借新入口重启。不是新增时间/新鲜度资格。
 3. 直接复用task_bulldozer_live_step和Motor_MoveAngleFineHeading；`body_angle=wrap(H-当前主yaw)`，U独立保向。
    当前请求速度仍250～350mm/s，原斜坡/换向/Fine补偿/航向PI保持，不先把车头转向H。
 4. 同action的H/D实时更新，不重启、不改变锁定U；U变化沿原明确拒绝处理。D>0不报完成；D=0执行原刹车并COMPLETED。
@@ -61,4 +67,5 @@ a3 b3 18 28 14 d9 00 64 23 28 69 78 92 7d c3
   仅同步文档/机器合同，固件不硬编码这个点，仍只消费H/D/U；原扫障基础报文示例同步上位当前几何。
 
 旧固件即便已经支持0x14的0..12，也不能执行13。部署须烧新的NormalRun/TASK并读回真实身份，再重开RDK完整正式待机入口。
+仅实现上一版mode34入口的step13固件也不支持这次SEARCH入口，需使用本次新NormalRun镜像；烧录由用户进行。
 四段实际轨迹、轮滑及地面5cm精度仍待人安排验证。本轮不包含mode52取消或其他历史候选。

@@ -1,5 +1,15 @@
 # 当前状态：F405 烧录入口
 
+2026-11-14 MATCH-SEARCH-ROTATION-20261114：空爪SEARCH进入step13（未烧录）。
+- 审查接受RDK 8db11ec的最小配套：只扩task_accept_bulldozer的空爪SEARCH首入口和前置同场景cancelled-context新action例外。
+  首次进入清旧放弃批次/审核/退让残留，不重开爪、不记首绿；同段更新或下一段不重复清理，原任务/action与编号回绕保持。
+- 接收器/枚举/字段、step13执行及U固定/H-D更新/D0完成、step12回SEARCH保持；不改PID/速度/舵机、STOP/PAUSE/mode51或mode52。
+  搜索站轮换/侧通道/失败目标历史属于上位，不在下位重复实现；D0中止移动不设置NAV到站标志。
+- NormalRun/MotionDebug编译通过；原夹具核对空爪/取消上下文/遗留预算、红蓝D0让位→step12→正常APP、旧action/持货拒绝、
+  STOP/mode51/APP边界、原step0/mode34及编号回绕；原测距流程和10组成对示例CRC/字段通过，无新测试程序。
+  用户明确自行烧录，本端未开设备/动作/烧录，actual未读；原Task空白保留，本机构建如实dirty1。地面轮换/避让效果待实车。
+  固定入口及搜索站JSON已回执，上一轮仅mode34入口的固件不能当作已支持SEARCH入口。
+
 2026-11-14 MATCH-ATTACK-RETURN-20261114：step13空载保向平移（未烧录）。
 - 已审查并接受RDK a8d1242的最小配套；枚举追加13、仅该步U允许0..35999厘度，接入原live/Fine保向执行。
   首次从本任务完成的双爪释放mode34且逻辑空载进入，只清一次放货审核/退让残留，不重放舵机、不记首绿送达。
