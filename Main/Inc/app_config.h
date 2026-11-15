@@ -645,6 +645,7 @@
 #define APP_LIFT_TRAVEL_ANGLE             85U
 /* Calibrated pose only; the autonomous first-green filter is not enabled here. */
 #define APP_LIFT_FIRST_GREEN_FILTER_ANGLE 82U
+#define APP_SINGLE_CARGO_FILTER_BACK_SPEED_MM_S 250.0f
 /* S2/S4 mounting: 1 mirrors the PWM angle, 0 selects the original mounting. */
 #define APP_CLAW_SERVOS_INVERTED           1
 #define APP_CLAW_MOUNT_ANGLE(deg) (APP_CLAW_SERVOS_INVERTED ? (180U - (deg)) : (deg))

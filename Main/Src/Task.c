@@ -3163,7 +3163,7 @@ static void task_process_single_filter(uint32_t now_ms)
   if (single_filter_phase == 2U) {
     Motor_ResumeFiniteMotion();
     const MotorDistanceStatus result = Motor_MoveDistanceHeading(
-        -0.100f, APP_INJURY_BACKOFF_SPEED_MM_S, single_filter_heading_deg);
+        -0.100f, APP_SINGLE_CARGO_FILTER_BACK_SPEED_MM_S, single_filter_heading_deg);
     task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
     if (result == MOTOR_DISTANCE_FAULT || result == MOTOR_DISTANCE_INVALID) {
       task_stop(TASK_FAULT_MOTOR, now_ms);
