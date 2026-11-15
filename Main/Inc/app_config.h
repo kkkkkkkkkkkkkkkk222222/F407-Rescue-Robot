@@ -503,9 +503,13 @@
 /* Derivative uses seconds, not frames; softened together with visual P. */
 #define APP_STEERING_KD_MM                0.0025f
 #define APP_STEERING_MIN_MM_S             10.0f
-/* Stationary object alignment only; gyro braking may reduce these to zero. */
-#define APP_APPROACH_ALIGN_MIN_TURN_MM_S 130.0f
+/* Stationary object alignment: 130 is breakaway effort only, not a run floor. */
+#define APP_APPROACH_ALIGN_START_TURN_MM_S 130.0f
 #define APP_APPROACH_ALIGN_MAX_TURN_MM_S 140.0f
+#define APP_APPROACH_ALIGN_STARTED_DPS     3.0f
+#define APP_APPROACH_ALIGN_STOPPED_DPS     2.0f
+/* Pixel-trend prediction coefficient, not a timer or measured total latency. */
+#define APP_APPROACH_ALIGN_BRAKE_LOOKAHEAD_S 0.20f
 #define APP_APPROACH_ALIGN_KP_MM_S         0.12f
 #define APP_APPROACH_ALIGN_KD_MM           0.0015f
 /* Begin easing at three times each phase's unchanged arrival tolerance. */

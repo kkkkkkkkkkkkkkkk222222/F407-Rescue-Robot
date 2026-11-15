@@ -12,6 +12,7 @@
 #include "motor.h"
 #include "pid.h"
 #include "vision.h"
+#include <string.h>
 
 typedef struct {
   int32_t last_heading_mdeg;
@@ -254,6 +255,13 @@ static float camera_angle;
 static float steering_mm_s;
 static float steering_target_mm_s;
 static float steering_near_brake_weight;
+static struct {
+  float raw_error_px;
+  float closing_px_s;
+  bool sample_valid;
+  bool turned;
+  bool braking;
+} approach_align;
 static float approach_speed_mm_s;
 static float approach_locked_heading_deg;
 static uint8_t approach_measure_pitch;
@@ -607,6 +615,7 @@ static void task_reset_tracking(void)
   steering_mm_s = 0.0f;
   steering_target_mm_s = 0.0f;
   steering_near_brake_weight = 0.0f;
+  memset(&approach_align, 0, sizeof(approach_align));
   Pid_Reset(&steering_pid);
   Pid_Reset(&camera_pid);
 }
@@ -1675,6 +1684,7 @@ static void task_initialize(uint32_t now_ms)
   steering_mm_s = 0.0f;
   steering_target_mm_s = 0.0f;
   steering_near_brake_weight = 0.0f;
+  memset(&approach_align, 0, sizeof(approach_align));
   approach_speed_mm_s = APP_APPROACH_SPEED_MM_S;
   approach_locked_heading_deg = 0.0f;
   remote_speed_mm_s = 0.0f;
@@ -1965,6 +1975,16 @@ static float task_track_target(const VisionData *vision, bool track_camera)
   const float raw_error = (float)APP_VISION_TARGET_X - vision->x;
   const float tolerance = task_approach_alignment_tolerance();
   const bool stationary_alignment = tolerance > 0.0f;
+  if (stationary_alignment) {
+    /* Use consecutive reports of the locked target, not the coordinate filter
+     * derivative. Existing vision dt is a receipt interval, not capture age. */
+    approach_align.closing_px_s = approach_align.sample_valid &&
+        approach_align.raw_error_px * raw_error > 0.0f ?
+        fmaxf(0.0f, (approach_align.raw_error_px - raw_error) / dt_s *
+            copysignf(1.0f, raw_error)) : 0.0f;
+    approach_align.raw_error_px = raw_error;
+    approach_align.sample_valid = true;
+  }
   steering_near_brake_weight = 0.0f;
   const bool near_center = stationary_alignment &&
       task_abs(raw_error) <= APP_APPROACH_ALIGN_SLOW_TOLERANCE_RATIO * tolerance;
@@ -2014,21 +2034,17 @@ static float task_track_target(const VisionData *vision, bool track_camera)
                                       steering_x, dt_s) *
                          APP_STEERING_DIRECTION;
   if (stationary_alignment) {
-    /* Ease the PD contribution before the target reaches the arrival edge.
-     * Adding it above the active-turn floor keeps gain reductions effective when
-     * the small pixel PD alone would remain below the active-turn minimum. */
+    /* Once moving, taper the entire request to zero at the arrival edge.
+     * Breakaway effort is owned separately by task_approach_align_output(). */
     const float ratio = fminf(1.0f, fmaxf(0.0f,
         (magnitude - tolerance) /
         ((APP_APPROACH_ALIGN_SLOW_TOLERANCE_RATIO - 1.0f) * tolerance)));
     steering_near_brake_weight = 1.0f - ratio;
     const float directional_pd = fmaxf(0.0f,
         steering_target_mm_s * copysignf(1.0f, x_error * APP_STEERING_DIRECTION));
-    const float turn = APP_APPROACH_ALIGN_MIN_TURN_MM_S + ratio *
-        fminf(APP_APPROACH_ALIGN_MAX_TURN_MM_S - APP_APPROACH_ALIGN_MIN_TURN_MM_S,
-              directional_pd);
+    const float turn = fminf(APP_APPROACH_ALIGN_MAX_TURN_MM_S,
+        ratio * (APP_APPROACH_ALIGN_MAX_TURN_MM_S + directional_pd));
     steering_target_mm_s = copysignf(turn, x_error * APP_STEERING_DIRECTION);
-    steering_mm_s = steering_mm_s * steering_target_mm_s < 0.0f ? 0.0f :
-        fmaxf(-turn, fminf(turn, steering_mm_s));
     return steering_target_mm_s;
   }
   const float minimum_mm_s = APP_STEERING_MIN_MM_S;
@@ -2310,23 +2326,94 @@ static float task_align_rate_brake(float field_yaw_mm_s, float closing_rate_dps)
 
 static float task_approach_steering(void)
 {
-  float target_mm_s = steering_target_mm_s;
-  if (task_approach_alignment_tolerance() > 0.0f) {
-    /* Update braking between vision frames, using the existing task cycle. */
-    const float brake_scale = 1.0f + steering_near_brake_weight *
-        (APP_APPROACH_ALIGN_NEAR_BRAKE_SCALE - 1.0f);
-    target_mm_s = task_align_rate_brake(target_mm_s,
-        task_align_closing_rate(target_mm_s) * brake_scale);
-    if (steering_mm_s * target_mm_s < 0.0f) {
-      steering_mm_s = 0.0f;
-    } else if (task_abs(steering_mm_s) > task_abs(target_mm_s)) {
-      steering_mm_s = target_mm_s;
-    }
-  }
+  /* Retained non-approach/sweep steering; object alignment owns its brake. */
   steering_mm_s = task_step_toward(
-      steering_mm_s, target_mm_s,
+      steering_mm_s, steering_target_mm_s,
       APP_STEERING_RATE_MM_S2 * APP_TASK_PERIOD_MS * 0.001f);
   return steering_mm_s;
+}
+
+static bool task_approach_align_output(bool new_target_report)
+{
+  const IMUData imu = IMU_GetData();
+  const float rate_dps = imu.gyro_mdps[2] * 0.001f * APP_LOCATION_IMU_YAW_SIGN;
+  const bool rotation_stopped = imu.ready &&
+      task_abs(rate_dps) <= APP_APPROACH_ALIGN_STOPPED_DPS;
+  const float tolerance = task_approach_alignment_tolerance();
+  const bool centered = approach_align.sample_valid &&
+      task_abs(approach_align.raw_error_px) <= tolerance;
+
+  task_status.motors_active = false;
+  if (!approach_align.sample_valid || !imu.ready) {
+    Motor_Stop();
+    return false;
+  }
+  if (approach_align.braking || Motor_IsBraking()) {
+    approach_align.braking = true;
+    steering_mm_s = 0.0f;
+    if (Motor_IsBraking()) { return false; }
+    if (!rotation_stopped) {
+      /* Reuse the existing short brake if residual rotation remains. */
+      Motor_Stop();
+      return false;
+    }
+    /* Keep the original new-report completion condition. No fixed dwell or
+     * extra confirmation frames; an old pre-brake picture cannot restart us. */
+    if (!new_target_report) { return false; }
+    if (centered) { return true; }
+    approach_align.braking = false;
+    approach_align.turned = false;
+    approach_align.closing_px_s = 0.0f;
+  }
+  if (centered) {
+    steering_mm_s = 0.0f;
+    approach_align.braking = true;
+    Motor_Stop();
+    return new_target_report && rotation_stopped && !Motor_IsBraking();
+  }
+  /* The existing full-turn recovery still owns this cluster-only boundary. */
+  if (approach_phase == APPROACH_CLUSTER_ALIGN && cluster_align_turn_mdeg >= 360000U) {
+    Motor_Stop();
+    return false;
+  }
+
+  const float direction = copysignf(1.0f,
+      approach_align.raw_error_px * APP_STEERING_DIRECTION);
+  const float closing_dps = rate_dps * direction;
+  if (closing_dps >= APP_APPROACH_ALIGN_STARTED_DPS) {
+    approach_align.turned = true;
+  }
+  const float brake_scale = 1.0f + steering_near_brake_weight *
+      (APP_APPROACH_ALIGN_NEAR_BRAKE_SCALE - 1.0f);
+  float target_mm_s = approach_align.turned ?
+      task_align_rate_brake(steering_target_mm_s,
+          fmaxf(0.0f, closing_dps) * brake_scale) :
+      direction * APP_APPROACH_ALIGN_START_TURN_MM_S;
+  const bool predicted_crossing = steering_near_brake_weight > 0.0f &&
+      closing_dps > APP_APPROACH_ALIGN_STOPPED_DPS &&
+      task_abs(approach_align.raw_error_px) - tolerance <=
+          approach_align.closing_px_s * APP_APPROACH_ALIGN_BRAKE_LOOKAHEAD_S;
+  if (closing_dps < -APP_APPROACH_ALIGN_STOPPED_DPS || predicted_crossing ||
+      (approach_align.turned &&
+       (task_abs(target_mm_s) <= APP_MOTOR_ZERO_EXIT_MM_S ||
+        (rotation_stopped && new_target_report)))) {
+    /* A zero Move request coasts on F405. Use the actual brake, keep mode20,
+     * and finish this correction before starting another in either direction. */
+    steering_mm_s = 0.0f;
+    approach_align.braking = true;
+    Motor_Stop();
+    return false;
+  }
+  if (steering_mm_s * target_mm_s < 0.0f) {
+    steering_mm_s = 0.0f;
+  } else if (task_abs(steering_mm_s) > task_abs(target_mm_s)) {
+    steering_mm_s = target_mm_s;
+  }
+  steering_mm_s = task_step_toward(steering_mm_s, target_mm_s,
+      APP_STEERING_RATE_MM_S2 * APP_TASK_PERIOD_MS * 0.001f);
+  task_move_body(0.0f, 0.0f, steering_mm_s);
+  task_status.motors_active = task_abs(steering_mm_s) > 0.5f;
+  return false;
 }
 
 static void task_cluster_align_sample(void)
@@ -2649,7 +2736,7 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
   }
 
   switch (approach_phase) {
-    case APPROACH_TRACK:
+    case APPROACH_TRACK: {
       if (cluster_target_active && !cluster_claws_ready) {
         Motor_Stop();
         task_status.motors_active = false;
@@ -2664,24 +2751,20 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
       }
       Camera_SetAngle(approach_measure_pitch);
       camera_angle = (float)approach_measure_pitch;
+      bool alignment_report = false;
       if (new_locked_target &&
           (int32_t)(vision->tick_ms - state_started_ms) >= (int32_t)APP_GRAB_CAMERA_SETTLE_MS) {
         task_status.found = true;
         (void)task_track_target(vision, false);
-        const float tolerance = task_approach_alignment_tolerance();
-        const float target_x = (float)vision->x;
-        if (task_abs(target_x - APP_VISION_TARGET_X) <= tolerance) {
-          Motor_Stop();
-          task_status.motors_active = false;
-          approach_phase = APPROACH_RANGE_WAIT;
-          approach_deadline_ms = now_ms;
-          step_started_ms = now_ms;
-          return;
-        }
+        alignment_report = true;
       }
-      task_move_body(0.0f, 0.0f, task_approach_steering());
-      task_status.motors_active = task_abs(steering_mm_s) > 0.5f;
+      if (task_approach_align_output(alignment_report)) {
+        approach_phase = APPROACH_RANGE_WAIT;
+        approach_deadline_ms = now_ms;
+        step_started_ms = now_ms;
+      }
       return;
+    }
 
     case APPROACH_RANGE_WAIT:
       Motor_Stop();
@@ -2726,11 +2809,7 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
         task_status.found = true;
         (void)task_track_target(vision, false);
       }
-      if (new_locked_target && tracking_valid &&
-          (task_abs((float)vision->x - (float)APP_VISION_TARGET_X) <=
-           task_approach_alignment_tolerance())) {
-        Motor_Stop();
-        task_status.motors_active = false;
+      if (task_approach_align_output(new_locked_target)) {
         task_clear_audit_result();
         approach_phase = APPROACH_CLUSTER_CAMERA_TO_140;
         cluster_align_sample_valid = false;
@@ -2746,8 +2825,6 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
         task_status.found = false;
         return;
       }
-      task_move_body(0.0f, 0.0f, task_approach_steering());
-      task_status.motors_active = task_abs(steering_mm_s) > 0.5f;
       return;
 
     case APPROACH_CLUSTER_CAMERA_TO_140:
@@ -2807,17 +2884,11 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
         task_status.found = true;
         (void)task_track_target(vision, false);
       }
-      if (new_locked_target && tracking_valid &&
-          (task_abs((float)vision->x - (float)APP_VISION_TARGET_X) <=
-           task_approach_alignment_tolerance())) {
-        Motor_Stop();
-        task_status.motors_active = false;
+      if (task_approach_align_output(new_locked_target)) {
         approach_phase = APPROACH_CAMERA_TO_140;
         step_started_ms = now_ms;
         return;
       }
-      task_move_body(0.0f, 0.0f, task_approach_steering());
-      task_status.motors_active = task_abs(steering_mm_s) > 0.5f;
       return;
 
     case APPROACH_CAMERA_TO_140:
