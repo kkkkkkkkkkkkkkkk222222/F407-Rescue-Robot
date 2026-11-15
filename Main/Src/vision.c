@@ -139,6 +139,10 @@ static void vision_save_config(const uint8_t *payload, uint8_t sequence)
     ++latest_data.session_generation;
     latest_data.mission = (VisionMissionCommand){0};
     context_pending = false;
+#if APP_BOARD_F405_ROBO
+    /* Only an accepted new CONFIG cancels old operator audio; no sound ACK. */
+    BoardF405_SetOperatorAlarm(false);
+#endif
   }
 }
 
@@ -546,6 +550,9 @@ static void vision_save_frame(uint32_t tick_ms)
         payload[2] <= 1U && payload[3] == 0U && payload[4] == 0U &&
         payload[5] == 0U && payload[6] == 0U && payload[7] == 0U) {
       BoardF405_RequestBeep(payload[1], payload[2] == 1U);
+    } else if (payload[0] == 2U && payload[1] <= 1U &&
+               vision_padding_zero(payload, 2U)) {
+      BoardF405_SetOperatorAlarm(payload[1] == 1U);
     }
     return;
   }

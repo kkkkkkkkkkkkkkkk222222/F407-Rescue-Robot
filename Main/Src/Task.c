@@ -367,6 +367,8 @@ static struct {
   DeliveryFinishReason finish;
 } delivery;
 static bool first_delivery_done;
+/* Field yaw is CCW-positive. Before the first delivery retain the old + scan. */
+static int8_t search_yaw_direction;
 static bool first_green_core_conflict;
 static bool first_green_bump_done;
 static bool complete_flow_active;
@@ -1744,6 +1746,7 @@ static void task_initialize(uint32_t now_ms)
   safe_enter_path_valid = false;
   delivery_exit_path_valid = false;
   first_delivery_done = false;
+  search_yaw_direction = 1;
   memset(&delivery, 0, sizeof(delivery));
   safe_align_done = safe_align_visual_confirmed = safe_align_lateral_active = false;
   safe_align_pixel_error_px = 0;
@@ -2236,7 +2239,7 @@ static void task_process_search(const VisionData *vision, uint32_t now_ms)
         step_started_ms = now_ms;
         return;
       }
-      task_move_body(0.0f, 0.0f, APP_SEARCH_ROTATE_SPEED_MM_S);
+      task_move_body(0.0f, 0.0f, APP_SEARCH_ROTATE_SPEED_MM_S * search_yaw_direction);
       task_status.motors_active = true;
       return;
 
@@ -2272,12 +2275,12 @@ static void task_process_search(const VisionData *vision, uint32_t now_ms)
         step_started_ms = now_ms;
         return;
       }
-      task_move_body(0.0f, 0.0f, APP_SEARCH_ROTATE_SPEED_MM_S);
+      task_move_body(0.0f, 0.0f, APP_SEARCH_ROTATE_SPEED_MM_S * search_yaw_direction);
       task_status.motors_active = true;
       return;
 
     case SEARCH_WAIT_RETURN:
-      task_move_body(0.0f, 0.0f, APP_SEARCH_WAIT_RETURN_SPEED_MM_S);
+      task_move_body(0.0f, 0.0f, APP_SEARCH_WAIT_RETURN_SPEED_MM_S * search_yaw_direction);
       task_status.motors_active = true;
       return;
 
@@ -4311,6 +4314,10 @@ static void task_delivery_check_front_budget(uint32_t now_ms)
 static void task_finish_delivery_exit(uint32_t now_ms)
 {
   /* Called only after the original Claw_Open reports its mechanical finish. */
+  if (state != TASK_OPEN_FOR_RAM && state != TASK_RAM_VERIFY) { return; }
+  /* Exactly one update at the common physical release exit, never per command,
+   * cargo item, SEARCH entry or RETURN repeat. First/third/... are field CCW. */
+  search_yaw_direction = first_delivery_done ? -search_yaw_direction : 1;
   first_delivery_done = true;
   task_bulldozer_clear_load();
   safe_enter_resume_mm = safe_enter_resume_push_ms = 0U;

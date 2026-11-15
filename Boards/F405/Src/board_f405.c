@@ -86,30 +86,73 @@ static void board_gpio(void)
   gpio(GPIOB, GPIO_PIN_6 | GPIO_PIN_7, GPIO_MODE_INPUT, GPIO_PULLUP, 0U);
 }
 
-/* UART RX writes the latest request. Only the foreground drives PA10. */
-static volatile uint8_t requested_beeps;
-static volatile bool requested_long_tone;
+/* Latest-request mailbox, not an audio queue. Only the foreground drives PA10. */
+enum {
+  BEEP_REQUEST_NONE = 0U,
+  BEEP_REQUEST_SILENCE = 0x10U,
+  BEEP_REQUEST_ALARM = 0x20U,
+  BEEP_REQUEST_LONG = 0x80U
+};
+static volatile uint8_t beep_request;
+static volatile bool operator_alarm_requested;
 
 void BoardF405_RequestBeep(uint8_t count, bool long_tone)
 {
-  requested_long_tone = long_tone;
-  requested_beeps = count;
+  if (count < 1U || count > 4U) { return; }
+  const uint32_t mask = __get_PRIMASK();
+  __disable_irq();
+  if (!operator_alarm_requested) {
+    beep_request = count | (long_tone ? BEEP_REQUEST_LONG : 0U);
+  }
+  __set_PRIMASK(mask);
+}
+
+void BoardF405_SetOperatorAlarm(bool enabled)
+{
+  const uint32_t mask = __get_PRIMASK();
+  __disable_irq();
+  if (!enabled) {
+    operator_alarm_requested = false;
+    beep_request = BEEP_REQUEST_SILENCE;
+  } else if (!operator_alarm_requested) {
+    operator_alarm_requested = true;
+    beep_request = BEEP_REQUEST_ALARM;
+  }
+  /* Repeated ON leaves both pending sound and the current phase intact. */
+  __set_PRIMASK(mask);
 }
 
 void BoardF405_ProcessBeep(uint32_t now_ms)
 {
   static uint8_t remaining;
-  static bool sounding;
+  static bool sounding, alarm_active;
   static uint32_t tone_ms, next_edge_ms;
   const uint32_t gap_ms = 150U;
+  const uint32_t alarm_on_ms = 120U, alarm_gap_ms = 60U;
 
-  if (requested_beeps != 0U) {
-    const uint32_t mask = __get_PRIMASK();
-    __disable_irq();
-    const uint8_t count = requested_beeps;
-    const bool long_tone = requested_long_tone;
-    requested_beeps = 0U;
-    __set_PRIMASK(mask);
+  const uint32_t mask = __get_PRIMASK();
+  __disable_irq();
+  const uint8_t request = beep_request;
+  beep_request = BEEP_REQUEST_NONE;
+  __set_PRIMASK(mask);
+
+  if (request == BEEP_REQUEST_SILENCE) {
+    remaining = 0U;
+    sounding = alarm_active = false;
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET);
+    return;
+  }
+  if (request == BEEP_REQUEST_ALARM) {
+    remaining = 0U;
+    sounding = alarm_active = true;
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_SET);
+    next_edge_ms = now_ms + alarm_on_ms;
+    return;
+  }
+  if (request != BEEP_REQUEST_NONE) {
+    const uint8_t count = request & 0x0FU;
+    const bool long_tone = (request & BEEP_REQUEST_LONG) != 0U;
+    alarm_active = false;
 
     if (sounding) {
       /* Separate the replacement's first tone from the interrupted tone. */
@@ -121,6 +164,14 @@ void BoardF405_ProcessBeep(uint32_t now_ms)
     }
     remaining = count;
     tone_ms = long_tone ? 350U : 100U;
+  }
+
+  if (alarm_active) {
+    if ((int32_t)(now_ms - next_edge_ms) < 0) { return; }
+    sounding = !sounding;
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, sounding ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    next_edge_ms = now_ms + (sounding ? alarm_on_ms : alarm_gap_ms);
+    return;
   }
 
   if (remaining == 0U || (int32_t)(now_ms - next_edge_ms) < 0) { return; }

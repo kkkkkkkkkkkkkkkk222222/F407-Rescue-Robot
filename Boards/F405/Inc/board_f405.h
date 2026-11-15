@@ -36,6 +36,8 @@ void BoardF405_ServoEmergencyOff(void);
 void BoardF405_Report(void);
 void BoardF405_ReportVersion(void);
 void BoardF405_RequestBeep(uint8_t count, bool long_tone);
+/* Persistent operator alarm; false cancels all queued/current operator sound. */
+void BoardF405_SetOperatorAlarm(bool enabled);
 void BoardF405_ProcessBeep(uint32_t now_ms);
 
 #endif

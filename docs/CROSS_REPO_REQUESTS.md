@@ -16,6 +16,50 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-PREWARM-FEEDBACK-20261116：下位警报v2已实现，上位配套与部署待完成
+
+已读取RDK `4609ca1d81c368bd482ba02515a7d7c7a8c4f49d`固定入口blob`6300786d9ee962f16597ee017b5db0a002c08e24`，
+开发说明blob`cba0ddab056db5c8669b228d32576cee644d267d`，警报合同blob`bd5eb0a5da36c2e7d8399f539c855aed90edea99`。
+本端基于efe3f1b核对PA10既有蜂鸣器、BoardF405_ProcessBeep和vision.c独立0x20分派，接受本次持续警报目标，未改变上位按键程序。
+
+- `Boards/F405/Src/board_f405.c`复用原前台服务，增加最新请求邮箱与持续警报状态。120ms响/60ms停，无长间隔组停顿；
+  不增加变调硬件、PWM定时器、中断或阻塞等待。短临界区仅交换邮箱字段，GPIO仍只在前台更新，控制流程不等待声音。
+- `BoardF405_SetOperatorAlarm(true)`只在从非警报切入时启动；重复01不重置节奏。普通v1查询在警报有效时忽略声音，不清警报、不排队。
+  false/00取消当前及待播操作声音，下一次原服务调用即拉低PA10，不等待音段/ACK；上电静音。连续覆盖的旧警报/查询不回放。
+- `Main/Src/vision.c`同TYPE0x20接v2版本02、op00/01、后6字节零，原v1保留。未知操作/版本/保留非零忽略消息，CRC沿原帧校验。
+  所有0x20均在任务context_pending处理前返回，不消耗0x1D/0x18配对、不改任务动作/ACK/CONFIG连续计数；不新增声音回包。
+- `vision_save_config()`仅在本次CONFIG真正接受、session递增处请求清音；未接受/非法CONFIG及已config_ready后的重复CONFIG不当成新局。
+  消音使用原前台声音服务，正常100Hz调度下由下一次服务处理；这不是实测端到端响应时间，也不要求启动等待消音。
+
+[本端v2合同与两组合成帧](contracts/f405_operator_alarm_v2_20261116.json)，字段与上位提案一致，序号不作续命/资格。
+已用原CRC/构帧函数核对00与01示例，未发设备。原夹具内编译实际声音函数块及实际vision.c，GPIO替身直接核对19项：
+持续周期、重复ON/v1不打断、消音/待播覆盖、v1单双长短音兼容、非法字段/CRC、CONFIG接受边界和声音穿插后的任务配对均通过。
+NormalRun/MotionDebug构建通过；没有新增测试源码/程序、声音ACK、新鲜度门、自动FAULT或高频串口续发。
+
+**未烧录、未打开设备；真实音量/节奏紧迫感、发车时延未实测。** 上位Python/C++ v2接收转发、唯一UART调度、长按3预热/短按3发车、
+取消旧预约及就绪v1心跳仍需RDK完成并按原方式构建部署；下位不读取上位设备状态，未收到ON不能自行判断整个上位进程失联。
+本端不改下载目录人用手册，不把下位实现冒充上位发车逻辑已修复。上位应按合同在重试/退出请求00，发车停止旧提示且不等待声音ACK。
+
+## MATCH-SEARCH-DIRECTION-20261116：投送后奇偶方向已实现，未烧录
+
+同一上位源版本，已核对state_machine.py blob`1f3cdcd029e1c0be767f5c81ebb4ee52bdaf73ee`的`_update_search_scan_progress()`取绝对角增量，
+与下位原`task_turn_magnitude_reached()`一致，无需新转向位或改变720°额度。只改Task.c：
+
+- 新比赛初始化搜索方向为+1；公共`task_finish_delivery_exit()`实际完成开爪后，首次保持+1，其后每趟翻转一次，复用原first_delivery_done。
+  公共出口增加OPEN_FOR_RAM/RAM_VERIFY状态防重入；重复COMPLETE/RETURN不再计次。两件一趟算一趟，正常/提前/前段超时实际放下都计动作结束。
+  开局藏点、扫障寄存、分离释放、抓取失败不经过该出口，不计数；超时动作结束不代表视觉送达或得分。
+- 只在SEARCH_SWEEP_120、SEARCH_SWEEP_90（当前低位105°）、SEARCH_WAIT_RETURN三个旋转请求乘方向；速度仍150mm/s。
+  搜索恢复、换相机、换点、返程重发保留本局方向，直到下次投送；不反转全局yaw/轮速，不改变返程、物块对准或相机角度。
+- 现有F405场地正yaw为CCW，task_move_body再乘`APP_OMNI_FIELD_YAW_TO_DRIVE_SIGN=-1`映射到轮驱动；
+  因此奇数趟请求场地+150/轮驱动-150为逆时针，偶数趟场地-150/轮驱动+150为顺时针。符号沿原已记录接线，不另改电机极性。
+
+原Task夹具27项直接核对开局方向、前四趟奇偶/重复出口防重、三个搜索阶段、恢复保留、顺时针整圈绝对值累计及新局复位通过；
+公共投送出口相关原39项回归及FLOW通过。物块对准、安全区回正及转角累计函数与efe3f1b一致。
+RDK对面搜索去向和7/24视觉对准点沿现有接口消费，无新增下位任务，未夹带修改。
+
+两原固件目标已构建；本轮未烧录/动车、未亲读actual，地面奇偶方向待实测。原独立工作区及Task初始化空白保留，构建dirty1。
+上位报告01:10实际efe3f1b/dirty1、22个mode52动作均单次进入，作为上一版部署/运行反馈保留，不能当本次警报/交替搜索已部署。
+
 ## MATCH-DELIVERY-EARLY-EXIT-20261116：接受并已配套，未烧录
 
 核对RDK源提交`8ae4b2c9b99d68aee2fbd79ff5269899b3cad289`，固定入口blob`710157e6fa9ea4b25db9bc842b1b7d087cc9bcde`，
