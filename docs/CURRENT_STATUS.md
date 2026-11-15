@@ -1,5 +1,10 @@
 # 当前状态：F405 烧录入口
 
+2026-11-15 原地搜索降速至150mm/s（未烧录）。
+- 用户将搜索轮周速度200改150；120°/105°正常扫描及两圈无果后等待换点时的继续扫描同步降为150mm/s。
+  只改APP_SEARCH_ROTATE_SPEED_MM_S和APP_SEARCH_WAIT_RETURN_SPEED_MM_S；PID、换点平移、接近抓取及流程保持。
+- NormalRun/MotionDebug编译通过；未新增测试程序、未烧录或操作实车，板端actual未读。
+
 2026-11-14 MATCH-ATTACK-FACING / MATCH-RECOVERED-INJURY-AUDIT：进攻带载转正及回抓单伤员审核复用（未烧录）。
 - 已审查RDK b1b3531固定入口/合同和实际runner，接受两项最小配套；旧step13/SEARCH/近爪成果保持。
 - 原0x14追加14：本任务藏点NAV完成、真实initial审核/闭爪后，红270°/蓝90°原连续回正，保留审核和载荷；
