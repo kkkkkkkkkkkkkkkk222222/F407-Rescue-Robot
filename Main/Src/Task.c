@@ -3860,7 +3860,13 @@ static void task_process_safe_align(uint32_t now_ms)
     if (task_abs(error_deg) > APP_SAFE_ALIGN_TOLERANCE_DEG) {
       /* ALIGN is continuous; its positioning speed bounds are independent
        * of finite TURN's speed profile and timeout. */
-      const float yaw_mm_s = task_position_align_speed(error_deg);
+      /* Keep the existing angular gain; reduce only safe-zone turn bounds.
+       * Speed falls with error from 250 to 150 before the existing 3deg stop. */
+      const float requested =
+          (task_abs(error_deg) - APP_NAV_HEADING_TOLERANCE_DEG) *
+          APP_NAV_HEADING_KP_MM_S_PER_DEG;
+      const float yaw_mm_s = fminf(APP_SAFE_ALIGN_TURN_MAX_MM_S,
+          fmaxf(APP_SAFE_ALIGN_TURN_MIN_MM_S, requested));
       task_move_body(0.0f, 0.0f, copysignf(yaw_mm_s, error_deg));
       task_status.motors_active = true;
     } else {

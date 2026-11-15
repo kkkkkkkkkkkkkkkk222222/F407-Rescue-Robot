@@ -590,6 +590,9 @@
 /* Positioning/sweep absolute-yaw alignment only; keep finite TURN unchanged. */
 #define APP_POSITION_ALIGN_TURN_MIN_MM_S  200.0f
 #define APP_POSITION_ALIGN_TURN_MAX_MM_S  400.0f
+/* Safe-zone yaw alignment only; other positioning turns keep their profile. */
+#define APP_SAFE_ALIGN_TURN_MIN_MM_S      150.0f
+#define APP_SAFE_ALIGN_TURN_MAX_MM_S      250.0f
 #define APP_SAFE_ALIGN_CAMERA_ANGLE           120U
 #define APP_SAFE_ALIGN_RAISED_CAMERA_ANGLE    115U
 #define APP_SAFE_ALIGN_CAMERA_SETTLE_MS       300U
