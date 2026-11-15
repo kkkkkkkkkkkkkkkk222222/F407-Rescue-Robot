@@ -1,5 +1,15 @@
 # 当前状态：F405 烧录入口
 
+2026-11-15 MATCH-ATTACK-BACK100-WHEEL：进攻首段100mm轮程后退（未烧录）。
+- 审查接受RDK 8709e43的最小配套：原0x18/opcode0x14追加15，A=-100mm/B=0/U红270°蓝90°，只从本任务已完成双爪释放mode34/空爪进入。
+- 首次仅清一次放货审核/批次预算，不重放舵机/记送达；复用原BACK_200的Motor_MoveDistanceHeading，原350mm/s请求及本段M1/M2轮程。
+  原motor.c、3mm公差、制动/起点/减速/PAUSE恢复保持；同action不重启、DONE不重走，不用地图XY/path_mm或纯旋转结束首段。
+- 15 DONE接同任务下一新action的13，后三段原定位目标、5cm、H/D及12/SEARCH不改；原13的SEARCH/释放入口和0..14校验保留。
+  搜索150、PID/PWM/舵机、审核复用、ISR/遥测和时间政策不改，无新增测试程序/时间门/握手/FAULT。
+- NormalRun/MotionDebug构建及原FLOW检查通过；原Task夹具红蓝有限段/重发/地图变化/PAUSE/DONE→13→12、错误入口和14组CRC/字段核对通过。
+  夹具电机为替身，地面100mm/打滑及转向余摆未验收。本轮未开设备或烧录，actual未新读；原Task空白和独立改动保留，构建如实dirty1。
+  用户烧新NormalRun并重开最新RDK入口；新8709e43不能直接配旧f14d2a4/cd0d329固件。详见固定入口与[F405首段说明](F405_ATTACK_BACK100_20261115.md)。
+
 2026-11-15 原地搜索降速至150mm/s（未烧录）。
 - 用户将搜索轮周速度200改150；120°/105°正常扫描及两圈无果后等待换点时的继续扫描同步降为150mm/s。
   只改APP_SEARCH_ROTATE_SPEED_MM_S和APP_SEARCH_WAIT_RETURN_SPEED_MM_S；PID、换点平移、接近抓取及流程保持。

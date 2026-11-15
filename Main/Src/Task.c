@@ -4177,7 +4177,8 @@ static void task_process_bulldozer(const VisionMissionCommand *command,
     }
 
     case VISION_BULLDOZER_FORWARD_PARK:
-    case VISION_BULLDOZER_BACK_200: {
+    case VISION_BULLDOZER_BACK_200:
+    case VISION_BULLDOZER_ATTACK_BACK_100: {
       const float speed = remote_action.arg_a < 0 ?
           APP_SAFE_SWEEP_RETURN_SPEED_MM_S : APP_SAFE_SWEEP_FORWARD_SPEED_MM_S;
       const MotorDistanceStatus result = Motor_MoveDistanceHeading(
@@ -4325,18 +4326,27 @@ static bool task_accept_bulldozer(const VisionMissionCommand *command,
   if (attack_face && !attack_face_entry) {
     return false;
   }
+  const bool attack_back = VISION_BULLDOZER_STEP(command->flags) ==
+      VISION_BULLDOZER_ATTACK_BACK_100;
   const bool empty_move = VISION_BULLDOZER_STEP(command->flags) ==
       VISION_BULLDOZER_EMPTY_BODY_MOVE;
   const bool empty_search_entry = empty_move && state == TASK_SEARCH &&
       !task_status.gripper_closed;
-  const bool release_done = empty_move && state == TASK_REMOTE_ACTION &&
+  const bool release_done = (empty_move || attack_back) && state == TASK_REMOTE_ACTION &&
       remote_action.type == REMOTE_ACTION_RELEASE_BOTH && remote_action.done &&
       remote_action.command == VISION_CMD_RELEASE_BOTH && accepted_context.valid &&
       accepted_context.opcode == VISION_CMD_RELEASE_BOTH &&
       owned_task && !task_status.gripper_closed;
+  if (attack_back) {
+    /* Only the first owned release hand-off may start this finite retreat.
+     * Reuse its load cleanup, without reopening claws or counting delivery. */
+    if (!release_done) { return false; }
+    task_bulldozer_clear_load();
+  }
   if (empty_move) {
     const bool next_empty_leg = previous_step_done &&
-        remote_action.step == VISION_BULLDOZER_EMPTY_BODY_MOVE &&
+        (remote_action.step == VISION_BULLDOZER_EMPTY_BODY_MOVE ||
+         remote_action.step == VISION_BULLDOZER_ATTACK_BACK_100) &&
         owned_task && !task_status.gripper_closed;
     if (!release_done && !next_empty_leg && !empty_search_entry) {
       return false;

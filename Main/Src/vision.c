@@ -226,6 +226,9 @@ static bool vision_bulldozer_payload_valid(uint8_t flags, int16_t a, int16_t b,
       return a == 200 && b == 0 && heading == sweep_heading;
     case VISION_BULLDOZER_BACK_200:
       return a == -200 && b == 0 && heading == sweep_heading;
+    case VISION_BULLDOZER_ATTACK_BACK_100:
+      return a == -100 && b == 0 && heading ==
+          ((flags & VISION_CMD_RED_SIDE) != 0U ? 27000U : 9000U);
     case VISION_BULLDOZER_SWEEP_1000:
       return a == 1000 && b == 0 && heading == sweep_heading;
     case VISION_BULLDOZER_BACK_TO_SWEEP:

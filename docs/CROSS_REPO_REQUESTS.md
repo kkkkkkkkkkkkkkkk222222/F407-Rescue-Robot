@@ -1,6 +1,6 @@
 # 两端当前要求与回执
 
-更新日期为 2026-11-14，时区 Asia/Shanghai。
+更新日期为 2026-11-15，时区 Asia/Shanghai。
 
 ## 固定入口与协作方式
 
@@ -15,6 +15,38 @@
 人保留知情、拒绝和选择权。已经明确批准的范围直接推进，超范围的重要取舍先由人决定，AI 不能互相授权。
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
+
+## MATCH-ATTACK-BACK100-WHEEL-20261115：接受并已实现，用户自行烧录
+
+已读取RDK最新固定入口、返程说明/合同及attack_return/obstacle_route/protocol/state_machine/runner，
+固定源提交`8709e43c62148197d94923db8af6af76873138f3`；入口blob`ecbe915a21cac6b4bdeda5f158d28b8de3864586`，
+机器合同blob`b91c65e20afb63fe0b0ad1c84435743dd4bf8352`。本端基于`cd0d3297673613468ecacab42ef17512ed6fabbe`增量实现。
+
+**接受仅首段100mm有限轮程后退，后三段保持原定位导航；不扩改转向/制动或上轮分析候选。**
+
+- 原TYPE0x18/opcode0x14追加15/ATTACK_BACK_100：P1红F9/蓝F1，A固定有符号-100mm、B=0、U红27000/蓝9000。
+  原0..14接收校验保持，step3仍仅-200mm原扫障航向；串口921600、原配对/完成回执不变。
+- 只从本任务已完成RELEASE_BOTH/mode34且逻辑空爪进入15，复用原首次空载交接清审核/预算一次；
+  不重放松爪、不记首绿/送达，无SEARCH随意发起15的入口，任务/action排序和编号回绕保持。
+- 直接复用原BACK_200的Motor_MoveDistanceHeading：-0.100m、原350mm/s请求、固定U；进度为本段M1/M2有符号编码器差。
+  motor.c未改，原3mm公差、起点/制动/加减速/PAUSE恢复/错误处理保持；地图XY/path_mm或纯转动不计满本段。
+  同action重发不重置起点，DONE后不走第二遍，仍本次mode25/COMPLETED。
+- 允许本任务完成15后的下一新action进入13 LEFT_500；后三段原目标、5cm、H/D和D0/配对DONE保持，最后仍12/SEARCH。
+  原13→13及SEARCH/释放入口保持；新15不受地图D0提前结束。旧step14和回抓单伤员审核复用不重复修改。
+- 搜索150、其他速度/PID/PWM、舵机、普通RETURN、STOP/mode51、ISR/遥测/时间政策不变；
+  无新增测试源码/独立程序、资格等待、握手、统计或FAULT。本轮未扩改上位REJECT出口/安全区无框策略。
+
+必要结果：NormalRun/MotionDebug构建、原FLOW_20261019_CHECK通过；原Task夹具直接调用核对红蓝mode34→15、
+  参数/地图变化/重发/PAUSE/本次DONE不重走、15→13动态→D0→12以及错误入口拒绝。14组原机器示例CRC/字段通过。
+夹具电机反馈为替身，只证明调用与状态交接；motor.c/配置及旧接收case差异核对为空，地面100mm/轮滑/转向余摆仍待人实测。
+
+**未烧录、未打开UART/SDK或执行实车动作，actual未亲自新读；用户自行烧录。** 上位18:43记录actual f14d2a4/dirty1仅历史身份，
+dirty差异未知，不能当新15部署证明。本机构建保留原Task初始化空白，如实dirty1；最终源码以本文件Git记录为准。
+需用户烧新NormalRun/TASK并重开RDK最新正式入口，旧f14d2a4/cd0d329无法执行新15。
+
+- [完整实现与检查边界](F405_ATTACK_BACK100_20261115.md)
+- [机器合同v3及原报文](contracts/f405_empty_body_move_20261114.json)
+- [固定上位请求](https://github.com/danmo-teng/shijue_fangan/blob/8709e43c62148197d94923db8af6af76873138f3/docs/CROSS_REPO_REQUESTS.md)
 
 ## MATCH-ATTACK-FACING / MATCH-RECOVERED-INJURY-AUDIT-20261114：接受并已实现，用户自行烧录
 
