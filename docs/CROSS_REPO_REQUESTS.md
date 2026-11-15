@@ -16,6 +16,48 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-DELIVERY-EARLY-EXIT-20261116：接受并已配套，未烧录
+
+核对RDK源提交`8ae4b2c9b99d68aee2fbd79ff5269899b3cad289`，固定入口blob`710157e6fa9ea4b25db9bc842b1b7d087cc9bcde`，
+方案blob`6b4cc98f18ec96fc3f9aebccc991dc5821fb8d59`，合同blob`a20f90424516c94f1a9035ca631d1c2b3e8a14de`，
+state_machine.py blob`c741b2fac320caead449907782a6973b53ac6845`及实际`run_competition_rescue.py`。
+用户已要求对照最新上位代码修改，本端从`7053f88c5a9b5e7bbe3c20d69149ad9e30037122`增量配套；物块对准成果保留。
+
+接受两条正式投送收尾路径，前段预算明确4000ms，后270mm原1500ms保持，其他抓取/扫障/进攻不扩用。
+
+- 首次从ALIGN接受正式ENTER时初始化一次有效执行预算，原任务周期累计至4000ms封顶；前400mm未达到才本地结束。
+  当周期轮程已达400mm则先进入原后段，不将4秒当整段上限。重复ENTER及HOLD不重置，PAUSE和原NAV STOP暂停预算，恢复仅余量。
+  HOLD本身不提供新的预算；已锁存本地收尾不依赖上位再次允许。未新增数据年龄门、诊断巡检、ISR或普通FAULT。
+- 同一任务的新COMPLETE动作可在本次ENTER推进或原开爪阶段接管；原上下文顺序、任务编号回绕与侧别/零参数检查保持。
+  新TASK/旧action/同action换opcode不能结束当前投送。进入开爪后重复原ENTER/COMPLETE不重置机械动作，新的ENTER动作不重推。
+- 提前COMPLETE先被接受：锁存opcode6及新action，停推后原Claw_Open；开爪中mode12/ACCEPT/未DONE。
+  完成后直接原抬臂→mode16→17，开爪且ACCEPT+DONE；跳过原相机观察等待。原mode15才收到COMPLETE也不另等1秒。
+- 本地超时先触发：锁存超时原因，保留原ENTER task/action/opcode5；开爪中同样12/ACCEPT/未DONE，开爪退出后16/17/ACCEPT+DONE。
+  晚到COMPLETE按原拒绝位报告，不能抢走ENTER的结束归属。同一任务周期沿原命令处理顺序先处理输入再检查预算；一旦锁存不可覆盖。
+- `TASK_OPEN_FOR_RAM`已按实际接受的结束原因/上下文运行，不再只等待ENTER命令。已在开爪过程中接受COMPLETE不重开舵机行程。
+  first_delivery_done只在真实机械开爪完成后设置，并复用现有载荷/审核/分离预算清理，随后原退出；这仍是任务流程完成，不是下位视觉得分判断。
+- 原RETURN可在16接受并等待原抬臂/0.30m退出；接受真实后继后清本次收尾归属，不提前清成SEARCH。PAUSE/STOP仍按原操作优先级。
+
+已核对上位 `_delivery_local_exit_output()` 与runner `_reconcile_delivery_local_exit()`：对本次已发布ENTER的16/17回包按
+delivery_push_timeout接管；在途COMPLETE被拒不阻断原ENTER退出，高水位动作号保留。上位提前COMPLETE分支要求本次op6开爪/DONE后再返程，
+与本端回包一致。0x18/0x1D/0x1E字段布局不变，无新握手。
+
+**合同示例修正：** 上位JSON第三组RETURN合成例flags=0x09，少了原DRIVE_STRAIGHT/USE_FINAL_HEADING/DISTANCE_VALID；
+实际`_return_center_output()`使用红0x1F、蓝0x17，无运行代码冲突。本端保留原校验，提供与实际代码一致的修正例及CRC：
+
+`a3b31d2a006400ca00000000badfc3a3b3182a081f02bc00002328b169c3`
+
+[本端接口合同及三组示例](contracts/f405_delivery_early_exit_20261116.json)。请RDK同步纠正其合成RETURN示例，不需改现有真实RETURN发送逻辑。
+
+验证：两原固件目标编译链接通过，原FLOW检查通过；原Task夹具39项直接调用/完整Task周期检查通过，含正常推进、3999/4000、
+400mm边界和后段1500ms、两条先后结束、开爪中接管/幂等、错误任务/动作/侧别/参数、暂停/STOP、HOLD和RETURN接管及红蓝。
+仅同步原mode15完成不再等待额外1秒的旧断言，无新增测试程序。三组帧CRC/字段已核对，物块对准及安全区回正函数与7053f88一致。
+
+**未烧录、未打开设备/动车，actual未读；用户自行烧录。** 原Task空白及独立WheelCheck/IDE/工具改动保留而未夹带提交，构建dirty1。
+先部署新NormalRun；上位`--enable-delivery-early-exit`/`RDK_ENABLE_DELIVERY_EARLY_EXIT=1`仍默认关闭，需配套启用后才会主动发提前COMPLETE。
+本地4秒出口不受上位开关限制，新上位观察器已能接住；未确认入区而超时放下可能留货区外，这是所选策略代价，不计作视觉确认。
+联合部署、实际入区与机械效果仍待实车验证，不以软件检查冒充比赛验收。
+
 ## MATCH-APPROACH-OVERSHOOT-20261115-2338：已按用户批准修正，未烧录
 
 已读[23:38交接报告](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/COMPETITION_OVERSHOOT_DELIVERY_20261115_2338.md)

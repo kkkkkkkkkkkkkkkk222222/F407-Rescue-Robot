@@ -621,6 +621,8 @@
 #define APP_SAFE_FINAL_PUSH_DISTANCE_MM    270U
 #define APP_SAFE_FINAL_PUSH_SPEED_MM_S     330.0f
 #define APP_SAFE_FINAL_PUSH_TIMEOUT_MS     1500U
+/* Formal ENTER only: effective front-segment execution budget, not freshness. */
+#define APP_SAFE_ENTER_FRONT_TIMEOUT_MS    4000U
 /* Visual CLEAR: P2/P3=0, +/-200 means a 90-deg turn and forward placement.
  * Only legacy fixed-distance CLEAR retains the +/-150 lateral stroke. */
 #define APP_SAFE_SWEEP_LATERAL_MM            150

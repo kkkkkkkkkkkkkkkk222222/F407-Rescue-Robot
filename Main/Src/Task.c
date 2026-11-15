@@ -354,6 +354,18 @@ static bool safe_align_visual_confirmed;
 static bool safe_align_lateral_active;
 static int16_t safe_align_pixel_error_px;
 static bool delivery_enter_active;
+typedef enum {
+  DELIVERY_FINISH_NONE = 0,
+  DELIVERY_FINISH_COMPLETE,
+  DELIVERY_FINISH_FRONT_TIMEOUT
+} DeliveryFinishReason;
+static struct {
+  bool active;
+  bool front_budget_active;
+  uint32_t front_elapsed_ms;
+  uint32_t front_last_ms;
+  DeliveryFinishReason finish;
+} delivery;
 static bool first_delivery_done;
 static bool first_green_core_conflict;
 static bool first_green_bump_done;
@@ -1376,6 +1388,12 @@ static void task_enter(TaskState next, uint32_t now_ms)
       (state == TASK_FACE_FIELD_CENTER) && (next == TASK_SEARCH);
   Motor_Stop();
   state = next;
+  if (next != TASK_NAVIGATE) { delivery.front_budget_active = false; }
+  if (next != TASK_NAVIGATE && next != TASK_OPEN_FOR_RAM &&
+      next != TASK_RAM_VERIFY && next != TASK_EXIT_SAFE_ZONE &&
+      next != TASK_FACE_FIELD_CENTER) {
+    memset(&delivery, 0, sizeof(delivery));
+  }
   if (next != TASK_INJURY_RECLOSE) { single_filter_active = false; }
   if (next == TASK_STOPPED || next == TASK_RECOVERY_WAIT || next == TASK_SEARCH) {
     single_filter_armed = false;
@@ -1726,6 +1744,7 @@ static void task_initialize(uint32_t now_ms)
   safe_enter_path_valid = false;
   delivery_exit_path_valid = false;
   first_delivery_done = false;
+  memset(&delivery, 0, sizeof(delivery));
   safe_align_done = safe_align_visual_confirmed = safe_align_lateral_active = false;
   safe_align_pixel_error_px = 0;
   first_green_bump_done = false;
@@ -4087,6 +4106,7 @@ static RemoteRouteStatus safe_enter_follow(
 
   if (!nav_final_push_active &&
       (enter_travelled_mm >= contact_start_mm)) {
+    delivery.front_budget_active = false;
     nav_final_push_active = true;
     nav_final_push_paused = false;
     nav_final_push_started_ms = now_ms - safe_enter_resume_push_ms;
@@ -4246,6 +4266,85 @@ static bool delivery_enter_command_ok(const VisionMissionCommand *command)
                (command->heading_cdeg == fallback_heading)));
 }
 
+static bool task_delivery_is_finishing(void)
+{
+  return delivery.active && delivery.finish != DELIVERY_FINISH_NONE;
+}
+
+static void task_delivery_account_front_time(uint32_t now_ms)
+{
+  if (!delivery.front_budget_active) { return; }
+  const uint32_t elapsed = now_ms - delivery.front_last_ms;
+  delivery.front_last_ms = now_ms;
+  /* Attribute the interval to the previously accepted input. An incoming
+   * PAUSE/STOP takes effect at this tick; resuming never grants a fresh 4 s. */
+  if (mission_paused || active_mission.command == VISION_CMD_STOP ||
+      accepted_context.opcode == VISION_CMD_STOP) { return; }
+  const uint32_t remaining = APP_SAFE_ENTER_FRONT_TIMEOUT_MS - delivery.front_elapsed_ms;
+  delivery.front_elapsed_ms += elapsed < remaining ? elapsed : remaining;
+}
+
+static void task_delivery_check_front_budget(uint32_t now_ms)
+{
+  if (!delivery.front_budget_active || delivery.finish != DELIVERY_FINISH_NONE ||
+      state != TASK_NAVIGATE || !delivery_enter_active || mission_paused ||
+      active_mission.command == VISION_CMD_STOP || !accepted_context.valid ||
+      accepted_context.cancelled || accepted_context.opcode != VISION_CMD_ENTER_SAFE_ZONE) {
+    return;
+  }
+  const LocationPose pose = Location_GetPose();
+  if (nav_final_push_active || (safe_enter_path_valid && pose.valid &&
+      pose.path_mm - safe_enter_start_path_mm >=
+          APP_SAFE_ENTER_TOTAL_DISTANCE_MM - APP_SAFE_FINAL_PUSH_DISTANCE_MM)) {
+    delivery.front_budget_active = false;
+    return;
+  }
+  if (delivery.front_elapsed_ms >= APP_SAFE_ENTER_FRONT_TIMEOUT_MS) {
+    delivery.finish = DELIVERY_FINISH_FRONT_TIMEOUT;
+    delivery.front_budget_active = false;
+    /* Keep the original ENTER task/action/opcode until a real successor wins. */
+    accepted_context.completed = false;
+    task_enter(TASK_OPEN_FOR_RAM, now_ms);
+  }
+}
+
+static void task_finish_delivery_exit(uint32_t now_ms)
+{
+  /* Called only after the original Claw_Open reports its mechanical finish. */
+  first_delivery_done = true;
+  task_bulldozer_clear_load();
+  safe_enter_resume_mm = safe_enter_resume_push_ms = 0U;
+  task_enter(TASK_EXIT_SAFE_ZONE, now_ms);
+}
+
+static void task_process_delivery_open(const VisionMissionCommand *command,
+                                       uint32_t now_ms)
+{
+  const uint8_t owner_opcode = delivery.finish == DELIVERY_FINISH_COMPLETE ?
+      VISION_CMD_TASK_COMPLETE : VISION_CMD_ENTER_SAFE_ZONE;
+  const bool local_finish_owned = task_delivery_is_finishing() &&
+      accepted_context.valid && !accepted_context.cancelled &&
+      accepted_context.opcode == owner_opcode;
+  Motor_Stop();
+  task_status.motors_active = false;
+  if (task_delivery_is_finishing() ? !local_finish_owned :
+      !delivery_enter_command_ok(command)) { return; }
+  if (task_status.gripper_closed) {
+    if (!Claw_Open(now_ms)) { return; }
+    task_status.gripper_closed = false;
+    if (!local_finish_owned) {
+      Camera_SetAngle(APP_DELIVERY_CAMERA_ANGLE);
+      camera_angle = (float)APP_DELIVERY_CAMERA_ANGLE;
+      step_started_ms = now_ms;
+    }
+  }
+  if (local_finish_owned) {
+    task_finish_delivery_exit(now_ms);
+  } else if ((uint32_t)(now_ms - step_started_ms) >= APP_DELIVERY_CAMERA_SETTLE_MS) {
+    task_enter(TASK_RAM_VERIFY, now_ms);
+  }
+}
+
 static void task_process_delivery_verify(
     const VisionMissionCommand *command, uint32_t now_ms)
 {
@@ -4260,13 +4359,8 @@ static void task_process_delivery_verify(
     task_status.motors_active = false;
     return;
   }
-  if ((uint32_t)(now_ms - state_started_ms) <
-      APP_DELIVERY_VERIFY_WAIT_MS) {
-    return;
-  }
   if (command->command == VISION_CMD_TASK_COMPLETE) {
-    first_delivery_done = true;
-    task_enter(TASK_EXIT_SAFE_ZONE, now_ms);
+    task_finish_delivery_exit(now_ms);
   }
 }
 
@@ -6112,7 +6206,8 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
       approach_hold_pending = true;
       approach_hold_started_ms = now_ms;
     }
-    if ((state == TASK_APPROACH && task_approach_runs_without_target()) ||
+    if (task_delivery_is_finishing() ||
+        (state == TASK_APPROACH && task_approach_runs_without_target()) ||
         (state == TASK_BOUNDARY_RECOVER) ||
         ((state == TASK_APPROACH_RECOVER) && capture_escape_active) ||
         (state == TASK_SAFE_SWEEP) ||
@@ -6606,6 +6701,11 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
     command_accepted = true;
     task_enter(TASK_NAVIGATE, now_ms);
     delivery_enter_active = true;
+    delivery.active = true;
+    delivery.front_budget_active = true;
+    delivery.front_elapsed_ms = 0U;
+    delivery.front_last_ms = now_ms;
+    delivery.finish = DELIVERY_FINISH_NONE;
     delivery_stage_only = false;
     nav_locked_heading_deg = task_safe_zone_heading();
     nav_heading_locked = true;
@@ -6629,10 +6729,24 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
   } else if ((command->command == VISION_CMD_TASK_COMPLETE) &&
-             !task_status.gripper_closed &&
-             (state == TASK_RAM_VERIFY)) {
+             delivery.finish == DELIVERY_FINISH_NONE &&
+             ((!task_status.gripper_closed && state == TASK_RAM_VERIFY) ||
+              (delivery.active &&
+               ((state == TASK_NAVIGATE && delivery_enter_active) ||
+                state == TASK_OPEN_FOR_RAM)))) {
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
+    delivery.active = true;
+    delivery.finish = DELIVERY_FINISH_COMPLETE;
+    delivery.front_budget_active = false;
+    Motor_Stop();
+    task_status.motors_active = false;
+    if (state == TASK_NAVIGATE) {
+      task_enter(TASK_OPEN_FOR_RAM, now_ms);
+    } else if (state == TASK_RAM_VERIFY) {
+      task_finish_delivery_exit(now_ms);
+    }
+    /* Already opening: retain its original servo action and start time. */
   } else if ((command->command == VISION_CMD_RETURN_CENTER) &&
              (state == TASK_CAPTURE_RETURN_WAIT) &&
              task_distance_command_valid(command, VISION_CMD_RETURN_CENTER)) {
@@ -6835,7 +6949,10 @@ static bool task_context_complete(void)
           (((accepted_context.flags & VISION_CMD_VISUAL_CORRECTION_VALID) == 0U) ||
            safe_align_visual_confirmed);
     case VISION_CMD_ENTER_SAFE_ZONE:
-      return state == TASK_RAM_VERIFY;
+      return state == TASK_RAM_VERIFY ||
+          (delivery.finish == DELIVERY_FINISH_FRONT_TIMEOUT &&
+           !task_status.gripper_closed &&
+           (state == TASK_EXIT_SAFE_ZONE || state == TASK_FACE_FIELD_CENTER));
     case VISION_CMD_TASK_COMPLETE:
       return state == TASK_EXIT_SAFE_ZONE || state == TASK_FACE_FIELD_CENTER;
     case VISION_CMD_RETURN_CENTER:
@@ -6881,6 +6998,7 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     context_session_generation = vision->session_generation;
     accepted_context = (TaskContext){0};
     active_mission = (VisionMissionCommand){0};
+    memset(&delivery, 0, sizeof(delivery));
     nav_reset_coarse();
     command_generation_seen = 0U;
     task_clear_audit_result();
@@ -7034,6 +7152,22 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
   }
 
   reject_stage = 7U;
+  if (incoming.command == VISION_CMD_TASK_COMPLETE) {
+    /* The original context checks above handle ordering and rollover. Only a
+     * new completion of this ENTER may take ownership; late COMPLETE cannot
+     * overwrite a locally latched timeout or an already accepted completion. */
+    if (new_target || !accepted_context.valid ||
+        !task_side_flag_valid(incoming.flags) ||
+        incoming.flags != (VISION_CMD_VALID | (incoming.flags & VISION_CMD_RED_SIDE)) ||
+        incoming.target_x_mm != 0 || incoming.target_y_mm != 0 || incoming.heading_cdeg != 0U ||
+        (new_action && (accepted_context.opcode != VISION_CMD_ENTER_SAFE_ZONE ||
+                        delivery.finish != DELIVERY_FINISH_NONE))) goto rejected;
+  }
+  if (incoming.command == VISION_CMD_ENTER_SAFE_ZONE && delivery.active && new_action &&
+      !(state == TASK_NAVIGATE && delivery_enter_active &&
+        accepted_context.opcode == VISION_CMD_STOP && delivery.finish == DELIVERY_FINISH_NONE)) {
+    goto rejected;
+  }
   if (range_request) {
     if (new_target || state != TASK_APPROACH ||
         (incoming.flags & VISION_CMD_DISTANCE_VALID) == 0U ||
@@ -7102,6 +7236,7 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
                  incoming.sequence, incoming.vision_frame, incoming.flags);
 
   if (new_target) {
+    memset(&delivery, 0, sizeof(delivery));
     nav_reuse_post_grab_audit = false;
     capture_budget_active = capture_wait_active = false;
     separation_total_attempts = 0U;
@@ -7117,6 +7252,10 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     app_visual_valid = false;
   }
   if (new_action) {
+    if (incoming.command != VISION_CMD_ENTER_SAFE_ZONE &&
+        incoming.command != VISION_CMD_TASK_COMPLETE && incoming.command != VISION_CMD_STOP) {
+      memset(&delivery, 0, sizeof(delivery));
+    }
     if (!reuse_nav_toggle && (incoming.command == VISION_CMD_NAVIGATE_WAYPOINT ||
         incoming.command == VISION_CMD_RETURN_CENTER)) {
       nav_reset_coarse();
@@ -7437,6 +7576,7 @@ void Task_Process(uint32_t now_ms)
   if (state == TASK_RECOVERY_WAIT && !mission_paused) {
     task_recover_reference(&vision);
   }
+  task_delivery_account_front_time(now_ms);
   task_account_manual_pause(now_ms);
   task_capture_budget_sample();
   task_sweep_sample(now_ms);
@@ -7471,6 +7611,7 @@ void Task_Process(uint32_t now_ms)
   }
   task_audit_watchdog(now_ms);
   task_approach_watchdog(now_ms);
+  task_delivery_check_front_budget(now_ms);
   if (state == TASK_GRAB_OBSERVE || state == TASK_DISPERSE_READY) {
     (void)task_capture_observe(now_ms);
   }
@@ -7485,7 +7626,7 @@ void Task_Process(uint32_t now_ms)
     task_publish_status(now_ms);
     return;
   }
-  if (complete_flow_active && !local_approach_autonomous &&
+  if (complete_flow_active && !local_approach_autonomous && !task_delivery_is_finishing() &&
       task_mission_valid(&vision.mission) &&
       (vision.mission.command == VISION_CMD_HOLD) &&
       (state != TASK_WAIT_CONFIG) && (state != TASK_START) &&
@@ -7692,22 +7833,7 @@ void Task_Process(uint32_t now_ms)
       break;
 
     case TASK_OPEN_FOR_RAM:
-      if (!delivery_enter_command_ok(&vision.mission)) {
-        /* Opening is safe to pause. Keep the state and wait for a fresh,
-         * matching ENTER command instead of latching a communication fault. */
-        Motor_Stop();
-        task_status.motors_active = false;
-      } else if (task_status.gripper_closed) {
-        if (Claw_Open(now_ms)) {
-          task_status.gripper_closed = false;
-          Camera_SetAngle(APP_DELIVERY_CAMERA_ANGLE);
-          camera_angle = (float)APP_DELIVERY_CAMERA_ANGLE;
-          step_started_ms = now_ms;
-        }
-      } else if ((uint32_t)(now_ms - step_started_ms) >=
-                 APP_DELIVERY_CAMERA_SETTLE_MS) {
-        task_enter(TASK_RAM_VERIFY, now_ms);
-      }
+      task_process_delivery_open(&vision.mission, now_ms);
       break;
 
     case TASK_RAM_VERIFY:

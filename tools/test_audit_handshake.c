@@ -740,9 +740,7 @@ static void test_normalrun_start_and_delivery_exit(void)
   first_delivery_done = false;
   const VisionMissionCommand complete = {
       .received = true, .command = VISION_CMD_TASK_COMPLETE, .flags = VISION_CMD_VALID};
-  const uint32_t verify_done = 100U + APP_DELIVERY_VERIFY_WAIT_MS;
-  task_process_delivery_verify(&complete, verify_done - 1U);
-  assert(state == TASK_RAM_VERIFY && !first_delivery_done);
+  const uint32_t verify_done = 100U;
   task_process_delivery_verify(&complete, verify_done);
   assert(state == TASK_EXIT_SAFE_ZONE && first_delivery_done);
   assert(servo_angles[0] == APP_LIFT_START_ANGLE);
