@@ -287,6 +287,15 @@ static bool empty_load_reobserved;
 static bool transport_stage_injury;
 static uint8_t transport_audit_phase, transport_audit_attempt;
 static bool injury_recheck_pending;
+/* One mechanical finish per actual grab, never per audit/transport request. */
+static bool single_filter_armed, single_filter_active, single_filter_reclose;
+static bool single_filter_sweep_done;
+static uint8_t single_filter_phase;
+static uint32_t single_filter_wait_ms;
+static float single_filter_heading_deg;
+static bool task_single_filter_eligible(void);
+static void task_begin_single_filter(uint32_t now_ms, bool reclose);
+static void task_process_single_filter(uint32_t now_ms);
 static uint8_t injury_backoff_phase;
 static uint32_t injury_backoff_last_ms, injury_backoff_elapsed_ms;
 static float injury_backoff_heading_deg;
@@ -916,6 +925,7 @@ static bool task_audit_has_green(void)
 
 static void task_begin_close_claw(uint32_t now_ms)
 {
+  single_filter_armed = true;
   injury_recheck_pending = false;
   const bool advance_for_core = complete_flow_active &&
       audit_core_seen_in_streak;
@@ -1355,6 +1365,10 @@ static void task_enter(TaskState next, uint32_t now_ms)
       (state == TASK_FACE_FIELD_CENTER) && (next == TASK_SEARCH);
   Motor_Stop();
   state = next;
+  if (next != TASK_INJURY_RECLOSE) { single_filter_active = false; }
+  if (next == TASK_STOPPED || next == TASK_RECOVERY_WAIT || next == TASK_SEARCH) {
+    single_filter_armed = false;
+  }
   if (next != TASK_NAVIGATE) {
     /* The grant belongs only to this NAV. ALIGN consumes it while retaining
      * the real audit; release/recovery/SEARCH must never carry it onward. */
@@ -1646,6 +1660,8 @@ static void task_initialize(uint32_t now_ms)
   approach_deadline_ms = now_ms;
   injury_recheck_pending = false;
   audit_watch_active = false;
+  single_filter_armed = single_filter_active = single_filter_reclose = false;
+  single_filter_phase = 0U;
   separation_total_attempts = 0U;
   Claw_SetSeparationHold(0U);
   pose_invalid_started_ms = now_ms;
@@ -3091,6 +3107,85 @@ static void task_process_injury_backoff(uint32_t now_ms)
   }
 }
 
+static bool task_single_filter_eligible(void)
+{
+  return single_filter_armed && audit_received && audit_host_stable && audit_valid &&
+      !audit_initial_stash && !safe_sweep_recheck_pending && audit_last_total_count == 1U &&
+      (audit_last_semantic == AUDIT_SEMANTIC_INJURY_SINGLE ||
+       (!first_delivery_done && !first_green_core_conflict &&
+        audit_last_semantic == AUDIT_SEMANTIC_FIRST_GREEN));
+}
+
+static void task_begin_single_filter(uint32_t now_ms, bool reclose)
+{
+  const bool sweep_done = safe_sweep_recheck_pending;
+  task_enter(TASK_INJURY_RECLOSE, now_ms);
+  single_filter_active = true;
+  single_filter_armed = false;
+  single_filter_reclose = reclose;
+  single_filter_sweep_done = sweep_done;
+  single_filter_phase = 0U;
+  task_status.gripper_closed = !reclose;
+  accepted_context.completed = false;
+}
+
+static void task_process_single_filter(uint32_t now_ms)
+{
+  /* Negative held-load evidence survives this movement and wins before NAV.
+   * Return the lift through its existing mechanical wait, then re-audit. */
+  if ((!audit_valid || (first_green_core_conflict && !first_delivery_done)) &&
+      single_filter_phase != 3U) {
+    Motor_Stop();
+    task_status.motors_active = false;
+    single_filter_wait_ms = Lift_PositionWaitMs(APP_LIFT_TRAVEL_ANGLE);
+    Lift_SetTravelPosition();
+    step_started_ms = now_ms;
+    single_filter_phase = 3U;
+  }
+  if (single_filter_phase == 0U) {
+    task_status.motors_active = false;
+    if (single_filter_reclose && !Claw_Touch(now_ms)) { return; }
+    single_filter_reclose = false;
+    injury_recheck_pending = false;
+    task_status.gripper_closed = true;
+    const LocationPose pose = Location_GetPose();
+    single_filter_heading_deg = pose.heading_mdeg * 0.001f;
+    single_filter_wait_ms = Lift_PositionWaitMs(APP_LIFT_FIRST_GREEN_FILTER_ANGLE);
+    Lift_SetFirstGreenFilterPosition();
+    step_started_ms = now_ms;
+    single_filter_phase = 1U;
+    return;
+  }
+  if (single_filter_phase == 1U) {
+    if (now_ms - step_started_ms < single_filter_wait_ms) { return; }
+    single_filter_phase = 2U;
+  }
+  if (single_filter_phase == 2U) {
+    Motor_ResumeFiniteMotion();
+    const MotorDistanceStatus result = Motor_MoveDistanceHeading(
+        -0.100f, APP_INJURY_BACKOFF_SPEED_MM_S, single_filter_heading_deg);
+    task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
+    if (result == MOTOR_DISTANCE_FAULT || result == MOTOR_DISTANCE_INVALID) {
+      task_stop(TASK_FAULT_MOTOR, now_ms);
+      return;
+    }
+    if (result != MOTOR_DISTANCE_DONE) { return; }
+    Motor_Stop();
+    single_filter_wait_ms = Lift_PositionWaitMs(APP_LIFT_TRAVEL_ANGLE);
+    Lift_SetTravelPosition();
+    step_started_ms = now_ms;
+    single_filter_phase = 3U;
+    return;
+  }
+  if (now_ms - step_started_ms < single_filter_wait_ms) { return; }
+  if (!audit_valid || (first_green_core_conflict && !first_delivery_done)) {
+    task_clear_audit_result();
+    task_enter(TASK_POST_GRAB_AUDIT, now_ms);
+  } else {
+    task_enter(single_filter_sweep_done ? TASK_SAFE_SWEEP_DONE : TASK_WAIT_NAVIGATION, now_ms);
+  }
+}
+
 static bool turn_to(float desired_deg, float current_deg,
                     float tolerance_deg, uint32_t now_ms)
 {
@@ -4160,6 +4255,7 @@ static bool task_bulldozer_live_step(uint8_t step)
 
 static void task_bulldozer_clear_load(void)
 {
+  single_filter_armed = false;
   first_green_core_conflict = false;
   task_status.gripper_closed = false;
   task_status.claw_visible = false;
@@ -4451,6 +4547,11 @@ static void task_pause_runtime(uint32_t now_ms)
   }
   if (state == TASK_INJURY_BACKOFF) {
     injury_backoff_last_ms = now_ms;
+  }
+  if (state == TASK_INJURY_RECLOSE && single_filter_active) {
+    Motor_PauseFiniteMotion();
+    task_status.motors_active = false;
+    return;
   }
   if (state == TASK_APPROACH && approach_phase == APPROACH_RANGE_MOVE) {
     Motor_PauseFiniteMotion();
@@ -5570,6 +5671,7 @@ static void task_process_safe_sweep_audit(uint32_t now_ms)
 
 static void task_begin_sweep_obstacle_grab(uint32_t now_ms)
 {
+  single_filter_armed = true;
   const bool original = state == TASK_SAFE_SWEEP_RETRIEVE_AUDIT;
   task_enter(TASK_SAFE_SWEEP, now_ms);
   visual_sweep_phase = original ? VS_GRAB_LOAD : VS_GRAB_OBSTACLE;
@@ -5932,6 +6034,12 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
       }
     }
   } else if (command->command == VISION_CMD_CARGO_AUDIT &&
+             state == TASK_INJURY_RECLOSE && single_filter_active) {
+    task_status.acknowledged_sequence = command->sequence;
+    command_accepted = true;
+    task_note_first_green_core(command);
+    /* Keep the committed real audit; motion images are not new empty evidence. */
+  } else if (command->command == VISION_CMD_CARGO_AUDIT &&
              task_first_green_core_request(command) && task_status.gripper_closed &&
              (state == TASK_WAIT_NAVIGATION || state == TASK_ALIGN_SAFE_ZONE ||
               (state == TASK_NAVIGATE && !delivery_enter_active))) {
@@ -6067,7 +6175,9 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
         task_enter(TASK_OPEN_CLAW, now_ms);
         abandoned_batch_open_pending = true;
       } else if (audit_valid) {
-        if (injury_recheck_pending) {
+        if (task_single_filter_eligible()) {
+          task_begin_single_filter(now_ms, injury_recheck_pending);
+        } else if (injury_recheck_pending) {
           task_enter(TASK_INJURY_RECLOSE, now_ms);
         } else {
           task_enter(safe_sweep_recheck_pending ?
@@ -6580,10 +6690,12 @@ static bool task_context_complete(void)
              state == TASK_SAFE_SWEEP_RETRIEVE_AUDIT ||
              (state == TASK_APPROACH && approach_phase == APPROACH_CLUSTER_CAPTURE);
     case VISION_CMD_CARGO_AUDIT:
+      if (state == TASK_INJURY_RECLOSE && single_filter_active) { return false; }
       return state == TASK_SAFE_SWEEP_AUDIT ?
           (sweep_audit_ready && sweep_audit_host_stable) :
           (audit_received && audit_host_stable);
     case VISION_CMD_GRAB_CONFIRMED:
+      if (state == TASK_INJURY_RECLOSE && single_filter_active) { return false; }
       return task_status.gripper_closed && state != TASK_CLOSE_CLAW &&
              !(state == TASK_SAFE_SWEEP &&
                (visual_sweep_phase == VS_GRAB_LOAD || visual_sweep_phase == VS_GRAB_OBSTACLE));
@@ -6841,7 +6953,8 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     command_accepted = true;
     mission_paused = false;
   } else if (!new_action && incoming.command == VISION_CMD_CARGO_AUDIT &&
-             !task_audit_state() && accepted_context.completed) {
+             !task_audit_state() && accepted_context.completed &&
+             !(state == TASK_INJURY_RECLOSE && single_filter_active)) {
     task_status.acknowledged_sequence = incoming.sequence;
     command_accepted = true;
     mission_paused = false;
@@ -7383,6 +7496,10 @@ void Task_Process(uint32_t now_ms)
       break;
 
     case TASK_INJURY_RECLOSE:
+      if (single_filter_active) {
+        task_process_single_filter(now_ms);
+        break;
+      }
       Motor_Stop();
       task_status.motors_active = false;
       task_status.gripper_closed = false;

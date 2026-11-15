@@ -16,6 +16,32 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-SINGLE-CARGO-FILTER-20261115：接受并配套机械收尾，未烧录
+
+已核对上位`e9c1cf382138d83723d8ccf9cacf545b10c32f88`固定入口blob`f9362ec5aac10df64724d645f4e6bb430d526c2f`及实际state_machine/runner，
+本端基于`7ad0965c8d2f5a3d13662844dd4fbc22eee2fe66`增量实施。该上位提交仅说明任务，不能当作固件已烧录。
+
+- 真正GRAB后的最终真实合法审核，首件单绿或单橙进入原mode50；绿色保持已合爪，橙色先完成原Claw_Touch再滤出。
+  双爪保持合爪，S1到82°，原角度行程等待后Motor_MoveDistanceHeading(-0.100m,150mm/s,本段起始航向)，
+  完成后S1回85°并等原机械行程，才交接mode22/完成。每次升降都在发指令前计算Lift_PositionWaitMs。
+- 执行期间保留原真实审核/帧号/任务归属，mode50闭爪后保持gripper_closed；CARGO_AUDIT完成位不提前发布，NAV仍不能进入。
+  重发GRAB/审核/HOLD不重启滤出或补造新帧；实际新抓取重新允许一次，途中复审不重复。PAUSE走原有限运动暂停/续行，
+  机械等待沿原pause计时平移；STOP/恢复退出清本段。仅阶段切换Stop，避免每周期重置轮程。
+- mode50仍消费新FIRST_GREEN_CORE_CONFLICT：撤原VALID、停止当前滤出、回85°后原23复审；不清平台黑事实、不靠滤出解除冲突。
+  暂存、首绿后普通材料、非法/空审核不触发；原橙色半闭复审代码未删改，61°起步限位保持。
+- **兼容范围调整**：正式新0x14扫障找回单橙经普通抓取，覆盖本动作。已停用旧0x13的safe_sweep_recheck_pending出口仍40且不插滤出，
+  因当前RDK_has_committed_audit把旧扫障角色与mode40绑定，直接扩到50会缺pending。保持旧出口，不重新启用或单端改变该协议等待。
+  若将来启用旧扫障，需两端另审mode50角色；本轮正式新流程无需上位新增字段/握手。
+- 原接口布局不变，mode50扩充含义为“重新合爪或闭爪高度滤出收尾”，上位应继续保持已提交审核等待22，不能只凭闭爪/ACK发NAV。
+  没有新TYPE、等待图像、计时资格、巡检、ISR或额外FAULT；有限直行错误沿原恢复处理，PID/全局速度/公差不改。
+
+必要结果：两原构建通过；原Task夹具直接调用核对单绿/单橙mode50、闭爪82、固定航向100mm、占位保留审核、PAUSE续行、
+回85后22、重复不重走/新抓重新允许、冲突不吞并回23，以及暂存/普通材料/非法/旧40排除、STOP清理。夹具电机为替身，
+不等于实车100mm或三棱锥滤出成功；没有新增测试源码/独立程序。
+
+本轮未烧录、未开UART/SDK或动作，actual未亲自读回；上位18:49的7ad0965/dirty1仅历史记录。保留原Task初始化空白，构建如实dirty1。
+用户自行烧新NormalRun并使用最新正式入口；代价是每次符合条件抓取多升降和100mm后退，实际返航起点由原动态定位更新。
+
 ## MATCH-BATCH-EXIT / MATCH-FIRST-GREEN-CORE-20261115：接受并已实现，用户自行烧录
 
 先审查RDK `2c839793db6a76ab078c5ebcec097bf01902bed0`的弃批预算同步，再核对工作期间新增的
