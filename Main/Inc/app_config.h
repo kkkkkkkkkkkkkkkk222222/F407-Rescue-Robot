@@ -512,6 +512,8 @@
 #define APP_APPROACH_ALIGN_SLOW_TOLERANCE_RATIO 3.0f
 /* Shared rate feedback in field-yaw coordinates; initial, uncalibrated gain. */
 #define APP_ALIGN_RATE_BRAKE_MM_S_PER_DPS  3.0f
+/* Object alignment only: smoothly double rate damping near the arrival edge. */
+#define APP_APPROACH_ALIGN_NEAR_BRAKE_SCALE 2.0f
 #define APP_STEERING_LIMIT_MM_S           90.0f
 #define APP_STEERING_RATE_MM_S2          400.0f
 #define APP_STEERING_DIRECTION           1.0f

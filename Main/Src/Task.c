@@ -253,6 +253,7 @@ static uint32_t nav_realign_started_ms;
 static float camera_angle;
 static float steering_mm_s;
 static float steering_target_mm_s;
+static float steering_near_brake_weight;
 static float approach_speed_mm_s;
 static float approach_locked_heading_deg;
 static uint8_t approach_measure_pitch;
@@ -605,6 +606,7 @@ static void task_reset_tracking(void)
   steering_uses_raw_x = false;
   steering_mm_s = 0.0f;
   steering_target_mm_s = 0.0f;
+  steering_near_brake_weight = 0.0f;
   Pid_Reset(&steering_pid);
   Pid_Reset(&camera_pid);
 }
@@ -1672,6 +1674,7 @@ static void task_initialize(uint32_t now_ms)
   camera_angle = (float)Camera_GetAngle();
   steering_mm_s = 0.0f;
   steering_target_mm_s = 0.0f;
+  steering_near_brake_weight = 0.0f;
   approach_speed_mm_s = APP_APPROACH_SPEED_MM_S;
   approach_locked_heading_deg = 0.0f;
   remote_speed_mm_s = 0.0f;
@@ -1962,6 +1965,7 @@ static float task_track_target(const VisionData *vision, bool track_camera)
   const float raw_error = (float)APP_VISION_TARGET_X - vision->x;
   const float tolerance = task_approach_alignment_tolerance();
   const bool stationary_alignment = tolerance > 0.0f;
+  steering_near_brake_weight = 0.0f;
   const bool near_center = stationary_alignment &&
       task_abs(raw_error) <= APP_APPROACH_ALIGN_SLOW_TOLERANCE_RATIO * tolerance;
   /* The filter may trail a target that has already crossed the centre. Keep
@@ -2016,6 +2020,7 @@ static float task_track_target(const VisionData *vision, bool track_camera)
     const float ratio = fminf(1.0f, fmaxf(0.0f,
         (magnitude - tolerance) /
         ((APP_APPROACH_ALIGN_SLOW_TOLERANCE_RATIO - 1.0f) * tolerance)));
+    steering_near_brake_weight = 1.0f - ratio;
     const float directional_pd = fmaxf(0.0f,
         steering_target_mm_s * copysignf(1.0f, x_error * APP_STEERING_DIRECTION));
     const float turn = APP_APPROACH_ALIGN_MIN_TURN_MM_S + ratio *
@@ -2308,8 +2313,10 @@ static float task_approach_steering(void)
   float target_mm_s = steering_target_mm_s;
   if (task_approach_alignment_tolerance() > 0.0f) {
     /* Update braking between vision frames, using the existing task cycle. */
+    const float brake_scale = 1.0f + steering_near_brake_weight *
+        (APP_APPROACH_ALIGN_NEAR_BRAKE_SCALE - 1.0f);
     target_mm_s = task_align_rate_brake(target_mm_s,
-        task_align_closing_rate(target_mm_s));
+        task_align_closing_rate(target_mm_s) * brake_scale);
     if (steering_mm_s * target_mm_s < 0.0f) {
       steering_mm_s = 0.0f;
     } else if (task_abs(steering_mm_s) > task_abs(target_mm_s)) {
