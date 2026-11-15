@@ -195,6 +195,8 @@ typedef enum {
 #define VISION_AUDIT_STABLE             0x10U
 #define VISION_AUDIT_DESTINATION_INJURY 0x20U
 #define VISION_AUDIT_SWEEP_PICKUP       0x40U
+/* Actual held-platform CORE evidence vetoes first-green transport, not counts. */
+#define VISION_AUDIT_FIRST_GREEN_CORE_CONFLICT 0x80U
 /* UNKNOWN_PRESENT may describe cargo inside the overall claw ROI whose side
  * cannot be assigned. total_count may therefore exceed left_count+right_count;
  * the audit is retained for no-side DISPERSE but is invalid for direct GRAB. */

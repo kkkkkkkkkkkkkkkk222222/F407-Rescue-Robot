@@ -16,6 +16,42 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-BATCH-EXIT / MATCH-FIRST-GREEN-CORE-20261115：接受并已实现，用户自行烧录
+
+先审查RDK `2c839793db6a76ab078c5ebcec097bf01902bed0`的弃批预算同步，再核对工作期间新增的
+`0d45d94149a0a83cb28f97a703b311b7ca0f7dd1`首绿平台黑配套，接受当前两项最小方案；
+最新固定入口blob`846122ebfaba91b13b2021ec26ee01bbe0c5ec80`，首绿机器合同blob`ee1cbd02d119af68352e543bdf8d745d1cb6e6d7`。
+本端从`a0a1c5d635eca77431129dd4bd38998f2385fd28`增量实施，不重做step13..15、审核复用或搜索150。
+
+- 真实稳定空审核先走原开爪，到原Claw_Open完成才清该批捕获/分离/审核重试预算并SEARCH；
+  明确弃批仍完成原释放和后退脱离，原强制mode47返中分支就地结束，不再重新合空爪或为清预算返中。
+  原非返中分支90°脱离保持。占位、单样本、未结束机械、mode24/51中间态及有载不能提前清。
+- 旧context仍cancelled，task/action/序号判重高水位保留；实际结束后新task可即接APP，旧任务接近包仍拒绝。
+  新RETURN在空爪SEARCH即接，清其继承的旧取消位；完成的同RETURN只ACK、不重返。
+  原1500ms ACK宽限由动作身份替代，不新增年龄/时间窗口；普通投送返程、原排序/回绕/STOP/PAUSE保持。
+- 原0x18/opcode0x12审核P5 bit7=0x80 FIRST_GREEN_CORE_CONFLICT（整帧索引9），P1和真实类型/左右计数/总数/帧号不变。
+  frame0全零非STABLE占位仅撤首绿运输资格，不采样/造READY/VALID。独立持物否决不因换角、漏黑、清审或mode51清除。
+- mode22持载接原23复审，入区前NAV/ALIGN接原140°mode48，重复请求不重开相机；旧单绿VALID撤销。
+  当前真1绿仍报1绿，原两帧/100ms/STABLE可形成READY但不可VALID；旧同图STABLE不能恢复资格。
+  原SIDE_VALID可保留真实绿侧1/另一侧0，原单件握持/曲线保持，不补黑、不置DANGER/UNKNOWN、不冒用近爪蓝标志。
+- 只有本次选择性曲线实际完成，或整批实际释放/空爪结束才清否决并重新真实审核；观察、拒绝、未完成和旧/重复DONE不清。
+  初始暂存、首绿完成后的普通材料及已接受ENTER保持；无新全局FAULT/永久停机、额外握手、计时资格、ISR或诊断框架。
+
+必要结果：NormalRun/MotionDebug构建通过；复用原Task夹具直接核对物资/伤员真实空退出、新task即接、旧包拒绝、
+未完成/占位/有载不清、新RETURN各扫描阶段即接及已完成RETURN只ACK；首绿metadata/真计数/旧STABLE/清审/左右单件分离/
+观察与旧DONE/重新真实审核/NAV和ALIGN复审/已接受ENTER/普通材料/暂存/mode51保持证据均符合预期。
+新位两组成对例CRC/字段通过；夹具为硬件替身，仅验证控制调用和状态衔接，不是地面/机械验收。
+无新增检查源码/独立程序；PID/速度/PWM/舵机、step15本地轮程和其他导航动作保持。
+
+**未烧录、未打开UART/SDK或发实车动作，actual未亲自新读；用户自行烧录。** RDK引用15:52实际a0a1c5d/dirty1仅历史回执，
+不能当本轮部署证明；本机构建保留原Task初始化空白，如实dirty1，源码以本文件Git记录为准。
+用户需烧新NormalRun/TASK并重开RDK最新入口；旧a0a1c5d不支持本轮预算同步及审核0x80语义。
+此前120°搜索入口与失败目标关联候选、其他上位REJECT出口及安全区无框策略，本轮不夹带扩改。
+
+- [本轮完整说明与边界](F405_BATCH_AND_FIRST_GREEN_20261115.md)
+- [首绿审核新位机器合同及两组成对报文](contracts/f405_first_green_core_20261115.json)
+- [固定上位交接](https://github.com/danmo-teng/shijue_fangan/blob/0d45d94149a0a83cb28f97a703b311b7ca0f7dd1/docs/CROSS_REPO_REQUESTS.md)
+
 ## MATCH-ATTACK-BACK100-WHEEL-20261115：接受并已实现，用户自行烧录
 
 已读取RDK最新固定入口、返程说明/合同及attack_return/obstacle_route/protocol/state_machine/runner，
