@@ -1963,7 +1963,7 @@ static float task_track_target(const VisionData *vision, bool track_camera)
   const float tolerance = task_approach_alignment_tolerance();
   const bool stationary_alignment = tolerance > 0.0f;
   const bool near_center = stationary_alignment &&
-      task_abs(raw_error) <= 2.0f * tolerance;
+      task_abs(raw_error) <= APP_APPROACH_ALIGN_SLOW_TOLERANCE_RATIO * tolerance;
   /* The filter may trail a target that has already crossed the centre. Keep
    * far-field smoothing, but never let that lag command the previous side. */
   const bool use_raw_x = near_center || (stationary_alignment &&
@@ -2001,23 +2001,32 @@ static float task_track_target(const VisionData *vision, bool track_camera)
   }
 
   steering_active = true;
+  steering_pid.kp = stationary_alignment ? APP_APPROACH_ALIGN_KP_MM_S :
+                                          APP_STEERING_KP_MM_S;
+  steering_pid.kd = stationary_alignment ? APP_APPROACH_ALIGN_KD_MM :
+                                          APP_STEERING_KD_MM;
   steering_target_mm_s = Pid_UpdateDt(&steering_pid,
                                       (float)APP_VISION_TARGET_X,
                                       steering_x, dt_s) *
                          APP_STEERING_DIRECTION;
-  if (near_center) {
-    /* Use each phase's unchanged centre tolerance: 45 at twice that error,
-     * 30 just outside it. This branch must bypass the far-field 60 minimum. */
-    const float ratio = (magnitude - tolerance) / tolerance;
-    const float turn = APP_APPROACH_ALIGN_NEAR_MIN_MM_S +
-        (APP_APPROACH_ALIGN_NEAR_MAX_MM_S - APP_APPROACH_ALIGN_NEAR_MIN_MM_S) * ratio;
+  if (stationary_alignment) {
+    /* Ease the PD contribution before the target reaches the arrival edge.
+     * Adding it above the active-turn floor keeps gain reductions effective when
+     * the small pixel PD alone would remain below the active-turn minimum. */
+    const float ratio = fminf(1.0f, fmaxf(0.0f,
+        (magnitude - tolerance) /
+        ((APP_APPROACH_ALIGN_SLOW_TOLERANCE_RATIO - 1.0f) * tolerance)));
+    const float directional_pd = fmaxf(0.0f,
+        steering_target_mm_s * copysignf(1.0f, x_error * APP_STEERING_DIRECTION));
+    const float turn = APP_APPROACH_ALIGN_MIN_TURN_MM_S + ratio *
+        fminf(APP_APPROACH_ALIGN_MAX_TURN_MM_S - APP_APPROACH_ALIGN_MIN_TURN_MM_S,
+              directional_pd);
     steering_target_mm_s = copysignf(turn, x_error * APP_STEERING_DIRECTION);
     steering_mm_s = steering_mm_s * steering_target_mm_s < 0.0f ? 0.0f :
         fmaxf(-turn, fminf(turn, steering_mm_s));
     return steering_target_mm_s;
   }
-  const float minimum_mm_s = stationary_alignment ?
-      APP_APPROACH_ALIGN_MIN_TURN_MM_S : APP_STEERING_MIN_MM_S;
+  const float minimum_mm_s = APP_STEERING_MIN_MM_S;
   if ((steering_target_mm_s > 0.0f) &&
       (steering_target_mm_s < minimum_mm_s)) {
     steering_target_mm_s = minimum_mm_s;
@@ -2277,10 +2286,38 @@ static float task_approach_aligned_speed(float requested_speed_mm_s)
       requested_speed_mm_s : speed_limit_mm_s;
 }
 
+static float task_align_closing_rate(float field_yaw_mm_s)
+{
+  const IMUData imu = IMU_GetData();
+  const float field_rate_dps = (float)imu.gyro_mdps[2] * 0.001f *
+      APP_LOCATION_IMU_YAW_SIGN;
+  return imu.ready && field_yaw_mm_s != 0.0f ?
+      fmaxf(0.0f, field_rate_dps * copysignf(1.0f, field_yaw_mm_s)) : 0.0f;
+}
+
+static float task_align_rate_brake(float field_yaw_mm_s, float closing_rate_dps)
+{
+  /* Lower the reference so the existing wheel loop brakes. Do not reverse on
+   * gyro feedback alone or reapply the active-turn minimum after braking. */
+  return copysignf(fmaxf(0.0f, task_abs(field_yaw_mm_s) -
+      APP_ALIGN_RATE_BRAKE_MM_S_PER_DPS * closing_rate_dps), field_yaw_mm_s);
+}
+
 static float task_approach_steering(void)
 {
+  float target_mm_s = steering_target_mm_s;
+  if (task_approach_alignment_tolerance() > 0.0f) {
+    /* Update braking between vision frames, using the existing task cycle. */
+    target_mm_s = task_align_rate_brake(target_mm_s,
+        task_align_closing_rate(target_mm_s));
+    if (steering_mm_s * target_mm_s < 0.0f) {
+      steering_mm_s = 0.0f;
+    } else if (task_abs(steering_mm_s) > task_abs(target_mm_s)) {
+      steering_mm_s = target_mm_s;
+    }
+  }
   steering_mm_s = task_step_toward(
-      steering_mm_s, steering_target_mm_s,
+      steering_mm_s, target_mm_s,
       APP_STEERING_RATE_MM_S2 * APP_TASK_PERIOD_MS * 0.001f);
   return steering_mm_s;
 }
@@ -3860,15 +3897,23 @@ static void task_process_safe_align(uint32_t now_ms)
     if (task_abs(error_deg) > APP_SAFE_ALIGN_TOLERANCE_DEG) {
       /* ALIGN is continuous; its positioning speed bounds are independent
        * of finite TURN's speed profile and timeout. */
-      /* Keep the existing angular gain; reduce only safe-zone turn bounds.
-       * Speed falls with error from 250 to 150 before the existing 3deg stop. */
+      /* Lower P starts deceleration farther out. Rate feedback and a smooth
+       * stopping envelope may reduce the 130 active-turn floor toward zero. */
       const float requested =
           (task_abs(error_deg) - APP_NAV_HEADING_TOLERANCE_DEG) *
-          APP_NAV_HEADING_KP_MM_S_PER_DEG;
-      const float yaw_mm_s = fminf(APP_SAFE_ALIGN_TURN_MAX_MM_S,
-          fmaxf(APP_SAFE_ALIGN_TURN_MIN_MM_S, requested));
-      task_move_body(0.0f, 0.0f, copysignf(yaw_mm_s, error_deg));
-      task_status.motors_active = true;
+          APP_SAFE_ALIGN_KP_MM_S_PER_DEG;
+      float yaw_mm_s = copysignf(fminf(APP_SAFE_ALIGN_TURN_MAX_MM_S,
+          fmaxf(APP_SAFE_ALIGN_TURN_MIN_MM_S, requested)), error_deg);
+      const float closing_rate_dps = task_align_closing_rate(yaw_mm_s);
+      yaw_mm_s = task_align_rate_brake(yaw_mm_s, closing_rate_dps);
+      const float predicted_travel_deg =
+          closing_rate_dps * APP_SAFE_ALIGN_BRAKE_LOOKAHEAD_S;
+      const float remaining_deg = task_abs(error_deg) - APP_SAFE_ALIGN_TOLERANCE_DEG;
+      if (predicted_travel_deg > remaining_deg) {
+        yaw_mm_s *= remaining_deg / predicted_travel_deg;
+      }
+      task_move_body(0.0f, 0.0f, yaw_mm_s);
+      task_status.motors_active = task_abs(yaw_mm_s) > 0.5f;
     } else {
       Motor_Stop();
       task_status.motors_active = false;

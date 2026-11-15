@@ -503,11 +503,15 @@
 /* Derivative uses seconds, not frames; softened together with visual P. */
 #define APP_STEERING_KD_MM                0.0025f
 #define APP_STEERING_MIN_MM_S             10.0f
-/* Pixel-only stationary alignment; engineering starting point, not calibrated. */
-#define APP_APPROACH_ALIGN_MIN_TURN_MM_S  60.0f
-/* Within twice the phase's existing centre tolerance, ease toward 30 mm/s. */
-#define APP_APPROACH_ALIGN_NEAR_MIN_MM_S  30.0f
-#define APP_APPROACH_ALIGN_NEAR_MAX_MM_S  45.0f
+/* Stationary object alignment only; gyro braking may reduce these to zero. */
+#define APP_APPROACH_ALIGN_MIN_TURN_MM_S 130.0f
+#define APP_APPROACH_ALIGN_MAX_TURN_MM_S 140.0f
+#define APP_APPROACH_ALIGN_KP_MM_S         0.12f
+#define APP_APPROACH_ALIGN_KD_MM           0.0015f
+/* Begin easing at three times each phase's unchanged arrival tolerance. */
+#define APP_APPROACH_ALIGN_SLOW_TOLERANCE_RATIO 3.0f
+/* Shared rate feedback in field-yaw coordinates; initial, uncalibrated gain. */
+#define APP_ALIGN_RATE_BRAKE_MM_S_PER_DPS  3.0f
 #define APP_STEERING_LIMIT_MM_S           90.0f
 #define APP_STEERING_RATE_MM_S2          400.0f
 #define APP_STEERING_DIRECTION           1.0f
@@ -591,8 +595,11 @@
 #define APP_POSITION_ALIGN_TURN_MIN_MM_S  200.0f
 #define APP_POSITION_ALIGN_TURN_MAX_MM_S  400.0f
 /* Safe-zone yaw alignment only; other positioning turns keep their profile. */
-#define APP_SAFE_ALIGN_TURN_MIN_MM_S      150.0f
+#define APP_SAFE_ALIGN_TURN_MIN_MM_S      130.0f
 #define APP_SAFE_ALIGN_TURN_MAX_MM_S      250.0f
+#define APP_SAFE_ALIGN_KP_MM_S_PER_DEG     12.0f
+/* Rate-based stopping envelope, not an extra timer or arrival condition. */
+#define APP_SAFE_ALIGN_BRAKE_LOOKAHEAD_S    0.20f
 #define APP_SAFE_ALIGN_CAMERA_ANGLE           120U
 #define APP_SAFE_ALIGN_RAISED_CAMERA_ANGLE    115U
 #define APP_SAFE_ALIGN_CAMERA_SETTLE_MS       300U
