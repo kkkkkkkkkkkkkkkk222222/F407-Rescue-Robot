@@ -5,6 +5,26 @@ from tools import vision_protocol as protocol
 
 
 class VisionProtocolTests(unittest.TestCase):
+    def test_confirmed_load_reuse_contract(self) -> None:
+        for flags, heading, expected in (
+            (0x2D, 9000, "a3b3181e042d0000000023289407c3"),
+            (0x25, 27000, "a3b3182104250000000069783f6ac3"),
+        ):
+            seq = 30 if flags == 0x2D else 33
+            self.assertEqual(protocol.mission_frame(seq, 4, flags, 0, 0, heading).hex(), expected)
+            protocol.mission_frame(seq, 4, flags, 0, 11500, heading)
+            protocol.mission_frame(seq, 3, flags | 0x52, 150, 0, heading)
+        for opcode, flags, a, b, heading in (
+            (4, 0x2D, 0, 0, 27000), (4, 0x25, 0, 0, 9000),
+            (4, 0x6D, 0, 0, 9000), (4, 0x2F, 0, 0, 9000),
+            (4, 0x29, 0, 0, 9000), (4, 0x2D, 1, 0, 9000),
+            (4, 0x2D, 0, 12000, 9000), (3, 0x3F, 150, 0, 9000),
+            (3, 0x7B, 150, 0, 9000), (3, 0x7F, -1, 0, 9000),
+            (3, 0x7F, 150, 1, 9000),
+        ):
+            with self.assertRaises(ValueError):
+                protocol.mission_frame(34, opcode, flags, a, b, heading)
+
     def test_attack_tail_return_contract(self) -> None:
         for flags, heading, expected in (
             (0xF9, 27000, "a3b3180a14f9ff6a00006978c55cc3"),

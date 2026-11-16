@@ -118,6 +118,8 @@
 #define VISION_CMD_CLUSTER_TARGET    0x20U
 /* STAGE NAV bit5 requests reuse of the task's real post-grab single-injury audit. */
 #define VISION_CMD_REUSE_POST_GRAB_AUDIT 0x20U
+/* Pose ALIGN / STAGE NAV: reuse a genuinely confirmed closed load, not a new audit. */
+#define VISION_CMD_REUSE_CONFIRMED_LOAD 0x20U
 /* APPROACH bit6 + DISTANCE_VALID: P2/P3=latched travel mm,
  * P4/P5=fixed pitch cdeg, P6/P7=aux: 0/1 use10500/12000;
  * aux2 is strictly +50mm at14000, open-claw pre-grab only. */

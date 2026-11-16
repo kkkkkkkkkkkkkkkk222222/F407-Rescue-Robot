@@ -76,6 +76,8 @@ CMD_USE_FINAL_HEADING = 0x04
 CMD_RED_SIDE = 0x08
 CMD_DISTANCE_VALID = 0x10
 CMD_CLUSTER_TARGET = 0x20
+CMD_REUSE_POST_GRAB_AUDIT = 0x20
+CMD_REUSE_CONFIRMED_LOAD = 0x20
 CMD_APPROACH_RANGE = 0x40
 APPROACH_RANGE_REOBSERVE = 1
 APPROACH_RANGE_PRE_GRAB = 2
@@ -340,6 +342,8 @@ def mission_frame(
             CMD_NAVIGATE_WAYPOINT, CMD_ALIGN_SAFE_ZONE,
             CMD_ENTER_SAFE_ZONE):
         allowed_flags |= CMD_STAGE_ONLY
+    if command in (CMD_NAVIGATE_WAYPOINT, CMD_ALIGN_SAFE_ZONE):
+        allowed_flags |= CMD_REUSE_CONFIRMED_LOAD
     if command == CMD_DISPERSE_PILE:
         allowed_flags |= (
             CMD_FIRST_GREEN_BUMP | CMD_SIDE_VALID | CMD_TARGET_RIGHT
@@ -376,7 +380,18 @@ def mission_frame(
     )
     if not 0 <= heading_cdeg <= 65535 or (heading_command and heading_cdeg >= 36000):
         raise ValueError("invalid mission auxiliary/heading value")
+    if command == CMD_NAVIGATE_WAYPOINT and flags & CMD_REUSE_CONFIRMED_LOAD:
+        direction = flags & (CMD_DRIVE_STRAIGHT | CMD_USE_FINAL_HEADING)
+        if (not flags & CMD_STAGE_ONLY or not flags & CMD_DISTANCE_VALID or
+                direction not in (0, CMD_DRIVE_STRAIGHT | CMD_USE_FINAL_HEADING) or
+                target_x_mm < 0 or target_y_mm != 0):
+            raise ValueError("confirmed load reuse requires STAGE NAV")
     if command == CMD_ALIGN_SAFE_ZONE:
+        if flags & CMD_REUSE_CONFIRMED_LOAD:
+            permitted = CMD_VALID | CMD_RED_SIDE | CMD_USE_FINAL_HEADING | CMD_REUSE_CONFIRMED_LOAD
+            if (flags & ~permitted or
+                    heading_cdeg != (9000 if flags & CMD_RED_SIDE else 27000)):
+                raise ValueError("confirmed load reuse requires own-zone pose ALIGN")
         if target_y_mm not in (0, 11500):
             raise ValueError("ALIGN camera pitch must be 0 or 11500 cdeg")
         visual = bool(flags & CMD_VISUAL_CORRECTION_VALID)

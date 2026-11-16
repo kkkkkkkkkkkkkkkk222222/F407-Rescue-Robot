@@ -273,7 +273,8 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
       VISION_CMD_DISTANCE_VALID |
       ((code == VISION_CMD_APPROACH_TARGET) ?
           (VISION_CMD_CLUSTER_TARGET | VISION_CMD_APPROACH_RANGE) : 0U) |
-      ((code == VISION_CMD_NAVIGATE_WAYPOINT) ? VISION_CMD_REUSE_POST_GRAB_AUDIT : 0U) |
+      (((code == VISION_CMD_NAVIGATE_WAYPOINT) || (code == VISION_CMD_ALIGN_SAFE_ZONE)) ?
+          VISION_CMD_REUSE_CONFIRMED_LOAD : 0U) |
       (((code == VISION_CMD_NAVIGATE_WAYPOINT) ||
         (code == VISION_CMD_ALIGN_SAFE_ZONE) ||
         (code == VISION_CMD_ENTER_SAFE_ZONE)) ?
@@ -338,6 +339,14 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
     }
   }
   if (code == VISION_CMD_ALIGN_SAFE_ZONE) {
+    if ((flags & VISION_CMD_REUSE_CONFIRMED_LOAD) != 0U) {
+      const uint8_t permitted = VISION_CMD_VALID | VISION_CMD_RED_SIDE |
+          VISION_CMD_USE_FINAL_HEADING | VISION_CMD_REUSE_CONFIRMED_LOAD;
+      if ((flags & (uint8_t)~permitted) != 0U ||
+          heading != ((flags & VISION_CMD_RED_SIDE) != 0U ? 9000U : 27000U)) {
+        goto rejected_payload;
+      }
+    }
     if (arg_b != 0 && arg_b != APP_SAFE_ALIGN_RAISED_CAMERA_ANGLE * 100) {
       goto rejected_payload;
     }
