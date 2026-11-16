@@ -4817,8 +4817,14 @@ static bool task_accept_bulldozer(const VisionMissionCommand *command,
   const bool attack_face_entry = attack_face && owned_task &&
       state == TASK_NAVIGATE && distance_command_done && route_to_stash &&
       accepted_context.opcode == VISION_CMD_NAVIGATE_WAYPOINT &&
-      task_status.gripper_closed && audit_received && audit_valid && audit_initial_stash;
-  if (attack_face && !attack_face_entry) {
+      task_status.gripper_closed && audit_received && audit_valid && audit_initial_stash &&
+      command->heading_cdeg == (configured_color == VISION_COLOR_RED ? 27000U : 9000U);
+  const bool attack_tail_entry = attack_face && owned_task && previous_step_done &&
+      accepted_context.opcode == VISION_CMD_BULLDOZER_STEP &&
+      remote_action.command == VISION_CMD_BULLDOZER_STEP &&
+      remote_action.step == VISION_BULLDOZER_ATTACK_BACK_100 &&
+      !task_status.gripper_closed;
+  if (attack_face && !attack_face_entry && !attack_tail_entry) {
     return false;
   }
   const bool attack_back = VISION_BULLDOZER_STEP(command->flags) ==
@@ -4841,7 +4847,8 @@ static bool task_accept_bulldozer(const VisionMissionCommand *command,
   if (empty_move) {
     const bool next_empty_leg = previous_step_done &&
         (remote_action.step == VISION_BULLDOZER_EMPTY_BODY_MOVE ||
-         remote_action.step == VISION_BULLDOZER_ATTACK_BACK_100) &&
+         remote_action.step == VISION_BULLDOZER_ATTACK_BACK_100 ||
+         remote_action.step == VISION_BULLDOZER_ATTACK_FACE_OPPONENT) &&
         owned_task && !task_status.gripper_closed;
     if (!release_done && !next_empty_leg && !empty_search_entry) {
       return false;

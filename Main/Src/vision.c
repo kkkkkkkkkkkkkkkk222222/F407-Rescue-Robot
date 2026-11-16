@@ -231,7 +231,7 @@ static bool vision_bulldozer_payload_valid(uint8_t flags, int16_t a, int16_t b,
     case VISION_BULLDOZER_BACK_200:
       return a == -200 && b == 0 && heading == sweep_heading;
     case VISION_BULLDOZER_ATTACK_BACK_100:
-      return a == -100 && b == 0 && heading ==
+      return (a == -100 || a == -150) && b == 0 && heading ==
           ((flags & VISION_CMD_RED_SIDE) != 0U ? 27000U : 9000U);
     case VISION_BULLDOZER_SWEEP_1000:
       return a == 1000 && b == 0 && heading == sweep_heading;
@@ -245,8 +245,7 @@ static bool vision_bulldozer_payload_valid(uint8_t flags, int16_t a, int16_t b,
       return a >= 0 && a <= APP_NAV_REMOTE_MAX_DISTANCE_MM &&
           b >= -18000 && b <= 18000 && heading < 36000U;
     case VISION_BULLDOZER_ATTACK_FACE_OPPONENT:
-      return a == 0 && b == 0 && heading ==
-          ((flags & VISION_CMD_RED_SIDE) != 0U ? 27000U : 9000U);
+      return a == 0 && b == 0 && heading < 36000U;
     case VISION_BULLDOZER_RELEASE_LOAD:
     case VISION_BULLDOZER_FULL_OPEN:
     case VISION_BULLDOZER_RAISE_RETURN:

@@ -1,5 +1,19 @@
 # 当前状态：F405 烧录入口
 
+2026-11-16 MATCH-TWO-STATION-TAIL-RETURN：两点路线/进攻转尾返回已配套（未烧录）。
+- 核对RDK750aafa实际代码和合同，收尾复查SHA未变。本条更新上次“路线仅提案”的阶段状态。
+  ①/③坐标、来源点记忆、投送直返及转尾角由上位负责，下位复用原运动控制。
+- step15接受-150mm并兼容-100；真实轮程DONE后，同归属空爪step14接受任意合法U；
+  step14实际DONE后接step13动态D/H、固定U倒车，再按原step12恢复搜索。原带载step14仍只朝对方。
+  保留同action幂等、每阶段清旧DONE、PAUSE/STOP及原速度/PID/舵机/公差；无新时间门/握手/ISR/FAULT。
+- 两目标构建、8条红蓝/起点Task路径及边界、实际解析器40组合同配对帧和34组边界、
+  Python逐字节合同核对及原协议25项检查通过；临时C夹具已恢复。
+- 本轮未开设备/烧录/动车、actual未读。build_git=c14b0a7/dirty1；
+  NormalRun指纹7f80781060c88b7cb25d20500bf3faa2354dcddf3a29f0a16a52ae3e09edf09b；
+  MotionDebug指纹c83794beb982106acf44c27fbd74593c6aa7a4fbc22ab77286fcb4f994f45241。
+  新上位路线需要配套部署本次NormalRun；构建含原独立工作区改动，实车精度/稳定性待验证。
+  [详细回执](CROSS_REPO_REQUESTS.md)、[协议合同](contracts/f405_two_station_tail_return_20261116.json)。
+
 2026-11-16 MATCH-PRE-GRAB-BANDS：抓前140°有限50mm补进已配套（未烧录）。
 - 已核对RDK04467bc功能代码/合同，收尾b995f5a的相关业务blob相同；新①/③/转尾路线仅提案，不修改原100mm/step15。
 - 严格aux2/A50/B14000，只从本批开爪抓前21/38/37接受；清旧审核，原近场200mm/s有限轮程执行时mode53，真实DONE后回入口停止复看。

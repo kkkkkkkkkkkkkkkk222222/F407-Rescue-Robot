@@ -186,7 +186,9 @@ typedef enum {
   VISION_BULLDOZER_RIGHT_TO_STAGE,
   VISION_BULLDOZER_PICKUP_READY,
   VISION_BULLDOZER_EMPTY_BODY_MOVE,
+  /* Step14: loaded NAV faces opponent; empty post-step15 may turn to any U. */
   VISION_BULLDOZER_ATTACK_FACE_OPPONENT,
+  /* Step15 legacy name retained; A=-150 now, old A=-100 remains compatible. */
   VISION_BULLDOZER_ATTACK_BACK_100
 } VisionBulldozerStep;
 

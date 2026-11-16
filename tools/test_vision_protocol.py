@@ -5,6 +5,22 @@ from tools import vision_protocol as protocol
 
 
 class VisionProtocolTests(unittest.TestCase):
+    def test_attack_tail_return_contract(self) -> None:
+        for flags, heading, expected in (
+            (0xF9, 27000, "a3b3180a14f9ff6a00006978c55cc3"),
+            (0xF1, 9000, "a3b3180a14f1ff6a000023287bc0c3"),
+        ):
+            self.assertEqual(protocol.mission_frame(10,20,flags,-150,0,heading).hex(), expected)
+            protocol.mission_frame(10,20,flags,-100,0,heading)
+        for heading in (0, 7448, 12981, 25448, 30981, 35999):
+            protocol.mission_frame(11,20,0xE9,0,0,heading)
+        for flags,a,b,u in ((0xE9,1,0,0),(0xE9,0,0,36000),
+                             (0xF9,-151,0,27000),(0xF9,-150,0,9000),
+                             (0x09,0,0,30981),(0x49,0,0,30981),
+                             (0xD9,5001,0,0),(0xD9,100,18001,0),(0xDB,100,0,0)):
+            with self.assertRaises(ValueError):
+                protocol.mission_frame(12,20,flags,a,b,u)
+
     def test_competition_command_and_status_context_pairs(self) -> None:
         command = protocol.mission_frame(9, protocol.CMD_GRAB_CONFIRMED)
         pair = protocol.pair_mission_frame(command, 42, 13, 101)

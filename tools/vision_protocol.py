@@ -68,6 +68,7 @@ CMD_DISPERSE_PILE = 0x10
 CMD_CHANGE_LANE = 0x11
 CMD_CARGO_AUDIT = 0x12
 CMD_CLEAR_SAFE_ZONE = 0x13
+CMD_BULLDOZER_STEP = 0x14
 
 CMD_VALID = 0x01
 CMD_DRIVE_STRAIGHT = 0x02
@@ -301,6 +302,26 @@ def parse_stm_status(frame: bytes) -> dict[str, int | bool]:
     }
 
 
+def _bulldozer_payload_valid(flags: int, a: int, b: int, heading: int) -> bool:
+    step = flags >> 4
+    sweep_heading = 0 if flags & CMD_RED_SIDE else 18000
+    opponent = 27000 if flags & CMD_RED_SIDE else 9000
+    if step in (0, 4):
+        return a == b == 0 and heading == sweep_heading + (9000 if step == 4 else 0)
+    if step in (1, 3, 8):
+        return a == {1: 200, 3: -200, 8: 1000}[step] and b == 0 and heading == sweep_heading
+    if step == 15:
+        return a in (-100, -150) and b == 0 and heading == opponent
+    if step == 14:
+        return a == b == 0 and 0 <= heading < 36000
+    if step in (5, 6, 10, 11, 13):
+        return (0 <= a <= 5000 and -18000 <= b <= 18000 and
+                (0 <= heading < 36000 if step == 13 else heading == sweep_heading))
+    if step in (2, 7, 9, 12):
+        return a == b == heading == 0
+    return False
+
+
 def mission_frame(
     sequence: int,
     command: int,
@@ -310,9 +331,9 @@ def mission_frame(
     heading_cdeg: int = 0,
 ) -> bytes:
     if (command not in (CMD_STOP, CMD_PAUSE) and
-            not CMD_GRAB_CONFIRMED <= command <= CMD_CLEAR_SAFE_ZONE):
+            not CMD_GRAB_CONFIRMED <= command <= CMD_BULLDOZER_STEP):
         raise ValueError("invalid mission command")
-    allowed_flags = 0x1F
+    allowed_flags = 0xF9 if command == CMD_BULLDOZER_STEP else 0x1F
     if command == CMD_APPROACH_TARGET:
         allowed_flags |= CMD_CLUSTER_TARGET | CMD_APPROACH_RANGE
     if command in (
@@ -325,6 +346,9 @@ def mission_frame(
         )
     if not flags & CMD_VALID or flags & ~allowed_flags:
         raise ValueError("invalid mission flags")
+    if command == CMD_BULLDOZER_STEP and not _bulldozer_payload_valid(
+            flags, target_x_mm, target_y_mm, heading_cdeg):
+        raise ValueError("invalid bulldozer step payload")
     if command == CMD_APPROACH_TARGET:
         if flags & CMD_APPROACH_RANGE:
             permitted = CMD_VALID | CMD_RED_SIDE | CMD_CLUSTER_TARGET | CMD_APPROACH_RANGE | CMD_DISTANCE_VALID
