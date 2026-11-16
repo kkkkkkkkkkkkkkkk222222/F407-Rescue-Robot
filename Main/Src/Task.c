@@ -1730,8 +1730,8 @@ static void task_enter(TaskState next, uint32_t now_ms)
     task_reset_turn_tracker();
   } else if (next == TASK_EXIT_SAFE_ZONE) {
     delivery_exit_phase = 0U;
-    delivery_exit_phase_ready_ms = now_ms + Lift_PositionWaitMs(APP_LIFT_START_ANGLE);
-    Lift_SetStartPosition();
+    delivery_exit_phase_ready_ms = now_ms + Lift_PositionWaitMs(APP_LIFT_RELEASE_RAISE_ANGLE);
+    Lift_SetReleaseRaisePosition();
     Camera_SetAngle(APP_DELIVERY_CAMERA_ANGLE);
     camera_angle = (float)APP_DELIVERY_CAMERA_ANGLE;
   } else if ((next == TASK_NAVIGATE) ||
@@ -4825,8 +4825,8 @@ static void task_process_bulldozer(const VisionMissionCommand *command,
       Motor_Stop();
       task_status.motors_active = false;
       if (remote_action.phase == 0U) {
-        remote_action.actuator_wait_ms = Lift_PositionWaitMs(APP_LIFT_START_ANGLE);
-        Lift_SetStartPosition();
+        remote_action.actuator_wait_ms = Lift_PositionWaitMs(APP_LIFT_RELEASE_RAISE_ANGLE);
+        Lift_SetReleaseRaisePosition();
         step_started_ms = now_ms;
         remote_action.phase = 1U;
       }

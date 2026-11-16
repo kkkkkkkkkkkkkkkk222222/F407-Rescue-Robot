@@ -1,5 +1,11 @@
 # 当前状态：F405 烧录入口
 
+2026-11-16 放下后抬臂61°→65°（已构建，未烧录）。
+- 按用户要求新增独立APP_LIFT_RELEASE_RAISE_ANGLE=65，普通投送退出及扫推step9使用同一机构入口，输出与脉宽差等待计算同步；起步仍61°。
+- NormalRun/MotionDebug编译通过，原投送退出段检查通过并同步既有断言。组合夹具先在原开局320ms收纳断言失败，该段未改；随后仅运行相关投送退出段，临时入口已恢复。
+- 未连接设备、烧录或动车。build_git=307e3e4/dirty1；NormalRun=bf4c10a880df69913c36ce90999d8e53d1828788529f0353752145e40a221194，MotionDebug=2d5764b5d5f008679eaf6b1d374055b3f745d270911b914e65a4d797d8c7ae84。
+  当前参数见[F405_CLAW_CALIBRATION](F405_CLAW_CALIBRATION.md)，原独立工作区改动保留、不夹入提交。
+
 2026-11-16 MATCH-CLOSED-GAP-ZONE-CANCEL：闭爪缺框出口/安全区目标取消已配套（未烧录）。
 - 核对RDK eb49d39实际代码/固定入口/合同；真实闭爪审核建立的本批载荷许可与当前审核分开保存，
   mode48明确bit5定位ALIGN或STAGE NAV→ALIGN可复用运输；不伪造本帧审核、数量或样本。

@@ -666,6 +666,7 @@
 #define APP_BOUNDARY_RECOVERY_SPEED_MM_S     300.0f
 #define APP_POSE_WAIT_TIMEOUT_MS          1500U
 #define APP_LIFT_START_ANGLE              61U
+#define APP_LIFT_RELEASE_RAISE_ANGLE      65U
 #define APP_LIFT_TRAVEL_ANGLE             85U
 /* Calibrated pose only; the autonomous first-green filter is not enabled here. */
 #define APP_LIFT_FIRST_GREEN_FILTER_ANGLE 82U

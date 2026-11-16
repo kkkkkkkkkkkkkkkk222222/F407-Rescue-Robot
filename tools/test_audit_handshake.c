@@ -743,9 +743,9 @@ static void test_normalrun_start_and_delivery_exit(void)
   const uint32_t verify_done = 100U;
   task_process_delivery_verify(&complete, verify_done);
   assert(state == TASK_EXIT_SAFE_ZONE && first_delivery_done);
-  assert(servo_angles[0] == APP_LIFT_START_ANGLE);
+  assert(servo_angles[0] == APP_LIFT_RELEASE_RAISE_ANGLE);
   const uint32_t lift_wait_ms = servo_pulse_wait_ms(
-      Servo_OutputPulseUs(1U, APP_LIFT_START_ANGLE),
+      Servo_OutputPulseUs(1U, APP_LIFT_RELEASE_RAISE_ANGLE),
       Servo_OutputPulseUs(1U, APP_LIFT_TRAVEL_ANGLE));
   const uint32_t reverse_start = verify_done + lift_wait_ms;
   Task_Process(reverse_start - 1U);

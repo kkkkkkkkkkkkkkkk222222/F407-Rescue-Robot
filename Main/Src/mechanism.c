@@ -143,6 +143,11 @@ void Lift_SetStartPosition(void)
   Servo_SetAngle(1U, APP_LIFT_START_ANGLE);
 }
 
+void Lift_SetReleaseRaisePosition(void)
+{
+  Servo_SetAngle(1U, APP_LIFT_RELEASE_RAISE_ANGLE);
+}
+
 uint32_t Lift_PositionWaitMs(uint8_t angle)
 {
   return servo_pulse_wait_ms(Servo_OutputPulseUs(1U, Servo_GetAngle(1U)),

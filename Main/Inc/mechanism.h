@@ -9,6 +9,7 @@ void Camera_SetAngle(uint8_t angle);
 uint8_t Camera_GetAngle(void);
 uint32_t Camera_PositionWaitMs(uint8_t angle);
 void Lift_SetStartPosition(void);
+void Lift_SetReleaseRaisePosition(void);
 /* Estimate the wait before commanding the given angle. */
 uint32_t Lift_PositionWaitMs(uint8_t angle);
 void Lift_SetTravelPosition(void);
