@@ -63,10 +63,11 @@
 #define APP_MOTION_DEBUG_MAX_TURN_RATE_DDEG_S 3600U
 #define APP_MOTION_DEBUG_TURN_RADIUS_MM 130.0f
 /* Console FILTER bench sequence; never starts automatically. */
-#define APP_DEBUG_FILTER_LIFT_ANGLE       75U
+#define APP_DEBUG_FILTER_LIFT_ANGLE       80U
 #define APP_DEBUG_FILTER_BACK_MM          50U
-#define APP_DEBUG_FILTER_BACK_SPEED_MM_S 150.0f
-#define APP_DEBUG_FILTER_TURN_RATE_DPS    30.0f
+#define APP_DEBUG_FILTER_BACK_SPEED_MM_S 300.0f
+#define APP_DEBUG_FILTER_SHIFT_MM        100U
+#define APP_DEBUG_FILTER_SHIFT_SPEED_MM_S 250.0f
 #define APP_MOTION_DEBUG_DISTANCE_TOLERANCE_MM 10.0f
 #define APP_MOTION_DEBUG_SLOWDOWN_MM 150.0f
 #define APP_MOTION_DEBUG_MIN_SLOW_SPEED_MM_S 80.0f
@@ -679,9 +680,9 @@
 #define APP_SERVO_S4_OFFSET_DEG            0  /* Left claw, recalibrate after remount */
 /* Fine installation trims are added after angle-to-pulse conversion. */
 #define APP_SERVO_S1_OFFSET_US             0
-#define APP_SERVO_S2_OFFSET_US            24
+#define APP_SERVO_S2_OFFSET_US            50
 #define APP_SERVO_S3_OFFSET_US             0
-#define APP_SERVO_S4_OFFSET_US             0
+#define APP_SERVO_S4_OFFSET_US            10
 #define APP_DELIVERY_CAMERA_ANGLE         120U
 #define APP_DELIVERY_CAMERA_SETTLE_MS     300U
 #define APP_DELIVERY_VERIFY_WAIT_MS       1000U
@@ -707,8 +708,8 @@
 #define APP_CLAW_RIGHT_OPEN_ANGLE  APP_CLAW_RIGHT_FROM_LEFT(APP_CLAW_LEFT_OPEN_ANGLE)
 #define APP_CLAW_LEFT_RELEASE_ANGLE             180U
 #define APP_CLAW_RIGHT_RELEASE_ANGLE APP_CLAW_RIGHT_FROM_LEFT(APP_CLAW_LEFT_RELEASE_ANGLE)
-/* Current mechanism: shared close86deg; installation error belongs in offsets. */
-#define APP_CLAW_LEFT_TOUCH_ANGLE                86U
+/* 2026-11-16 calibration: close84deg, S4 +10us / S2 +50us installation trims. */
+#define APP_CLAW_LEFT_TOUCH_ANGLE                84U
 #define APP_CLAW_RIGHT_TOUCH_ANGLE APP_CLAW_RIGHT_FROM_LEFT(APP_CLAW_LEFT_TOUCH_ANGLE)
 /* Stow folds the left claw inside before bringing the right claw around it. */
 #define APP_CLAW_LEFT_RETRACT_ANGLE              32U

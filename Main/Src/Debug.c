@@ -68,6 +68,7 @@ static bool circles_still;
 #if APP_BOARD_F405_ROBO
 static DebugFilterStatus filter_test;
 static uint32_t filter_step_ms, filter_lift_wait_ms;
+static float filter_shift_heading_rad;
 
 static void debug_cancel_filter(void)
 {
@@ -198,6 +199,15 @@ static void debug_finish(DebugMotionState state, DebugMotionFault fault,
                          uint32_t now_ms)
 {
   Motor_Stop();
+#if APP_ENABLE_MOTION_DEBUG_TASK && APP_BOARD_F405_ROBO
+  if (filter_test.active && filter_test.phase == DEBUG_FILTER_LEFT &&
+      state == DEBUG_MOTION_DONE) {
+    /* This is an intermediate stop; the whole FILTER is still running. */
+    filter_test.phase = DEBUG_FILTER_LEFT_STOP;
+    debug_status.remaining = 0U;
+    return;
+  }
+#endif
   active = false;
 #if APP_ENABLE_MOTION_DEBUG_TASK
   debug_cancel_circles();
@@ -519,11 +529,15 @@ static void debug_update_move(uint32_t now_ms)
     bounded_progress_mm = active_move_distance_mm;
   }
   const float remaining_mm = active_move_distance_mm - bounded_progress_mm;
+  float tolerance_mm = APP_MOTION_DEBUG_DISTANCE_TOLERANCE_MM;
+#if APP_ENABLE_MOTION_DEBUG_TASK && APP_BOARD_F405_ROBO
+  if (filter_test.active) { tolerance_mm = APP_GO_DISTANCE_TOLERANCE_MM; }
+#endif
   debug_status.progress = (int16_t)(active_move_progress_sign *
                                     bounded_progress_mm);
   debug_status.remaining = debug_saturate_u16(remaining_mm);
 
-  if (remaining_mm <= APP_MOTION_DEBUG_DISTANCE_TOLERANCE_MM) {
+  if (remaining_mm <= tolerance_mm) {
     debug_status.progress = (int16_t)(active_move_progress_sign *
                                      active_move_distance_mm);
     debug_status.remaining = 0U;
@@ -535,7 +549,7 @@ static void debug_update_move(uint32_t now_ms)
 #if APP_BOARD_F405_ROBO
   const float brake_a = APP_DEBUG_LATERAL_DECEL_MM_S2;
   const float delay_rate = brake_a * APP_DEBUG_LATERAL_BRAKE_DELAY_S;
-  const float usable = fmaxf(0.0f, remaining_mm - APP_MOTION_DEBUG_DISTANCE_TOLERANCE_MM);
+  const float usable = fmaxf(0.0f, remaining_mm - tolerance_mm);
   speed_mm_s = fminf(speed_mm_s, fmaxf(fminf(active_move_speed_mm_s, APP_DEBUG_LATERAL_END_MM_S),
       sqrtf(delay_rate * delay_rate + 2.0f * brake_a * usable) - delay_rate));
 #else
@@ -569,6 +583,30 @@ static void debug_update_move(uint32_t now_ms)
 }
 
 #if APP_ENABLE_MOTION_DEBUG_TASK && APP_BOARD_F405_ROBO
+static void debug_start_filter_shift(bool left, uint32_t now_ms)
+{
+  const LocationPose pose = Location_GetPose();
+  if (left) {
+    filter_shift_heading_rad = pose.heading_mdeg * 0.001f * DEBUG_DEG_RAD;
+  }
+  active_move_start_x_mm = (float)pose.x_mm;
+  active_move_start_y_mm = (float)pose.y_mm;
+  /* Keep the return parallel to the outgoing leg, despite any yaw drift. */
+  active_move_field_angle_rad = filter_shift_heading_rad +
+      (left ? 90.0f : 270.0f) * DEBUG_DEG_RAD;
+  active_move_body_angle_deg = left ? 90.0f : 270.0f;
+  active_move_body_straight = false;
+  active_move_distance_mm = APP_DEBUG_FILTER_SHIFT_MM;
+  active_move_speed_mm_s = APP_DEBUG_FILTER_SHIFT_SPEED_MM_S;
+  active_move_progress_sign = left ? 1.0f : -1.0f;
+  active_command = debug_status.command = VISION_MOTION_CMD_MOVE_BODY;
+  active_start_ms = now_ms;
+  active_timeout_ms = debug_move_timeout(active_move_distance_mm, active_move_speed_mm_s);
+  debug_status.progress = 0;
+  debug_status.remaining = APP_DEBUG_FILTER_SHIFT_MM;
+  filter_test.phase = left ? DEBUG_FILTER_LEFT : DEBUG_FILTER_RIGHT;
+}
+
 static void debug_start_filter(uint8_t lift_angle, uint32_t now_ms)
 {
   filter_test = (DebugFilterStatus){.valid = true, .active = true,
@@ -598,7 +636,7 @@ static void debug_update_filter(uint32_t now_ms)
         debug_finish(DEBUG_MOTION_FAULT, DEBUG_MOTION_FAULT_ODOM, now_ms);
         return;
       }
-      const MotorDistanceStatus result = Motor_MoveDistance(
+      const MotorDistanceStatus result = Motor_MoveDistanceConstant(
           -(float)APP_DEBUG_FILTER_BACK_MM * 0.001f, APP_DEBUG_FILTER_BACK_SPEED_MM_S);
       const float progress = fminf(APP_DEBUG_FILTER_BACK_MM,
           fmaxf(0.0f, Motor_GetDistanceTravelledMm()));
@@ -627,19 +665,15 @@ static void debug_update_filter(uint32_t now_ms)
       return;
     case DEBUG_FILTER_LIFT:
       if (now_ms - filter_step_ms < filter_lift_wait_ms) { return; }
-      /* Motor TURN uses drive-yaw polarity; the bench turn is field CCW. */
-      active_turn_angle_deg = 90.0f * APP_OMNI_FIELD_YAW_TO_DRIVE_SIGN;
-      active_turn_speed_mm_s = APP_DEBUG_FILTER_TURN_RATE_DPS *
-          DEBUG_DEG_RAD * APP_MOTION_DEBUG_TURN_RADIUS_MM;
-      active_command = debug_status.command = VISION_MOTION_CMD_TURN_REL;
-      active_start_ms = now_ms;
-      active_timeout_ms = APP_MOTOR_TURN_TIMEOUT_MS;
-      debug_status.progress = 0;
-      debug_status.remaining = 900U;
-      filter_test.phase = DEBUG_FILTER_TURN;
+      debug_start_filter_shift(true, now_ms);
       return;
-    case DEBUG_FILTER_TURN:
-      debug_update_turn(now_ms);
+    case DEBUG_FILTER_LEFT_STOP:
+      if (Motor_IsBraking()) { return; }
+      debug_start_filter_shift(false, now_ms);
+      return;
+    case DEBUG_FILTER_LEFT:
+    case DEBUG_FILTER_RIGHT:
+      debug_update_move(now_ms);
       return;
     default:
       debug_finish(DEBUG_MOTION_FAULT, DEBUG_MOTION_FAULT_INVALID, now_ms);
