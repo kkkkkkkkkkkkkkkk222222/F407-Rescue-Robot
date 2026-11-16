@@ -16,6 +16,56 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-PRE-GRAB-BANDS-20261116：下位已配套并构建，未烧录
+
+已按用户本轮“对照上位机代码仓库修改”读取RDK功能提交`04467bc2e3ba9f0368a9090d77e44ff270ce7d0d`。
+收尾分支更新为`b995f5a4a1da3833acc7bcb3c15ccf19acc3b004`，再次读取state_machine/protocol/runner的blob均与功能提交一致；
+新路线文档仅为①/③及转尾倒车提案，不是实施要求，本端未改原100mm/step15/搜索路线。
+固定入口blob `c661e985803a3e17aefdc5ea86834809aab4e159`；state_machine `8ee7eba558a903e6e8b1e213576871b19dbfd0d7`；
+protocol `71a7e974f5095de02c2d4ceabdad58446f2fdb73`；runner `57923648341dc08fe7bea6499d685e9cf9c58e92`；
+合同 `949f98322dfbab3ec10dc67e679b925a573e54df`；绿橙分界配置 `ea5cd631316b552df71be5478e28cb2a29e0d92e`。
+
+接受绿橙抓前分区补进的最小配套。上位负责锁定目标、类别和分区线判定，下位不猜像素线值、不改ROI或视觉模型。
+本端在81a3557上增量修改原Task/真实解析器/vision.h和构帧工具；新的合爪84°、左右+10/+50µs及上轮三项成果保持。
+
+### 已实现的动作与接口
+
+- 仍TYPE0x18/opcode9/RANGE bit6，新增严格`aux=2、A=+50mm、B=14000`组合；红方/聚堆位沿原任务。
+  aux0/1仍只在105/120原测距流程使用，原范围/flags/参数约束不放宽；[本端合同和相同4组成对帧](contracts/f405_pre_grab_bands_20261116.json)。
+- 仅本批已进入抓前观察、开爪且140°的21/38/37接受，必须有原capture预算和真实源帧；闭爪/运输、分离后复审、无目标开局探爪不适用。
+  同task/新action/聚堆归属/源帧顺序沿原检查；下位没有绿橙目标框坐标，绿橙与“上区”由上位确认，不冒充下位独立视觉判断。
+- 接受时清旧抓前审核样本及许可，保持现有爪姿/140°。复用Motor_MoveDistanceConstant前进50mm，使用原普通/聚堆近场200mm/s请求，保留原加速、航向和轮程刹车。
+- 内部保留入口状态，执行中只将线上mode映射53且不报DONE；仅MOTOR_DISTANCE_DONE后Stop，回原21/38/37并报本task/action/opcode9的ACCEPT|DONE。
+  原轮程3mm完成公差保持，不使用aux0剩10mm提前交接；真实地面50mm仍待实测，不把控制器DONE当实尺结果。
+- 同action与原源帧重发只确认，不重置轮程或预算；新action、新图才开始下一段。执行中的AUDIT/GRAB、改参数、换源帧或抢开新段会拒绝。
+  完成阶段保持停止，普通21/38不会恢复自主爬行；真实CARGO_AUDIT仍需原两帧审核后再GRAB，聚堆真实稳定审核可沿原38→37。
+- 复用审核源帧下界：运动中收到的图即使在完成后重发、甚至更换审核action，也不能变成完成后复看样本。
+  同一规则用于下一50mm段；上位已有匹配DONE后取下一实际图的逻辑，没有新增年龄门或额外握手。
+- HOLD沿原有限段语义保留执行/完成；PAUSE暂停有限轮程并沿原暂停记账恢复；STOP/ABORT及原任务/释放/恢复生命周期结束本段。
+  更换会话时结束旧有限段并走原mode24恢复，避免清状态后落回原自主爬行；未增加普通FAULT。
+
+### 原预算与性能边界
+
+- 仍使用本批capture_forward_used_mm/200mm额度。aux2运行时按本段实际轮程增量记账，替代同段Location累计以免算两遍；之前本批已经用掉的距离不清。
+- 成功一段至少计入名义50mm（若实际测得更多则保留更多），不把原到位公差反复返还为新额度；150mm已用可接末段，151mm已用则不足下一整段。
+- 额度不够整段时接住该请求并走原capture escape/mode24，不动部分50mm、不报DONE，也不让上位在拒绝回包里无限重试。
+- 继续原capture_wait_started_ms/4000ms决策预算；无已启动预算时首次补进沿原空审核决策起算，已有预算保留。
+  接新50mm、mode53↔原审核、真实合法结果后再请求补进都不重置；人工PAUSE沿原排除暂停时间。到期走原恢复，无新每段超时。
+- 不新增ISR、协议类型、高频日志/统计、传感器年龄门、等待握手或全局速度/PID；状态/预算更新在原Task调用中完成。
+
+### 实际检查与部署
+
+- NormalRun及MotionDebug现有目标编译链接通过。
+- 临时复用原Task/mechanism夹具，3个入口×红蓝完整调用链通过：清旧审核、mode53/完成回原入口、49mm仍RUNNING不提前DONE、重复/HOLD不重走、PAUSE续行、STOP/会话替换、完成保持、新段/真审核再GRAB。
+  另覆盖错误入口/参数/源帧/聚堆位、抢发AUDIT/GRAB、运动中图重发不能充当完成后图、151/150mm剩余额度、连续4段共200mm及第5段恢复、3990/4000ms预算、有限运动失败原恢复。
+- 真实vision解析器消费上位红蓝×普通/聚堆4组配对帧通过；8组非法aux/距离/角度拒绝，aux0/1×105/120兼容通过。
+  本地Python原合同测试新增aux2覆盖通过；上轮aux1幂等、mode48证据保留及STAGE/ALIGN相机相关原夹具回归通过。
+- 临时夹具已经恢复，没有向仓库或对端新增独立测试程序；只扩原协议测试。原Task空白和WheelCheck/IDE/工具独立改动保留、不夹入提交。
+
+本轮未连接串口/SWD、烧录、启动设备或读actual。构建Git基线为81a3557/dirty1，最终指纹见CURRENT_STATUS；不能据提交/编译称已部署。
+上位`--enable-pre-grab-advance`仍默认关闭，所读绿/橙分界均null。下一步先部署新版NormalRun、人工标定并保存两类横线，再重开上位启用开关。
+下位请求/完成出口/预算已在本回执说明，待对端核对及实车观察；未在此窗口修改上位文件或替对端宣称已收到。
+
 ## 2026-11-16 三项统一配套：已实现并构建，未烧录
 
 对应MATCH-STAGE-CAMERA-FLICK-20261116、MATCH-TRANSPORT-AUDIT-RECOVERY-20261116、MATCH-TOP-EDGE-RANGE-20261116。

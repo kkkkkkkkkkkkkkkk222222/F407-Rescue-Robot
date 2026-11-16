@@ -1,5 +1,16 @@
 # 当前状态：F405 烧录入口
 
+2026-11-16 MATCH-PRE-GRAB-BANDS：抓前140°有限50mm补进已配套（未烧录）。
+- 已核对RDK04467bc功能代码/合同，收尾b995f5a的相关业务blob相同；新①/③/转尾路线仅提案，不修改原100mm/step15。
+- 严格aux2/A50/B14000，只从本批开爪抓前21/38/37接受；清旧审核，原近场200mm/s有限轮程执行时mode53，真实DONE后回入口停止复看。
+  同action/源帧不重走，下一段需新action/实际图；运动中旧审核图和GRAB不能抢接，完成后仍原真实审核才合爪。aux0/1及mode48规则保持。
+- 共用本批200mm和4秒决策预算，不因段切换清零；轮程增量计账不与Location重复，成功至少计50mm；不足整段/预算到期沿原mode24恢复，不假报DONE。
+  HOLD保留有限段、PAUSE原暂停记账、STOP/任务生命周期清段；替换会话走原恢复，避免落回自主爬行。无新时间门/ISR/FAULT/独立测试程序。
+- 两固件构建、原Task夹具6种入口/红蓝链路及预算/幂等/旧帧检查、实际解析器4组合同帧和8组非法组合、原Python合同检查与上轮3项回归通过；临时夹具已恢复。
+- 本轮未开设备/烧录/动车、actual未读。build_git=81a3557/dirty1；NormalRun=`0a81b4d1f7f9c5b76f161259054feeb101a8d7a6b763488bb44bc55eceeb73f3`；MotionDebug=`97e2e897f09b787912e0764f5352ad3a7bee441a1b8e3365b371d20ae503fcdf`。
+  上位开关默认关、绿橙横线配置均null；须部署新NormalRun、人工标线保存后重开上位启用`--enable-pre-grab-advance`。
+  [详细回执](CROSS_REPO_REQUESTS.md)、[协议合同](contracts/f405_pre_grab_bands_20261116.json)。
+
 2026-11-16 对照RDK db44f14完成三项配套（已构建，未烧录）。
 - STAGE到点不提前抬120，保持140°到原运输复审/实际ALIGN；120/115及单橙直接ALIGN原入口保持。
 - 仅本轮闭爪mode48合法非空真实样本跨500ms/原复看保留，原两帧/100ms不变；原帧STABLE不年龄失效。

@@ -77,6 +77,7 @@ CMD_DISTANCE_VALID = 0x10
 CMD_CLUSTER_TARGET = 0x20
 CMD_APPROACH_RANGE = 0x40
 APPROACH_RANGE_REOBSERVE = 1
+APPROACH_RANGE_PRE_GRAB = 2
 MODE_APPROACH_RANGE_WAIT = 52
 MODE_APPROACH_RANGE_MOVE = 53
 CMD_FIRST_GREEN_BUMP = 0x20
@@ -327,9 +328,12 @@ def mission_frame(
     if command == CMD_APPROACH_TARGET:
         if flags & CMD_APPROACH_RANGE:
             permitted = CMD_VALID | CMD_RED_SIDE | CMD_CLUSTER_TARGET | CMD_APPROACH_RANGE | CMD_DISTANCE_VALID
+            ordinary = (0 <= target_x_mm <= 2500 and target_y_mm in (10500,12000) and
+                        heading_cdeg in (0, APPROACH_RANGE_REOBSERVE))
+            pre_grab = (target_x_mm == 50 and target_y_mm == 14000 and
+                        heading_cdeg == APPROACH_RANGE_PRE_GRAB)
             if (not flags & CMD_DISTANCE_VALID or flags & ~permitted or
-                    not 0 <= target_x_mm <= 2500 or target_y_mm not in (10500,12000) or
-                    heading_cdeg not in (0, APPROACH_RANGE_REOBSERVE)):
+                    not (ordinary or pre_grab)):
                 raise ValueError("invalid calibrated approach distance/pitch")
         elif flags & CMD_DISTANCE_VALID or not 0 <= target_x_mm < IMAGE_WIDTH or not 0 <= target_y_mm < IMAGE_HEIGHT:
             raise ValueError("invalid approach pixels")

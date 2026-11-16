@@ -33,6 +33,14 @@ class VisionProtocolTests(unittest.TestCase):
                 self.assertEqual(int.from_bytes(frame[10:12],"big"),aux)
         with self.assertRaises(ValueError):
             protocol.mission_frame(1,protocol.CMD_APPROACH_TARGET,flags,700,12000,2)
+        for extra in (0, protocol.CMD_RED_SIDE, protocol.CMD_CLUSTER_TARGET,
+                      protocol.CMD_RED_SIDE | protocol.CMD_CLUSTER_TARGET):
+            frame = protocol.mission_frame(1,protocol.CMD_APPROACH_TARGET,flags|extra,50,14000,2)
+            self.assertEqual(frame[6:12], bytes.fromhex("003236b00002"))
+        for distance,pitch,aux in ((0,14000,2),(49,14000,2),(51,14000,2),
+                                   (50,12000,2),(50,14000,0),(50,14000,1),(50,14000,3)):
+            with self.assertRaises(ValueError):
+                protocol.mission_frame(1,protocol.CMD_APPROACH_TARGET,flags,distance,pitch,aux)
         for distance,pitch,extra in ((2501,10500,0),(700,9000,0),(700,10500,protocol.CMD_USE_FINAL_HEADING)):
             with self.assertRaises(ValueError):
                 protocol.mission_frame(1,protocol.CMD_APPROACH_TARGET,flags|extra,distance,pitch,0)

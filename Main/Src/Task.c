@@ -288,6 +288,10 @@ static uint32_t delivery_exit_start_path_mm;
 static uint8_t delivery_exit_phase;
 static uint32_t delivery_exit_phase_ready_ms;
 static bool capture_budget_active, capture_wait_active, capture_escape_active;
+static struct {
+  bool active, moving;
+  uint32_t charged_mm, source_frame, review_frame_floor;
+} pre_grab;
 static bool capture_escape_return_center;
 static bool abandoned_batch_open_pending;
 static bool capture_return_closed;
@@ -706,6 +710,7 @@ static bool task_full_turn_reached(void)
 
 static uint8_t task_protocol_mode(void)
 {
+  if (pre_grab.moving) { return VISION_MODE_APPROACH_RANGE_MOVE; }
   if (state == TASK_ALIGN_SAFE_ZONE) {
     return safe_align_done ? 11U : 10U;
   }
@@ -1386,6 +1391,12 @@ static void task_update_match_time(uint32_t now_ms)
 
 static void task_enter(TaskState next, uint32_t now_ms)
 {
+  /* A completed cluster review may become ready without changing the batch.
+   * All other state transitions leave this finite pre-grab lifecycle. */
+  if (!(pre_grab.active && !pre_grab.moving && state == TASK_APPROACH &&
+        approach_phase == APPROACH_CLUSTER_CAPTURE && next == TASK_DISPERSE_READY)) {
+    memset(&pre_grab, 0, sizeof(pre_grab));
+  }
   TaskDiag_Event("STATE", state, next, task_status.fault,
       accepted_context.task_id, accepted_context.action_id, now_ms - state_started_ms);
   if (state == TASK_FACE_FIELD_CENTER && next == TASK_SEARCH &&
@@ -1707,6 +1718,7 @@ static void task_initialize(uint32_t now_ms)
   status_sent_ms = now_ms - APP_TASK_STATUS_PERIOD_MS;
   delivery_exit_phase = 0U;
   capture_budget_active = capture_wait_active = capture_escape_active = false;
+  memset(&pre_grab, 0, sizeof(pre_grab));
   opening_claw_probe_active = false;
   first_green_core_conflict = false;
   abandoned_batch_open_pending = false;
@@ -2506,6 +2518,17 @@ static void task_capture_budget_sample(void)
 {
   if (!capture_budget_active) return;
   const LocationPose pose = Location_GetPose();
+  if (pre_grab.moving) {
+    /* Charge the same batch from this finite leg's measured wheels. Do not
+     * also add Location path for the same movement, including during PAUSE. */
+    const uint32_t used = (uint32_t)(fmaxf(0.0f, Motor_GetDistanceTravelledMm()) + 0.5f);
+    if (used > pre_grab.charged_mm) {
+      capture_forward_used_mm += used - pre_grab.charged_mm;
+      pre_grab.charged_mm = used;
+    }
+    if (pose.valid) { capture_budget_pose = pose; }
+    return;
+  }
   if (!pose.valid) return;
   if (capture_budget_pose.valid &&
       (state == TASK_APPROACH || state == TASK_GRAB_OBSERVE)) {
@@ -2644,6 +2667,7 @@ static void task_process_capture_escape(uint32_t now_ms)
  * retained side; the MCU never guesses an easy separation from a count. */
 static bool task_capture_observe(uint32_t now_ms)
 {
+  if (pre_grab.moving) { return true; }
   const bool limit = capture_budget_active &&
       capture_forward_used_mm >= APP_CAPTURE_FORWARD_BUDGET_MM;
   const bool initial_capture = !cargo_recheck_pending && separation_total_attempts == 0U &&
@@ -2697,7 +2721,7 @@ static bool task_capture_observe(uint32_t now_ms)
   }
   if (audit_received && audit_valid) {
     /* Legal cargo waits for GRAB; no autonomous grab or further pushing. */
-    capture_wait_active = false;
+    if (!pre_grab.active) { capture_wait_active = false; }
     return !(state == TASK_APPROACH && approach_phase == APPROACH_CLUSTER_CAPTURE);
   }
   if (!audit_received && separation_total_attempts >= APP_SEPARATION_MAX_ATTEMPTS) {
@@ -2723,6 +2747,68 @@ static bool task_capture_observe(uint32_t now_ms)
   }
   return !(audit_received && state == TASK_APPROACH &&
            approach_phase == APPROACH_CLUSTER_CAPTURE);
+}
+
+static bool task_pre_grab_entry(void)
+{
+  return complete_flow_active && !task_status.gripper_closed &&
+      !cargo_recheck_pending && !opening_claw_probe_active &&
+      separation_total_attempts == 0U && capture_budget_active &&
+      Camera_GetAngle() == APP_GRAB_VIEW_ANGLE && task_status.claw_visible &&
+      (state == TASK_GRAB_OBSERVE || state == TASK_DISPERSE_READY ||
+       (state == TASK_APPROACH && approach_phase == APPROACH_CLUSTER_CAPTURE));
+}
+
+static void task_begin_pre_grab(const VisionMissionCommand *command, uint32_t now_ms)
+{
+  task_capture_budget_sample();
+  task_clear_audit_result();
+  if (!capture_wait_active) {
+    capture_wait_active = true;
+    capture_wait_started_ms = now_ms;
+  }
+  if (capture_forward_used_mm > APP_CAPTURE_FORWARD_BUDGET_MM - VISION_PRE_GRAB_ADVANCE_MM ||
+      now_ms - capture_wait_started_ms >= APP_CAPTURE_DECISION_WAIT_MS) {
+    task_begin_capture_escape(now_ms);
+    return;
+  }
+  Motor_Stop();
+  pre_grab.active = pre_grab.moving = true;
+  pre_grab.charged_mm = 0U;
+  pre_grab.source_frame = command->vision_frame;
+  pre_grab.review_frame_floor = command->vision_frame;
+}
+
+static void task_process_pre_grab(uint32_t now_ms)
+{
+  /* Use the original batch decision deadline, not a new per-50mm timer. */
+  if (now_ms - capture_wait_started_ms >= APP_CAPTURE_DECISION_WAIT_MS) {
+    task_begin_capture_escape(now_ms);
+    return;
+  }
+  Motor_ResumeFiniteMotion();
+  const MotorDistanceStatus result = Motor_MoveDistanceConstant(
+      VISION_PRE_GRAB_ADVANCE_MM * 0.001f, cluster_target_active ?
+      APP_DISPERSE_CAPTURE_SPEED_MM_S : APP_GRAB_WATCH_CRAWL_SPEED_MM_S);
+  task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
+  task_capture_budget_sample();
+  if (result == MOTOR_DISTANCE_DONE) {
+    /* Reserve the nominal leg even when the existing distance tolerance is
+     * used, so repeated 50mm commands cannot reclaim that tolerance as budget. */
+    if (pre_grab.charged_mm < VISION_PRE_GRAB_ADVANCE_MM) {
+      capture_forward_used_mm += VISION_PRE_GRAB_ADVANCE_MM - pre_grab.charged_mm;
+    }
+    Motor_Stop();
+    task_status.motors_active = false;
+    pre_grab.moving = false;
+    task_clear_audit_result();
+    audit_frame_floor = pre_grab.review_frame_floor;
+    audit_frame_floor_valid = true;
+    accepted_context.completed = true;
+  } else if (distance_failed(result) ||
+             capture_forward_used_mm >= APP_CAPTURE_FORWARD_BUDGET_MM) {
+    task_begin_capture_escape(now_ms);
+  }
 }
 
 static bool task_prepare_separation(int8_t keep_side, uint32_t now_ms)
@@ -2926,6 +3012,11 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
         if (audit_received) { task_enter(TASK_DISPERSE_READY, now_ms); }
         return;
       }
+      if (pre_grab.active) {
+        Motor_Stop();
+        task_status.motors_active = false;
+        return;
+      }
       {
         LocationPose pose;
         if (!task_get_location_pose(&pose, now_ms)) {
@@ -3053,7 +3144,7 @@ static void task_process_grab_observe(const VisionData *vision,
      * pickup, however, CLAW_VISIBLE means "start inspecting", not "cargo is
      * already inside".  Crawl straight until the upper computer confirms a
      * stable non-empty claw audit, then stop before it sends GRAB. */
-    if (cargo_recheck_pending || sampled_nonempty_audit) {
+    if (pre_grab.active || cargo_recheck_pending || sampled_nonempty_audit) {
       Motor_Stop();
       task_status.motors_active = false;
       return;
@@ -4815,7 +4906,7 @@ static void task_pause_runtime(uint32_t now_ms)
     task_status.motors_active = false;
     return;
   }
-  if (state == TASK_APPROACH && approach_phase == APPROACH_RANGE_MOVE) {
+  if (pre_grab.moving || (state == TASK_APPROACH && approach_phase == APPROACH_RANGE_MOVE)) {
     Motor_PauseFiniteMotion();
     task_status.motors_active = false;
     return;
@@ -6245,7 +6336,7 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
       approach_hold_pending = true;
       approach_hold_started_ms = now_ms;
     }
-    if (task_delivery_is_finishing() ||
+    if (pre_grab.moving || task_delivery_is_finishing() ||
         (state == TASK_APPROACH && task_approach_runs_without_target()) ||
         (state == TASK_BOUNDARY_RECOVER) ||
         ((state == TASK_APPROACH_RECOVER) && capture_escape_active) ||
@@ -6465,6 +6556,13 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
     }
   } else if (command->command == VISION_CMD_APPROACH_TARGET &&
              (command->flags & VISION_CMD_APPROACH_RANGE) != 0U) {
+    if (command->heading_cdeg == VISION_APPROACH_RANGE_PRE_GRAB) {
+      task_begin_pre_grab(command, now_ms);
+      task_status.acknowledged_sequence = command->sequence;
+      command_accepted = true;
+      mission_paused = false;
+      return;
+    }
     if (state != TASK_APPROACH) { return; }
     if (approach_phase == APPROACH_RANGE_WAIT) {
       approach_range_mm = (uint16_t)command->target_x_mm;
@@ -6973,6 +7071,7 @@ static bool task_context_complete(void)
   if (!accepted_context.valid || accepted_context.cancelled) { return false; }
   switch (accepted_context.opcode) {
     case VISION_CMD_APPROACH_TARGET:
+      if (pre_grab.active) { return !pre_grab.moving; }
       return state == TASK_GRAB_OBSERVE || state == TASK_SAFE_SWEEP_AUDIT ||
              state == TASK_SAFE_SWEEP_RETRIEVE_AUDIT ||
              (state == TASK_APPROACH && approach_phase == APPROACH_CLUSTER_CAPTURE);
@@ -7040,6 +7139,11 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     TaskDiag_Event("SESSION", context_session_generation, vision->session_generation,
                    state, accepted_context.task_id, accepted_context.action_id, 0);
     context_session_generation = vision->session_generation;
+    if (pre_grab.active) {
+      /* A replacement session cannot inherit this session's finite stroke
+       * or fall through into the original autonomous near-field crawl. */
+      task_enter(TASK_APPROACH_RECOVER, now_ms);
+    }
     accepted_context = (TaskContext){0};
     active_mission = (VisionMissionCommand){0};
     memset(&delivery, 0, sizeof(delivery));
@@ -7133,6 +7237,8 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
       (incoming.flags ^ accepted_context.flags) == VISION_CMD_REUSE_POST_GRAB_AUDIT;
   const bool range_request = incoming.command == VISION_CMD_APPROACH_TARGET &&
       (incoming.flags & VISION_CMD_APPROACH_RANGE) != 0U;
+  const bool pre_grab_request = range_request &&
+      incoming.heading_cdeg == VISION_APPROACH_RANGE_PRE_GRAB;
   const bool live_bulldozer = incoming.command == VISION_CMD_BULLDOZER_STEP &&
       task_bulldozer_live_step(VISION_BULLDOZER_STEP(incoming.flags));
   reject_stage = 4U;
@@ -7191,7 +7297,9 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
       (new_target || !accepted_context.visual_valid ||
        task_serial32_newer(incoming.vision_frame, accepted_context.vision_frame));
   if (incoming.command == VISION_CMD_CARGO_AUDIT && !new_target &&
-      audit_frame_floor_valid && !task_serial32_newer(incoming.vision_frame, audit_frame_floor)) {
+      ((audit_frame_floor_valid && !task_serial32_newer(incoming.vision_frame, audit_frame_floor)) ||
+       (pre_grab.active && !task_serial32_newer(incoming.vision_frame,
+                                               pre_grab.review_frame_floor)))) {
     command_visual_new = false;
   }
 
@@ -7212,7 +7320,31 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
         accepted_context.opcode == VISION_CMD_STOP && delivery.finish == DELIVERY_FINISH_NONE)) {
     goto rejected;
   }
-  if (range_request) {
+  if (pre_grab.moving && !new_target && visual &&
+      task_serial32_newer(incoming.vision_frame, pre_grab.review_frame_floor)) {
+    /* A picture seen during this stroke is not its completion recheck,
+     * even when its premature AUDIT/next-stroke command is rejected below. */
+    pre_grab.review_frame_floor = incoming.vision_frame;
+  }
+  if (pre_grab.moving && !overlay && incoming.command != VISION_CMD_STOP &&
+      !pre_grab_request) goto rejected;
+  if (pre_grab.active && incoming.command == VISION_CMD_APPROACH_TARGET &&
+      !pre_grab_request) goto rejected;
+  if (pre_grab_request) {
+    const uint8_t permitted = VISION_CMD_VALID | VISION_CMD_RED_SIDE |
+        VISION_CMD_CLUSTER_TARGET | VISION_CMD_APPROACH_RANGE | VISION_CMD_DISTANCE_VALID;
+    if (new_target || !task_pre_grab_entry() || !task_side_flag_valid(incoming.flags) ||
+        (incoming.flags & VISION_CMD_DISTANCE_VALID) == 0U ||
+        (incoming.flags & (uint8_t)~permitted) != 0U ||
+        incoming.target_x_mm != VISION_PRE_GRAB_ADVANCE_MM ||
+        incoming.target_y_mm != APP_GRAB_VIEW_ANGLE * 100 || incoming.vision_frame == 0U ||
+        (((incoming.flags & VISION_CMD_CLUSTER_TARGET) != 0U) != cluster_target_active)) goto rejected;
+    if (new_action) {
+      if (pre_grab.moving || !command_visual_new ||
+          (pre_grab.active && !task_serial32_newer(incoming.vision_frame,
+                                                  pre_grab.review_frame_floor))) goto rejected;
+    } else if (!pre_grab.active || incoming.vision_frame != pre_grab.source_frame) goto rejected;
+  } else if (range_request) {
     if (new_target || state != TASK_APPROACH ||
         (incoming.flags & VISION_CMD_DISTANCE_VALID) == 0U ||
         incoming.target_x_mm < 0 || incoming.target_x_mm > APP_APPROACH_RANGE_MAX_MM ||
@@ -7262,7 +7394,11 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
   }
   command_accepted = false;
   reject_stage = 9U;
-  if (!new_action && range_request && accepted_context.completed &&
+  if (!new_action && pre_grab_request) {
+    task_status.acknowledged_sequence = incoming.sequence;
+    command_accepted = true;
+    mission_paused = false;
+  } else if (!new_action && range_request && accepted_context.completed &&
       approach_range_reobserve && approach_phase == APPROACH_RANGE_WAIT) {
     task_status.acknowledged_sequence = incoming.sequence;
     command_accepted = true;
@@ -7296,6 +7432,7 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     memset(&delivery, 0, sizeof(delivery));
     nav_reuse_post_grab_audit = false;
     capture_budget_active = capture_wait_active = false;
+    memset(&pre_grab, 0, sizeof(pre_grab));
     separation_total_attempts = 0U;
     safe_enter_resume_mm = safe_enter_resume_push_ms = 0U;
     Claw_SetSeparationHold(0U);
@@ -7663,6 +7800,11 @@ void Task_Process(uint32_t now_ms)
       (state != TASK_WAIT_CONFIG) && (state != TASK_START) &&
       (state != TASK_OPEN_CLAW)) {
     task_pause_runtime(now_ms);
+    task_publish_status(now_ms);
+    return;
+  }
+  if (pre_grab.moving) {
+    task_process_pre_grab(now_ms);
     task_publish_status(now_ms);
     return;
   }

@@ -119,10 +119,13 @@
 /* STAGE NAV bit5 requests reuse of the task's real post-grab single-injury audit. */
 #define VISION_CMD_REUSE_POST_GRAB_AUDIT 0x20U
 /* APPROACH bit6 + DISTANCE_VALID: P2/P3=latched travel mm,
- * P4/P5=fixed measuring pitch cdeg (10500/12000), P6/P7=finish aux(0/1). */
+ * P4/P5=fixed pitch cdeg, P6/P7=aux: 0/1 use10500/12000;
+ * aux2 is strictly +50mm at14000, open-claw pre-grab only. */
 #define VISION_CMD_APPROACH_RANGE     0x40U
 /* APPROACH_RANGE aux: retain measuring pitch and return mode52/DONE. */
 #define VISION_APPROACH_RANGE_REOBSERVE 1U
+#define VISION_APPROACH_RANGE_PRE_GRAB  2U
+#define VISION_PRE_GRAB_ADVANCE_MM      50U
 #define VISION_MODE_APPROACH_RANGE_WAIT 52U
 #define VISION_MODE_APPROACH_RANGE_MOVE 53U
 /* DISPERSE_PILE bit5: first formal green only. Execute the short local
