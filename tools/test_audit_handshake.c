@@ -850,7 +850,7 @@ static void test_normalrun_navigation_handoffs_and_abort(void)
   assert(nav_follow(&route, route.command, APP_NAV_FAST_SPEED_MM_S, 100U) ==
          REMOTE_ROUTE_REACHED);
   assert(distance_command_done && !task_status.motors_active &&
-         Camera_GetAngle() == APP_SAFE_ALIGN_CAMERA_ANGLE);
+         Camera_GetAngle() == APP_GRAB_VIEW_ANGLE);
 
   task_enter(TASK_FACE_FIELD_CENTER, 120U);
   route.command = VISION_CMD_RETURN_CENTER;

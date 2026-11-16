@@ -16,6 +16,67 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## 2026-11-16 三项统一配套：已实现并构建，未烧录
+
+对应MATCH-STAGE-CAMERA-FLICK-20261116、MATCH-TRANSPORT-AUDIT-RECOVERY-20261116、MATCH-TOP-EDGE-RANGE-20261116。
+已核对RDK `db44f144ee3005ba16124044d08c40ebe0a1c330`（收尾再次读取分支仍为该SHA）：
+固定入口blob `d132e38b1b501f5efd24d169be9b4aa6ef9bbc9d`；state_machine.py `349c3bb9aa220425d3f667687b8b06ba0a25eccc`；
+protocol.py `d4337734435a27460c7813149374e92926b22dfe`；runner `16afa34d7aa09ce606d8a0cb52fa6d2a820e2708`；
+顶端测距合同 `3e938d55ce76819dce542573c14e29951339bcc9`。本端基于0277770增量修改。
+
+**接受当前三项范围。** 本端只修改Task.c、原解析器/协议宏及本地构帧工具；保留已确认的夹爪84°/+10/+50µs。
+上位暂停的橙色中线/ROI/T265/闭爪抽障/异侧挤障不纳入，不复活历史候选。
+
+### 安全区到点相机
+
+删除STAGE且D=0到达分支提前设120°的操作，只沿原Stop/到达回报，保持140°夹内视角。
+原运输复审完成后的实际ALIGN仍通过task_begin_safe_align和原接收分支选择120°或115°。
+抓后单橙合法审核复用直接ALIGN的入口也有自己的设角，不依赖NAV提前设角。
+没有修改普通RETURN/藏点/接近导航、相机全局速度或原138/142复看；上位不需新报文。
+
+### 同一次闭爪mode48审核恢复
+
+新增局部判定仅保留本轮mode48、实际闭爪、已存在非空合法样本且无首绿黑冲突的证据。
+入口/新审核action/新任务或会话、STOP、分离释放等原生命周期清理仍执行；不借抓取时的旧载荷完成新复审。
+
+- 覆盖原局部500ms证据间隔、500ms累计窗口、Task_Process全局过期，以及相机nudge/回140/settle清理。
+- 保留原两个不同真实帧、不同audit_id及最小100ms间隔；重复包不增样本、不更新时间。同原帧STABLE确认仅对上述例外免年龄失效。
+- 占位仍撤销audit_received/host_stable/valid/ready及mode48旧completed；只保留真实样本，不当空爪，不授予权限。
+  撤销后原帧STABLE不能重新放行，需原规则的新真实图；普通漏框时上位应按新代码重发原稳定payload，而非占位。
+- 新真实类别/数量/语义变化第一帧就撤旧完成、重新累计；合法材料按类别数量比较，不把两黑和一绿一黑混为同一批。
+  同一绿黑组合从单侧MIXED变成两侧分开不算矛盾；左右侧抖动也不重新起算。危险/未知/空/首绿黑冲突不能借保留例外恢复资格。
+- 相机非140°或原settle未完成不收新样本；原总审核超时、抓后mode23及其他审核范围保持。
+
+代价/边界：本轮闭爪合法样本可存活超过500ms，但不是无图制造载荷；上位真实矛盾时必须撤旧STABLE。
+已核对db44f14对capture_cargo新增类别/数量及遮挡混装的处理，其占位会立即撤销本端旧许可。
+
+### 顶端远目标分段接近
+
+0x18/opcode9原RANGE bit6的aux扩为0/1；vision.c真实解析器、Task校验、vision.h和tools/vision_protocol.py同步。
+aux0保留原有限段及原末端余量交接、转140°补进/审核；aux1沿同Motor_MoveDistanceLinear，必须返回MOTOR_DISTANCE_DONE才Stop，
+保持本段105/120°、回mode52，锁定本task/action/opcode9的ACCEPT|DONE；不会假报21或进入抓取。
+
+mode52收到已完成aux1的同action和相同D/pitch/aux，仅确认完成，不再启动轮程，也不重置等待期限；HOLD保留完成。
+执行中或完成后同动作改变参数会拒绝；新action仍须原新图/测距入口，才锁下一段距离。aux>1拒绝，原flags/距离/角度/任务顺序保持。
+aux1不使用aux0原近端余量的提前交接，避免上位以为本段已经实际走完。原RANGE_WAIT等待/恢复照常，无新超时、循环次数、握手或FAULT。
+[本端合同及与上位相同的4组红蓝配对帧](contracts/f405_top_edge_range_20261116.json)。上位只在框贴顶且原标定最上档选aux1；完整框aux0由上位决定。
+
+### 实际检查与部署边界
+
+- NormalRun/MotionDebug两个现有固件目标编译链接通过。
+- 复用原Task/mechanism主机夹具直接调用：红蓝×普通/聚堆×105/120共8组合，真实完成/余量边界、执行/完成重发、HOLD、下一段、aux0、错参数/旧action拒绝均通过。
+- 同一夹具检查mode48漏框/全局过期/138复看/回140保留，重复帧/100ms、原帧STABLE、占位撤销、新action/入口/STOP/首绿黑冲突，合法换类和MIXED侧别变动；通过。
+- STAGE重复D0保持140、红蓝ALIGN120/115及单橙直接复用入口通过；原FLOW范围/审核/分离回归通过。
+- 原vision解析器实际消费上位合同4组上下文+命令帧通过，aux2/3拒绝；本地Python原测距合同检查通过，CRC/字段与上位一致。
+- 原STAGE/RETURN/ABORT导航检查另有既存断言仍期望200mm/s，当前源码末端下限已为250mm/s；改前Task亦复现同一失败。
+  仅临时对齐该旧断言后，本次相机/RETURN/ABORT检查通过；已恢复200断言，不将整个旧导航套件宣称为原样全通过，不改本轮无关速度参数。
+- 没有新增独立测试程序到仓库。临时夹具已恢复，仅更新原到达相机断言及原协议测试aux0/1与非法值覆盖。
+
+本轮没有打开串口/SWD、烧录、启动车轮或重启上位；真实场景恢复、相机运动和分段距离仍待实车。
+**必须先部署本次新NormalRun并核对身份，再在RDK启用`--enable-top-edge-range-reobserve`；目前保持默认关闭。**
+提交/构建不等于actual，本端也不冒充上位已读回执。原Task空白、WheelCheck试验、IDE及工具独立改动保留，未夹入本次提交。
+构建的Git基线0277770/dirty1，最终指纹见CURRENT_STATUS；本轮actual未读取。
+
 ## MATCH-PREWARM-FEEDBACK-20261116：下位警报v2已实现，上位配套与部署待完成
 
 已读取RDK `4609ca1d81c368bd482ba02515a7d7c7a8c4f49d`固定入口blob`6300786d9ee962f16597ee017b5db0a002c08e24`，

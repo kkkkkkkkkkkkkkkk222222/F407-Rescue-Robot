@@ -299,7 +299,8 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
       const uint8_t permitted = VISION_CMD_VALID | VISION_CMD_RED_SIDE |
           VISION_CMD_CLUSTER_TARGET | VISION_CMD_APPROACH_RANGE | VISION_CMD_DISTANCE_VALID;
       if ((flags & VISION_CMD_DISTANCE_VALID) == 0U || (flags & (uint8_t)~permitted) != 0U ||
-          arg_a < 0 || arg_a > (int16_t)APP_APPROACH_RANGE_MAX_MM || heading != 0U ||
+          arg_a < 0 || arg_a > (int16_t)APP_APPROACH_RANGE_MAX_MM ||
+          heading > VISION_APPROACH_RANGE_REOBSERVE ||
           (arg_b != APP_SEARCH_LOW_CAMERA_ANGLE * 100 &&
            arg_b != APP_SEARCH_HIGH_CAMERA_ANGLE * 100)) goto rejected_payload;
     } else if ((flags & VISION_CMD_DISTANCE_VALID) != 0U ||

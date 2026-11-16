@@ -26,9 +26,13 @@ class VisionProtocolTests(unittest.TestCase):
     def test_calibrated_approach_distance_contract(self) -> None:
         flags = protocol.CMD_VALID | protocol.CMD_DISTANCE_VALID | protocol.CMD_APPROACH_RANGE
         for pitch in (10500,12000):
-            frame = protocol.mission_frame(1,protocol.CMD_APPROACH_TARGET,flags,700,pitch,0)
-            self.assertEqual(int.from_bytes(frame[6:8],"big"),700)
-            self.assertEqual(int.from_bytes(frame[8:10],"big"),pitch)
+            for aux in (0, protocol.APPROACH_RANGE_REOBSERVE):
+                frame = protocol.mission_frame(1,protocol.CMD_APPROACH_TARGET,flags,700,pitch,aux)
+                self.assertEqual(int.from_bytes(frame[6:8],"big"),700)
+                self.assertEqual(int.from_bytes(frame[8:10],"big"),pitch)
+                self.assertEqual(int.from_bytes(frame[10:12],"big"),aux)
+        with self.assertRaises(ValueError):
+            protocol.mission_frame(1,protocol.CMD_APPROACH_TARGET,flags,700,12000,2)
         for distance,pitch,extra in ((2501,10500,0),(700,9000,0),(700,10500,protocol.CMD_USE_FINAL_HEADING)):
             with self.assertRaises(ValueError):
                 protocol.mission_frame(1,protocol.CMD_APPROACH_TARGET,flags|extra,distance,pitch,0)
