@@ -588,6 +588,23 @@ static bool wheel_parse_args(const char *cursor, int32_t args[3], uint8_t *count
   return true;
 }
 
+#if APP_BOARD_F405_ROBO
+static void wheel_report_filter(void)
+{
+  static const char *const phases[] = {
+      "IDLE", "PENDING", "WAIT_85", "BACK_50", "BACK_STOP", "LIFT",
+      "TURN_CCW_90", "DONE", "STOPPED", "FAULT"};
+  const DebugFilterStatus f = Debug_GetFilterStatus();
+  char text[144];
+  (void)snprintf(text, sizeof(text),
+      "FILTER VALID=%u ACTIVE=%u SEQ=%u PHASE=%s LIFT_DEG=%u BACK_MM=50 TURN_CCW_DEG=90\r\n",
+      f.valid, f.active, f.sequence,
+      (unsigned)f.phase < sizeof(phases) / sizeof(phases[0]) ? phases[f.phase] : "INVALID",
+      f.lift_angle);
+  wheel_send(text);
+}
+#endif
+
 static void wheel_submit_motion(uint8_t opcode, int16_t arg1, int16_t arg2,
                                 uint16_t speed)
 {
@@ -705,6 +722,11 @@ static void wheel_execute(void)
     if (count > 1U || (count == 1U && (args[0] < 1 || args[0] > 4))) {
       wheel_send("ERR SOFF: OPTIONAL ID 1..4\r\n"); return;
     }
+    const DebugFilterStatus filter = Debug_GetFilterStatus();
+    if ((count == 0U || args[0] == 1) &&
+        (filter.active || filter.phase == DEBUG_FILTER_PENDING)) {
+      (void)Debug_SubmitConsoleCommand(VISION_MOTION_CMD_STOP, 0, 0, 0, NULL);
+    }
     BoardF405_ServoTestOff(count == 0U ? 0U : (uint8_t)args[0]);
     wheel_send("SERVO PWM OFF\r\n"); return;
   }
@@ -760,6 +782,34 @@ static void wheel_execute(void)
     wheel_send(text);
     return;
   }
+#if APP_BOARD_F405_ROBO
+  if (strcmp(command, "FILTER") == 0) {
+    const int32_t angle = count == 0U ? APP_DEBUG_FILTER_LIFT_ANGLE : args[0];
+    if (count > 1U || angle < APP_LIFT_START_ANGLE || angle > APP_LIFT_TRAVEL_ANGLE) {
+      wheel_send("ERR FILTER: [LIFT_DEG 61..85], DEFAULT 75\r\n"); return;
+    }
+    if (rx_recovery_pending || rx_overflow || cancel_requested || sequence_active) {
+      wheel_send("BUSY: WAIT CONSOLE/WHEELS READY\r\n"); return;
+    }
+    uint8_t sequence;
+    const DebugConsoleResult result = Debug_SubmitConsoleFilter((uint8_t)angle, &sequence);
+    if (result != DEBUG_CONSOLE_ACCEPTED) {
+      wheel_send(result == DEBUG_CONSOLE_BUSY ? "BUSY: MOTION ACTIVE; STOP FIRST\r\n" :
+                                                "ERR FILTER ARGUMENT\r\n"); return;
+    }
+    motion_tracking = true;
+    post_motion_trace = false;
+    tracked_sequence = sequence;
+    motion_start_yaw_mdeg = IMU_GetData().yaw_mdeg;
+    last_motion_report_ms = HAL_GetTick() - 250U;
+    wheel_send("FILTER ACCEPT: S1=85 -> BACK50 -> LIFT -> CCW90; HOLD FINAL POSE\r\n");
+    wheel_report_filter();
+    return;
+  }
+  if (strcmp(command, "FILTERSTAT") == 0 && count == 0U) {
+    wheel_report_filter(); return;
+  }
+#endif
   if (strcmp(command, "CIRCLES") == 0) {
     const int32_t rate = (count == 2U) ? args[1] : 60;
     if (((count != 1U) && (count != 2U)) || (args[0] == 0) ||
@@ -847,6 +897,9 @@ static void wheel_execute(void)
                "SERVO 1=LIFT 2=RIGHT_CLAW 3=CAMERA 4=LEFT_CLAW; NO AUTO SWEEP\r\n");
 #endif
     wheel_report_state("STATUS");
+#if APP_BOARD_F405_ROBO
+    wheel_report_filter();
+#endif
     wheel_report_motors();
     return;
   }
@@ -862,6 +915,10 @@ static void wheel_execute(void)
     wheel_report_version();
 #if APP_BOARD_F405_ROBO
     wheel_send("MLOG 1/0: COMPACT 100ms DRIVE LOG, NO MOTION, CONTINUES AFTER STOP\r\n");
+#endif
+#if APP_BOARD_F405_ROBO
+    wheel_send("FILTER [lift_deg=75]: S1=85, BACK50mm, LIFT61..85, CCW90deg; FILTERSTAT\r\n"
+               "FILTER HOLDS FINAL POSE; STOP CANCELS NEXT STEPS; NO AUTO START\r\n");
 #endif
     wheel_send("DIAG CRASH TRACE 0/1; MOTION TRACE + 2s POST-STOP; NO AUTO MOTION\r\n");
     wheel_send("TURN deg [deg/s=30]; MOVE mm [mm/s=150]\r\n"

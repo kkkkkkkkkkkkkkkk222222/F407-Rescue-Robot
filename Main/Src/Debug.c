@@ -10,6 +10,7 @@
 #include "motor.h"
 #include "vision.h"
 #include "WheelCheck.h"
+#include "mechanism.h"
 
 #if APP_ENABLE_MOTION_DEBUG_TASK && \
     ((VISION_MSG_MOTION_COMMAND != 0x19U) || \
@@ -36,6 +37,9 @@ static struct {
 #if APP_ENABLE_MOTION_DEBUG_TASK
   int8_t circle_count;
   int64_t circle_anchor_raw_mdeg;
+#if APP_BOARD_F405_ROBO
+  uint8_t filter_lift_angle;
+#endif
 #endif
 } console_request;
 static bool command_sequence_valid;
@@ -61,6 +65,18 @@ static uint32_t circles_start_ms;
 static uint32_t circles_dwell_start_ms;
 static uint32_t circles_still_start_ms;
 static bool circles_still;
+#if APP_BOARD_F405_ROBO
+static DebugFilterStatus filter_test;
+static uint32_t filter_step_ms, filter_lift_wait_ms;
+
+static void debug_cancel_filter(void)
+{
+  if (filter_test.active || filter_test.phase == DEBUG_FILTER_PENDING) {
+    filter_test.active = false;
+    filter_test.phase = DEBUG_FILTER_STOPPED;
+  }
+}
+#endif
 #endif
 
 static uint32_t debug_enter_critical(void)
@@ -185,6 +201,13 @@ static void debug_finish(DebugMotionState state, DebugMotionFault fault,
   active = false;
 #if APP_ENABLE_MOTION_DEBUG_TASK
   debug_cancel_circles();
+#if APP_BOARD_F405_ROBO
+  if (filter_test.active) {
+    filter_test.active = false;
+    filter_test.phase = state == DEBUG_MOTION_DONE ? DEBUG_FILTER_DONE :
+        state == DEBUG_MOTION_FAULT ? DEBUG_FILTER_FAULT : DEBUG_FILTER_STOPPED;
+  }
+#endif
 #endif
   debug_status.state = state;
   debug_status.fault = fault;
@@ -210,6 +233,9 @@ static void debug_start_command(const VisionData *vision, uint32_t now_ms,
 {
 #if APP_ENABLE_MOTION_DEBUG_TASK
   debug_cancel_circles();
+#if APP_BOARD_F405_ROBO
+  debug_cancel_filter();
+#endif
   if ((vision->motion_opcode != VISION_MOTION_CMD_STOP) &&
       (vision->motion_opcode != VISION_MOTION_CMD_HOLD)) {
     memset(&circles, 0, sizeof(circles));
@@ -542,6 +568,86 @@ static void debug_update_move(uint32_t now_ms)
   (void)Motor_MoveAngle(speed_mm_s, body_angle_deg);
 }
 
+#if APP_ENABLE_MOTION_DEBUG_TASK && APP_BOARD_F405_ROBO
+static void debug_start_filter(uint8_t lift_angle, uint32_t now_ms)
+{
+  filter_test = (DebugFilterStatus){.valid = true, .active = true,
+      .sequence = debug_status.command_sequence, .lift_angle = lift_angle,
+      .phase = DEBUG_FILTER_WAIT_85};
+  filter_step_ms = now_ms;
+  filter_lift_wait_ms = Lift_PositionWaitMs(APP_LIFT_TRAVEL_ANGLE);
+  /* MotionDebug keeps all servo PWM off at boot. Enable only the lift here;
+   * the operator's left/right claw and camera settings remain untouched. */
+  BoardF405_ServoTestSet(1U, APP_LIFT_TRAVEL_ANGLE);
+}
+
+static void debug_update_filter(uint32_t now_ms)
+{
+  switch (filter_test.phase) {
+    case DEBUG_FILTER_WAIT_85:
+      if (now_ms - filter_step_ms >= filter_lift_wait_ms && !Motor_IsBraking()) {
+        filter_test.phase = DEBUG_FILTER_BACK;
+        active_start_ms = now_ms;
+        active_timeout_ms = debug_move_timeout(APP_DEBUG_FILTER_BACK_MM,
+                                               APP_DEBUG_FILTER_BACK_SPEED_MM_S);
+      }
+      return;
+    case DEBUG_FILTER_BACK: {
+      /* Match the existing MOVE path's odometry requirement. */
+      if (!Location_GetPose().valid) {
+        debug_finish(DEBUG_MOTION_FAULT, DEBUG_MOTION_FAULT_ODOM, now_ms);
+        return;
+      }
+      const MotorDistanceStatus result = Motor_MoveDistance(
+          -(float)APP_DEBUG_FILTER_BACK_MM * 0.001f, APP_DEBUG_FILTER_BACK_SPEED_MM_S);
+      const float progress = fminf(APP_DEBUG_FILTER_BACK_MM,
+          fmaxf(0.0f, Motor_GetDistanceTravelledMm()));
+      debug_status.progress = -(int16_t)progress;
+      debug_status.remaining = debug_saturate_u16(APP_DEBUG_FILTER_BACK_MM - progress);
+      if (result == MOTOR_DISTANCE_DONE) {
+        Motor_Stop();
+        debug_status.progress = -(int16_t)APP_DEBUG_FILTER_BACK_MM;
+        debug_status.remaining = 0U;
+        filter_test.phase = DEBUG_FILTER_BACK_STOP;
+      } else if (result == MOTOR_DISTANCE_FAULT) {
+        debug_finish(DEBUG_MOTION_FAULT, DEBUG_MOTION_FAULT_MOTOR, now_ms);
+      } else if (result != MOTOR_DISTANCE_RUNNING) {
+        debug_finish(DEBUG_MOTION_FAULT, DEBUG_MOTION_FAULT_INVALID, now_ms);
+      } else if (now_ms - active_start_ms >= active_timeout_ms) {
+        debug_finish(DEBUG_MOTION_FAULT, DEBUG_MOTION_FAULT_TIMEOUT, now_ms);
+      }
+      return;
+    }
+    case DEBUG_FILTER_BACK_STOP:
+      if (Motor_IsBraking()) { return; }
+      filter_lift_wait_ms = Lift_PositionWaitMs(filter_test.lift_angle);
+      BoardF405_ServoTestSet(1U, filter_test.lift_angle);
+      filter_step_ms = now_ms;
+      filter_test.phase = DEBUG_FILTER_LIFT;
+      return;
+    case DEBUG_FILTER_LIFT:
+      if (now_ms - filter_step_ms < filter_lift_wait_ms) { return; }
+      /* Motor TURN uses drive-yaw polarity; the bench turn is field CCW. */
+      active_turn_angle_deg = 90.0f * APP_OMNI_FIELD_YAW_TO_DRIVE_SIGN;
+      active_turn_speed_mm_s = APP_DEBUG_FILTER_TURN_RATE_DPS *
+          DEBUG_DEG_RAD * APP_MOTION_DEBUG_TURN_RADIUS_MM;
+      active_command = debug_status.command = VISION_MOTION_CMD_TURN_REL;
+      active_start_ms = now_ms;
+      active_timeout_ms = APP_MOTOR_TURN_TIMEOUT_MS;
+      debug_status.progress = 0;
+      debug_status.remaining = 900U;
+      filter_test.phase = DEBUG_FILTER_TURN;
+      return;
+    case DEBUG_FILTER_TURN:
+      debug_update_turn(now_ms);
+      return;
+    default:
+      debug_finish(DEBUG_MOTION_FAULT, DEBUG_MOTION_FAULT_INVALID, now_ms);
+      return;
+  }
+}
+#endif
+
 void Debug_Init(uint32_t now_ms)
 {
   const uint32_t primask = debug_enter_critical();
@@ -581,6 +687,10 @@ void Debug_Init(uint32_t now_ms)
   memset(&circles, 0, sizeof(circles));
   console_request.circle_count = 0;
   circles_still = false;
+#if APP_BOARD_F405_ROBO
+  memset(&filter_test, 0, sizeof(filter_test));
+  console_request.filter_lift_angle = 0U;
+#endif
 #endif
 
   /* Mapping starts at the actual three-wheel rotation centre. */
@@ -628,6 +738,9 @@ void Debug_Process(uint32_t now_ms)
 #if APP_ENABLE_MOTION_DEBUG_TASK
     const int8_t count = console_request.circle_count;
     const int64_t anchor = console_request.circle_anchor_raw_mdeg;
+#if APP_BOARD_F405_ROBO
+    const uint8_t filter_angle = console_request.filter_lift_angle;
+#endif
 #endif
     console_pending = false;
     debug_start_command(&vision, now_ms, DEBUG_SOURCE_CONSOLE);
@@ -636,12 +749,22 @@ void Debug_Process(uint32_t now_ms)
         (active_command == VISION_MOTION_CMD_TURN_REL)) {
       debug_start_circles(count, anchor, now_ms);
     }
+#if APP_BOARD_F405_ROBO
+    if (filter_angle != 0U) {
+      if (active) { debug_start_filter(filter_angle, now_ms); }
+      else { filter_test.phase = DEBUG_FILTER_FAULT; }
+    }
+#endif
 #endif
   }
 
   if (active) {
     if (debug_motor_fault()) {
       debug_finish(DEBUG_MOTION_FAULT, DEBUG_MOTION_FAULT_MOTOR, now_ms);
+#if APP_ENABLE_MOTION_DEBUG_TASK && APP_BOARD_F405_ROBO
+    } else if (filter_test.active) {
+      debug_update_filter(now_ms);
+#endif
     } else if (active_command == VISION_MOTION_CMD_TURN_REL) {
       debug_update_turn(now_ms);
     } else if ((active_command == VISION_MOTION_CMD_MOVE_BODY) ||
@@ -706,6 +829,9 @@ void Debug_SetWheelCheckActive(bool enabled)
   active_move_body_straight = false;
 #if APP_ENABLE_MOTION_DEBUG_TASK
   debug_cancel_circles();
+#if APP_BOARD_F405_ROBO
+  debug_cancel_filter();
+#endif
 #endif
   Motor_Stop();
   debug_status.state = DEBUG_MOTION_STOPPED;
@@ -765,6 +891,9 @@ DebugConsoleResult Debug_SubmitConsoleCommand(uint8_t opcode, int16_t arg1,
   console_request.speed = speed;
 #if APP_ENABLE_MOTION_DEBUG_TASK
   console_request.circle_count = 0;
+#if APP_BOARD_F405_ROBO
+  console_request.filter_lift_angle = 0U;
+#endif
   if (!stopping) {
     memset(&circles, 0, sizeof(circles));
   }
@@ -781,6 +910,9 @@ DebugConsoleResult Debug_SubmitConsoleCommand(uint8_t opcode, int16_t arg1,
   if (stopping) {
 #if APP_ENABLE_MOTION_DEBUG_TASK
     debug_cancel_circles();
+#if APP_BOARD_F405_ROBO
+    debug_cancel_filter();
+#endif
 #endif
 #if APP_ENABLE_MOTION_DEBUG_TASK
     if (wheel_check_active) {
@@ -796,6 +928,42 @@ DebugConsoleResult Debug_SubmitConsoleCommand(uint8_t opcode, int16_t arg1,
   }
   debug_leave_critical(primask);
   return DEBUG_CONSOLE_ACCEPTED;
+}
+
+DebugFilterStatus Debug_GetFilterStatus(void)
+{
+  DebugFilterStatus result = {0};
+#if APP_ENABLE_MOTION_DEBUG_TASK && APP_BOARD_F405_ROBO
+  const uint32_t mask = debug_enter_critical();
+  result = filter_test;
+  debug_leave_critical(mask);
+#endif
+  return result;
+}
+
+DebugConsoleResult Debug_SubmitConsoleFilter(uint8_t lift_angle, uint8_t *sequence)
+{
+#if APP_ENABLE_MOTION_DEBUG_TASK && APP_BOARD_F405_ROBO
+  if (lift_angle < APP_LIFT_START_ANGLE || lift_angle > APP_LIFT_TRAVEL_ANGLE) {
+    return DEBUG_CONSOLE_INVALID;
+  }
+  const uint32_t mask = debug_enter_critical();
+  uint8_t issued;
+  const DebugConsoleResult result = Debug_SubmitConsoleCommand(
+      VISION_MOTION_CMD_MOVE_BODY, -(int16_t)APP_DEBUG_FILTER_BACK_MM, 0,
+      (uint16_t)APP_DEBUG_FILTER_BACK_SPEED_MM_S, &issued);
+  if (result == DEBUG_CONSOLE_ACCEPTED) {
+    console_request.filter_lift_angle = lift_angle;
+    filter_test = (DebugFilterStatus){.valid = true, .phase = DEBUG_FILTER_PENDING,
+                                    .sequence = issued, .lift_angle = lift_angle};
+    if (sequence != NULL) { *sequence = issued; }
+  }
+  debug_leave_critical(mask);
+  return result;
+#else
+  (void)lift_angle; (void)sequence;
+  return DEBUG_CONSOLE_INVALID;
+#endif
 }
 
 DebugConsoleResult Debug_SubmitConsoleCircles(int8_t count, uint16_t rate_dps,

@@ -1,5 +1,14 @@
 # 当前状态：F405 烧录入口
 
+2026-11-16 MotionDebug 高度筛选观察测试：已烧录，等待用户启动。
+- 新增直接串口`FILTER [角度=75]`：S1=85°→原轮程后退50mm/150mm/s→S1目标角61..85°→场地逆时针90°/30°每秒，完成保持姿态。
+  角度可逐次改，无需重烧；左右夹爪/相机保持预设。上电不运行，原STOP可终止，FILTERSTAT只查询；NormalRun无此测试入口。
+- 两固件目标编译通过，原主机夹具直接检查顺序、参数、BUSY、停止/不续跑等通过；原夹具已恢复。未实车执行测试动作。
+- OpenOCD编程/校验/复位成功；板端MODE5/MOTIONDEBUG、FILTER IDLE、IMU/ODOM=1、轮速目标/PWM全零。COM18已关闭，等待用户指令。
+- 本轮提交前实烧，build_git=666d8d0/dirty1，expected指纹6509d4d4…f17c3cae；板端编译时间08:39:02。
+  原工作区YAW入口及Task空白保留在实际构建、不纳入本轮提交；不得以新提交SHA冒充已实烧构建。
+  使用、精确构建/烧录证据及未完成项见[F405_FILTER_BENCH](F405_FILTER_BENCH.md)。
+
 2026-11-16 MATCH-PREWARM-FEEDBACK / MATCH-SEARCH-DIRECTION：持续操作警报及投送后交替搜索（未烧录）。
 - 已核对RDK `4609ca1d81c368bd482ba02515a7d7c7a8c4f49d`固定入口、开发交接、警报v2合同及实际搜索转角累计代码。
   本端基于efe3f1b实施；上位预热/发车按键分离、Python及C++ v2发送调度仍待上位实现/部署，下位改完不代表整链完成。

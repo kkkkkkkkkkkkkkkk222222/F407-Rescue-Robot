@@ -61,10 +61,24 @@ typedef struct {
   int32_t goal_error_mdeg;
 } DebugCircleStatus;
 
+typedef enum {
+  DEBUG_FILTER_IDLE = 0, DEBUG_FILTER_PENDING, DEBUG_FILTER_WAIT_85,
+  DEBUG_FILTER_BACK, DEBUG_FILTER_BACK_STOP, DEBUG_FILTER_LIFT,
+  DEBUG_FILTER_TURN, DEBUG_FILTER_DONE, DEBUG_FILTER_STOPPED, DEBUG_FILTER_FAULT
+} DebugFilterPhase;
+typedef struct {
+  bool valid, active;
+  uint8_t sequence, lift_angle;
+  DebugFilterPhase phase;
+} DebugFilterStatus;
+
 void Debug_Init(uint32_t now_ms);
 void Debug_Process(uint32_t now_ms);
 DebugStatus Debug_GetStatus(void);
 DebugCircleStatus Debug_GetCircleStatus(void);
+DebugFilterStatus Debug_GetFilterStatus(void);
+/* Console-only: set S1=85, back 50mm, lift to angle, field-CCW 90deg, hold pose. */
+DebugConsoleResult Debug_SubmitConsoleFilter(uint8_t lift_angle, uint8_t *sequence);
 /* Cancel the current motion and discard commands received during a bench test. */
 void Debug_SetWheelCheckActive(bool enabled);
 DebugConsoleResult Debug_SubmitConsoleCommand(uint8_t opcode, int16_t arg1,
