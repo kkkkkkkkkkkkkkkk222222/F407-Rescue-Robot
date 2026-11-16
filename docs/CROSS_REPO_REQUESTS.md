@@ -16,6 +16,13 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## 2026-11-16 S1运输高度修复：已构建，未烧录
+
+按用户黑CORE运输高度偏低反馈，板端只读核对actual=6b05d94，S1 offset仍0，左右微秒标定仍+10/+50。
+生产夹具复现过滤82°被中断后，原恢复/重新抓黑CORE可沿用82°进入NAV；普通合爪入口现明确恢复原85°，未调参数或加等待。
+桌面工具映射/旧测试补偿及手册同步；RDK不需改报文。两目标构建及相关回归通过，需新NormalRun部署后实测。
+这是一条已证实的缺陷路径，不宣称已确认实车掉物的唯一原因；actual/expected和检查见[核对记录](F405_SERVO_TRANSPORT_AUDIT_20261116.md)。
+
 ## MATCH-CLOSED-GAP-ZONE-CANCEL-20261116：下位已配套并构建，未烧录
 
 按用户本轮“对照上位机的代码，修改代码”核对RDK功能提交及收尾分支，均为eb49d39ab695a44487cf5deebbdd26116fcf69f9。

@@ -33,8 +33,8 @@ internal static class F405ClawCalibrator
 internal sealed class CalibratorForm : Form, IMessageFilter
 {
     private readonly string repo, openOcdExe, dataDirectory;
-    private readonly bool inverted;
-    private readonly string configText;
+    private bool inverted;
+    private string configText;
     private readonly TextBox port = new TextBox();
     private readonly NumericUpDown opening = new NumericUpDown();
     private readonly NumericUpDown leftOffset = new NumericUpDown();
@@ -87,9 +87,7 @@ internal sealed class CalibratorForm : Form, IMessageFilter
         openOcdExe = Path.GetFullPath(openOcd);
         dataDirectory = Path.GetFullPath(directory);
         Directory.CreateDirectory(dataDirectory);
-        configText = File.ReadAllText(Path.Combine(repo, "Main/Inc/app_config.h"));
-        inverted = Regex.IsMatch(configText,
-            @"(?m)^\s*#define\s+APP_CLAW_SERVOS_INVERTED\s+1\b");
+        ReloadSourceConfiguration();
         closedOpening = Define("APP_CLAW_LEFT_TOUCH_ANGLE");
         session = new StreamWriter(Path.Combine(dataDirectory,
             "adjust_" + DateTime.Now.ToString("yyyyMMdd_HHmmss_fff") + ".jsonl"), true, new UTF8Encoding(false));
@@ -202,6 +200,11 @@ internal sealed class CalibratorForm : Form, IMessageFilter
         Log("先连接读取当前姿态。初次折算offset只是保持原姿态的起点，不是自动测得的安装误差。");
     }
 
+    private void ReloadSourceConfiguration()
+    {
+        configText = File.ReadAllText(Path.Combine(repo, "Main/Inc/app_config.h"));
+        inverted = Define("APP_CLAW_SERVOS_INVERTED") == 1;
+    }
     private int Define(string name)
     {
         Match entry = Regex.Match(configText, @"(?m)^\s*#define\s+" + Regex.Escape(name) + @"\s+([^\r\n]+)");
@@ -227,13 +230,21 @@ internal sealed class CalibratorForm : Form, IMessageFilter
         MatchCollection entries = Regex.Matches(console, @"\{\s*""(?<name>[A-Z_]+)""\s*,\s*(?<lift>\w+)\s*,\s*(?<cam>\w+)\s*,\s*(?<claw>\w+)\s*\}");
         var labels = new Dictionary<string, string> { {"START","起步收纳"}, {"SEARCH","高位搜索"}, {"LOW","低位搜索"},
             {"OBSERVE","开爪观察"}, {"AUDIT","合爪复审"}, {"HALF","半闭后退"}, {"STAGE","安全区预备"},
-            {"DROP","投送开爪"}, {"FILTER","首绿抬升82°"} };
+            {"DROP","投送开爪"}, {"EXIT","放下后抬臂"}, {"FILTER","首绿抬升"} };
         foreach (Match entry in entries)
         {
             string key = entry.Groups["name"].Value, claw = entry.Groups["claw"].Value;
             string lift = entry.Groups["lift"].Value;
-            int height = Define(lift == "Lift_SetStartPosition" ? "APP_LIFT_START_ANGLE" :
-                lift == "Lift_SetFirstGreenFilterPosition" ? "APP_LIFT_FIRST_GREEN_FILTER_ANGLE" : "APP_LIFT_TRAVEL_ANGLE");
+            string liftDefine;
+            switch (lift)
+            {
+                case "Lift_SetStartPosition": liftDefine = "APP_LIFT_START_ANGLE"; break;
+                case "Lift_SetReleaseRaisePosition": liftDefine = "APP_LIFT_RELEASE_RAISE_ANGLE"; break;
+                case "Lift_SetFirstGreenFilterPosition": liftDefine = "APP_LIFT_FIRST_GREEN_FILTER_ANGLE"; break;
+                case "Lift_SetTravelPosition": liftDefine = "APP_LIFT_TRAVEL_ANGLE"; break;
+                default: throw new IOException("未识别的固件抬臂动作：" + lift);
+            }
+            int height = Define(liftDefine);
             int camera = Regex.IsMatch(entry.Groups["cam"].Value, @"^\d+U?$") ?
                 int.Parse(entry.Groups["cam"].Value.TrimEnd('U')) : Define(entry.Groups["cam"].Value);
             int left = claw == "Claw_Retract" ? Define("APP_CLAW_LEFT_RETRACT_ANGLE") :
@@ -263,6 +274,12 @@ internal sealed class CalibratorForm : Form, IMessageFilter
     private void ApplyPreset(Pose selected)
     {
         if (!connected) throw new IOException("先连接读取；点击预设只执行机构姿态，不运行比赛动作。");
+        ReloadSourceConfiguration();
+        Pose current = null;
+        foreach (Pose candidate in Presets())
+            if (candidate.Name == selected.Name) { current = candidate; break; }
+        if (current == null) throw new IOException("该预设已从源码移除，请重新打开窗口。");
+        selected = current;
         CancelRepeat(); loading = true;
         try
         {
@@ -324,9 +341,16 @@ internal sealed class CalibratorForm : Form, IMessageFilter
     }
     private int StepUs { get { return Convert.ToInt32(step.SelectedItem, CultureInfo.InvariantCulture); } }
     private int OpeningCdeg { get { return (int)(opening.Value * 100M); } }
-    private int BaseLeft { get { return 500 + (inverted ? 18000 - OpeningCdeg : OpeningCdeg) / 9; } }
+    private int BaseLeft { get { return ClawBasePulse(4, OpeningCdeg); } }
     private int RightOpeningCdeg { get { return Math.Max(0, Math.Min(18000, OpeningCdeg + poseRightDeltaCdeg)); } }
-    private int BaseRight { get { return 500 + (inverted ? RightOpeningCdeg : 18000 - RightOpeningCdeg) / 9; } }
+    private int BaseRight { get { return ClawBasePulse(2, RightOpeningCdeg); } }
+    private int ClawBasePulse(int id, int mechanicalOpeningCdeg)
+    {
+        int logical = id == 4 ? mechanicalOpeningCdeg : 18000 - mechanicalOpeningCdeg;
+        int mounted = inverted ? 18000 - logical : logical;
+        int whole = Math.Max(0, Math.Min(18000, mounted + Define("APP_SERVO_S" + id + "_OFFSET_DEG") * 100));
+        return 500 + whole / 9;
+    }
     private int LeftPulse { get { return OpeningCdeg >= 18000 ? (inverted ? 500 : 2500) : Math.Max(500, Math.Min(2500, BaseLeft + (int)leftOffset.Value)); } }
     private int RightPulse { get { return RightOpeningCdeg >= 18000 ? (inverted ? 2500 : 500) : Math.Max(500, Math.Min(2500, BaseRight + (int)rightOffset.Value)); } }
     private void UpdatePreview()
@@ -583,6 +607,7 @@ internal sealed class CalibratorForm : Form, IMessageFilter
         DisconnectBoard();
         try
         {
+            ReloadSourceConfiguration();
             OpenConsole(); StartHelper(); connected = true;
             if (hasRead || saved != null) RefreshAll(true); else AdoptLive();
             state.Text = "已连接 " + serial.PortName + "；双爪倒装=" + inverted + "；只在手动调节时写脉宽表。";

@@ -925,8 +925,52 @@ static void test_normalrun_safe_zone_team_heading(void)
   }
 }
 
+static void test_filter_recovery_restores_transport_lift(void)
+{
+  prepare(); configured_color = VISION_COLOR_RED;
+  initial_claw_ready = first_delivery_done = true;
+  audit_received = audit_host_stable = audit_valid = true;
+  Lift_SetTravelPosition();
+  task_begin_single_filter(0U, false);
+  task_process_single_filter(1U);
+  assert(Servo_GetAngle(1U) == APP_LIFT_FIRST_GREEN_FILTER_ANGLE);
+  task_stop(TASK_FAULT_MOTOR, 100U);
+  assert(state == TASK_RECOVERY_WAIT && !single_filter_active);
+  recovery_reference_ready = task_status.claw_visible = true;
+  Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
+  VisionMissionCommand audit = injury_audit(1U);
+  audit.audit_left_class = VISION_CARGO_CORE;
+  audit.audit_flags = VISION_AUDIT_STABLE;
+  command_visual_new = true;
+  task_accept_mission_legacy(&audit, 200U);
+  audit.audit_id = 2U; audit.vision_frame = 3U;
+  task_accept_mission_legacy(&audit, 320U);
+  assert(audit_valid);
+  VisionMissionCommand grab = {
+      .command = VISION_CMD_GRAB_CONFIRMED, .flags = VISION_CMD_VALID, .received = true};
+  task_accept_mission_legacy(&grab, 340U);
+  assert(state == TASK_CLOSE_CLAW && Servo_GetAngle(1U) == APP_LIFT_TRAVEL_ANGLE);
+  Claw_Touch(400U); assert(Claw_Touch(1500U));
+  task_status.gripper_closed = true;
+  task_clear_audit_result();
+  task_enter(TASK_POST_GRAB_AUDIT, 1500U);
+  task_status.claw_visible = true;
+  audit.audit_id = 3U; audit.vision_frame = 4U;
+  task_accept_mission_legacy(&audit, 1600U);
+  audit.audit_id = 4U; audit.vision_frame = 5U;
+  task_accept_mission_legacy(&audit, 1720U);
+  assert(state == TASK_WAIT_NAVIGATION && audit_valid);
+  VisionMissionCommand nav = {
+      .received = true, .command = VISION_CMD_NAVIGATE_WAYPOINT,
+      .flags = VISION_CMD_VALID | VISION_CMD_RED_SIDE | VISION_CMD_DISTANCE_VALID |
+          VISION_CMD_STAGE_ONLY, .target_x_mm = 100, .heading_cdeg = 9000};
+  task_accept_mission_legacy(&nav, 1800U);
+  assert(state == TASK_NAVIGATE && Servo_GetAngle(1U) == APP_LIFT_TRAVEL_ANGLE);
+}
+
 int main(void)
 {
+  test_filter_recovery_restores_transport_lift();
 #ifdef NORMALRUN_FLOW_REVIEW_CHECK
   test_normalrun_start_and_delivery_exit();
   test_normalrun_start_center_approach();

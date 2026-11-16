@@ -975,6 +975,9 @@ static bool task_audit_has_green(void)
 
 static void task_begin_close_claw(uint32_t now_ms)
 {
+  /* Recovery can abandon the 82-degree filter before its restore phase.
+   * A new ordinary grab always starts at the calibrated transport height. */
+  Lift_SetTravelPosition();
   single_filter_armed = true;
   injury_recheck_pending = false;
   const bool advance_for_core = complete_flow_active &&

@@ -66,10 +66,11 @@ static const DebugPreset presets[] = {
     {"HALF",    Lift_SetTravelPosition, APP_SEARCH_HIGH_CAMERA_ANGLE,     Claw_HalfTouch},
     {"STAGE",   Lift_SetTravelPosition, APP_SAFE_ALIGN_CAMERA_ANGLE,       Claw_Touch},
     {"DROP",    Lift_SetTravelPosition, APP_DELIVERY_CAMERA_ANGLE,        Claw_Open},
+    {"EXIT",    Lift_SetReleaseRaisePosition, APP_DELIVERY_CAMERA_ANGLE, Claw_Open},
     {"FILTER",  Lift_SetFirstGreenFilterPosition, APP_GRAB_VIEW_ANGLE,     Claw_Touch}
 };
 static const DebugPreset *pending_preset;
-static const char preset_help[] = "P START / SEARCH / LOW / OBSERVE / AUDIT / HALF / STAGE / DROP / FILTER\r\n";
+static const char preset_help[] = "P START / SEARCH / LOW / OBSERVE / AUDIT / HALF / STAGE / DROP / EXIT / FILTER\r\n";
 
 static void debug_start_preset(const char *name)
 {

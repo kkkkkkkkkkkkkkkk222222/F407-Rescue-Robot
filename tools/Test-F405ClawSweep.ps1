@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$ConfigPath = (Join-Path $PSScriptRoot 'F405ClawSweep.ini'),
     [string]$OpenOcdExe,
     [switch]$Preview,
@@ -69,11 +69,24 @@ $stepDeg = Read-Number StepDeg 0.09 180
 $intervalMs = Read-Integer IntervalMs 20 10000
 $holdMs = Read-Integer HoldMs 0 60000
 $cycles = Read-Integer Cycles 1 10000
+$firmwareConfig = [IO.File]::ReadAllText((Join-Path $repo 'Main/Inc/app_config.h'))
+function Read-FirmwareInteger([string]$Name) {
+    $match = [regex]::Match($firmwareConfig, '(?m)^\s*#define\s+' + [regex]::Escape($Name) + '\s+([+-]?\d+)[uUlL]*\b')
+    if (!$match.Success) { throw "Missing firmware parameter $Name" }
+    return [int]$match.Groups[1].Value
+}
+$clawsInverted = (Read-FirmwareInteger APP_CLAW_SERVOS_INVERTED) -eq 1
+$firmwareTrimDeg = Read-FirmwareInteger APP_SERVO_S4_OFFSET_DEG
+$trimUs = Read-FirmwareInteger APP_SERVO_S4_OFFSET_US
+if ($trimDeg -ne $firmwareTrimDeg) {
+    throw "LeftTrimDeg=$trimDeg differs from firmware S4 offset=$firmwareTrimDeg. Use the firmware value; fine trim is read from APP_SERVO_S4_OFFSET_US."
+}
 
 function Convert-ToPulse([decimal]$Angle) {
-    $outputAngle = $Angle + $trimDeg
-    if ($outputAngle -lt 0 -or $outputAngle -gt 180) { throw 'Angle plus LeftTrimDeg must be within 0..180.' }
-    return (500 + [int][Math]::Floor($outputAngle * 2000 / 180))
+    $mountedAngle = if ($clawsInverted) { 180 - $Angle } else { $Angle }
+    if ($Angle -eq 180) { return (500 + [int][Math]::Floor($mountedAngle * 2000 / 180)) }
+    $outputAngle = [Math]::Min(180, [Math]::Max(0, $mountedAngle + $firmwareTrimDeg))
+    return [Math]::Min(2500, [Math]::Max(500, 500 + [int][Math]::Floor($outputAngle * 2000 / 180) + $trimUs))
 }
 
 $startPulse = Convert-ToPulse $startDeg
@@ -87,7 +100,7 @@ if ($intervalMs -lt $minIntervalMs) {
 $commandRate = [Math]::Round($actualStep * 1000 / $intervalMs, 2)
 $stepsPerLeg = [Math]::Ceiling([Math]::Abs($endPulse - $startPulse) / $stepUs)
 $sweepSeconds = $cycles * 2.0 * ($stepsPerLeg * $intervalMs + $holdMs) / 1000.0
-Write-Output "S4 $startDeg <-> $endDeg deg, test trim $trimDeg deg"
+Write-Output "S4 $startDeg <-> $endDeg logical deg, firmware trim $firmwareTrimDeg deg + $trimUs us; full-open endpoint has no trim"
 Write-Output "PWM $startPulse <-> $endPulse us, step $stepUs us ($actualStep deg), interval $intervalMs ms"
 Write-Output "Command pace up to $commandRate deg/s, limit 500 deg/s"
 Write-Output "Hold $holdMs ms per end, $cycles round trips, about $sweepSeconds s plus travel to and from the start"

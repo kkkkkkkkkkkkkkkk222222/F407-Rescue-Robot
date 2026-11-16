@@ -1,4 +1,4 @@
-param([string]$Destination)
+﻿param([string]$Destination)
 
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
@@ -43,13 +43,14 @@ $lines = @(
     ('Offsets S1={0:+0;-0;0}, S2={1:+0;-0;0}, S3={2:+0;-0;0}, S4={3:+0;-0;0}' -f $offset[1], $offset[2], $offset[3], $offset[4])
     ('Fine offsets(us) S1={0}, S2={1}, S3={2}, S4={3}' -f $offsetUs[1], $offsetUs[2], $offsetUs[3], $offsetUs[4])
     ''
-    'Preset       S4/S2 logical -> PWM(us)        S1/S3 logical'
+    'Preset       S4/S2 logical -> PWM(us)        S1/S3 logical -> PWM(us)'
 )
 foreach ($preset in $presets) {
     $name = $preset.Groups['name'].Value
     $camera = Read-Angle $preset.Groups['cam'].Value
     $lift = switch ($preset.Groups['lift'].Value) {
         'Lift_SetStartPosition' { Read-Angle APP_LIFT_START_ANGLE }
+        'Lift_SetReleaseRaisePosition' { Read-Angle APP_LIFT_RELEASE_RAISE_ANGLE }
         'Lift_SetTravelPosition' { Read-Angle APP_LIFT_TRAVEL_ANGLE }
         'Lift_SetFirstGreenFilterPosition' { Read-Angle APP_LIFT_FIRST_GREEN_FILTER_ANGLE }
         default { throw "Unrecognized lift action in P $name" }
@@ -75,7 +76,11 @@ foreach ($preset in $presets) {
     $rightWhole = [Math]::Min(180, [Math]::Max(0, $mountedRight + $offset[2]))
     $leftPwm = [Math]::Min(2500, [Math]::Max(500, 500 + [Math]::Floor($leftWhole * 2000 / 180) + $offsetUs[4]))
     $rightPwm = [Math]::Min(2500, [Math]::Max(500, 500 + [Math]::Floor($rightWhole * 2000 / 180) + $offsetUs[2]))
-    $lines += 'P {0,-10} {1,3}/{2,-3} -> {3,4}/{4,-4}          {5,3}/{6}' -f $name, $left, $right, $leftPwm, $rightPwm, $lift, $camera
+    $liftWhole = [Math]::Min(180, [Math]::Max(0, $lift + $offset[1]))
+    $cameraWhole = [Math]::Min(180, [Math]::Max(0, $camera + $offset[3]))
+    $liftPwm = [Math]::Min(2500, [Math]::Max(500, 500 + [Math]::Floor($liftWhole * 2000 / 180) + $offsetUs[1]))
+    $cameraPwm = [Math]::Min(2500, [Math]::Max(500, 500 + [Math]::Floor($cameraWhole * 2000 / 180) + $offsetUs[3]))
+    $lines += 'P {0,-10} {1,3}/{2,-3} -> {3,4}/{4,-4}          {5,3}/{6,-3} -> {7}/{8}' -f $name, $left, $right, $leftPwm, $rightPwm, $lift, $camera, $liftPwm, $cameraPwm
 }
 $runInScript = Join-Path $PSScriptRoot 'Run-F405ClawRunIn.ps1'
 $sweepScript = Join-Path $PSScriptRoot 'Test-F405ClawSweep.ps1'
@@ -92,6 +97,7 @@ $lines += @(
 
 $exists = Test-Path -LiteralPath $Destination -PathType Leaf
 $current = if ($exists) { [System.IO.File]::ReadAllText($Destination) } else { $template }
+$current = $current.Replace('O 即时试调，RUN 重启后重新加载 app_config.h 中的默认偏移。', 'O即时试调；RUN重启后重新加载板上固件的默认偏移。只改源码文件不会改变已烧录参数。')
 # Migrate only exact sentences emitted by older versions; retain personal notes.
 $knownLegacy = @{
     'S 1 88 设升降逻辑角。S 2 90 设右爪逻辑角。S 3 140 设摄像头逻辑角。' = 'S1起步/退出61°、水平85°、首绿静止预设82°；合爪S4=86°、S2=94°；S3=140°复审。'
@@ -100,6 +106,21 @@ $knownLegacy = @{
     'RDK 使用 JP506 的 UART4，230400 8N1。' = 'RDK 使用 JP506 的 UART4，921600 8N1。'
 }
 foreach ($entry in $knownLegacy.GetEnumerator()) { $current = $current.Replace($entry.Key, $entry.Value) }
+$angleDescription = 'S命令是固件逻辑角；起步、放下后抬臂、运输水平、过滤高度分别见下方自动表。'
+$offsetDescription = '合爪逻辑角、左右整数度/微秒offset以自动表为准，不把历史标定当当前参数。'
+foreach ($old in @(
+    'S1起步/退出61°、水平85°、首绿静止预设82°；合爪S4=84°、S2=96°；S3=140°复审。',
+    'S1起步/退出61°、水平85°、首绿静止预设82°；合爪S4=86°、S2=94°；S3=140°复审。',
+    'S 1 85 设推板水平；S 1 61 为起步收纳/退出，S 1 82 为首绿过滤高度的手动预设。'
+)) { $current = $current.Replace($old, $angleDescription) }
+foreach ($old in @(
+    '收纳先S4=32°后S2=132°。当前微调为S4+8us、S2+32us，O只调额外整数度补偿。',
+    '收纳先S4=32°后S2=132°。当前微调为S4+0us、S2+24us，O只调额外整数度补偿。',
+    '合爪逻辑角为 S 4 86、S 2 94；左右业务角互补，安装补偿为 S4 0us、S2 +24us。'
+)) { $current = $current.Replace($old, $offsetDescription) }
+if (!$current.Contains('P EXIT ')) {
+    $current = $current.Replace('P DROP     投送时双开', "P DROP     投送时双开`r`nP EXIT     放下后抬臂的机构姿态，不执行后退")
+}
 if (!$current.Contains('P FILTER')) {
     $current = $current.Replace('P DROP     投送时双开', "P DROP     投送时双开`r`nP FILTER   首绿抬升82°静止预设，不启动Task或后退")
 }
