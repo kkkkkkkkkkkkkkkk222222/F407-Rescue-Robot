@@ -607,9 +607,19 @@ static void task_stop(TaskFault fault, uint32_t now_ms)
     /* A new confirmed TYPE=0x11 configuration is the only supported restart
      * request after an operator ABORT/STOP. Hardware faults remain latched. */
     Vision_RearmConfig();
+    if (state == TASK_STOPPED && task_status.fault == TASK_FAULT_REMOTE_STOP) {
+      /* Another STOP cancels any pending restart but keeps the claw stroke. */
+      return;
+    }
   }
   task_status.fault = fault;
   task_enter(TASK_STOPPED, now_ms);
+  if (fault == TASK_FAULT_REMOTE_STOP) {
+    initial_claw_ready = false;
+    Claw_SetSeparationHold(0U);
+    Claw_RestartAction();
+    Lift_SetStartPosition();
+  }
 }
 
 static bool task_get_location_pose(LocationPose *pose, uint32_t now_ms)
@@ -1772,7 +1782,7 @@ static void task_enter(TaskState next, uint32_t now_ms)
   }
 }
 
-static void task_initialize(uint32_t now_ms)
+static void task_initialize(uint32_t now_ms, bool claws_already_stowed)
 {
   task_clear_confirmed_load();
   recovery_reference_ready = false;
@@ -1800,7 +1810,7 @@ static void task_initialize(uint32_t now_ms)
            APP_CAMERA_INTEGRAL_LIMIT_PX_S);
 
   Mechanism_Init();
-  Lift_SetStartPosition();
+  if (!claws_already_stowed) { Lift_SetStartPosition(); }
   task_status = (TaskStatus){0};
   task_status.remaining_s = UINT16_MAX;
   state = TASK_WAIT_CONFIG;
@@ -1858,7 +1868,7 @@ static void task_initialize(uint32_t now_ms)
   delivery_exit_start_path_mm = 0U;
   locked_cargo_counts = 0U;
   configured_color = 0U;
-  initial_claw_ready = false;
+  initial_claw_ready = claws_already_stowed;
   tracking_valid = false;
   tracking_filter_valid = false;
   approach_report_generation_valid = false;
@@ -7981,10 +7991,10 @@ void Task_Process(uint32_t now_ms)
 {
   TaskDiag_TaskTick();
   if (!initialized) {
-    task_initialize(now_ms);
+    task_initialize(now_ms, false);
   }
 
-  if (!initial_claw_ready) {
+  if (!initial_claw_ready && state != TASK_STOPPED) {
     Motor_Stop();
     if (Claw_Retract(now_ms)) {
       initial_claw_ready = true;
@@ -8016,6 +8026,21 @@ void Task_Process(uint32_t now_ms)
     task_clear_sweep_audit_evidence();
   }
   task_accept_mission(&vision, now_ms);
+  if (state == TASK_STOPPED && task_status.fault == TASK_FAULT_REMOTE_STOP) {
+    Motor_Stop();
+    task_status.motors_active = false;
+    if (!initial_claw_ready && Claw_Retract(now_ms)) {
+      initial_claw_ready = true;
+      task_status.gripper_closed = false;
+    }
+    if (initial_claw_ready && vision.config_ready && task_imu.ready) {
+      /* The STOP has already stowed the claws. Bring up only the new task. */
+      task_initialize(now_ms, true);
+    }
+    task_status.camera_angle = Camera_GetAngle();
+    task_publish_status(now_ms);
+    return;
+  }
   task_apply_complete_target(&vision);
   if (!IMU_GetData().ready) {
     if (state != TASK_STOPPED) { task_stop(TASK_FAULT_POSE_TIMEOUT, now_ms); }
@@ -8322,13 +8347,6 @@ void Task_Process(uint32_t now_ms)
     case TASK_STOPPED:
       Motor_Stop();
       task_status.motors_active = false;
-      if ((task_status.fault == TASK_FAULT_REMOTE_STOP) &&
-          vision.config_ready) {
-        /* Vision_RearmConfig() made this readiness possible only after a new
-         * confirmed operator configuration. Rebuild task-local state and
-         * repeat the normal safe claw retraction before consuming it. */
-        task_initialize(now_ms);
-      }
       break;
 
     default:

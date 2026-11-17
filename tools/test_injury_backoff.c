@@ -145,7 +145,7 @@ static VisionMissionCommand injury_audit(uint8_t id)
 static void prepare(void)
 {
   Mechanism_Init();
-  task_initialize(0U);
+  task_initialize(0U, false);
   accepted_context = (TaskContext){.valid = true, .opcode = VISION_CMD_CARGO_AUDIT};
   first_delivery_done = true;
   test_pose = (LocationPose){.valid = true, .heading_mdeg = 90000};

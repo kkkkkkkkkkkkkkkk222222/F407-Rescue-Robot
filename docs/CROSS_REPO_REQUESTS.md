@@ -16,6 +16,14 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-ROUND-RESUME-STOW-20261117：下位停车收纳已配套并构建，未烧录
+
+按用户要求核对并实施RDK 37e3544eaa23a5caf9c9178bd412362ec9f1f8cc 的停车收纳交接。下位基线b65e3c8在STOPPED只停底盘，原收纳延后到新CONFIG。现人工REMOTE_STOP沿原入口清轮程和运动输出并锁在STOPPED，设大舵机原起始61°，在现有Task周期继续原Claw_Retract，依次收左、右爪。现场仍由人工清空载荷并摆回原出发位。
+
+重复STOP保留原收纳阶段并重新锁定发车配置，较新的STOP优先。已确认的CONFIG如提前到达，留在停车态等同一次收纳完成，之后才初始化新任务并沿原起步接续。不重复收纳，不修改角度、协议、额外等待或计分；其他故障停车不触发本收纳。上位五秒长4清局为独立改动。
+
+生产Task和实际机构状态机在硬件替身下通过即时停车、原收纳顺序、重复STOP、提前CONFIG、较晚STOP、新局及故障停车隔离检查。NormalRun/MotionDebug编译链接通过，build_git=b65e3c8/dirty1（含原独立工作区改动）。NormalRun ID=42ce5f7a583271ac0cd4d49079e766f3cad4d4c5373b70e7e1c02b928720762d，MotionDebug ID=6952cda0bb7c360af84df27cf3ce4471824124a3c0e8ef73a78a191be8b65687。未连接、烧录或实车验证。
+
 ## MATCH-ROUND-RESUME-20261117：下位已配套并构建，未烧录
 
 核对RDK 8660064786c6ef970e9d584531decf0e030db8d9 的短4/短3处理、恢复报文和串口STOP串号校验。固定入口blob 4f43d35ebfd7286f51738fa945ae09eb2efe8778，合同blob 3f1f927bc67b6f76184c4694cfadcf4870d467a1。
