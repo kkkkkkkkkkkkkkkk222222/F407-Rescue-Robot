@@ -324,8 +324,11 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
            arg_b == APP_SEARCH_HIGH_CAMERA_ANGLE * 100);
       const bool pre_grab = heading == VISION_APPROACH_RANGE_PRE_GRAB &&
           arg_a == VISION_PRE_GRAB_ADVANCE_MM && arg_b == APP_GRAB_VIEW_ANGLE * 100;
+      const bool zone_view = heading == VISION_APPROACH_RANGE_ZONE_VIEW &&
+          arg_a == 0 && arg_b == APP_SEARCH_LOW_CAMERA_ANGLE * 100 &&
+          (flags & VISION_CMD_CLUSTER_TARGET) == 0U;
       if ((flags & VISION_CMD_DISTANCE_VALID) == 0U || (flags & (uint8_t)~permitted) != 0U ||
-          (!ordinary && !pre_grab)) goto rejected_payload;
+          (!ordinary && !pre_grab && !zone_view)) goto rejected_payload;
     } else if ((flags & VISION_CMD_DISTANCE_VALID) != 0U ||
                arg_a < 0 || arg_a > (int16_t)APP_VISION_MAX_X ||
                arg_b < 0 || arg_b > (int16_t)APP_VISION_MAX_Y) {

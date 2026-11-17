@@ -1,5 +1,11 @@
 # 当前状态：F405 烧录入口
 
+2026-11-17 MATCH-SEARCH-ZONE-VIEW：下位相机观察已局部配套、已构建，未烧录。
+- 核对上位7f1bfcb交接：空爪从120°SEARCH进入原APPROACH、已转正mode52后，同task新action的RANGE aux3/A0/B10500只停轮并将相机移至105°，原机械行程结束才报告该动作DONE。同action重发不重新动作；aux0/1/2原义保持。
+- 完成后接105°新图的原像素重对准/正常新action测距；同观察action的HOLD回105°SEARCH，保留本站扫描阶段、累计转角及方向。普通HOLD、速度/PID/抓取和停车收纳不变。
+- 生产Task/机构替身及真实C解析器相关检查、Python协议28项、NormalRun/MotionDebug构建通过；未连接设备、烧录或读actual。上位在所核对提交中尚未实现观察状态/aux3构帧，两端联合功能仍待上位接续与实测。
+  [详细回执](CROSS_REPO_REQUESTS.md)、[接口及红蓝配对帧](contracts/f405_search_zone_view_20261117.json)。
+
 2026-11-17 MATCH-ROUND-RESUME-STOW：短按4停车收纳已实现、已构建，未烧录。
 - 人工停车立即停止底盘，随后大舵机回原起始位、沿原机械顺序先收左爪再收右爪。保持停车等待，重复STOP不重启收纳。
 - 提前到达的0x52恢复配置等本次收纳完成，再沿原起步流程发车。新STOP仍取消待发车配置。两种固件构建及生产Task/机构替身检查通过，实车收纳待验证。详见[交接回执](CROSS_REPO_REQUESTS.md)。

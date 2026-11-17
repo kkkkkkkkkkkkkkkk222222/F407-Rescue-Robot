@@ -5,6 +5,23 @@ from tools import vision_protocol as protocol
 
 
 class VisionProtocolTests(unittest.TestCase):
+    def test_search_zone_view_contract(self) -> None:
+        import json
+        from pathlib import Path
+        contract = json.loads((Path(__file__).resolve().parents[1] /
+            "docs/contracts/f405_search_zone_view_20261117.json").read_text(encoding="utf-8"))
+        for row in contract["examples"]:
+            expected = bytes.fromhex(row["command_hex"])
+            self.assertEqual(protocol.mission_frame(expected[3], 9, row["flags"],
+                row["A"], row["B"], row["U"]), expected)
+            self.assertEqual(protocol.command_context_frame(expected[3], row["task_id"],
+                row["action_id"], row["source_frame"]), bytes.fromhex(row["context_hex"]))
+        for flags, a, b, u in ((0x51, 1, 10500, 3), (0x51, 0, 12000, 3),
+                                (0x71, 0, 10500, 3), (0x41, 0, 10500, 3),
+                                (0x51, 0, 10500, 4)):
+            with self.assertRaises(ValueError):
+                protocol.mission_frame(1, 9, flags, a, b, u)
+
     def test_three_material_composition_contract(self) -> None:
         import json
         from pathlib import Path

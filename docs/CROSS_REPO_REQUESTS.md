@@ -16,6 +16,23 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-SEARCH-ZONE-VIEW-20261117：下位局部配套并构建，未烧录；上位流程待接续
+
+按用户本轮“读取上位机交接并改好，只需要适配、小改”，核对RDK `codex/gamepad-teleop` 的7f1bfcb46223a7e2ba86023efd42e17fd0fd32e4。固定入口blob b6e7b479de63281984d08a9daae702fecd0e638d，观察合同blob 3a7fcdaebc79afcfddf855c72227a77daed4b14f，并读同提交侧边交接。下位原vision.c/Task.c确实拒绝aux3，现接受本项最小接口，不恢复旧几何/路径方案。
+
+- **解析与入口：** 原0x18/opcode9、1D context增加独立aux3，只接受A0/B10500、VALID|APPROACH_RANGE|DISTANCE_VALID|本方阵营，无cluster/其他位。只接原120°SEARCH进入的空爪APPROACH、已转正mode52、同task合法新action和真实非零source frame。aux0普通靠近、aux1同角分段、aux2抓前50mm保持。
+- **机械与完成：** 沿原Motor_Stop取消残留有限运动，只将相机120→105°，用原Camera_PositionWaitMs确定机械行程；Task周期等本次行程结束才置该action DONE、mode52/10500，保持底盘停止，不动夹爪/大舵机或载荷资格。重复同action只确认，不重新计行程；原ABORT优先。沿原mode52等待期限管理后续，没有新增时间门、固定观察等待、ISR或全车FAULT。
+- **继续与退出：** 完成后只接同task后续正常新action和105°新图；观察前/行程中已见图不能授权新有限段，旧观察DONE不会完成新段。可用原像素重对准，再沿105°原RANGE接近；本端不做区外判定，上位须以完整相关区框/目标关系确认。已完成观察的同task当前action HOLD结束临时候选，回空爪SEARCH并保持105°，恢复进入前的扫描阶段、累计转角和原搜索方向，不重开两圈、不自动抬回120°。普通HOLD的原义保持。
+- **相关旧入口：** MATCH-SEARCH-STATION-REPOSITION的空爪13完成→13、14完成→13、SEARCH→13已由原task_accept_bulldozer承接；MATCH-TOP-EDGE-RANGE-ENABLE复用原aux1，本轮无需再改。原短4停车收纳、快速恢复、扫障step8巡航500及其他速度/PID/地图/计分保持。
+
+必要检查：复用生产Task/mechanism硬件替身，红蓝分别核对0轮程、机械完成前后DONE、重复请求、提前图拒绝及新图正常aux1接续、观察专属HOLD归属和105°扫描预算/方向；另核对闭爪/cluster/非SEARCH来源/未转正/错角度/正距离/错阵营/零frame拒接、ABORT/PAUSE与原等待超时退出，普通aux0/1两种目标路径通过。临时夹具留本地未提交，无新增独立测试程序。两组原合同帧经真实vision.c解析，红蓝严格形状及aux0/1/2兼容通过；本地Python协议28项通过。旧组合夹具的“三绿应非法”断言与已实施三件材料规则冲突，本轮改跑直接相关测距段，未宣称整套历史夹具通过。
+
+NormalRun/MotionDebug编译链接通过，自动备份关闭。build_git=341e3b7/dirty1，包含原独立WheelCheck工作区改动及Task空白，不是干净提交构建。
+NormalRun firmware ID=96211ed3bfc9dc2fc1314802124c4e5ccc34ffdba0dbc3b75cb6fd068e950a93；
+MotionDebug firmware ID=e06c43ee1f68b54f06a7067b080ec996f441966a9bdfe7a1b56e5b9732eb9cca。
+
+[本端接口及红蓝配对帧](contracts/f405_search_zone_view_20261117.json)已标记下位实际支持、上位仍待实现。在所核对7f1bfcb中，上位观察状态/生产aux3构帧仍未实现；请上位主对话沿自己的已批准流程接续，配套后再启用。该文件发布及下位离线检查不等于两端已可发车。本轮未连接设备、烧录、复位、发动作或读取板端actual，真实相机/区外识别效果仍待联合实测。
+
 ## MATCH-ROUND-RESUME-STOW-20261117：下位停车收纳已配套并构建，未烧录
 
 按用户要求核对并实施RDK 37e3544eaa23a5caf9c9178bd412362ec9f1f8cc 的停车收纳交接。下位基线b65e3c8在STOPPED只停底盘，原收纳延后到新CONFIG。现人工REMOTE_STOP沿原入口清轮程和运动输出并锁在STOPPED，设大舵机原起始61°，在现有Task周期继续原Claw_Retract，依次收左、右爪。现场仍由人工清空载荷并摆回原出发位。

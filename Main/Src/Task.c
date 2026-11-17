@@ -267,6 +267,11 @@ static float approach_locked_heading_deg;
 static uint8_t approach_measure_pitch;
 static uint16_t approach_range_mm;
 static bool approach_range_reobserve;
+static struct {
+  bool search_entry, active, done;
+  SearchPhase search_phase;
+  uint32_t search_turn_mdeg, source_frame, frame_floor, wait_ms;
+} zone_view;
 static uint32_t approach_deadline_ms;
 static bool transport_sort_active;
 static float filtered_target_x;
@@ -1483,6 +1488,14 @@ static void task_update_match_time(uint32_t now_ms)
 
 static void task_enter(TaskState next, uint32_t now_ms)
 {
+  if (next == TASK_APPROACH && state == TASK_SEARCH) {
+    memset(&zone_view, 0, sizeof(zone_view));
+    zone_view.search_entry = Camera_GetAngle() == APP_SEARCH_HIGH_CAMERA_ANGLE;
+    zone_view.search_phase = search_phase;
+    zone_view.search_turn_mdeg = turn_tracker.accumulated_mdeg;
+  } else {
+    memset(&zone_view, 0, sizeof(zone_view));
+  }
   if (next == TASK_WAIT_NAVIGATION) { task_remember_confirmed_load(); }
   if (next == TASK_SEARCH || next == TASK_STOPPED || next == TASK_RECOVERY_WAIT ||
       next == TASK_OPEN_CLAW || next == TASK_OPEN_FOR_RAM || next == TASK_SAFE_SWEEP ||
@@ -1834,6 +1847,7 @@ static void task_initialize(uint32_t now_ms, bool claws_already_stowed)
   approach_range_mm = 0U;
   approach_range_reobserve = false;
   approach_deadline_ms = now_ms;
+  memset(&zone_view, 0, sizeof(zone_view));
   injury_recheck_pending = false;
   audit_watch_active = false;
   single_filter_armed = single_filter_active = single_filter_reclose = false;
@@ -2966,6 +2980,17 @@ static bool task_prepare_separation(int8_t keep_side, uint32_t now_ms)
 static void task_process_approach(const VisionData *vision, uint32_t now_ms)
 {
   task_status.auto_approach = true;
+  if (zone_view.active) {
+    Motor_Stop();
+    task_status.motors_active = false;
+    if (!zone_view.done && now_ms - step_started_ms >= zone_view.wait_ms) {
+      approach_measure_pitch = APP_SEARCH_LOW_CAMERA_ANGLE;
+      zone_view.done = true;
+      approach_deadline_ms = step_started_ms = now_ms;
+      accepted_context.completed = true;
+    }
+    return;
+  }
   if (capture_budget_active && capture_forward_used_mm >= APP_CAPTURE_FORWARD_BUDGET_MM &&
       (approach_phase == APPROACH_TRACK || approach_phase == APPROACH_CLUSTER_ALIGN ||
        approach_phase == APPROACH_ALIGN_125)) {
@@ -6470,6 +6495,20 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
   } else if (command->command == VISION_CMD_HOLD) {
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
+    if (zone_view.active && zone_view.done && state == TASK_APPROACH) {
+      const SearchPhase saved_phase = zone_view.search_phase;
+      const uint32_t saved_turn = zone_view.search_turn_mdeg;
+      task_enter(TASK_SEARCH, now_ms);
+      /* Continue this site's remaining sweep at the completed 105-degree view. */
+      search_phase = saved_phase == SEARCH_CAMERA_TO_120 || saved_phase == SEARCH_HOLD_120 ?
+          SEARCH_SWEEP_120 : saved_phase;
+      turn_tracker.accumulated_mdeg = saved_turn;
+      turn_tracker.valid = false;
+      Camera_SetAngle(APP_SEARCH_LOW_CAMERA_ANGLE);
+      camera_angle = (float)APP_SEARCH_LOW_CAMERA_ANGLE;
+      mission_paused = false;
+      return;
+    }
     if ((state == TASK_APPROACH_RECOVER) && cluster_recovery_latched) {
       cluster_recovery_hold_seen = true;
     }
@@ -6705,6 +6744,21 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
       task_status.acknowledged_sequence = command->sequence;
       command_accepted = true;
       mission_paused = false;
+      return;
+    }
+    if (command->heading_cdeg == VISION_APPROACH_RANGE_ZONE_VIEW) {
+      zone_view.active = true;
+      zone_view.done = false;
+      mission_paused = false;
+      zone_view.source_frame = zone_view.frame_floor = command->vision_frame;
+      zone_view.wait_ms = Camera_PositionWaitMs(APP_SEARCH_LOW_CAMERA_ANGLE);
+      approach_deadline_ms = step_started_ms = now_ms;
+      Motor_Stop();
+      task_status.motors_active = false;
+      Camera_SetAngle(APP_SEARCH_LOW_CAMERA_ANGLE);
+      camera_angle = (float)APP_SEARCH_LOW_CAMERA_ANGLE;
+      task_status.acknowledged_sequence = command->sequence;
+      command_accepted = true;
       return;
     }
     if (state != TASK_APPROACH) { return; }
@@ -7262,6 +7316,7 @@ static bool task_context_complete(void)
   if (!accepted_context.valid || accepted_context.cancelled) { return false; }
   switch (accepted_context.opcode) {
     case VISION_CMD_APPROACH_TARGET:
+      if (zone_view.active) { return zone_view.done; }
       if (pre_grab.active) { return !pre_grab.moving; }
       return state == TASK_GRAB_OBSERVE || state == TASK_SAFE_SWEEP_AUDIT ||
              state == TASK_SAFE_SWEEP_RETRIEVE_AUDIT ||
@@ -7471,6 +7526,8 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
       (incoming.flags & VISION_CMD_APPROACH_RANGE) != 0U;
   const bool pre_grab_request = range_request &&
       incoming.heading_cdeg == VISION_APPROACH_RANGE_PRE_GRAB;
+  const bool zone_view_request = range_request &&
+      incoming.heading_cdeg == VISION_APPROACH_RANGE_ZONE_VIEW;
   const bool live_bulldozer = incoming.command == VISION_CMD_BULLDOZER_STEP &&
       task_bulldozer_live_step(VISION_BULLDOZER_STEP(incoming.flags));
   reject_stage = 4U;
@@ -7562,7 +7619,30 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
       !pre_grab_request && !cancel_capture) goto rejected;
   if (pre_grab.active && incoming.command == VISION_CMD_APPROACH_TARGET &&
       !pre_grab_request) goto rejected;
-  if (pre_grab_request) {
+  if (zone_view.active && !overlay && incoming.command != VISION_CMD_STOP) {
+    if (!zone_view.done && visual && task_serial32_newer(incoming.vision_frame, zone_view.frame_floor)) {
+      zone_view.frame_floor = incoming.vision_frame;
+    }
+    if (!zone_view_request &&
+        (!zone_view.done || incoming.command != VISION_CMD_APPROACH_TARGET || new_target ||
+         !new_action || !command_visual_new ||
+         !task_serial32_newer(incoming.vision_frame, zone_view.frame_floor) ||
+         (incoming.flags & VISION_CMD_CLUSTER_TARGET) != 0U)) goto rejected;
+  }
+  if (zone_view_request) {
+    const uint8_t expected = VISION_CMD_VALID | VISION_CMD_APPROACH_RANGE |
+        VISION_CMD_DISTANCE_VALID | (incoming.flags & VISION_CMD_RED_SIDE);
+    if (new_target || state != TASK_APPROACH || task_status.gripper_closed ||
+        cluster_target_active || opening_claw_probe_active || cargo_recheck_pending ||
+        !zone_view.search_entry || !task_side_flag_valid(incoming.flags) ||
+        incoming.flags != expected || incoming.target_x_mm != 0 ||
+        incoming.target_y_mm != APP_SEARCH_LOW_CAMERA_ANGLE * 100 ||
+        incoming.vision_frame == 0U || approach_phase != APPROACH_RANGE_WAIT) goto rejected;
+    if (zone_view.active) {
+      if (new_action || incoming.vision_frame != zone_view.source_frame) goto rejected;
+    } else if (!new_action || !command_visual_new ||
+               approach_measure_pitch != APP_SEARCH_HIGH_CAMERA_ANGLE) goto rejected;
+  } else if (pre_grab_request) {
     const uint8_t permitted = VISION_CMD_VALID | VISION_CMD_RED_SIDE |
         VISION_CMD_CLUSTER_TARGET | VISION_CMD_APPROACH_RANGE | VISION_CMD_DISTANCE_VALID;
     if (new_target || !task_pre_grab_entry() || !task_side_flag_valid(incoming.flags) ||
@@ -7626,7 +7706,11 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
   }
   command_accepted = false;
   reject_stage = 9U;
-  if (!new_action && pre_grab_request) {
+  if (!new_action && zone_view_request) {
+    task_status.acknowledged_sequence = incoming.sequence;
+    command_accepted = true;
+    mission_paused = false;
+  } else if (!new_action && pre_grab_request) {
     task_status.acknowledged_sequence = incoming.sequence;
     command_accepted = true;
     mission_paused = false;
@@ -7652,6 +7736,10 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     command_accepted = true;
     mission_paused = false;
   } else {
+    if (zone_view.active && !overlay && !zone_view_request &&
+        incoming.command == VISION_CMD_APPROACH_TARGET) {
+      zone_view.active = zone_view.search_entry = false;
+    }
     task_accept_mission_legacy(&incoming, now_ms);
   }
   if (!command_accepted) goto rejected;
