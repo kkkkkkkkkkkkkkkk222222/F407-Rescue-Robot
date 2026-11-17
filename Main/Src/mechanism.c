@@ -173,14 +173,15 @@ void Lift_SetTravelPosition(void)
   Servo_SetAngle(1U, APP_LIFT_TRAVEL_ANGLE);
 }
 
-uint8_t Lift_LoadedTravelAngle(bool has_core)
+uint8_t Lift_LoadedTravelAngle(LiftLoad load)
 {
-  return has_core ? APP_LIFT_CORE_TRAVEL_ANGLE : APP_LIFT_TRAVEL_ANGLE;
+  return load == LIFT_LOAD_MATERIAL ? APP_LIFT_MATERIAL_TRAVEL_ANGLE :
+      load == LIFT_LOAD_ORANGE ? APP_LIFT_ORANGE_TRAVEL_ANGLE : APP_LIFT_TRAVEL_ANGLE;
 }
 
-void Lift_SetLoadedTravelPosition(bool has_core)
+void Lift_SetLoadedTravelPosition(LiftLoad load)
 {
-  Servo_SetAngle(1U, Lift_LoadedTravelAngle(has_core));
+  Servo_SetAngle(1U, Lift_LoadedTravelAngle(load));
 }
 
 void Lift_SetFirstGreenFilterPosition(void)

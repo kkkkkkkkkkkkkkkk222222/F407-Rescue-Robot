@@ -82,6 +82,7 @@ CMD_APPROACH_RANGE = 0x40
 APPROACH_RANGE_REOBSERVE = 1
 APPROACH_RANGE_PRE_GRAB = 2
 APPROACH_RANGE_ZONE_VIEW = 3
+SEPARATION_ORANGE_CORE_82 = 8200
 MODE_APPROACH_RANGE_WAIT = 52
 MODE_APPROACH_RANGE_MOVE = 53
 CMD_FIRST_GREEN_BUMP = 0x20
@@ -354,6 +355,19 @@ def mission_frame(
         )
     if not flags & CMD_VALID or flags & ~allowed_flags:
         raise ValueError("invalid mission flags")
+    if command in (CMD_DISPERSE_PILE, CMD_RELEASE_LEFT, CMD_RELEASE_RIGHT):
+        if target_x_mm or target_y_mm or heading_cdeg not in (0, SEPARATION_ORANGE_CORE_82):
+            raise ValueError("invalid separation lift payload")
+        if heading_cdeg == SEPARATION_ORANGE_CORE_82:
+            permitted = CMD_VALID | CMD_RED_SIDE
+            if command == CMD_DISPERSE_PILE:
+                permitted |= CMD_SIDE_VALID | CMD_TARGET_RIGHT
+                if not flags & CMD_SIDE_VALID:
+                    raise ValueError("82-degree separation requires an explicit retained side")
+            if flags & ~permitted:
+                raise ValueError("invalid 82-degree separation flags")
+    if command == CMD_RELEASE_BOTH and heading_cdeg == SEPARATION_ORANGE_CORE_82:
+        raise ValueError("release both cannot request retained-orange lift")
     if command == CMD_BULLDOZER_STEP and not _bulldozer_payload_valid(
             flags, target_x_mm, target_y_mm, heading_cdeg):
         raise ValueError("invalid bulldozer step payload")

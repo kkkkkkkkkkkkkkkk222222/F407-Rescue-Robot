@@ -669,7 +669,8 @@
 #define APP_LIFT_START_ANGLE              61U
 #define APP_LIFT_RELEASE_RAISE_ANGLE      65U
 #define APP_LIFT_TRAVEL_ANGLE             85U
-#define APP_LIFT_CORE_TRAVEL_ANGLE        88U
+#define APP_LIFT_MATERIAL_TRAVEL_ANGLE    88U
+#define APP_LIFT_ORANGE_TRAVEL_ANGLE      82U
 /* Calibrated pose only; the autonomous first-green filter is not enabled here. */
 #define APP_LIFT_FIRST_GREEN_FILTER_ANGLE 82U
 #define APP_SINGLE_CARGO_FILTER_BACK_SPEED_MM_S 250.0f

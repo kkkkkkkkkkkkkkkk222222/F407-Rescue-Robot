@@ -1,6 +1,6 @@
 # 两端当前要求与回执
 
-更新日期为 2026-11-17，时区 Asia/Shanghai。
+更新日期为 2026-11-18，时区 Asia/Shanghai。
 
 ## 固定入口与协作方式
 
@@ -16,7 +16,20 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
-## MATCH-CORE-TRANSPORT-88-20261117 / MATCH-ORANGE-SEPARATION-GRIP-20261117：下位已实现并构建，未烧录
+## MATCH-ORANGE-MATERIAL-SEPARATION-V2：已等待上位提交后配套并构建，未烧录
+
+按用户本轮要求，等待上位本轮修改完成并推送，再读取固定提交`codex/gamepad-teleop` 7d3d956f19296dc01301e0870bb715c5eed7546f。固定入口blob db346fee539398fe60f019bda44cf4c5cf6374f9，protocol.py 0cb44246baa3774703e1b4d066eee4cbfdc29b53，state_machine.py 001d378be8a65744df28a2977eae2a5130099ec5，合同4281a1e33456bd71a0266a977ae00040013415e3。已核对实际选侧/构帧及下位原b1cfe66入口；本V2运输分类替代旧“无黑85、含黑88”，选侧排序仍由上位负责，不在下位重复实现。
+
+- **运输姿态：** 用独立载荷类型保留真实确认事实：合法单橙82°、合法材料88°（含首绿/纯绿、纯黑、code6/7、多绿）。原空车85、开机61、放置65等独立入口保持。明确的开局材料/单橙临时持载也按对应类型，UNKNOWN及未知混装不伪造合法载荷。清审核缓存/漏框不改已确认类型，真实合法复审更新，实际释放、新目标/新局清除。普通合爪使用当前真实合法审核选角，滤除正常或负证据出口恢复同一载荷目标；单橙原滤除恢复82，首绿/多绿仍82→原退100mm→88。
+- **严格新请求：** 原0x18的DISPERSE或单侧RELEASE只接受A/B0、U0/8200。8200要求DISPERSE明确保留侧，或单侧RELEASE释放相反侧；无侧/FIRST_GREEN_BUMP/NEAR_KEEP/RELEASE_BOTH及其他参数不能冒充。Task只接首绿后、同任务新action、原允许分离状态、真实稳定非法非空审核、injury目的且无DANGER/UNKNOWN标志的非空保留侧。UNKNOWN类别本身不推断橙黑，只沿显式8200表达上位完整直方图结论，不改变审核资格/数量。相同action不能换U；特殊动作结束后先进入原复审，不能拿旧DONE吞掉新分离action。
+- **原动作接续：** 先Motor_Stop，目标82及Lift_PositionWaitMs(82)锁在本动作独立字段，行程完成才走原开侧/分离轨迹，原动作尾段完成才DONE；不把8200当航向、不调用mode50、不额外退100mm。重复仅ACK；单侧释放后的原YIELD接续保持82。原140°复审期间保留82，实际剩橙/材料后按真实审核选82/88再合爪；仍非法沿原分离/放弃。后续普通分离若需恢复姿态，沿对应实际行程后才执行原动作。
+- **退出：** PAUSE沿原暂停恢复时钟承接升降，ABORT保持原立即停轮/61°收纳优先；HOLD取消、失败/放弃、新目标及新局清理特殊标记，空爪SEARCH恢复85，不能把上次82污染普通动作。原明确单橙保留侧+10°和橙专用上限继续保持，8200不让UNKNOWN侧自动加力。未改变原分离速度/轨迹、审核帧数、计分、扫描或新增固定等待/握手/遥测。
+
+按用户要求仅5组直接检查：左右单侧释放的升降前端、幂等及原YIELD；DISPERSE原完成尾段/PAUSE/ABORT/HOLD退出与初始化；首绿/目的/合法性/未知/归属及普通动作恢复边界；材料/单橙实际审核、漏框保持、普通合爪与滤除恢复；代表性红蓝U0/U8200帧与实际上位构帧器、本地工具逐字节匹配，经真实C解析器及单侧RELEASE/非法字段检查通过。未跑整套回归，未重测未改的整段分离轨迹；临时夹具未提交，无新增独立测试程序任务。[原32组上位示例与本端接口状态](contracts/f405_orange_material_separation_v2.json)已落盘，代表检查不冒充32组全量或实车通过。
+
+NormalRun/MotionDebug编译链接通过，自动备份关闭，build_git=b1cfe66/dirty1，含原独立WheelCheck及Task空白工作区内容。NormalRun firmware ID=0f26033ddf7b726d6bd5a9f4078cf4bf70dc2cb261504eca4888d00b90a59be2；MotionDebug firmware ID=3ac084555fc651901d9cfab7a1c0a7bef96dbaed2a3e6fe535e72cb636723016。本轮未连接设备、烧录、复位、发物理动作或读取actual；须新NormalRun与上位7d3d956配套部署后联合实测，源码/离线完成不等于实板角度或真实分离有效。
+
+## MATCH-CORE-TRANSPORT-88-20261117 / MATCH-ORANGE-SEPARATION-GRIP-20261117：历史回执；运输分类由顶部V2替代
 
 按用户本轮“对照上位机的代码，修改我的代码，只需要做必要的测试”核对RDK `codex/gamepad-teleop` bca14a48c661ede028a3dda1d263c7cd1176b70e，固定入口blob b9a83fe8d7c771b7c6d0e7be68498af19ac75017、实际state_machine.py b983ac3a53f0a5d9d57832740fef0920a246086d。已核对原CargoAudit.to_protocol真实类别/数量及code6/7，沿现有审核配套，无新增消息或合同。
 

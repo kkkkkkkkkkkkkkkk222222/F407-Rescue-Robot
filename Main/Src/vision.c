@@ -311,6 +311,21 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
 
   const int16_t arg_a = (int16_t)vision_u16_be(&payload[2]);
   const int16_t arg_b = (int16_t)vision_u16_be(&payload[4]);
+  if (code == VISION_CMD_DISPERSE_PILE || code == VISION_CMD_RELEASE_LEFT ||
+      code == VISION_CMD_RELEASE_RIGHT) {
+    if (arg_a != 0 || arg_b != 0 ||
+        (heading != 0U && heading != VISION_SEPARATION_ORANGE_CORE_82)) goto rejected_payload;
+    if (heading == VISION_SEPARATION_ORANGE_CORE_82) {
+      uint8_t permitted = VISION_CMD_VALID | VISION_CMD_RED_SIDE;
+      if (code == VISION_CMD_DISPERSE_PILE) {
+        permitted |= VISION_CMD_SIDE_VALID | VISION_CMD_TARGET_RIGHT;
+        if ((flags & VISION_CMD_SIDE_VALID) == 0U) goto rejected_payload;
+      }
+      if ((flags & (uint8_t)~permitted) != 0U) goto rejected_payload;
+    }
+  }
+  if (code == VISION_CMD_RELEASE_BOTH && heading == VISION_SEPARATION_ORANGE_CORE_82)
+    goto rejected_payload;
   if (code == VISION_CMD_BULLDOZER_STEP &&
       !vision_bulldozer_payload_valid(flags, arg_a, arg_b, heading)) {
     goto rejected_payload;

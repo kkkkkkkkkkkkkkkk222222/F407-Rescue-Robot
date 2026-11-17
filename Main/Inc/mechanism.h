@@ -13,8 +13,13 @@ void Lift_SetReleaseRaisePosition(void);
 /* Estimate the wait before commanding the given angle. */
 uint32_t Lift_PositionWaitMs(uint8_t angle);
 void Lift_SetTravelPosition(void);
-uint8_t Lift_LoadedTravelAngle(bool has_core);
-void Lift_SetLoadedTravelPosition(bool has_core);
+typedef enum {
+  LIFT_LOAD_UNKNOWN = 0,
+  LIFT_LOAD_MATERIAL,
+  LIFT_LOAD_ORANGE
+} LiftLoad;
+uint8_t Lift_LoadedTravelAngle(LiftLoad load);
+void Lift_SetLoadedTravelPosition(LiftLoad load);
 /* Explicit maintenance preset; no autonomous filter sequence implied. */
 void Lift_SetFirstGreenFilterPosition(void);
 void Claw_SetSeparationHold(uint8_t extra_close_deg);
