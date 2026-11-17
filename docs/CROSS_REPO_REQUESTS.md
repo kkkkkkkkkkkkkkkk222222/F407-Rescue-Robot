@@ -16,6 +16,18 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-ORANGE-TOP-VIEW-20261118：已等上位提交后配套并构建，未烧录
+
+按用户本轮要求，等待上位本轮修改完成并推送，再读取固定提交`codex/gamepad-teleop` a266c97e13603c261b3684b4582a416e4ad8927a。固定入口blob4bdb19a8fa158e9e55af64d7ee924791294d710a、protocol.py a94712c69f2087b90c53e87c191525d482d103ea、state_machine.py 282824869116000783fb7011eac7e6fc9df77bb2、合同27aadd6a9782939a82db9bc356d2e9362e795562已核对。上位已负责贴顶+B1及换角后唯一水平重叠橙框接续；下位原1136492确实只有aux3的对准后观察，本次只局部增加aux4，不改橙块分离。
+
+- **解析/入口：** 独立VISION_APPROACH_ORANGE_TOP_VIEW=4，原0x18/opcode9、A0/B10500、VALID|RANGE|DISTANCE_VALID|本方阵营，按原cluster身份带位。只接同任务合法新action、空爪120°APPROACH_TRACK或未执行有限段的RANGE_WAIT；53、130/140抓前、带载/审核分离等入口保持拒绝。触发真实frame非零且可与上一像素命令同帧，不要求额外一张图；橙类别/B1由上位确认，不伪造载荷审核。
+- **机械/完成：** Motor_Stop取消残余转向，复用Camera_PositionWaitMs/Task原行程从120到105，只动相机。相同行动重发不重启，不清目标/原搜索预算。行程完成才原同task/action/command9、mode20/10500/ACCEPT+DONE，随后继续停轮；本DONE不是已对准，不提前52，不接受直接RANGE或普通零距抓取。PAUSE/ABORT保持原优先级。
+- **接续/HOLD：** 完成后只接同task后续新action、保留同一cluster身份的105°新图普通像素；清旧120°转向滤波/样本，从TRACK继续，真实对准后才原52，后续原105°有限距离。已在行程中见过的图不能在结束后重用。机械期间HOLD不取消相机动作；完成后的短HOLD保持mode20/105及当前目标，持续无框沿原mode20的500ms丢失恢复，不走aux3立即SEARCH出口。等待新像素时不让旧像素缺失挡住相机完成处理。aux3的原非聚堆52观察/105°预算恢复、aux1/2含义保持。
+
+仅5组直接检查通过：红蓝普通/聚堆、同帧20/52入口及停轮/仅相机/真实mode20完成、新图TRACK→52→105测距；短/长HOLD、行程中HOLD与PAUSE/ABORT；错误状态/有限段已启动或已完成/130°/载荷/归属/阵营/cluster/零frame及aux3兼容；行程中图与后续新图界限；4组实际上位构帧与本地工具逐字节相等并经真实vision.c解析，严格aux4形状及原aux1/2/3代表兼容。临时夹具只留本地，未跑整套回归，未向上位附加测试程序任务。
+
+NormalRun/MotionDebug最终编译链接通过，自动备份关闭，build_git=1136492/dirty1，含原独立WheelCheck及Task空白工作区内容。NormalRun firmware ID=4ecac1599700c3c8fe30cb209d61240fe00bf7a11b73b5d30764e3f536ca2e18；MotionDebug firmware ID=4cd8946ad1347480e55dfe62d02702096d0be26d083a930b2f5eb1882b8fb776。[接口与4组原始配对帧](contracts/f405_orange_top_view_20261118.json)已落盘并更新本端支持状态。本轮未连接设备、烧录、复位、发物理动作或读actual；需新NormalRun配套上位a266c97后联合实测，离线检查不证明实物识别/水平接回或地面靠近效果。
+
 ## MATCH-ORANGE-MATERIAL-SEPARATION-V2：已等待上位提交后配套并构建，未烧录
 
 按用户本轮要求，等待上位本轮修改完成并推送，再读取固定提交`codex/gamepad-teleop` 7d3d956f19296dc01301e0870bb715c5eed7546f。固定入口blob db346fee539398fe60f019bda44cf4c5cf6374f9，protocol.py 0cb44246baa3774703e1b4d066eee4cbfdc29b53，state_machine.py 001d378be8a65744df28a2977eae2a5130099ec5，合同4281a1e33456bd71a0266a977ae00040013415e3。已核对实际选侧/构帧及下位原b1cfe66入口；本V2运输分类替代旧“无黑85、含黑88”，选侧排序仍由上位负责，不在下位重复实现。

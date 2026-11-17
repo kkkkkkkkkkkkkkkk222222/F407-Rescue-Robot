@@ -82,6 +82,7 @@ CMD_APPROACH_RANGE = 0x40
 APPROACH_RANGE_REOBSERVE = 1
 APPROACH_RANGE_PRE_GRAB = 2
 APPROACH_RANGE_ZONE_VIEW = 3
+APPROACH_ORANGE_TOP_VIEW = 4
 SEPARATION_ORANGE_CORE_82 = 8200
 MODE_APPROACH_RANGE_WAIT = 52
 MODE_APPROACH_RANGE_MOVE = 53
@@ -381,8 +382,10 @@ def mission_frame(
             zone_view = (target_x_mm == 0 and target_y_mm == 10500 and
                          heading_cdeg == APPROACH_RANGE_ZONE_VIEW and
                          not flags & CMD_CLUSTER_TARGET)
+            orange_view = (target_x_mm == 0 and target_y_mm == 10500 and
+                           heading_cdeg == APPROACH_ORANGE_TOP_VIEW)
             if (not flags & CMD_DISTANCE_VALID or flags & ~permitted or
-                    not (ordinary or pre_grab or zone_view)):
+                    not (ordinary or pre_grab or zone_view or orange_view)):
                 raise ValueError("invalid calibrated approach distance/pitch")
         elif flags & CMD_DISTANCE_VALID or not 0 <= target_x_mm < IMAGE_WIDTH or not 0 <= target_y_mm < IMAGE_HEIGHT:
             raise ValueError("invalid approach pixels")
