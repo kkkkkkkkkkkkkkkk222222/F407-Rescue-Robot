@@ -16,6 +16,43 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-ATTACK-LATERAL-CENTRE / MATCH-RECOVERED-INJURY-STAGE-20261117：已实施并构建，未烧录
+
+按用户本轮“对照上位机修改代码”核对RDK功能及收尾分支，均为f6b37beac2a508e949da5e3c82f83c8088d3bad4。
+固定入口blob 97efb219f3fcf34fde0a5b0a0fa63deb3ed51508；attack_return.py ea107ed361db914df15960cf82c660bb63929757；
+search_transfer.py 777393c243a43740f573e065c39b20c5ab860eb0；state_machine.py 891b70cf07e3b5dcbb603f4f15ec20911261bac4；
+runner 8a1da91fb107101f20a4f4c9cab9bbd2ac84c6e2；protocol.py 2d4b569b30dadc06d5df500ca32ca0418b661f25；
+obstacle_route.py 96f370c4c173cea95a5327ceed0869b4713f9574；新路线合同1b1d3279592ff212680d7ad8f91a696d63ac4139。
+
+### 当前路线与下位最小衔接
+
+- 当前上位进攻路线为step15(-100)→step13横移→step13后退→step14朝中心→step12。替代旧-150/先转尾路线；①/③仍X±.40/Y0，上位计算横移方向、各段剩余D/H、到点后atan2(-Y,-X)并锁存U。
+- 已核对真实runner将attack_return_route.index加入action key，所以连续两段step13分配不同action，同段H/D更新保持原action。下位现有入口和控制已支持15→13→13及-100，不再新增对应动作。
+- 仅扩step14入口：同归属、空爪、TASK_REMOTE_ACTION、原BULLDOZER step13实际done，接受合法新action的任意U。原step15完成后的转向兼容保留；持货仍仅原合法藏点NAV完成后朝对方，不扩任意持货转向。
+- 复用原task_wrap_angle及速度控制按最短角回正，不写死顺/逆时针，不改速度/PID。未完成step13拒接14，未完成14拒接12；新action清旧DONE，同action重复不重启、不允许改U。完成12才恢复SEARCH，转向中不提前搜索。
+- 普通投送返观察点/两点换点同样可用13→14→12；源点记忆、目标选择与两段方向由上位负责，下位不增加场地坐标/计数或新协议。
+
+### 单橙补位资格遗漏修复
+
+接受RDK本轮对a8eacb9代码的定位：上次补位入口没有重新建立nav_reuse_post_grab_audit，旧单橙链到点后发送普通ALIGN会被拒。不是补位NAV没有实现，也不能拿通用confirmed_load.active冒充旧单橙准入。
+
+本端在原ALIGN→STAGE接受分支，进入NAV前用task_closed_single_injury_audit判定真实闭爪、received、host_stable、valid、非藏点、伤员目的地及INJURY_SINGLE语义，并要求原bit5；task_enter之后设置本段nav_reuse_post_grab_audit。
+沿原同任务/新action/合法STAGE/载荷/目的地约束，D0实际完成后原普通ALIGN（红flags13/蓝5）可直接接；不生成新视觉帧、数量或审核样本，不加140°复审或新等待。
+材料/混装、非稳定或撤销审核、开爪、错任务、无bit5都不能取得单橙通行资格；NAV撤位后重新加位不能重建。普通真实矛盾及释放/分离沿原清审核撤资格，通用confirmed-load逻辑未改。
+
+### 必要检查与部署边界
+
+- 同一生产Task夹具在改前分别复现step13→14拒绝及单橙补位未建立资格；改后红蓝×4起点8条100mm/横移/后退/转中心/SEARCH链通过，验证本地轮程、独立action、同段更新、旧DONE清除、重复、未完成拒接及PAUSE恢复。
+- 检查SEARCH直达→转中心、跨0°双向最短角、固定U不能同action修改、STOP，以及错任务/持货/未完成/无前序/其他step/旧action拒绝。原8条旧路线兼容及载荷进攻点仅朝对方回归通过。
+- 原真实单橙审核→首次bit5 NAV→普通ALIGN→视觉→重复补位→普通ALIGN链红蓝均通过；审核样本数/源帧不增加。材料/混合、无bit5、非稳定、撤资格/开爪/错归属及撤位重加边界通过。
+- 原补位16条真实/通用复用载荷路径、4条重新对准及12条拒绝边界通过。原C夹具已恢复；未新增提交测试程序。
+- 上位合同40组context+command原字节和4组单橙示例经本地Python逐字节/CRC及真实vision.c解析全部通过。原解析器已支持，无需改线格式；[当前合同](contracts/f405_attack_lateral_centre_20261117.json)保留上位8组路线及单橙示例，旧转尾合同标记superseded。
+- NormalRun、MotionDebug编译链接通过；build_git=a8eacb9/dirty1，包含原本地WheelCheck独立改动与Task空白，不是干净提交构建。
+  NormalRun firmware ID=60986db140f187e0d9360e582598315d4571f2d67ca963d9d94d26c6802761c4；
+  MotionDebug firmware ID=31ec17dd372f1b5d2c07e133701ef9b1c0f6d72e8c6b300da27a431c7bfb4408。
+- 本轮未开串口/SWD、烧录、复位、发动作或读actual。上位报告11:34实跑actual=a8eacb9/dirty1是对端证据，不是本轮读取。新路线与单橙补位须部署新NormalRun后联合验证。
+- 本轮保持两个本地构建APP_AUTO_BACKUP=OFF，单独索引只提交本次Task/枚举注释/合同/回执；原IDE暂存、WheelCheck及Task空白保留，不夹入提交。未改上位仓库或已撤回的边界方案。
+
 ## MATCH-SWEEP-STAGING-TWO-POINTS-20261117：下位已配套、构建，未烧录
 
 按用户本轮“对照上位机的代码，修改代码”核对RDK codex/gamepad-teleop：

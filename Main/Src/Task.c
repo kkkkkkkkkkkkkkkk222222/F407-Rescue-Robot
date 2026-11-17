@@ -4893,12 +4893,13 @@ static bool task_accept_bulldozer(const VisionMissionCommand *command,
       accepted_context.opcode == VISION_CMD_NAVIGATE_WAYPOINT &&
       task_status.gripper_closed && audit_received && audit_valid && audit_initial_stash &&
       command->heading_cdeg == (configured_color == VISION_COLOR_RED ? 27000U : 9000U);
-  const bool attack_tail_entry = attack_face && owned_task && previous_step_done &&
+  const bool empty_turn_entry = attack_face && owned_task && previous_step_done &&
       accepted_context.opcode == VISION_CMD_BULLDOZER_STEP &&
       remote_action.command == VISION_CMD_BULLDOZER_STEP &&
-      remote_action.step == VISION_BULLDOZER_ATTACK_BACK_100 &&
+      (remote_action.step == VISION_BULLDOZER_ATTACK_BACK_100 ||
+       remote_action.step == VISION_BULLDOZER_EMPTY_BODY_MOVE) &&
       !task_status.gripper_closed;
-  if (attack_face && !attack_face_entry && !attack_tail_entry) {
+  if (attack_face && !attack_face_entry && !empty_turn_entry) {
     return false;
   }
   const bool attack_back = VISION_BULLDOZER_STEP(command->flags) ==
@@ -6793,11 +6794,17 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
                (state != TASK_ALIGN_SAFE_ZONE || confirmed_load.active))) &&
              task_stage_command(command) &&
              task_distance_command_valid(command, VISION_CMD_NAVIGATE_WAYPOINT)) {
+    const bool reuse_injury_audit = state == TASK_ALIGN_SAFE_ZONE &&
+        (command->flags & VISION_CMD_REUSE_POST_GRAB_AUDIT) != 0U &&
+        task_closed_single_injury_audit();
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
     task_enter(TASK_NAVIGATE, now_ms);
     route_to_stash = false;
     delivery_stage_only = true;
+    /* Repairing the staging position consumes the same real single-injury
+     * audit again; the preceding ALIGN already cleared its old NAV grant. */
+    nav_reuse_post_grab_audit = reuse_injury_audit;
     if ((command->flags & VISION_CMD_REUSE_CONFIRMED_LOAD) != 0U &&
         task_confirmed_load_available()) {
       confirmed_load.active = true;

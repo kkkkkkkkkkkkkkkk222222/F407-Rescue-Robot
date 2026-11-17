@@ -1,5 +1,13 @@
 # 当前状态：F405 烧录入口
 
+2026-11-17 MATCH-ATTACK-LATERAL-CENTRE / RECOVERED-INJURY-STAGE：已配套并构建，未烧录。
+- 核对RDK f6b37be实际路线/状态机/runner及40组合同帧。当前进攻返程为轮程退100mm→保持朝向横移→保持朝向后退→朝实际场地中心→搜索；上位分配连续两段step13的独立action。
+- 下位step14新增同任务空爪、step13实际DONE后的入口，复用原任意绝对航向及最短转角；载荷进攻点朝对方限制保持。step12仍须转向DONE才接收，旧step15后转向及-150兼容不删除，但不作为当前路线。
+- 修复上一轮ALIGN→STAGE补位漏接单橙资格：只对bit5且原真实稳定合法闭爪单橙，在状态切换后重新设置nav_reuse_post_grab_audit，D0后普通ALIGN继续可用；不补审核、不加140°复审，通用confirmed-load复用保持。
+- 两项改前失败均复现；新8条路线、最短角/归属/未完成拒接、单橙重复补位及撤销边界通过，原8条路线兼容和补位/通用复用回归通过。40组上位配对帧及4组单橙示例通过Python字节/CRC及真实C解析器，临时夹具恢复。
+- NormalRun/MotionDebug构建通过，build_git=a8eacb9/dirty1，含原独立工作区改动；指纹60986db1…802761c4 / 31ec17dd…7bfb4408。本轮未连设备/烧录/读取actual，地面结果待验。
+  [详细回执与身份](CROSS_REPO_REQUESTS.md)、[当前路线及单橙合同](contracts/f405_attack_lateral_centre_20261117.json)。旧转尾合同已标记替代，本轮按范围提交，自动备份关闭。
+
 2026-11-17 MATCH-SWEEP-STAGING-TWO-POINTS：补位/重新对准已配套并构建，未烧录。
 - 核对RDK b0237c5实际state_machine/runner/obstacle_route/protocol：两档扫障点由上位选择，原step5/6实时H/D及step8固定1000mm可直接承接。
 - 下位原ALIGN状态新增同批闭爪新action的STAGE NAV入口，要求真实合法运输审核或明确bit5且正在使用的已确认载荷；保留载荷/目的地，清旧ALIGN/DONE，沿原D0及mode48/定位/视觉对准出口。
