@@ -217,6 +217,9 @@ typedef enum {
 #define VISION_CARGO_DANGER         4U
 #define VISION_CARGO_UNKNOWN        5U
 #define VISION_CARGO_MIXED_MATERIAL 6U
+/* Code6: count2=1G1C, count3=1G2C. Code7: count3=2G1C only. */
+#define VISION_CARGO_MIXED_TWO_GREEN 7U
+#define VISION_CARGO_CLASS_MAX      VISION_CARGO_MIXED_TWO_GREEN
 
 typedef struct {
   int16_t x_mm;

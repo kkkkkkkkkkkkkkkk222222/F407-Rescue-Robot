@@ -395,7 +395,7 @@ static bool nav_reuse_post_grab_audit;
 static struct {
   bool valid, active, injury;
   uint8_t total, left, right;
-  uint8_t classes[VISION_CARGO_MIXED_MATERIAL + 1U];
+  uint8_t classes[VISION_CARGO_CLASS_MAX + 1U];
 } confirmed_load;
 static bool stash_backoff_pending;
 static bool cluster_target_active;
@@ -417,7 +417,7 @@ static uint8_t audit_last_counts;
 static uint8_t audit_last_flags;
 static uint8_t audit_last_total_count;
 static uint8_t audit_last_id;
-static uint8_t audit_last_class_counts[VISION_CARGO_MIXED_MATERIAL + 1U];
+static uint8_t audit_last_class_counts[VISION_CARGO_CLASS_MAX + 1U];
 static uint8_t audit_last_zero_classes;
 static AuditSemantic audit_last_semantic;
 static bool audit_core_seen_in_streak;
@@ -797,12 +797,14 @@ static AuditSemantic task_audit_semantic(
     return AUDIT_SEMANTIC_INVALID;
   }
 
-  if ((total == 0U) || (total > 2U) ||
+  if ((total == 0U) || (total > 3U) ||
       ((uint8_t)(left_count + right_count) != total) ||
       ((left_count == 0U) != (left == VISION_CARGO_NONE)) ||
       ((right_count == 0U) != (right == VISION_CARGO_NONE)) ||
-      ((left == VISION_CARGO_MIXED_MATERIAL) && (left_count != 2U)) ||
-      ((right == VISION_CARGO_MIXED_MATERIAL) && (right_count != 2U)) ||
+      ((left == VISION_CARGO_MIXED_MATERIAL) && (left_count < 2U)) ||
+      ((left == VISION_CARGO_MIXED_TWO_GREEN) && (left_count != 3U)) ||
+      ((right == VISION_CARGO_MIXED_MATERIAL) && (right_count < 2U)) ||
+      ((right == VISION_CARGO_MIXED_TWO_GREEN) && (right_count != 3U)) ||
       dangerous || unknown || injury_mixed) {
     return AUDIT_SEMANTIC_INVALID;
   }
@@ -818,18 +820,20 @@ static AuditSemantic task_audit_semantic(
     return (destination_injury && (total == 1U)) ?
         AUDIT_SEMANTIC_INJURY_SINGLE : AUDIT_SEMANTIC_INVALID;
   }
-  /* After the first single GREEN, transport at most two GREEN/CORE objects.
-   * MIXED_MATERIAL encodes GREEN+CORE on one claw with count exactly two. */
+  /* After the first single GREEN, transport at most three GREEN/CORE objects.
+   * The two mixed codes retain the actual green/core composition. */
   const bool material =
          !destination_injury &&
          ((left == VISION_CARGO_NONE) ||
           (left == VISION_CARGO_GREEN) ||
           (left == VISION_CARGO_CORE) ||
-          (left == VISION_CARGO_MIXED_MATERIAL)) &&
+          (left == VISION_CARGO_MIXED_MATERIAL) ||
+          (left == VISION_CARGO_MIXED_TWO_GREEN)) &&
          ((right == VISION_CARGO_NONE) ||
           (right == VISION_CARGO_GREEN) ||
           (right == VISION_CARGO_CORE) ||
-          (right == VISION_CARGO_MIXED_MATERIAL));
+          (right == VISION_CARGO_MIXED_MATERIAL) ||
+          (right == VISION_CARGO_MIXED_TWO_GREEN));
   return material ? AUDIT_SEMANTIC_MATERIAL_LEGAL :
                     AUDIT_SEMANTIC_INVALID;
 }
@@ -970,7 +974,9 @@ static bool task_audit_has_green(void)
   return (audit_last_left_class == VISION_CARGO_GREEN) ||
          (audit_last_right_class == VISION_CARGO_GREEN) ||
          (audit_last_left_class == VISION_CARGO_MIXED_MATERIAL) ||
-         (audit_last_right_class == VISION_CARGO_MIXED_MATERIAL);
+         (audit_last_right_class == VISION_CARGO_MIXED_MATERIAL) ||
+         (audit_last_left_class == VISION_CARGO_MIXED_TWO_GREEN) ||
+         (audit_last_right_class == VISION_CARGO_MIXED_TWO_GREEN);
 }
 
 static void task_begin_close_claw(uint32_t now_ms)
@@ -1002,15 +1008,15 @@ static bool task_audit_is_placeholder(const VisionMissionCommand *command)
 }
 
 static uint8_t task_audit_class_counts(const VisionMissionCommand *command,
-                                      uint8_t counts[VISION_CARGO_MIXED_MATERIAL + 1U])
+                                      uint8_t counts[VISION_CARGO_CLASS_MAX + 1U])
 {
   const uint8_t classes[2] = {command->audit_left_class, command->audit_right_class};
   const uint8_t sides[2] = {command->audit_counts & 0x03U,
                            (command->audit_counts >> 2) & 0x03U};
   uint8_t zero_classes = 0U;
-  for (uint8_t i = 0U; i <= VISION_CARGO_MIXED_MATERIAL; ++i) { counts[i] = 0U; }
+  for (uint8_t i = 0U; i <= VISION_CARGO_CLASS_MAX; ++i) { counts[i] = 0U; }
   for (uint8_t i = 0U; i < 2U; ++i) {
-    if (classes[i] > VISION_CARGO_MIXED_MATERIAL) { continue; }
+    if (classes[i] > VISION_CARGO_CLASS_MAX) { continue; }
     counts[classes[i]] += sides[i];
     if (sides[i] == 0U && classes[i] != VISION_CARGO_NONE) {
       zero_classes |= (uint8_t)(1U << classes[i]);
@@ -1019,12 +1025,22 @@ static uint8_t task_audit_class_counts(const VisionMissionCommand *command,
   return zero_classes;
 }
 
-static void task_normalize_load_classes(uint8_t *counts)
+static void task_normalize_load_classes(uint8_t *counts, uint8_t left,
+                                        uint8_t right, uint8_t packed)
 {
-  const uint8_t mixed = counts[VISION_CARGO_MIXED_MATERIAL] / 2U;
-  counts[VISION_CARGO_GREEN] += mixed;
-  counts[VISION_CARGO_CORE] += mixed;
+  const uint8_t classes[2] = {left, right};
+  for (uint8_t i = 0U; i < 2U; ++i) {
+    const uint8_t n = (packed >> (2U * i)) & 3U;
+    if (classes[i] == VISION_CARGO_MIXED_MATERIAL && n >= 2U) {
+      counts[VISION_CARGO_GREEN] += 1U;
+      counts[VISION_CARGO_CORE] += n - 1U;
+    } else if (classes[i] == VISION_CARGO_MIXED_TWO_GREEN && n == 3U) {
+      counts[VISION_CARGO_GREEN] += 2U;
+      counts[VISION_CARGO_CORE] += 1U;
+    }
+  }
   counts[VISION_CARGO_MIXED_MATERIAL] = 0U;
+  counts[VISION_CARGO_MIXED_TWO_GREEN] = 0U;
 }
 
 static void task_remember_confirmed_load(void)
@@ -1039,16 +1055,18 @@ static void task_remember_confirmed_load(void)
   confirmed_load.left = audit_last_left_class;
   confirmed_load.right = audit_last_right_class;
   memcpy(confirmed_load.classes, audit_last_class_counts, sizeof(confirmed_load.classes));
-  task_normalize_load_classes(confirmed_load.classes);
+  task_normalize_load_classes(confirmed_load.classes, audit_last_left_class,
+                              audit_last_right_class, audit_last_counts);
 }
 
 static void task_observe_confirmed_load(const VisionMissionCommand *command)
 {
   if (!confirmed_load.valid || !command_visual_new || command->vision_frame == 0U ||
       task_audit_is_empty(command)) { return; } /* A missing box is not a changed load. */
-  uint8_t classes[VISION_CARGO_MIXED_MATERIAL + 1U];
+  uint8_t classes[VISION_CARGO_CLASS_MAX + 1U];
   const uint8_t zero_classes = task_audit_class_counts(command, classes);
-  task_normalize_load_classes(classes);
+  task_normalize_load_classes(classes, command->audit_left_class,
+                              command->audit_right_class, command->audit_counts);
   if (zero_classes != 0U || task_audit_semantic(command) == AUDIT_SEMANTIC_INVALID ||
       command->audit_total_count != confirmed_load.total ||
       ((command->audit_flags & VISION_AUDIT_DESTINATION_INJURY) != 0U) != confirmed_load.injury ||
@@ -1185,17 +1203,19 @@ static void task_latch_audit(const VisionMissionCommand *command, uint32_t now_m
       (uint8_t)~VISION_AUDIT_STABLE;
   const AuditSemantic semantic = task_audit_semantic(command);
   const uint8_t single_side_mask = task_single_side_mask(command);
-  uint8_t class_counts[VISION_CARGO_MIXED_MATERIAL + 1U];
+  uint8_t class_counts[VISION_CARGO_CLASS_MAX + 1U];
   const uint8_t zero_classes = task_audit_class_counts(command, class_counts);
   bool classes_same = zero_classes == audit_last_zero_classes;
-  for (uint8_t i = 0U; i <= VISION_CARGO_MIXED_MATERIAL; ++i) {
+  for (uint8_t i = 0U; i <= VISION_CARGO_CLASS_MAX; ++i) {
     classes_same = classes_same && class_counts[i] == audit_last_class_counts[i];
   }
   const bool current_has_core =
       (command->audit_left_class == VISION_CARGO_CORE) ||
       (command->audit_right_class == VISION_CARGO_CORE) ||
       (command->audit_left_class == VISION_CARGO_MIXED_MATERIAL) ||
-      (command->audit_right_class == VISION_CARGO_MIXED_MATERIAL);
+      (command->audit_right_class == VISION_CARGO_MIXED_MATERIAL) ||
+      (command->audit_left_class == VISION_CARGO_MIXED_TWO_GREEN) ||
+      (command->audit_right_class == VISION_CARGO_MIXED_TWO_GREEN);
   bool same = false;
   if ((semantic != AUDIT_SEMANTIC_INVALID) &&
       (semantic == audit_last_semantic)) {
@@ -1206,27 +1226,25 @@ static void task_latch_audit(const VisionMissionCommand *command, uint32_t now_m
             (current_has_core == audit_core_seen_in_streak));
   } else if ((semantic == AUDIT_SEMANTIC_INVALID) &&
              (audit_last_semantic == AUDIT_SEMANTIC_INVALID)) {
-    /* Compare the wire-visible class histogram, independent of claw side.
-     * MIXED stays a distinct category; its composition is not on the wire. */
+    /* Invalid evidence retains the exact wire histogram, ignoring claw side. */
     same = (semantic_flags == audit_last_flags) &&
            (command->audit_total_count == audit_last_total_count) && classes_same;
   }
-  /* In a retained transport review, changed wire-visible cargo must revoke
-   * the old permission on its first real frame, even if still legal cargo. */
+  /* Stable material evidence follows actual composition, including 2G1C vs
+   * 1G2C, while allowing the same objects to move between claw sides. */
+  if (same && semantic == AUDIT_SEMANTIC_MATERIAL_LEGAL) {
+    uint8_t current[VISION_CARGO_CLASS_MAX + 1U], previous[VISION_CARGO_CLASS_MAX + 1U];
+    memcpy(current, class_counts, sizeof(current));
+    memcpy(previous, audit_last_class_counts, sizeof(previous));
+    task_normalize_load_classes(current, command->audit_left_class,
+                                command->audit_right_class, command->audit_counts);
+    task_normalize_load_classes(previous, audit_last_left_class,
+                                audit_last_right_class, audit_last_counts);
+    same = memcmp(current, previous, sizeof(current)) == 0;
+  }
   if (state == TASK_TRANSPORT_AUDIT && same) {
-    bool transport_classes_same = classes_same;
-    if (semantic == AUDIT_SEMANTIC_MATERIAL_LEGAL) {
-      /* A legal MIXED side is one GREEN + one CORE; moving that pair between
-       * sides must not turn unchanged cargo into a contradictory sample. */
-      const uint8_t mixed = class_counts[VISION_CARGO_MIXED_MATERIAL] / 2U;
-      const uint8_t last_mixed = audit_last_class_counts[VISION_CARGO_MIXED_MATERIAL] / 2U;
-      transport_classes_same =
-          class_counts[VISION_CARGO_GREEN] + mixed ==
-              audit_last_class_counts[VISION_CARGO_GREEN] + last_mixed &&
-          class_counts[VISION_CARGO_CORE] + mixed ==
-              audit_last_class_counts[VISION_CARGO_CORE] + last_mixed;
-    }
-    same = transport_classes_same && semantic_flags == audit_last_flags;
+    same = (semantic == AUDIT_SEMANTIC_MATERIAL_LEGAL || classes_same) &&
+        semantic_flags == audit_last_flags;
   }
   audit_initial_stash =
       (command->audit_flags & VISION_AUDIT_INITIAL_STASH) != 0U;
@@ -1285,7 +1303,7 @@ static void task_latch_audit(const VisionMissionCommand *command, uint32_t now_m
   audit_last_total_count = command->audit_total_count;
   audit_last_id = command->audit_id;
   audit_last_zero_classes = zero_classes;
-  for (uint8_t i = 0U; i <= VISION_CARGO_MIXED_MATERIAL; ++i) {
+  for (uint8_t i = 0U; i <= VISION_CARGO_CLASS_MAX; ++i) {
     audit_last_class_counts[i] = class_counts[i];
   }
   audit_last_semantic = semantic;
@@ -1330,7 +1348,7 @@ static void task_clear_audit_result(void)
   audit_last_total_count = 0U;
   audit_last_id = 0U;
   audit_last_zero_classes = 0U;
-  for (uint8_t i = 0U; i <= VISION_CARGO_MIXED_MATERIAL; ++i) {
+  for (uint8_t i = 0U; i <= VISION_CARGO_CLASS_MAX; ++i) {
     audit_last_class_counts[i] = 0U;
   }
   audit_last_semantic = AUDIT_SEMANTIC_INVALID;
@@ -2639,7 +2657,8 @@ static bool task_capture_has_eligible(void)
   const uint8_t classes[2] = {audit_last_left_class, audit_last_right_class};
   for (uint8_t i = 0U; i < 2U; ++i) {
     if (classes[i] == VISION_CARGO_GREEN || classes[i] == VISION_CARGO_CORE ||
-        classes[i] == VISION_CARGO_MIXED_MATERIAL || classes[i] == VISION_CARGO_INJURED)
+        classes[i] == VISION_CARGO_MIXED_MATERIAL ||
+        classes[i] == VISION_CARGO_MIXED_TWO_GREEN || classes[i] == VISION_CARGO_INJURED)
       return true;
   }
   return false;
@@ -3448,8 +3467,18 @@ static void task_process_injury_backoff(uint32_t now_ms)
 
 static bool task_single_filter_eligible(void)
 {
-  return single_filter_armed && audit_received && audit_host_stable && audit_valid &&
-      !audit_initial_stash && !safe_sweep_recheck_pending && audit_last_total_count == 1U &&
+  if (!single_filter_armed || !audit_received || !audit_host_stable || !audit_valid ||
+      audit_initial_stash) { return false; }
+  if (task_status.gripper_closed &&
+      audit_last_semantic == AUDIT_SEMANTIC_MATERIAL_LEGAL && first_delivery_done &&
+      audit_last_total_count >= 2U && audit_last_total_count <= 3U) {
+    uint8_t classes[VISION_CARGO_CLASS_MAX + 1U];
+    memcpy(classes, audit_last_class_counts, sizeof(classes));
+    task_normalize_load_classes(classes, audit_last_left_class,
+                                audit_last_right_class, audit_last_counts);
+    return classes[VISION_CARGO_GREEN] >= 2U;
+  }
+  return !safe_sweep_recheck_pending && audit_last_total_count == 1U &&
       (audit_last_semantic == AUDIT_SEMANTIC_INJURY_SINGLE ||
        (!first_delivery_done && !first_green_core_conflict &&
         audit_last_semantic == AUDIT_SEMANTIC_FIRST_GREEN));
@@ -5790,6 +5819,7 @@ static void task_process_safe_sweep(uint32_t now_ms)
       task_status.motors_active = false;
       if (Claw_Touch(now_ms)) {
         task_status.gripper_closed = true;
+        single_filter_armed = true;
         task_safe_sweep_advance(now_ms);
       }
       return;

@@ -104,6 +104,8 @@ CARGO_INJURED = 3
 CARGO_DANGER = 4
 CARGO_UNKNOWN = 5
 CARGO_MIXED_MATERIAL = 6
+CARGO_MIXED_TWO_GREEN = 7
+CARGO_CLASS_MAX = CARGO_MIXED_TWO_GREEN
 
 
 def crc16_modbus(data: bytes) -> int:
@@ -439,12 +441,16 @@ def cargo_audit_frame(
     audit_id: int,
     total_count: int,
 ) -> bytes:
-    if left_class not in range(CARGO_MIXED_MATERIAL + 1):
+    if left_class not in range(CARGO_CLASS_MAX + 1):
         raise ValueError("invalid left cargo class")
-    if right_class not in range(CARGO_MIXED_MATERIAL + 1):
+    if right_class not in range(CARGO_CLASS_MAX + 1):
         raise ValueError("invalid right cargo class")
     if left_count not in range(4) or right_count not in range(4):
         raise ValueError("per-side cargo count must be 0..3")
+    for cargo, count in ((left_class, left_count), (right_class, right_count)):
+        if ((cargo == CARGO_MIXED_MATERIAL and count not in (2, 3)) or
+                (cargo == CARGO_MIXED_TWO_GREEN and count != 3)):
+            raise ValueError("invalid mixed-material composition")
     if audit_flags & ~0x7F:
         raise ValueError("invalid cargo audit flags")
     if not 0 <= audit_id <= 0xFF or not 0 <= total_count <= 0xFF:

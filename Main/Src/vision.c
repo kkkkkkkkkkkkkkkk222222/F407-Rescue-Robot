@@ -398,8 +398,12 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
     goto rejected_payload;
   }
   if ((code == VISION_CMD_CARGO_AUDIT) &&
-      ((payload[2] > VISION_CARGO_MIXED_MATERIAL) ||
-       (payload[3] > VISION_CARGO_MIXED_MATERIAL) ||
+      ((payload[2] > VISION_CARGO_CLASS_MAX) ||
+       (payload[3] > VISION_CARGO_CLASS_MAX) ||
+       (payload[2] == VISION_CARGO_MIXED_MATERIAL && (payload[4] & 3U) < 2U) ||
+       (payload[3] == VISION_CARGO_MIXED_MATERIAL && ((payload[4] >> 2) & 3U) < 2U) ||
+       (payload[2] == VISION_CARGO_MIXED_TWO_GREEN && (payload[4] & 3U) != 3U) ||
+       (payload[3] == VISION_CARGO_MIXED_TWO_GREEN && ((payload[4] >> 2) & 3U) != 3U) ||
        ((payload[4] & 0xF0U) != 0U) || ((payload[5] & 0x80U) != 0U))) {
     goto rejected_payload;
   }
