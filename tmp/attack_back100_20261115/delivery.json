@@ -1,0 +1,15 @@
+{
+  "source_sha": "a0a1c5d635eca77431129dd4bd38998f2385fd28",
+  "upper_sha": "8709e43c62148197d94923db8af6af76873138f3",
+  "build_modes": [
+    "NormalRun/TASK",
+    "MotionDebug/MOTIONDEBUG"
+  ],
+  "upper_baud": 921600,
+  "source_dirty": 1,
+  "dirty_source_difference": "preserved original Task initialization whitespace",
+  "pushed": true,
+  "flashed": false,
+  "actual_read": false,
+  "ground_distance_validated": false
+}

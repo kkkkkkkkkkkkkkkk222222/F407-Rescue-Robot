@@ -1,0 +1,8 @@
+{"timestamp_monotonic_ns":160269928772,"event":"t265_debug_option","data":{"name":"enable_mapping","supported":true,"before":1,"after":1}}
+{"timestamp_monotonic_ns":160270106026,"event":"t265_debug_option","data":{"name":"enable_relocalization","supported":true,"before":1,"after":1}}
+{"timestamp_monotonic_ns":160270163596,"event":"t265_debug_option","data":{"name":"enable_pose_jumping","supported":true,"before":1,"after":1}}
+{"timestamp_monotonic_ns":160270214663,"event":"t265_debug_option","data":{"name":"enable_map_preservation","supported":true,"before":0,"after":0}}
+{"timestamp_monotonic_ns":160297829499,"event":"t265_pose_jumping_final","data":{"value":1.000000}}
+{"timestamp_monotonic_ns":160297917876,"event":"pipeline_started","data":{"t265_map_enabled":false}}
+{"timestamp_monotonic_ns":160832336318,"event":"t265_first_pose_frame","data":{"wait_ms":534.346073}}
+{"timestamp_monotonic_ns":171192151021,"event":"t265_pose_gap","data":{"t265_timestamp_s":1792149379.56481,"dt_s":0.145302772521973,"displacement_m":0.00115262417905722,"velocity_residual_m":0.00191241805067241,"tracker_confidence":2,"mapper_confidence":0}}

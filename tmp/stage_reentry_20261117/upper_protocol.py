@@ -1,0 +1,474 @@
+#!/usr/bin/env python3
+"""Upper-computer protocol extensions for the complete rescue flow.
+
+The legacy 15-byte frame and existing 0x18 command remain the transport.  The
+new opcodes are intentionally kept in this separate module so the original
+mission test program is not changed while F407 firmware is being updated.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from obstacle_route import ACTUATOR_STEPS, LIVE_STEPS, LOCAL_DISTANCES, TURN_STEPS, RouteStep
+
+
+FRAME_HEAD = bytes((0xA3, 0xB3))
+FRAME_TAIL = 0xC3
+FRAME_SIZE = 15
+TYPE_MISSION_COMMAND = 0x18
+TYPE_COMMAND_CONTEXT = 0x1D
+TYPE_STATUS_CONTEXT = 0x1E
+
+
+def command_context_frame(sequence: int, task_id: int, action_id: int, vision_frame: int) -> bytes:
+    """Pair with 0x18 using the same transport SEQ; IDs survive heartbeats."""
+    payload = task_id.to_bytes(2, "big") + action_id.to_bytes(2, "big") + vision_frame.to_bytes(4, "big")
+    body = bytes((TYPE_COMMAND_CONTEXT, sequence)) + payload
+    return FRAME_HEAD + body + crc16_modbus(body).to_bytes(2, "little") + bytes((FRAME_TAIL,))
+
+CMD_STOP = 0x00
+CMD_PAUSE = 0x01
+CMD_GRAB_CONFIRMED = 0x02
+CMD_NAVIGATE_WAYPOINT = 0x03
+CMD_ALIGN_SAFE_ZONE = 0x04
+CMD_ENTER_SAFE_ZONE = 0x05
+CMD_TASK_COMPLETE = 0x06
+CMD_ABORT = 0x07
+CMD_RETURN_CENTER = 0x08
+
+# New complete-flow opcodes.  They are sent as TYPE=0x18 and require the
+# matching F407 firmware described in docs/f407_competition_flow_handoff.md.
+CMD_APPROACH_TARGET = 0x09
+CMD_HOLD = 0x0A
+CMD_YIELD_BACKOFF = 0x0B
+CMD_ESCAPE_MANEUVER = 0x0C  # Retired; reserved for historical logs, never send.
+CMD_RELEASE_LEFT = 0x0D
+CMD_RELEASE_RIGHT = 0x0E
+CMD_RELEASE_BOTH = 0x0F
+CMD_DISPERSE_PILE = 0x10
+CMD_CHANGE_LANE = 0x11
+CMD_CARGO_AUDIT = 0x12
+CMD_CLEAR_SAFE_ZONE = 0x13
+CMD_BULLDOZER_STEP = 0x14  # Segmented motion; each extension requires matching F405 support.
+CMD_CLOSED_DEFLECT = 0x15  # TYPE=0x18 opcode, unrelated to TYPE=0x15 odometry.
+
+CMD_VALID = 1 << 0
+CMD_DRIVE_STRAIGHT = 1 << 1
+CMD_USE_FINAL_HEADING = 1 << 2
+CMD_RED_SIDE = 1 << 3
+CMD_DISTANCE_VALID = 1 << 4
+CMD_CLUSTER_TARGET = 1 << 5
+CMD_REUSE_POST_GRAB_AUDIT = 1 << 5  # STAGE NAV only; recovered single injury, no new count.
+CMD_REUSE_CONFIRMED_LOAD = 1 << 5  # Pose ALIGN / STAGE NAV: prior closed-load permission, not a new audit.
+CMD_FIRST_GREEN_BUMP = 1 << 5
+CMD_APPROACH_RANGE = 1 << 6
+# APPROACH_RANGE aux only: finish this segment at the same measuring pitch.
+APPROACH_RANGE_REOBSERVE = 1
+APPROACH_RANGE_PRE_GRAB = 2  # Paired firmware: open claw, 140deg, finite 50mm.
+CMD_STAGE_ONLY = 1 << 6
+CMD_VISUAL_CORRECTION_VALID = 1 << 6
+CMD_SIDE_VALID = 1 << 6
+CMD_TARGET_RIGHT = 1 << 7
+CMD_DISPERSE_NEAR_KEEP = 1 << 4  # DISPERSE only: side evidence, never cargo validity.
+
+AUDIT_INITIAL_STASH = 1 << 0
+AUDIT_DANGER_PRESENT = 1 << 1
+AUDIT_UNKNOWN_PRESENT = 1 << 2
+AUDIT_INJURY_MIXED = 1 << 3
+AUDIT_STABLE = 1 << 4
+AUDIT_DESTINATION_INJURY = 1 << 5
+AUDIT_SWEEP_PICKUP = 1 << 6
+AUDIT_FIRST_GREEN_CORE_CONFLICT = 1 << 7  # Negative transport qualification, never a count.
+
+CARGO_NONE = 0
+CARGO_GREEN = 1
+CARGO_CORE = 2
+CARGO_INJURED = 3
+CARGO_DANGER = 4
+CARGO_UNKNOWN = 5
+CARGO_MIXED_MATERIAL = 6
+
+CARGO_CLASS_CODES = {
+    "": CARGO_NONE,
+    "none": CARGO_NONE,
+    "green_supply": CARGO_GREEN,
+    "core_black": CARGO_CORE,
+    "injured_orange": CARGO_INJURED,
+    "danger_cyan": CARGO_DANGER,
+    "unknown": CARGO_UNKNOWN,
+    "mixed_material": CARGO_MIXED_MATERIAL,
+}
+
+
+def crc16_modbus(data: bytes) -> int:
+    crc = 0xFFFF
+    for value in data:
+        crc ^= value
+        for _ in range(8):
+            crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
+    return crc & 0xFFFF
+
+
+def _i16be(value: int, name: str) -> bytes:
+    if not -32768 <= value <= 32767:
+        raise ValueError(f"{name} must be in -32768..32767")
+    return int(value).to_bytes(2, "big", signed=True)
+
+
+def _u16be(value: int, name: str) -> bytes:
+    if not 0 <= value <= 65535:
+        raise ValueError(f"{name} must be in 0..65535")
+    return int(value).to_bytes(2, "big")
+
+
+def mission_frame(
+    sequence: int,
+    command: int,
+    flags: int = CMD_VALID,
+    arg_a: int = 0,
+    arg_b: int = 0,
+    aux_cdeg: int = 0,
+) -> bytes:
+    """Build one complete-flow TYPE=0x18 frame.
+
+    ``arg_a`` and ``arg_b`` are signed int16 values whose meaning depends on
+    the opcode.  ``aux_cdeg`` is the legacy absolute heading field for
+    navigation commands and an opcode-specific unsigned field otherwise.
+    """
+    if not 0 <= sequence <= 0xFF:
+        raise ValueError("sequence must be in 0..255")
+    if not 0 <= command <= 0xFF or not 0 <= flags <= 0xFF:
+        raise ValueError("command and flags must be bytes")
+    if command == CMD_CLOSED_DEFLECT:
+        from closed_deflect import VIEW, PULL, STAGE, CARRYING, END_AT_ORIGINAL
+        phase = flags >> 4
+        valid = bool(flags & CMD_VALID) and flags & 0xC0 == 0 and 0 <= aux_cdeg < 36000
+        if phase == VIEW:
+            valid = valid and bool(flags & CARRYING) and not flags & END_AT_ORIGINAL and arg_a == 0 and arg_b == 12000
+        elif phase == PULL:
+            valid = valid and 0 <= arg_a <= 2500 and 100 <= abs(arg_b) <= 6000
+        elif phase == STAGE:
+            valid = valid and bool(flags & CARRYING) and not flags & END_AT_ORIGINAL and 0 <= arg_a <= 5000 and -18000 <= arg_b <= 18000
+        else:
+            valid = False
+        if not valid:
+            raise ValueError("invalid closed deflection payload")
+    if command == CMD_BULLDOZER_STEP:
+        # High nibble identifies the route step, not the legacy bit meanings.
+        if flags & 0x06 or not flags & CMD_VALID:
+            raise ValueError("invalid bulldozer flags")
+        try:
+            step = RouteStep(flags >> 4)
+        except ValueError as error:
+            raise ValueError("invalid bulldozer step") from error
+        if step in TURN_STEPS:
+            expected = (0 if flags & CMD_RED_SIDE else 18000)
+            if step == RouteStep.TURN_LEFT:
+                expected = (expected + 9000) % 36000
+            valid = arg_a == arg_b == 0 and (
+                0 <= aux_cdeg < 36000 if step == RouteStep.ATTACK_FACE_OPPONENT
+                else aux_cdeg == expected)
+        elif step in LOCAL_DISTANCES:
+            expected = ((27000 if flags & CMD_RED_SIDE else 9000)
+                        if step == RouteStep.ATTACK_BACK_150 else
+                        (0 if flags & CMD_RED_SIDE else 18000))
+            valid = ((arg_a in {-100, -150} if step == RouteStep.ATTACK_BACK_150
+                      else arg_a == LOCAL_DISTANCES[step]) and arg_b == 0 and
+                     aux_cdeg == expected)
+        elif step == RouteStep.EMPTY_BODY_MOVE:
+            valid = 0 <= arg_a <= 5000 and -18000 <= arg_b <= 18000 and 0 <= aux_cdeg < 36000
+        elif step in LIVE_STEPS:
+            valid = (0 <= arg_a <= 5000 and -18000 <= arg_b <= 18000 and
+                     aux_cdeg == (0 if flags & CMD_RED_SIDE else 18000))
+        else:
+            valid = step in ACTUATOR_STEPS and arg_a == arg_b == aux_cdeg == 0
+        if not valid:
+            raise ValueError("invalid bulldozer step payload")
+    if flags & CMD_CLUSTER_TARGET and command not in {
+        CMD_APPROACH_TARGET,
+        CMD_DISPERSE_PILE,
+        CMD_BULLDOZER_STEP,
+        CMD_CLOSED_DEFLECT,
+        CMD_NAVIGATE_WAYPOINT,
+        CMD_ALIGN_SAFE_ZONE,
+    }:
+        raise ValueError("bit5 requires an approach, disperse, bulldozer, STAGE NAV or pose ALIGN command")
+    if command == CMD_ALIGN_SAFE_ZONE and flags & CMD_REUSE_CONFIRMED_LOAD:
+        allowed = CMD_VALID | CMD_RED_SIDE | CMD_USE_FINAL_HEADING | CMD_REUSE_CONFIRMED_LOAD
+        if (flags & ~allowed or flags & (CMD_VALID | CMD_USE_FINAL_HEADING) !=
+                CMD_VALID | CMD_USE_FINAL_HEADING or arg_a != 0 or
+                arg_b not in {0, 11500} or
+                aux_cdeg != (9000 if flags & CMD_RED_SIDE else 27000)):
+            raise ValueError("confirmed load reuse requires pose ALIGN with the side heading")
+    if command == CMD_NAVIGATE_WAYPOINT and flags & CMD_REUSE_POST_GRAB_AUDIT:
+        required = CMD_VALID | CMD_DISTANCE_VALID | CMD_STAGE_ONLY
+        if (flags & required != required or arg_a < 0 or arg_b != 0 or
+                not 0 <= aux_cdeg < 36000):
+            raise ValueError("audit reuse requires the existing STAGE NAV distance/heading payload")
+    if command == CMD_APPROACH_TARGET and flags & CMD_APPROACH_RANGE:
+        allowed = CMD_VALID | CMD_RED_SIDE | CMD_CLUSTER_TARGET | CMD_APPROACH_RANGE | CMD_DISTANCE_VALID
+        ordinary = (aux_cdeg in {0, APPROACH_RANGE_REOBSERVE} and
+                    0 <= arg_a <= 2500 and arg_b in {10500, 12000})
+        pre_grab = aux_cdeg == APPROACH_RANGE_PRE_GRAB and arg_a == 50 and arg_b == 14000
+        if (flags & ~allowed or flags & (CMD_VALID | CMD_DISTANCE_VALID) != (CMD_VALID | CMD_DISTANCE_VALID) or
+                not (ordinary or pre_grab)):
+            raise ValueError("invalid fixed-pitch approach range request")
+    if flags & CMD_STAGE_ONLY and command not in {
+        CMD_APPROACH_TARGET,
+        CMD_NAVIGATE_WAYPOINT,
+        CMD_ALIGN_SAFE_ZONE,
+        CMD_ENTER_SAFE_ZONE,
+        CMD_DISPERSE_PILE,
+        CMD_BULLDOZER_STEP,
+    }:
+        raise ValueError("bit6 is not valid for this command")
+    if flags & CMD_TARGET_RIGHT and command not in {CMD_DISPERSE_PILE, CMD_BULLDOZER_STEP}:
+        raise ValueError("TARGET_RIGHT is only valid for DISPERSE_PILE")
+    if command != CMD_BULLDOZER_STEP and flags & CMD_TARGET_RIGHT and not flags & CMD_SIDE_VALID:
+        raise ValueError("TARGET_RIGHT requires SIDE_VALID")
+    if (
+        command == CMD_DISPERSE_PILE and
+        flags & CMD_FIRST_GREEN_BUMP and
+        flags & (CMD_SIDE_VALID | CMD_TARGET_RIGHT)
+    ):
+        raise ValueError("FIRST_GREEN_BUMP cannot use side-selection flags")
+    if command == CMD_DISPERSE_PILE and flags & CMD_DISPERSE_NEAR_KEEP:
+        if (not flags & CMD_SIDE_VALID or flags & CMD_FIRST_GREEN_BUMP or
+                arg_a != 0 or arg_b != 0 or aux_cdeg != 0):
+            raise ValueError("near-claw keep requires an explicit side and zero motion payload")
+    if command == CMD_ENTER_SAFE_ZONE:
+        visual = bool(flags & CMD_VISUAL_CORRECTION_VALID)
+        fallback_heading = 9000 if flags & CMD_RED_SIDE else 27000
+        if (
+            not flags & CMD_DRIVE_STRAIGHT or
+            flags & CMD_DISTANCE_VALID or
+            arg_a != 0 or
+            arg_b != 0
+        ):
+            raise ValueError("ENTER uses F407 encoder distance with zero D")
+        if visual:
+            if flags & CMD_USE_FINAL_HEADING or aux_cdeg != 0:
+                raise ValueError("visual ENTER must use the latched ALIGN heading")
+        elif (
+            not flags & CMD_USE_FINAL_HEADING or
+            aux_cdeg != fallback_heading
+        ):
+            raise ValueError("fallback ENTER must use the side heading")
+    if command == CMD_CLEAR_SAFE_ZONE:
+        allowed_flags = CMD_VALID | CMD_RED_SIDE
+        if flags & ~allowed_flags or not flags & CMD_VALID:
+            raise ValueError("CLEAR_SAFE_ZONE only allows CMD_VALID and RED_SIDE")
+        if arg_a != 0 and not 80 <= arg_a <= 600:
+            raise ValueError("CLEAR_SAFE_ZONE uses 0 for visual pickup or legacy 80..600 mm")
+        placement_mm = 200 if arg_a == 0 else 150
+        if abs(arg_b) != placement_mm:
+            raise ValueError("visual CLEAR uses +/-200 mm turn-and-place; legacy CLEAR uses +/-150 mm")
+        if aux_cdeg != 0:
+            raise ValueError("CLEAR_SAFE_ZONE P6/P7 must be zero")
+    payload = (
+        bytes((command, flags))
+        + _i16be(arg_a, "arg_a")
+        + _i16be(arg_b, "arg_b")
+        + _u16be(aux_cdeg, "aux_cdeg")
+    )
+    body = bytes((TYPE_MISSION_COMMAND, sequence)) + payload
+    crc = crc16_modbus(body)
+    return FRAME_HEAD + body + crc.to_bytes(2, "little") + bytes((FRAME_TAIL,))
+
+
+@dataclass(frozen=True)
+class CargoAuditPayload:
+    """Compact left/right cargo audit sent before movement or release."""
+
+    left_class: str = ""
+    right_class: str = ""
+    left_count: int = 0
+    right_count: int = 0
+    total_count: int = 0
+    danger_present: bool = False
+    unknown_present: bool = False
+    injury_mixed: bool = False
+    stable: bool = False
+    initial_stash: bool = False
+    destination_injury: bool = False
+    audit_id: int = 0
+    sweep_pickup: bool = False
+    first_green_core_conflict: bool = False
+
+    @property
+    def semantic_signature(self) -> tuple:
+        """Compare exactly the evidence visible to F407, ignoring claw side."""
+        payload = self.frame(0)[4:12]
+        histogram = [0] * (CARGO_MIXED_MATERIAL + 1)
+        zero_class_mask = 0
+        for class_code, count in ((payload[2], payload[4] & 3),
+                                  (payload[3], (payload[4] >> 2) & 3)):
+            histogram[class_code] += count
+            if count == 0 and class_code != CARGO_NONE:
+                zero_class_mask |= 1 << class_code
+        return (payload[7], payload[5] & ~AUDIT_STABLE,
+                tuple(histogram), zero_class_mask)
+
+    def frame(self, sequence: int) -> bytes:
+        left = CARGO_CLASS_CODES.get(self.left_class, CARGO_UNKNOWN)
+        right = CARGO_CLASS_CODES.get(self.right_class, CARGO_UNKNOWN)
+        if not 0 <= self.left_count <= 3 or not 0 <= self.right_count <= 3:
+            raise ValueError("each claw count must be in 0..3")
+        if not 0 <= self.total_count <= 255 or not 0 <= self.audit_id <= 255:
+            raise ValueError("audit count and id must be bytes")
+        flags = 0
+        flags |= AUDIT_INITIAL_STASH if self.initial_stash else 0
+        flags |= AUDIT_DANGER_PRESENT if self.danger_present else 0
+        flags |= AUDIT_UNKNOWN_PRESENT if self.unknown_present else 0
+        flags |= AUDIT_INJURY_MIXED if self.injury_mixed else 0
+        flags |= AUDIT_STABLE if self.stable else 0
+        flags |= AUDIT_DESTINATION_INJURY if self.destination_injury else 0
+        flags |= AUDIT_SWEEP_PICKUP if self.sweep_pickup else 0
+        flags |= AUDIT_FIRST_GREEN_CORE_CONFLICT if self.first_green_core_conflict else 0
+        packed_counts = self.left_count | (self.right_count << 2)
+        payload = bytes((
+            CMD_CARGO_AUDIT,
+            CMD_VALID,
+            left,
+            right,
+            packed_counts,
+            flags,
+            self.audit_id,
+            self.total_count,
+        ))
+        body = bytes((TYPE_MISSION_COMMAND, sequence)) + payload
+        crc = crc16_modbus(body)
+        return FRAME_HEAD + body + crc.to_bytes(2, "little") + bytes((FRAME_TAIL,))
+
+
+def approach_target_frame(
+    sequence: int, x_px: int, y_px: int, *, cluster_target: bool = False
+) -> bytes:
+    flags = CMD_VALID | (CMD_CLUSTER_TARGET if cluster_target else 0)
+    return mission_frame(sequence, CMD_APPROACH_TARGET, flags, x_px, y_px)
+
+
+def hold_frame(sequence: int) -> bytes:
+    return mission_frame(sequence, CMD_HOLD, CMD_VALID)
+
+
+def pause_frame(sequence: int) -> bytes:
+    return mission_frame(sequence, CMD_PAUSE, CMD_VALID)
+
+
+def grab_frame(sequence: int, red_side: bool) -> bytes:
+    flags = CMD_VALID | (CMD_RED_SIDE if red_side else 0)
+    return mission_frame(sequence, CMD_GRAB_CONFIRMED, flags)
+
+
+def navigation_frame(
+    sequence: int,
+    remaining_m: float,
+    heading_deg: float,
+    red_side: bool,
+) -> bytes:
+    if remaining_m < 0.0:
+        raise ValueError("remaining distance must be nonnegative")
+    flags = CMD_VALID | CMD_DRIVE_STRAIGHT | CMD_USE_FINAL_HEADING | CMD_DISTANCE_VALID
+    flags |= CMD_RED_SIDE if red_side else 0
+    return mission_frame(
+        sequence,
+        CMD_NAVIGATE_WAYPOINT,
+        flags,
+        max(0, min(32767, round(remaining_m * 1000.0))),
+        0,
+        round(heading_deg % 360.0 * 100.0) % 36000,
+    )
+
+
+def enter_safe_zone_frame(sequence: int, heading_deg: float, red_side: bool) -> bytes:
+    flags = CMD_VALID | CMD_DRIVE_STRAIGHT | CMD_USE_FINAL_HEADING
+    flags |= CMD_RED_SIDE if red_side else 0
+    return mission_frame(
+        sequence,
+        CMD_ENTER_SAFE_ZONE,
+        flags,
+        0,
+        0,
+        round(heading_deg % 360.0 * 100.0) % 36000,
+    )
+
+
+def task_complete_frame(sequence: int, red_side: bool) -> bytes:
+    return mission_frame(
+        sequence,
+        CMD_TASK_COMPLETE,
+        CMD_VALID | (CMD_RED_SIDE if red_side else 0),
+    )
+
+
+def return_center_frame(
+    sequence: int,
+    remaining_m: float,
+    heading_deg: float,
+    red_side: bool,
+) -> bytes:
+    flags = CMD_VALID | CMD_DRIVE_STRAIGHT | CMD_USE_FINAL_HEADING | CMD_DISTANCE_VALID
+    flags |= CMD_RED_SIDE if red_side else 0
+    return mission_frame(
+        sequence,
+        CMD_RETURN_CENTER,
+        flags,
+        max(0, min(32767, round(remaining_m * 1000.0))),
+        0,
+        round(heading_deg % 360.0 * 100.0) % 36000,
+    )
+
+
+def yield_backoff_frame(sequence: int, distance_m: float) -> bytes:
+    return mission_frame(
+        sequence,
+        CMD_YIELD_BACKOFF,
+        CMD_VALID,
+        -max(0, min(32767, round(distance_m * 1000.0))),
+        0,
+    )
+
+
+def release_frame(sequence: int, side: str) -> bytes:
+    commands = {
+        "left": CMD_RELEASE_LEFT,
+        "right": CMD_RELEASE_RIGHT,
+        "both": CMD_RELEASE_BOTH,
+    }
+    try:
+        command = commands[side]
+    except KeyError as error:
+        raise ValueError("release side must be left, right or both") from error
+    return mission_frame(sequence, command, CMD_VALID)
+
+
+def disperse_frame(
+    sequence: int,
+    keep_side: str | None = None,
+    *,
+    red_side: bool = False,
+    first_green_bump: bool = False,
+) -> bytes:
+    if keep_side not in {None, "left", "right"}:
+        raise ValueError("keep_side must be left, right or None")
+    if first_green_bump and keep_side is not None:
+        raise ValueError("FIRST_GREEN_BUMP cannot select a side")
+    flags = CMD_VALID | (CMD_RED_SIDE if red_side else 0)
+    if first_green_bump:
+        flags |= CMD_FIRST_GREEN_BUMP
+    if keep_side is not None:
+        flags |= CMD_SIDE_VALID
+    if keep_side == "right":
+        flags |= CMD_TARGET_RIGHT
+    return mission_frame(sequence, CMD_DISPERSE_PILE, flags)
+
+
+def change_lane_frame(sequence: int, lateral_m: float, forward_m: float) -> bytes:
+    return mission_frame(
+        sequence,
+        CMD_CHANGE_LANE,
+        CMD_VALID,
+        max(-32768, min(32767, round(lateral_m * 1000.0))),
+        max(-32768, min(32767, round(forward_m * 1000.0))),
+    )
+

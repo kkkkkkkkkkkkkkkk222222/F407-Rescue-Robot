@@ -1,0 +1,7 @@
+# TX 2026-11-13T00:37:04.5011100+08:00 S 4 86
+RXCMD S 4 86
+SERVO ID=4 TARGET_DEG=86 PWM=ON
+# TX 2026-11-13T00:37:05.2063101+08:00 S 2 90
+RXCMD S 2 90
+SERVO ID=2 TARGET_DEG=90 PWM=ON
+# Previous closed pose restored. No wheel, lift, or camera commands sent.

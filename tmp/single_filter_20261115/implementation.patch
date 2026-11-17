@@ -1,0 +1,277 @@
+diff --git a/Main/Src/Task.c b/Main/Src/Task.c
+index e224656..506c957 100644
+--- a/Main/Src/Task.c
++++ b/Main/Src/Task.c
+@@ -287,6 +287,15 @@ static bool empty_load_reobserved;
+ static bool transport_stage_injury;
+ static uint8_t transport_audit_phase, transport_audit_attempt;
+ static bool injury_recheck_pending;
++/* One mechanical finish per actual grab, never per audit/transport request. */
++static bool single_filter_armed, single_filter_active, single_filter_reclose;
++static bool single_filter_sweep_done;
++static uint8_t single_filter_phase;
++static uint32_t single_filter_wait_ms;
++static float single_filter_heading_deg;
++static bool task_single_filter_eligible(void);
++static void task_begin_single_filter(uint32_t now_ms, bool reclose);
++static void task_process_single_filter(uint32_t now_ms);
+ static uint8_t injury_backoff_phase;
+ static uint32_t injury_backoff_last_ms, injury_backoff_elapsed_ms;
+ static float injury_backoff_heading_deg;
+@@ -916,6 +925,7 @@ static bool task_audit_has_green(void)
+ 
+ static void task_begin_close_claw(uint32_t now_ms)
+ {
++  single_filter_armed = true;
+   injury_recheck_pending = false;
+   const bool advance_for_core = complete_flow_active &&
+       audit_core_seen_in_streak;
+@@ -1355,6 +1365,10 @@ static void task_enter(TaskState next, uint32_t now_ms)
+       (state == TASK_FACE_FIELD_CENTER) && (next == TASK_SEARCH);
+   Motor_Stop();
+   state = next;
++  if (next != TASK_INJURY_RECLOSE) { single_filter_active = false; }
++  if (next == TASK_STOPPED || next == TASK_RECOVERY_WAIT || next == TASK_SEARCH) {
++    single_filter_armed = false;
++  }
+   if (next != TASK_NAVIGATE) {
+     /* The grant belongs only to this NAV. ALIGN consumes it while retaining
+      * the real audit; release/recovery/SEARCH must never carry it onward. */
+@@ -1646,6 +1660,8 @@ static void task_initialize(uint32_t now_ms)
+   approach_deadline_ms = now_ms;
+   injury_recheck_pending = false;
+   audit_watch_active = false;
++  single_filter_armed = single_filter_active = single_filter_reclose = false;
++  single_filter_phase = 0U;
+   separation_total_attempts = 0U;
+   Claw_SetSeparationHold(0U);
+   pose_invalid_started_ms = now_ms;
+@@ -3091,6 +3107,85 @@ static void task_process_injury_backoff(uint32_t now_ms)
+   }
+ }
+ 
++static bool task_single_filter_eligible(void)
++{
++  return single_filter_armed && audit_received && audit_host_stable && audit_valid &&
++      !audit_initial_stash && !safe_sweep_recheck_pending && audit_last_total_count == 1U &&
++      (audit_last_semantic == AUDIT_SEMANTIC_INJURY_SINGLE ||
++       (!first_delivery_done && !first_green_core_conflict &&
++        audit_last_semantic == AUDIT_SEMANTIC_FIRST_GREEN));
++}
++
++static void task_begin_single_filter(uint32_t now_ms, bool reclose)
++{
++  const bool sweep_done = safe_sweep_recheck_pending;
++  task_enter(TASK_INJURY_RECLOSE, now_ms);
++  single_filter_active = true;
++  single_filter_armed = false;
++  single_filter_reclose = reclose;
++  single_filter_sweep_done = sweep_done;
++  single_filter_phase = 0U;
++  task_status.gripper_closed = !reclose;
++  accepted_context.completed = false;
++}
++
++static void task_process_single_filter(uint32_t now_ms)
++{
++  /* Negative held-load evidence survives this movement and wins before NAV.
++   * Return the lift through its existing mechanical wait, then re-audit. */
++  if ((!audit_valid || (first_green_core_conflict && !first_delivery_done)) &&
++      single_filter_phase != 3U) {
++    Motor_Stop();
++    task_status.motors_active = false;
++    single_filter_wait_ms = Lift_PositionWaitMs(APP_LIFT_TRAVEL_ANGLE);
++    Lift_SetTravelPosition();
++    step_started_ms = now_ms;
++    single_filter_phase = 3U;
++  }
++  if (single_filter_phase == 0U) {
++    task_status.motors_active = false;
++    if (single_filter_reclose && !Claw_Touch(now_ms)) { return; }
++    single_filter_reclose = false;
++    injury_recheck_pending = false;
++    task_status.gripper_closed = true;
++    const LocationPose pose = Location_GetPose();
++    single_filter_heading_deg = pose.heading_mdeg * 0.001f;
++    single_filter_wait_ms = Lift_PositionWaitMs(APP_LIFT_FIRST_GREEN_FILTER_ANGLE);
++    Lift_SetFirstGreenFilterPosition();
++    step_started_ms = now_ms;
++    single_filter_phase = 1U;
++    return;
++  }
++  if (single_filter_phase == 1U) {
++    if (now_ms - step_started_ms < single_filter_wait_ms) { return; }
++    single_filter_phase = 2U;
++  }
++  if (single_filter_phase == 2U) {
++    Motor_ResumeFiniteMotion();
++    const MotorDistanceStatus result = Motor_MoveDistanceHeading(
++        -0.100f, APP_INJURY_BACKOFF_SPEED_MM_S, single_filter_heading_deg);
++    task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
++    if (result == MOTOR_DISTANCE_FAULT || result == MOTOR_DISTANCE_INVALID) {
++      task_stop(TASK_FAULT_MOTOR, now_ms);
++      return;
++    }
++    if (result != MOTOR_DISTANCE_DONE) { return; }
++    Motor_Stop();
++    single_filter_wait_ms = Lift_PositionWaitMs(APP_LIFT_TRAVEL_ANGLE);
++    Lift_SetTravelPosition();
++    step_started_ms = now_ms;
++    single_filter_phase = 3U;
++    return;
++  }
++  if (now_ms - step_started_ms < single_filter_wait_ms) { return; }
++  if (!audit_valid || (first_green_core_conflict && !first_delivery_done)) {
++    task_clear_audit_result();
++    task_enter(TASK_POST_GRAB_AUDIT, now_ms);
++  } else {
++    task_enter(single_filter_sweep_done ? TASK_SAFE_SWEEP_DONE : TASK_WAIT_NAVIGATION, now_ms);
++  }
++}
++
+ static bool turn_to(float desired_deg, float current_deg,
+                     float tolerance_deg, uint32_t now_ms)
+ {
+@@ -4160,6 +4255,7 @@ static bool task_bulldozer_live_step(uint8_t step)
+ 
+ static void task_bulldozer_clear_load(void)
+ {
++  single_filter_armed = false;
+   first_green_core_conflict = false;
+   task_status.gripper_closed = false;
+   task_status.claw_visible = false;
+@@ -4452,6 +4548,11 @@ static void task_pause_runtime(uint32_t now_ms)
+   if (state == TASK_INJURY_BACKOFF) {
+     injury_backoff_last_ms = now_ms;
+   }
++  if (state == TASK_INJURY_RECLOSE && single_filter_active) {
++    Motor_PauseFiniteMotion();
++    task_status.motors_active = false;
++    return;
++  }
+   if (state == TASK_APPROACH && approach_phase == APPROACH_RANGE_MOVE) {
+     Motor_PauseFiniteMotion();
+     task_status.motors_active = false;
+@@ -5570,6 +5671,7 @@ static void task_process_safe_sweep_audit(uint32_t now_ms)
+ 
+ static void task_begin_sweep_obstacle_grab(uint32_t now_ms)
+ {
++  single_filter_armed = true;
+   const bool original = state == TASK_SAFE_SWEEP_RETRIEVE_AUDIT;
+   task_enter(TASK_SAFE_SWEEP, now_ms);
+   visual_sweep_phase = original ? VS_GRAB_LOAD : VS_GRAB_OBSTACLE;
+@@ -5931,6 +6033,12 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
+         }
+       }
+     }
++  } else if (command->command == VISION_CMD_CARGO_AUDIT &&
++             state == TASK_INJURY_RECLOSE && single_filter_active) {
++    task_status.acknowledged_sequence = command->sequence;
++    command_accepted = true;
++    task_note_first_green_core(command);
++    /* Keep the committed real audit; motion images are not new empty evidence. */
+   } else if (command->command == VISION_CMD_CARGO_AUDIT &&
+              task_first_green_core_request(command) && task_status.gripper_closed &&
+              (state == TASK_WAIT_NAVIGATION || state == TASK_ALIGN_SAFE_ZONE ||
+@@ -6067,7 +6175,9 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
+         task_enter(TASK_OPEN_CLAW, now_ms);
+         abandoned_batch_open_pending = true;
+       } else if (audit_valid) {
+-        if (injury_recheck_pending) {
++        if (task_single_filter_eligible()) {
++          task_begin_single_filter(now_ms, injury_recheck_pending);
++        } else if (injury_recheck_pending) {
+           task_enter(TASK_INJURY_RECLOSE, now_ms);
+         } else {
+           task_enter(safe_sweep_recheck_pending ?
+@@ -6580,10 +6690,12 @@ static bool task_context_complete(void)
+              state == TASK_SAFE_SWEEP_RETRIEVE_AUDIT ||
+              (state == TASK_APPROACH && approach_phase == APPROACH_CLUSTER_CAPTURE);
+     case VISION_CMD_CARGO_AUDIT:
++      if (state == TASK_INJURY_RECLOSE && single_filter_active) { return false; }
+       return state == TASK_SAFE_SWEEP_AUDIT ?
+           (sweep_audit_ready && sweep_audit_host_stable) :
+           (audit_received && audit_host_stable);
+     case VISION_CMD_GRAB_CONFIRMED:
++      if (state == TASK_INJURY_RECLOSE && single_filter_active) { return false; }
+       return task_status.gripper_closed && state != TASK_CLOSE_CLAW &&
+              !(state == TASK_SAFE_SWEEP &&
+                (visual_sweep_phase == VS_GRAB_LOAD || visual_sweep_phase == VS_GRAB_OBSTACLE));
+@@ -6841,7 +6953,8 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
+     command_accepted = true;
+     mission_paused = false;
+   } else if (!new_action && incoming.command == VISION_CMD_CARGO_AUDIT &&
+-             !task_audit_state() && accepted_context.completed) {
++             !task_audit_state() && accepted_context.completed &&
++             !(state == TASK_INJURY_RECLOSE && single_filter_active)) {
+     task_status.acknowledged_sequence = incoming.sequence;
+     command_accepted = true;
+     mission_paused = false;
+@@ -7383,6 +7496,10 @@ void Task_Process(uint32_t now_ms)
+       break;
+ 
+     case TASK_INJURY_RECLOSE:
++      if (single_filter_active) {
++        task_process_single_filter(now_ms);
++        break;
++      }
+       Motor_Stop();
+       task_status.motors_active = false;
+       task_status.gripper_closed = false;
+diff --git a/docs/CROSS_REPO_REQUESTS.md b/docs/CROSS_REPO_REQUESTS.md
+index aff80d8..5d45beb 100644
+--- a/docs/CROSS_REPO_REQUESTS.md
++++ b/docs/CROSS_REPO_REQUESTS.md
+@@ -16,6 +16,32 @@
+ 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
+ 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
+ 
++## MATCH-SINGLE-CARGO-FILTER-20261115：接受并配套机械收尾，未烧录
++
++已核对上位`e9c1cf382138d83723d8ccf9cacf545b10c32f88`固定入口blob`f9362ec5aac10df64724d645f4e6bb430d526c2f`及实际state_machine/runner，
++本端基于`7ad0965c8d2f5a3d13662844dd4fbc22eee2fe66`增量实施。该上位提交仅说明任务，不能当作固件已烧录。
++
++- 真正GRAB后的最终真实合法审核，首件单绿或单橙进入原mode50；绿色保持已合爪，橙色先完成原Claw_Touch再滤出。
++  双爪保持合爪，S1到82°，原角度行程等待后Motor_MoveDistanceHeading(-0.100m,150mm/s,本段起始航向)，
++  完成后S1回85°并等原机械行程，才交接mode22/完成。每次升降都在发指令前计算Lift_PositionWaitMs。
++- 执行期间保留原真实审核/帧号/任务归属，mode50闭爪后保持gripper_closed；CARGO_AUDIT完成位不提前发布，NAV仍不能进入。
++  重发GRAB/审核/HOLD不重启滤出或补造新帧；实际新抓取重新允许一次，途中复审不重复。PAUSE走原有限运动暂停/续行，
++  机械等待沿原pause计时平移；STOP/恢复退出清本段。仅阶段切换Stop，避免每周期重置轮程。
++- mode50仍消费新FIRST_GREEN_CORE_CONFLICT：撤原VALID、停止当前滤出、回85°后原23复审；不清平台黑事实、不靠滤出解除冲突。
++  暂存、首绿后普通材料、非法/空审核不触发；原橙色半闭复审代码未删改，61°起步限位保持。
++- **兼容范围调整**：正式新0x14扫障找回单橙经普通抓取，覆盖本动作。已停用旧0x13的safe_sweep_recheck_pending出口仍40且不插滤出，
++  因当前RDK_has_committed_audit把旧扫障角色与mode40绑定，直接扩到50会缺pending。保持旧出口，不重新启用或单端改变该协议等待。
++  若将来启用旧扫障，需两端另审mode50角色；本轮正式新流程无需上位新增字段/握手。
++- 原接口布局不变，mode50扩充含义为“重新合爪或闭爪高度滤出收尾”，上位应继续保持已提交审核等待22，不能只凭闭爪/ACK发NAV。
++  没有新TYPE、等待图像、计时资格、巡检、ISR或额外FAULT；有限直行错误沿原恢复处理，PID/全局速度/公差不改。
++
++必要结果：两原构建通过；原Task夹具直接调用核对单绿/单橙mode50、闭爪82、固定航向100mm、占位保留审核、PAUSE续行、
++回85后22、重复不重走/新抓重新允许、冲突不吞并回23，以及暂存/普通材料/非法/旧40排除、STOP清理。夹具电机为替身，
++不等于实车100mm或三棱锥滤出成功；没有新增测试源码/独立程序。
++
++本轮未烧录、未开UART/SDK或动作，actual未亲自读回；上位18:49的7ad0965/dirty1仅历史记录。保留原Task初始化空白，构建如实dirty1。
++用户自行烧新NormalRun并使用最新正式入口；代价是每次符合条件抓取多升降和100mm后退，实际返航起点由原动态定位更新。
++
+ ## MATCH-BATCH-EXIT / MATCH-FIRST-GREEN-CORE-20261115：接受并已实现，用户自行烧录
+ 
+ 先审查RDK `2c839793db6a76ab078c5ebcec097bf01902bed0`的弃批预算同步，再核对工作期间新增的
+diff --git a/docs/CURRENT_STATUS.md b/docs/CURRENT_STATUS.md
+index 3e7e4ec..6d68a92 100644
+--- a/docs/CURRENT_STATUS.md
++++ b/docs/CURRENT_STATUS.md
+@@ -1,5 +1,15 @@
+ # 当前状态：F405 烧录入口
+ 
++2026-11-15 MATCH-SINGLE-CARGO-FILTER：合爪82°滤出、轮程后退100mm、回85°（未烧录）。
++- 核对RDK e9c1cf3固定交接及实际mode50等待路径，在真正抓取的最终合法审核后复用mode50机械收尾；首件单绿、单橙适用。
++  保持左右爪；82°等待按发指令前Lift_PositionWaitMs计算，150mm/s请求固定本段航向后退100mm，再按原等待回85°后到22。
++- 每次实际GRAB只执行一次，机械期间保留真实审核，重复/HOLD不重启；PAUSE保留轮程和机械等待，STOP/恢复清本段。
++  mode50不提前报完成/NAV；新首绿黑冲突仍接收，停止滤出并回85°后原23复审，不解除负资格。
++- 61°限位、PID/其他速度/舵机角、原橙色半闭复审代码保持。正式新扫障回抓走普通抓取覆盖；停用旧0x13仍保留40出口，
++  该旧分支不扩mode50（上位_has_committed_audit的旧扫障角色不兼容50）；未重新启用旧扫障。
++- NormalRun/MotionDebug构建及原Task夹具相关直接调用通过，无新增测试源码/程序；机械滤出效果、地面100mm待实车。
++  未烧录/开设备，actual未读；原Task空白和独立工具/IDE改动保留，构建dirty1。协议字段不变，mode50现在可表示闭爪滤出收尾。
++
+ 2026-11-15 MATCH-BATCH-EXIT / MATCH-FIRST-GREEN-CORE：弃批就地重选、首绿平台黑否决（未烧录）。
+ - 审查RDK 2c83979弃批请求，并核对后续0d45d94首绿新位，接受两项最小配套；原step15/搜索150/舵机保持。
+ - 真实稳定空审核到原开爪完成、或明确弃批到原释放脱离完成，才清旧捕获/分离预算并SEARCH；旧任务仍cancelled、保留编号判重，新task可即接。

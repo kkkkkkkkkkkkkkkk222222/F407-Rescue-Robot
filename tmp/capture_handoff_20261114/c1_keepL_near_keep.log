@@ -1,0 +1,10 @@
+Temporary breakpoint 1 at 0x14001de29: file tools/test_audit_handshake.c, line 946.
+[New Thread 7212.0x48c]
+
+Thread 1 hit Temporary breakpoint 1, main () at tools/test_audit_handshake.c:946
+946	  test_distance_search_accumulation_and_transport_sort();
+c1_keepL READY mode=37 ready=1 valid=0 mask=0 count=4 total=1 escape=0
+c1_keepL NEAR accepted=1 side=1 soft=5 turn=10.0 attempts=1 count=4 total=1 valid=0 first=0
+c1_keepL repeat attempts=1
+c1_keepL GRAB forbidden=1 valid=0
+

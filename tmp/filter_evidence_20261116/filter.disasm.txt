@@ -1,0 +1,225 @@
+
+tmp/servo_transport_audit_20261116/actual-matched.elf:     file format elf32-littlearm
+
+
+Disassembly of section .text:
+
+08015338 <task_process_single_filter>:
+ 8015338:	b580      	push	{r7, lr}
+ 801533a:	b088      	sub	sp, #32
+ 801533c:	af00      	add	r7, sp, #0
+ 801533e:	6078      	str	r0, [r7, #4]
+ 8015340:	4b73      	ldr	r3, [pc, #460]	@ (8015510 <task_process_single_filter+0x1d8>)
+ 8015342:	781b      	ldrb	r3, [r3, #0]
+ 8015344:	f083 0301 	eor.w	r3, r3, #1
+ 8015348:	b2db      	uxtb	r3, r3
+ 801534a:	2b00      	cmp	r3, #0
+ 801534c:	d10a      	bne.n	8015364 <task_process_single_filter+0x2c>
+ 801534e:	4b71      	ldr	r3, [pc, #452]	@ (8015514 <task_process_single_filter+0x1dc>)
+ 8015350:	781b      	ldrb	r3, [r3, #0]
+ 8015352:	2b00      	cmp	r3, #0
+ 8015354:	d01d      	beq.n	8015392 <task_process_single_filter+0x5a>
+ 8015356:	4b70      	ldr	r3, [pc, #448]	@ (8015518 <task_process_single_filter+0x1e0>)
+ 8015358:	781b      	ldrb	r3, [r3, #0]
+ 801535a:	f083 0301 	eor.w	r3, r3, #1
+ 801535e:	b2db      	uxtb	r3, r3
+ 8015360:	2b00      	cmp	r3, #0
+ 8015362:	d016      	beq.n	8015392 <task_process_single_filter+0x5a>
+ 8015364:	4b6d      	ldr	r3, [pc, #436]	@ (801551c <task_process_single_filter+0x1e4>)
+ 8015366:	781b      	ldrb	r3, [r3, #0]
+ 8015368:	2b03      	cmp	r3, #3
+ 801536a:	d012      	beq.n	8015392 <task_process_single_filter+0x5a>
+ 801536c:	f7f6 fe5c 	bl	800c028 <Motor_Stop>
+ 8015370:	4b6b      	ldr	r3, [pc, #428]	@ (8015520 <task_process_single_filter+0x1e8>)
+ 8015372:	2200      	movs	r2, #0
+ 8015374:	751a      	strb	r2, [r3, #20]
+ 8015376:	2055      	movs	r0, #85	@ 0x55
+ 8015378:	f7f4 fe28 	bl	8009fcc <Lift_PositionWaitMs>
+ 801537c:	4603      	mov	r3, r0
+ 801537e:	4a69      	ldr	r2, [pc, #420]	@ (8015524 <task_process_single_filter+0x1ec>)
+ 8015380:	6013      	str	r3, [r2, #0]
+ 8015382:	f7f4 fe41 	bl	800a008 <Lift_SetTravelPosition>
+ 8015386:	4a68      	ldr	r2, [pc, #416]	@ (8015528 <task_process_single_filter+0x1f0>)
+ 8015388:	687b      	ldr	r3, [r7, #4]
+ 801538a:	6013      	str	r3, [r2, #0]
+ 801538c:	4b63      	ldr	r3, [pc, #396]	@ (801551c <task_process_single_filter+0x1e4>)
+ 801538e:	2203      	movs	r2, #3
+ 8015390:	701a      	strb	r2, [r3, #0]
+ 8015392:	4b62      	ldr	r3, [pc, #392]	@ (801551c <task_process_single_filter+0x1e4>)
+ 8015394:	781b      	ldrb	r3, [r3, #0]
+ 8015396:	2b00      	cmp	r3, #0
+ 8015398:	d139      	bne.n	801540e <task_process_single_filter+0xd6>
+ 801539a:	4b61      	ldr	r3, [pc, #388]	@ (8015520 <task_process_single_filter+0x1e8>)
+ 801539c:	2200      	movs	r2, #0
+ 801539e:	751a      	strb	r2, [r3, #20]
+ 80153a0:	4b62      	ldr	r3, [pc, #392]	@ (801552c <task_process_single_filter+0x1f4>)
+ 80153a2:	781b      	ldrb	r3, [r3, #0]
+ 80153a4:	2b00      	cmp	r3, #0
+ 80153a6:	d009      	beq.n	80153bc <task_process_single_filter+0x84>
+ 80153a8:	6878      	ldr	r0, [r7, #4]
+ 80153aa:	f7f5 f811 	bl	800a3d0 <Claw_Touch>
+ 80153ae:	4603      	mov	r3, r0
+ 80153b0:	f083 0301 	eor.w	r3, r3, #1
+ 80153b4:	b2db      	uxtb	r3, r3
+ 80153b6:	2b00      	cmp	r3, #0
+ 80153b8:	f040 809f 	bne.w	80154fa <task_process_single_filter+0x1c2>
+ 80153bc:	4b5b      	ldr	r3, [pc, #364]	@ (801552c <task_process_single_filter+0x1f4>)
+ 80153be:	2200      	movs	r2, #0
+ 80153c0:	701a      	strb	r2, [r3, #0]
+ 80153c2:	4b5b      	ldr	r3, [pc, #364]	@ (8015530 <task_process_single_filter+0x1f8>)
+ 80153c4:	2200      	movs	r2, #0
+ 80153c6:	701a      	strb	r2, [r3, #0]
+ 80153c8:	4b55      	ldr	r3, [pc, #340]	@ (8015520 <task_process_single_filter+0x1e8>)
+ 80153ca:	2201      	movs	r2, #1
+ 80153cc:	74da      	strb	r2, [r3, #19]
+ 80153ce:	f107 0308 	add.w	r3, r7, #8
+ 80153d2:	4618      	mov	r0, r3
+ 80153d4:	f7f4 fbc0 	bl	8009b58 <Location_GetPose>
+ 80153d8:	693b      	ldr	r3, [r7, #16]
+ 80153da:	ee07 3a90 	vmov	s15, r3
+ 80153de:	eef8 7ae7 	vcvt.f32.s32	s15, s15
+ 80153e2:	ed9f 7a54 	vldr	s14, [pc, #336]	@ 8015534 <task_process_single_filter+0x1fc>
+ 80153e6:	ee67 7a87 	vmul.f32	s15, s15, s14
+ 80153ea:	4b53      	ldr	r3, [pc, #332]	@ (8015538 <task_process_single_filter+0x200>)
+ 80153ec:	edc3 7a00 	vstr	s15, [r3]
+ 80153f0:	2052      	movs	r0, #82	@ 0x52
+ 80153f2:	f7f4 fdeb 	bl	8009fcc <Lift_PositionWaitMs>
+ 80153f6:	4603      	mov	r3, r0
+ 80153f8:	4a4a      	ldr	r2, [pc, #296]	@ (8015524 <task_process_single_filter+0x1ec>)
+ 80153fa:	6013      	str	r3, [r2, #0]
+ 80153fc:	f7f4 fe0c 	bl	800a018 <Lift_SetFirstGreenFilterPosition>
+ 8015400:	4a49      	ldr	r2, [pc, #292]	@ (8015528 <task_process_single_filter+0x1f0>)
+ 8015402:	687b      	ldr	r3, [r7, #4]
+ 8015404:	6013      	str	r3, [r2, #0]
+ 8015406:	4b45      	ldr	r3, [pc, #276]	@ (801551c <task_process_single_filter+0x1e4>)
+ 8015408:	2201      	movs	r2, #1
+ 801540a:	701a      	strb	r2, [r3, #0]
+ 801540c:	e07c      	b.n	8015508 <task_process_single_filter+0x1d0>
+ 801540e:	4b43      	ldr	r3, [pc, #268]	@ (801551c <task_process_single_filter+0x1e4>)
+ 8015410:	781b      	ldrb	r3, [r3, #0]
+ 8015412:	2b01      	cmp	r3, #1
+ 8015414:	d10a      	bne.n	801542c <task_process_single_filter+0xf4>
+ 8015416:	4b44      	ldr	r3, [pc, #272]	@ (8015528 <task_process_single_filter+0x1f0>)
+ 8015418:	681b      	ldr	r3, [r3, #0]
+ 801541a:	687a      	ldr	r2, [r7, #4]
+ 801541c:	1ad2      	subs	r2, r2, r3
+ 801541e:	4b41      	ldr	r3, [pc, #260]	@ (8015524 <task_process_single_filter+0x1ec>)
+ 8015420:	681b      	ldr	r3, [r3, #0]
+ 8015422:	429a      	cmp	r2, r3
+ 8015424:	d36b      	bcc.n	80154fe <task_process_single_filter+0x1c6>
+ 8015426:	4b3d      	ldr	r3, [pc, #244]	@ (801551c <task_process_single_filter+0x1e4>)
+ 8015428:	2202      	movs	r2, #2
+ 801542a:	701a      	strb	r2, [r3, #0]
+ 801542c:	4b3b      	ldr	r3, [pc, #236]	@ (801551c <task_process_single_filter+0x1e4>)
+ 801542e:	781b      	ldrb	r3, [r3, #0]
+ 8015430:	2b02      	cmp	r3, #2
+ 8015432:	d135      	bne.n	80154a0 <task_process_single_filter+0x168>
+ 8015434:	f7f6 fe66 	bl	800c104 <Motor_ResumeFiniteMotion>
+ 8015438:	4b3f      	ldr	r3, [pc, #252]	@ (8015538 <task_process_single_filter+0x200>)
+ 801543a:	edd3 7a00 	vldr	s15, [r3]
+ 801543e:	eeb0 1a67 	vmov.f32	s2, s15
+ 8015442:	eddf 0a3e 	vldr	s1, [pc, #248]	@ 801553c <task_process_single_filter+0x204>
+ 8015446:	ed9f 0a3e 	vldr	s0, [pc, #248]	@ 8015540 <task_process_single_filter+0x208>
+ 801544a:	f7f7 fc5d 	bl	800cd08 <Motor_MoveDistanceHeading>
+ 801544e:	4603      	mov	r3, r0
+ 8015450:	77fb      	strb	r3, [r7, #31]
+ 8015452:	7ffb      	ldrb	r3, [r7, #31]
+ 8015454:	2b01      	cmp	r3, #1
+ 8015456:	bf0c      	ite	eq
+ 8015458:	2301      	moveq	r3, #1
+ 801545a:	2300      	movne	r3, #0
+ 801545c:	b2da      	uxtb	r2, r3
+ 801545e:	4b30      	ldr	r3, [pc, #192]	@ (8015520 <task_process_single_filter+0x1e8>)
+ 8015460:	751a      	strb	r2, [r3, #20]
+ 8015462:	7ffb      	ldrb	r3, [r7, #31]
+ 8015464:	2b03      	cmp	r3, #3
+ 8015466:	d002      	beq.n	801546e <task_process_single_filter+0x136>
+ 8015468:	7ffb      	ldrb	r3, [r7, #31]
+ 801546a:	2b04      	cmp	r3, #4
+ 801546c:	d104      	bne.n	8015478 <task_process_single_filter+0x140>
+ 801546e:	6879      	ldr	r1, [r7, #4]
+ 8015470:	2003      	movs	r0, #3
+ 8015472:	f7f9 fac3 	bl	800e9fc <task_stop>
+ 8015476:	e047      	b.n	8015508 <task_process_single_filter+0x1d0>
+ 8015478:	7ffb      	ldrb	r3, [r7, #31]
+ 801547a:	2b02      	cmp	r3, #2
+ 801547c:	d141      	bne.n	8015502 <task_process_single_filter+0x1ca>
+ 801547e:	f7f6 fdd3 	bl	800c028 <Motor_Stop>
+ 8015482:	2055      	movs	r0, #85	@ 0x55
+ 8015484:	f7f4 fda2 	bl	8009fcc <Lift_PositionWaitMs>
+ 8015488:	4603      	mov	r3, r0
+ 801548a:	4a26      	ldr	r2, [pc, #152]	@ (8015524 <task_process_single_filter+0x1ec>)
+ 801548c:	6013      	str	r3, [r2, #0]
+ 801548e:	f7f4 fdbb 	bl	800a008 <Lift_SetTravelPosition>
+ 8015492:	4a25      	ldr	r2, [pc, #148]	@ (8015528 <task_process_single_filter+0x1f0>)
+ 8015494:	687b      	ldr	r3, [r7, #4]
+ 8015496:	6013      	str	r3, [r2, #0]
+ 8015498:	4b20      	ldr	r3, [pc, #128]	@ (801551c <task_process_single_filter+0x1e4>)
+ 801549a:	2203      	movs	r2, #3
+ 801549c:	701a      	strb	r2, [r3, #0]
+ 801549e:	e033      	b.n	8015508 <task_process_single_filter+0x1d0>
+ 80154a0:	4b21      	ldr	r3, [pc, #132]	@ (8015528 <task_process_single_filter+0x1f0>)
+ 80154a2:	681b      	ldr	r3, [r3, #0]
+ 80154a4:	687a      	ldr	r2, [r7, #4]
+ 80154a6:	1ad2      	subs	r2, r2, r3
+ 80154a8:	4b1e      	ldr	r3, [pc, #120]	@ (8015524 <task_process_single_filter+0x1ec>)
+ 80154aa:	681b      	ldr	r3, [r3, #0]
+ 80154ac:	429a      	cmp	r2, r3
+ 80154ae:	d32a      	bcc.n	8015506 <task_process_single_filter+0x1ce>
+ 80154b0:	4b17      	ldr	r3, [pc, #92]	@ (8015510 <task_process_single_filter+0x1d8>)
+ 80154b2:	781b      	ldrb	r3, [r3, #0]
+ 80154b4:	f083 0301 	eor.w	r3, r3, #1
+ 80154b8:	b2db      	uxtb	r3, r3
+ 80154ba:	2b00      	cmp	r3, #0
+ 80154bc:	d10a      	bne.n	80154d4 <task_process_single_filter+0x19c>
+ 80154be:	4b15      	ldr	r3, [pc, #84]	@ (8015514 <task_process_single_filter+0x1dc>)
+ 80154c0:	781b      	ldrb	r3, [r3, #0]
+ 80154c2:	2b00      	cmp	r3, #0
+ 80154c4:	d00d      	beq.n	80154e2 <task_process_single_filter+0x1aa>
+ 80154c6:	4b14      	ldr	r3, [pc, #80]	@ (8015518 <task_process_single_filter+0x1e0>)
+ 80154c8:	781b      	ldrb	r3, [r3, #0]
+ 80154ca:	f083 0301 	eor.w	r3, r3, #1
+ 80154ce:	b2db      	uxtb	r3, r3
+ 80154d0:	2b00      	cmp	r3, #0
+ 80154d2:	d006      	beq.n	80154e2 <task_process_single_filter+0x1aa>
+ 80154d4:	f7fb f85c 	bl	8010590 <task_clear_audit_result>
+ 80154d8:	6879      	ldr	r1, [r7, #4]
+ 80154da:	2017      	movs	r0, #23
+ 80154dc:	f7fb fae6 	bl	8010aac <task_enter>
+ 80154e0:	e012      	b.n	8015508 <task_process_single_filter+0x1d0>
+ 80154e2:	4b18      	ldr	r3, [pc, #96]	@ (8015544 <task_process_single_filter+0x20c>)
+ 80154e4:	781b      	ldrb	r3, [r3, #0]
+ 80154e6:	2b00      	cmp	r3, #0
+ 80154e8:	d001      	beq.n	80154ee <task_process_single_filter+0x1b6>
+ 80154ea:	2328      	movs	r3, #40	@ 0x28
+ 80154ec:	e000      	b.n	80154f0 <task_process_single_filter+0x1b8>
+ 80154ee:	2309      	movs	r3, #9
+ 80154f0:	6879      	ldr	r1, [r7, #4]
+ 80154f2:	4618      	mov	r0, r3
+ 80154f4:	f7fb fada 	bl	8010aac <task_enter>
+ 80154f8:	e006      	b.n	8015508 <task_process_single_filter+0x1d0>
+ 80154fa:	bf00      	nop
+ 80154fc:	e004      	b.n	8015508 <task_process_single_filter+0x1d0>
+ 80154fe:	bf00      	nop
+ 8015500:	e002      	b.n	8015508 <task_process_single_filter+0x1d0>
+ 8015502:	bf00      	nop
+ 8015504:	e000      	b.n	8015508 <task_process_single_filter+0x1d0>
+ 8015506:	bf00      	nop
+ 8015508:	3720      	adds	r7, #32
+ 801550a:	46bd      	mov	sp, r7
+ 801550c:	bd80      	pop	{r7, pc}
+ 801550e:	bf00      	nop
+ 8015510:	200019a1 	.word	0x200019a1
+ 8015514:	20001996 	.word	0x20001996
+ 8015518:	20001994 	.word	0x20001994
+ 801551c:	2000191a 	.word	0x2000191a
+ 8015520:	20001780 	.word	0x20001780
+ 8015524:	2000191c 	.word	0x2000191c
+ 8015528:	20001858 	.word	0x20001858
+ 801552c:	20001918 	.word	0x20001918
+ 8015530:	20001915 	.word	0x20001915
+ 8015534:	3a83126f 	.word	0x3a83126f
+ 8015538:	20001920 	.word	0x20001920
+ 801553c:	437a0000 	.word	0x437a0000
+ 8015540:	bdcccccd 	.word	0xbdcccccd
+ 8015544:	20001919 	.word	0x20001919

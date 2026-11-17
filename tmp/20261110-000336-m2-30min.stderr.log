@@ -1,0 +1,5 @@
+Exception: C:\Users\29459\Desktop\F407\WWW\tmp\left_wheel_runin_30min.ps1:56
+Line |
+  56 |          throw 'F405 MotionDebug with CAL was not confirmed.'
+     |          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | F405 MotionDebug with CAL was not confirmed.

@@ -1,0 +1,16 @@
+Temporary breakpoint 1 at 0x14001dc97: file tools/test_audit_handshake.c, line 946.
+[New Thread 14056.0x6300]
+
+Thread 1 hit Temporary breakpoint 1, main () at tools/test_audit_handshake.c:946
+946	  test_distance_search_accumulation_and_transport_sort();
+normal_SEARCH accept=1
+closed_SEARCH accept=0
+same_action accept=0
+old_action accept=0
+mode51 accept=0
+STOPPED accept=0
+old_step0 accept=1
+release_mode34 accept=1
+counter_rollover accept=1
+approach_not_SEARCH accept=0
+

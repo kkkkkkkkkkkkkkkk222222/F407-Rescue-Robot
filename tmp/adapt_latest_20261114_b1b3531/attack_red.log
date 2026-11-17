@@ -1,0 +1,20 @@
+Temporary breakpoint 1 at 0x14001e16c: file tools/test_audit_handshake.c, line 946.
+[New Thread 2624.0x1b70]
+
+Thread 1 hit Temporary breakpoint 1, main () at tools/test_audit_handshake.c:946
+946	  test_distance_search_accumulation_and_transport_sort();
+CHECK real_initial_audit=1
+CHECK original_stash_DONE=1
+CHECK step14_fresh_running=1
+CHECK continuous_yaw_only=1
+CHECK duplicate_running=1
+CHECK own_turn_DONE=1
+CHECK duplicate_DONE=1
+CHECK original_release34=1
+CHECK release_not_restarted=1
+CHECK existing13_follows=1
+A debugging session is active.
+
+	Inferior 1 [process 2624] will be killed.
+
+Quit anyway? (y or n) [answered Y; input not from terminal]

@@ -1,0 +1,26 @@
+#ifndef MECHANISM_H
+#define MECHANISM_H
+
+#include <stdbool.h>
+#include <stdint.h>
+
+void Mechanism_Init(void);
+void Camera_SetAngle(uint8_t angle);
+uint8_t Camera_GetAngle(void);
+void Lift_SetStartPosition(void);
+/* Estimate the wait before commanding the given angle. */
+uint32_t Lift_PositionWaitMs(uint8_t angle);
+void Lift_SetTravelPosition(void);
+void Claw_SetSeparationHold(uint8_t extra_close_deg);
+void Claw_RestartAction(void);
+bool Claw_Open(uint32_t now_ms);
+bool Claw_OpenLeft(uint32_t now_ms);
+bool Claw_OpenRight(uint32_t now_ms);
+bool Claw_ClusterOpenLeft(uint32_t now_ms);
+bool Claw_ClusterOpenRight(uint32_t now_ms);
+bool Claw_SetBumpPosition(bool closed, uint32_t now_ms);
+bool Claw_Retract(uint32_t now_ms);
+bool Claw_Touch(uint32_t now_ms);
+bool Claw_HalfTouch(uint32_t now_ms);
+
+#endif

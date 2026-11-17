@@ -1,0 +1,11 @@
+Open On-Chip Debugger 0.12.0 (2026-03-02) [https://github.com/sysprogs/openocd]
+Licensed under GNU GPL v2
+libusb1 d52e355daa09f17ce64819122cb067b8a2ee0d4b
+For bug reports, read
+	http://openocd.org/doc/doxygen/bugs.html
+Info : Using CMSIS-DAPv2 interface with VID:PID=0xfaed:0x4870, serial=288485686040
+Error: CMSIS-DAP command CMD_INFO failed.
+tools/F405ClawCalibrator.tcl:3: Error: 
+Traceback (most recent call last):
+  File "tools/F405ClawCalibrator.tcl", line 3, in script
+    init

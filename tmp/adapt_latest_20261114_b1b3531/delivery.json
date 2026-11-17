@@ -1,0 +1,27 @@
+{
+  "source_sha": "f14d2a4f85d9fc986709818e272aebb6e5210d14",
+  "upstream_sha": "b1b3531782b95d65cc7b4a24927935344ee98e7d",
+  "pushed": true,
+  "flashed": false,
+  "actual_read": false,
+  "source_dirty": 1,
+  "reason": "preserved original Task initialization whitespace",
+  "builds": {
+    "NormalRun": {
+      "elf": "C:\\Users\\29459\\Desktop\\F407\\WWW\\build\\F405\\NormalRun\\NormalRun.elf",
+      "firmware_id": "ec30db980af3170555c468f0d0d2e60caf2cf355bfe9a9110d1a79c15edaf75d",
+      "board": "F405_ROBO",
+      "mode": "APP_MODE_NORMAL_DEBUG",
+      "service": "TASK",
+      "upper_baud": 921600
+    },
+    "MotionDebug": {
+      "elf": "C:\\Users\\29459\\Desktop\\F407\\WWW\\build\\F405\\MotionDebug\\MotionDebug.elf",
+      "firmware_id": "327d3ab4004ca436e96c47c23d83d9c697a992a3d61dcc5e9b5d344de5cfad1c",
+      "board": "F405_ROBO",
+      "mode": "APP_MODE_NORMAL_DEBUG",
+      "service": "MOTIONDEBUG",
+      "upper_baud": 921600
+    }
+  }
+}

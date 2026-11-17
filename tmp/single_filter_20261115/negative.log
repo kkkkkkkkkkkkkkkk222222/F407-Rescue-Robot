@@ -1,0 +1,12 @@
+Temporary breakpoint 1 at 0x14001ea5f: file tools/test_audit_handshake.c, line 946.
+[New Thread 33312.0xb3d8]
+
+Thread 1 hit Temporary breakpoint 1, main () at tools/test_audit_handshake.c:946
+946	  test_distance_search_accumulation_and_transport_sort();
+CHECK negative_consumed=1
+CHECK back_to_audit=1
+A debugging session is active.
+
+	Inferior 1 [process 33312] will be killed.
+
+Quit anyway? (y or n) [answered Y; input not from terminal]

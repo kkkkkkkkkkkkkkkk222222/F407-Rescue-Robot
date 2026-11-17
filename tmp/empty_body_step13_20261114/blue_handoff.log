@@ -1,0 +1,29 @@
+Temporary breakpoint 1 at 0x14001dc37: file tools/test_audit_handshake.c, line 946.
+[New Thread 17748.0x11fc]
+
+Thread 1 hit Temporary breakpoint 1, main () at tools/test_audit_handshake.c:946
+946	  test_distance_search_accumulation_and_transport_sort();
+$1 = false
+$2 = true
+enum EMPTY=13 READY=12 mode=34
+blue leg0 accept=1 task=10 action=100 done=0 mode=25
+blue leg0 U=90.00 forward=-250.00 left=0.00 done=0
+blue release_clear stash=0 cargo=0 stable=0 attempts=0 first=0
+blue leg0 repeat same_start=1 U=90.00 done=0 speed=250.0
+blue immutable rejected=1 U=9000
+blue resume paused=0 U=90.00 done=0
+blue leg0 D0 mode=25 done=1 complete=1 output=0.0/0.0
+blue leg1 accept=1 task=10 action=101 done=0 mode=25
+blue leg1 U=90.00 forward=0.00 left=350.00 done=0
+blue leg1 repeat same_start=1 U=90.00 done=0 speed=250.0
+blue leg1 D0 mode=25 done=1 complete=1 output=0.0/0.0
+blue leg2 accept=1 task=10 action=102 done=0 mode=25
+blue leg2 U=90.00 forward=-350.00 left=0.00 done=0
+blue leg2 repeat same_start=1 U=90.00 done=0 speed=250.0
+blue leg2 D0 mode=25 done=1 complete=1 output=0.0/0.0
+blue leg3 accept=1 task=10 action=103 done=0 mode=25
+blue leg3 U=90.00 forward=-0.00 left=-350.00 done=0
+blue leg3 repeat same_start=1 U=90.00 done=0 speed=250.0
+blue leg3 D0 mode=25 done=1 complete=1 output=0.0/0.0
+blue READY mode=3 complete=1 cancelled=0 first=0 camera=120
+

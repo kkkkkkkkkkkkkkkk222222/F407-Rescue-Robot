@@ -1,0 +1,11 @@
+Temporary breakpoint 1 at 0x14001e16c: file tools/test_audit_handshake.c, line 946.
+[New Thread 21056.0x4730]
+
+Thread 1 hit Temporary breakpoint 1, main () at tools/test_audit_handshake.c:946
+946	  test_distance_search_accumulation_and_transport_sort();
+CHECK invalid_entry_rejected=1
+A debugging session is active.
+
+	Inferior 1 [process 21056] will be killed.
+
+Quit anyway? (y or n) [answered Y; input not from terminal]

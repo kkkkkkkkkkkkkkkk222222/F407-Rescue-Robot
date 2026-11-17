@@ -1,0 +1,38 @@
+Open On-Chip Debugger 0.12.0 (2026-03-02) [https://github.com/sysprogs/openocd]
+Licensed under GNU GPL v2
+libusb1 d52e355daa09f17ce64819122cb067b8a2ee0d4b
+For bug reports, read
+	http://openocd.org/doc/doxygen/bugs.html
+Info : Using CMSIS-DAPv2 interface with VID:PID=0xfaed:0x4870, serial=288485686040
+Info : CMSIS-DAP: SWD supported
+Info : CMSIS-DAP: JTAG supported
+Info : CMSIS-DAP: Atomic commands supported
+Info : CMSIS-DAP: UART via USB COM port supported
+Info : CMSIS-DAP: FW Version = Horco v0.2
+Info : CMSIS-DAP: Interface Initialised (SWD)
+Info : SWCLK/TCK = 1 SWDIO/TMS = 1 TDI = 1 TDO = 1 nTRST = 0 nRESET = 1
+Info : CMSIS-DAP: Interface ready
+Info : clock speed 2000 kHz
+Info : SWD DPIDR 0x2ba01477
+Info : [stm32f4x.cpu] Cortex-M4 r0p1 processor detected
+Info : [stm32f4x.cpu] target has 6 breakpoints, 4 watchpoints
+Info : [stm32f4x.cpu] Examination succeed
+Info : [stm32f4x.cpu] starting gdb server on 3333
+Info : Listening on port 3333 for gdb connections
+RCC
+0x3038b83 0x7405408 0x940a
+TIM4
+0x81 0x30 0x0 0x200 0x1f 0x0 0x0 0x0 0x1 0x25ac 0x53 0x4e1f 0x0 0x2774 0x0 0x0
+TIM1
+0x1 0x0 0x33 0x800 0x849 0x0 0x4141 0x3 0x111 0x0 0x0 0xffff 0x0 0x0 0x0 0x0
+DMA1
+0x30 0x0 0x0 0x0 0x4025541 0x8 0x40000834 0x20007f00 0x0 0x8
+DMA2FLAGS
+0x0 0x300000
+DMA2S6
+0x25301 0x7 0x20007f20 0x40020818 0x0 0x20
+TICKS
+0x4fd 0x13ec 0x1827 0x2774 0x2d50 0x3afc 0x4366 0x64
+EDGES
+0x2000 0x20000000 0x1 0x10000 0x2 0x20000 0x4 0x40000
+shutdown command invoked

@@ -1,0 +1,19 @@
+Temporary breakpoint 1 at 0x14001e25c: file tools/test_audit_handshake.c, line 946.
+[New Thread 30632.0x8d10]
+
+Thread 1 hit Temporary breakpoint 1, main () at tools/test_audit_handshake.c:946
+946	  test_distance_search_accumulation_and_transport_sort();
+$1 = false
+$2 = true
+CHECK real_invalid_ready=1
+CHECK release_still_pending=1
+CHECK opening_does_not_clear=1
+CHECK original_detach_started=1
+CHECK detachment_not_finished=1
+CHECK local_SEARCH_no_reclose47=1
+CHECK delivery_count_unchanged=1
+A debugging session is active.
+
+	Inferior 1 [process 30632] will be killed.
+
+Quit anyway? (y or n) [answered Y; input not from terminal]

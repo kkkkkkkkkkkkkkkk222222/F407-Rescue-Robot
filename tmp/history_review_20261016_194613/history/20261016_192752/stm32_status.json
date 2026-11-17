@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "timestamp_monotonic_ns": 793016265057,
+  "sequence": 40,
+  "flags": 128,
+  "mode": 18,
+  "camera_pitch_cdeg": 9000,
+  "acknowledged_sequence": 240,
+  "fault_code": 1,
+  "context_valid": true,
+  "task_id": 0,
+  "action_id": 0,
+  "accepted_command": 0,
+  "action_status": 0,
+  "rejected_action_id": 0,
+  "relay": {"tx_frames": 16087, "tx_errors": 0, "last_sequence": 240, "last_tx_age_ms": 2114.104, "mission_tx_frames": 16084, "last_mission_command": 7, "last_mission_sequence": 240, "last_mission_payload": [7,9,0,0,0,0,0,0], "last_mission_tx_monotonic_ns": 790902056050, "last_mission_tx_age_ms": 2114.104}
+}

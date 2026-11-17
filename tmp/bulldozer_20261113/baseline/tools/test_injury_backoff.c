@@ -1,0 +1,279 @@
+/* Exercise the production Task and mechanism with hardware replaced by mocks. */
+#include <assert.h>
+#include <stdio.h>
+#include "../Main/Src/Task.c"
+#define camera_angle mechanism_camera_angle
+#include "../Main/Src/mechanism.c"
+#undef camera_angle
+
+static uint8_t servo_angles[4];
+static float reverse_output;
+static float lateral_output, yaw_output;
+static VisionData test_vision;
+static LocationPose test_pose = {.valid = true, .heading_mdeg = 90000};
+static bool motor_fault;
+static bool heading_rejected;
+static float heading_output;
+static float fine_speed_request;
+static unsigned heading_calls;
+static MotorDistanceStatus distance_result;
+static float distance_request;
+static unsigned distance_calls, finite_pauses, finite_resumes;
+void Servo_SetAngle(uint8_t id, uint8_t angle) { servo_angles[id - 1U] = angle; }
+uint8_t Servo_GetAngle(uint8_t id) { return servo_angles[id - 1U]; }
+uint8_t Servo_OutputAngle(uint8_t id, uint8_t angle)
+{
+  static const int offsets[] = {
+      APP_SERVO_S1_OFFSET_DEG, APP_SERVO_S2_OFFSET_DEG,
+      APP_SERVO_S3_OFFSET_DEG, APP_SERVO_S4_OFFSET_DEG
+  };
+  assert(id >= 1U && id <= 4U && angle <= 180U);
+  const uint8_t mounted = (id == 2U || id == 4U) ? APP_CLAW_MOUNT_ANGLE(angle) : angle;
+  if ((id == 4U && angle == 180U) || (id == 2U && angle == 0U)) { return mounted; }
+  const int output = (int)mounted + offsets[id - 1U];
+  return (uint8_t)(output < 0 ? 0 : output > 180 ? 180 : output);
+}
+uint16_t Servo_OutputPulseUs(uint8_t id, uint8_t angle)
+{
+  if ((id == 4U && angle == 180U) || (id == 2U && angle == 0U)) {
+    return 500U + (uint32_t)APP_CLAW_MOUNT_ANGLE(angle) * 2000U / 180U;
+  }
+  static const int trim[] = {APP_SERVO_S1_OFFSET_US, APP_SERVO_S2_OFFSET_US,
+                            APP_SERVO_S3_OFFSET_US, APP_SERVO_S4_OFFSET_US};
+  const int pulse = 500 + Servo_OutputAngle(id, angle) * 2000 / 180 + trim[id - 1U];
+  return pulse < 500 ? 500 : pulse > 2500 ? 2500 : pulse;
+}
+void Motor_Stop(void) { reverse_output = lateral_output = yaw_output = 0.0f; }
+void Motor_PauseFiniteMotion(void) { ++finite_pauses; Motor_Stop(); }
+void Motor_ResumeFiniteMotion(void) { ++finite_resumes; }
+void Motor_Move(float forward, float lateral, float yaw)
+{ lateral_output = lateral; yaw_output = yaw; reverse_output = forward; }
+bool Motor_MoveHeading(float forward, float heading)
+{
+  ++heading_calls;
+  heading_output = heading;
+  if (heading_rejected) { return false; }
+  reverse_output=forward; lateral_output=yaw_output=0.0f; return true;
+}
+bool Motor_MoveHeadingLowRearDeadband(float forward, float heading)
+{ return Motor_MoveHeading(forward, heading); }
+MotorStatus Motor_GetStatus(uint8_t id)
+{ (void)id; return (MotorStatus){.stall_fault = motor_fault}; }
+LocationPose Location_GetPose(void) { return test_pose; }
+VisionData Vision_GetSnapshot(void) { return test_vision; }
+void Vision_RearmConfig(void) {}
+void Vision_ClearAbort(void) {}
+void Vision_RequestConfigAck(void) {}
+void Vision_QueueStmStatus(const VisionStmStatus *value) { (void)value; }
+IMUData IMU_GetData(void) { return (IMUData){.ready = true}; }
+void IMU_ConfirmHeadingReference(void) {}
+void Encoder_GetAll(EncoderStatus out[3])
+{ for (uint8_t i=0;i<3;++i) out[i]=(EncoderStatus){0}; }
+bool Vision_FusedPoseIsFresh(const VisionFusedPose *p, uint32_t now, uint32_t timeout)
+{ return p && p->received && (p->status & VISION_POSE_VALID) && now-p->tick_ms <= timeout; }
+void Location_Reanchor(int32_t x, int32_t y, int32_t heading)
+{ test_pose.x_mm=x; test_pose.y_mm=y; test_pose.heading_mdeg=heading; }
+MotorDistanceStatus Motor_MoveDistance(float distance, float speed)
+{ (void)distance; (void)speed; return MOTOR_DISTANCE_DONE; }
+MotorDistanceStatus Motor_MoveDistanceHeading(float distance, float speed, float heading)
+{
+  (void)speed;
+  distance_request = distance;
+  heading_output = heading;
+  ++distance_calls;
+  return distance_result;
+}
+MotorDistanceStatus Motor_MoveStartForward(float heading)
+{
+  return Motor_MoveDistanceHeading(APP_START_FORWARD_DISTANCE_M,
+                                   APP_START_FORWARD_SPEED_MM_S, heading);
+}
+MotorDistanceStatus Motor_MoveDistanceLinear(float distance, float speed, float slow, float end)
+{
+  distance_request=distance; ++distance_calls;
+  (void)speed; (void)slow; (void)end;
+  return distance_result;
+}
+MotorDistanceStatus Motor_MoveDistanceConstant(float distance, float speed)
+{ (void)distance; (void)speed; return MOTOR_DISTANCE_DONE; }
+MotorTurnStatus Motor_TurnAngle(float angle) { (void)angle; return MOTOR_TURN_DONE; }
+MotorTurnStatus Motor_TurnAngleSpeed(float angle, float speed)
+{ (void)angle; (void)speed; return MOTOR_TURN_DONE; }
+bool Motor_MoveAngle(float speed, float angle) { (void)speed; (void)angle; return true; }
+bool Motor_MoveAngleFine(float speed, float angle)
+{
+  fine_speed_request = speed;
+  return Motor_MoveAngle(speed, angle);
+}
+bool Motor_MoveAngleHeading(float speed, float angle, float heading)
+{
+  if (!Motor_MoveHeading(speed, heading)) { return false; }
+  const float angle_rad = angle * (3.14159265358979323846f / 180.0f);
+  reverse_output = speed * cosf(angle_rad);
+  lateral_output = speed * sinf(angle_rad);
+  return true;
+}
+bool Motor_IsBraking(void) { return false; }
+bool Motor_MoveSpin(float speed, float angle, float yaw)
+{ (void)speed; (void)angle; (void)yaw; return true; }
+void Location_Reset(LocationStart start) { (void)start; }
+#if APP_BOARD_F405_ROBO && APP_ENABLE_TASK
+void TaskDiag_Event(const char *kind, uint32_t a, uint32_t b, uint32_t c,
+                    uint32_t d, uint32_t e, uint32_t f)
+{ (void)kind; (void)a; (void)b; (void)c; (void)d; (void)e; (void)f; }
+void TaskDiag_TaskTick(void) {}
+#endif
+
+static VisionMissionCommand injury_audit(uint8_t id)
+{
+  return (VisionMissionCommand){.received = true, .flags = VISION_CMD_VALID,
+    .command = VISION_CMD_CARGO_AUDIT, .sequence = id, .audit_id = id,
+    .audit_left_class = VISION_CARGO_INJURED, .audit_right_class = VISION_CARGO_NONE,
+    .audit_counts = 1U, .audit_total_count = 1U,
+    .audit_flags = VISION_AUDIT_DESTINATION_INJURY | VISION_AUDIT_STABLE,
+    .vision_frame = (uint32_t)id + 1U};
+}
+
+static void prepare(void)
+{
+  Mechanism_Init();
+  task_initialize(0U);
+  accepted_context = (TaskContext){.valid = true, .opcode = VISION_CMD_CARGO_AUDIT};
+  first_delivery_done = true;
+  test_pose = (LocationPose){.valid = true, .heading_mdeg = 90000};
+  test_vision = (VisionData){0};
+  motor_fault = false;
+  heading_rejected = false;
+  heading_calls = 0U;
+  heading_output = 0.0f;
+  distance_result = MOTOR_DISTANCE_DONE;
+  distance_request=0.0f;
+  distance_calls=finite_pauses=finite_resumes=0U;
+  complete_flow_active = true;
+  task_status.gripper_closed = true;
+  Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
+  task_enter(TASK_POST_GRAB_AUDIT, 0U);
+}
+
+static void audit_at(uint8_t id, uint32_t now)
+{
+  VisionMissionCommand command = injury_audit(id);
+  command_visual_new = true;
+  task_accept_mission_legacy(&command, now);
+}
+
+static void tick(uint32_t now)
+{
+  accepted_context.last_command_rx_ms = now;
+  task_process_injury_backoff(now);
+}
+
+static void test_complete_injury_sequence(void)
+{
+  prepare();
+  audit_at(1U, 10U); audit_at(1U, 20U);
+  assert(state == TASK_POST_GRAB_AUDIT && !audit_received);
+  audit_at(2U, 110U);
+  assert(state == TASK_WAIT_NAVIGATION && audit_valid && task_status.gripper_closed);
+  /* Continue exercising the retained legacy backoff independently. */
+  task_enter(TASK_INJURY_BACKOFF, 110U);
+  VisionMissionCommand grab = {.received = true, .flags = VISION_CMD_VALID,
+    .command = VISION_CMD_GRAB_CONFIRMED};
+  task_accept_mission_legacy(&grab, 211U);
+  assert(state == TASK_INJURY_BACKOFF && injury_backoff_elapsed_ms == 0U);
+  tick(250U);
+  assert(servo_angles[3] == APP_CLAW_LEFT_TOUCH_ANGLE + APP_INJURY_CLAW_RELAX_DEG &&
+         servo_angles[1] == APP_CLAW_RIGHT_TOUCH_ANGLE - APP_INJURY_CLAW_RELAX_DEG);
+  assert(reverse_output == 0.0f);
+  audit_at(4U, 260U);
+  assert(state == TASK_INJURY_BACKOFF && audit_consistent_count == 0U);
+  tick(849U); assert(reverse_output == 0.0f);
+  tick(850U); assert(reverse_output == -150.0f);
+  tick(2849U); assert(state == TASK_INJURY_BACKOFF && reverse_output == -150.0f);
+  tick(2850U); assert(reverse_output == 0.0f && Camera_GetAngle() == 140U);
+  const uint32_t camera_ready = 2850U + APP_GRAB_CAMERA_SETTLE_MS;
+  tick(camera_ready - 1U); assert(state == TASK_INJURY_BACKOFF);
+  tick(camera_ready); assert(state == TASK_POST_GRAB_AUDIT && !audit_valid);
+  assert(injury_recheck_pending && !task_status.gripper_closed);
+  audit_at(5U, camera_ready + 10U); audit_at(5U, camera_ready + 20U);
+  assert(state == TASK_POST_GRAB_AUDIT);
+  audit_at(6U, camera_ready + 110U);
+  assert(state == TASK_INJURY_RECLOSE && !task_status.gripper_closed);
+  VisionMissionCommand nav = {.received = true, .flags = VISION_CMD_VALID,
+    .command = VISION_CMD_NAVIGATE_WAYPOINT};
+  command_accepted = false;
+  task_accept_mission_legacy(&nav, 3561U);
+  assert(!command_accepted && state == TASK_INJURY_RECLOSE);
+  assert(!Claw_Touch(3600U));
+  assert(servo_angles[3] == APP_CLAW_LEFT_TOUCH_ANGLE &&
+         servo_angles[1] == APP_CLAW_RIGHT_TOUCH_ANGLE);
+  const uint32_t close_done_at = 3600U + claw_wait_ms;
+  assert(!Claw_Touch(close_done_at - 1U)); assert(Claw_Touch(close_done_at));
+}
+
+static void test_pause_does_not_consume_reverse_time(void)
+{
+  prepare(); task_enter(TASK_INJURY_BACKOFF, 0U);
+  tick(0U); tick(600U); tick(1100U);
+  assert(injury_backoff_elapsed_ms == 500U);
+  task_pause_runtime(1100U);
+  task_pause_runtime(6100U);
+  tick(6100U);
+  assert(injury_backoff_elapsed_ms == 500U && reverse_output == -150.0f);
+  tick(7600U);
+  assert(reverse_output == 0.0f && injury_backoff_phase == 2U);
+}
+
+static void test_empty_reaudit(void)
+{
+  prepare(); injury_recheck_pending = true;
+  for (uint8_t i = 1U; i <= 3U; ++i) {
+    VisionMissionCommand command = injury_audit(i);
+    command.audit_left_class = VISION_CARGO_NONE;
+    command.audit_counts = command.audit_total_count = 0U;
+    command_visual_new = true;
+    task_accept_mission_legacy(&command, i * 100U);
+  }
+  assert(state == TASK_OPEN_CLAW && !task_status.gripper_closed);
+}
+
+static void test_invalid_reaudit_cannot_close(void)
+{
+  prepare(); injury_recheck_pending = true;
+  for (uint8_t i = 1U; i <= 3U; ++i) {
+    VisionMissionCommand command = injury_audit(i);
+    command.audit_counts = command.audit_total_count = 2U;
+    command_visual_new = true;
+    task_accept_mission_legacy(&command, i * 100U);
+  }
+  assert(audit_received && !audit_valid && state == TASK_POST_GRAB_AUDIT);
+  task_process_post_grab_audit(40U);
+  assert(!task_status.gripper_closed);
+}
+
+static void test_ordinary_and_stash_skip_backoff(void)
+{
+  for (uint8_t stash = 0U; stash <= 1U; ++stash) {
+    prepare();
+    for (uint8_t i = 1U; i <= 3U; ++i) {
+      VisionMissionCommand command = injury_audit(i);
+      command.audit_left_class = VISION_CARGO_GREEN;
+      command.audit_flags = VISION_AUDIT_STABLE |
+          (stash ? VISION_AUDIT_INITIAL_STASH : 0U);
+      command_visual_new = true;
+      task_accept_mission_legacy(&command, i * 100U);
+    }
+    assert(state == TASK_WAIT_NAVIGATION && !injury_recheck_pending);
+  }
+}
+
+int main(void)
+{
+  test_complete_injury_sequence();
+  test_pause_does_not_consume_reverse_time();
+  test_empty_reaudit();
+  test_invalid_reaudit_cannot_close();
+  test_ordinary_and_stash_skip_backoff();
+  puts("injury firmware sequence: 5 scenarios PASS");
+  return 0;
+}

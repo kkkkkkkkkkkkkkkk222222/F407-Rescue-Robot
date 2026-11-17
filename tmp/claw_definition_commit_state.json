@@ -1,0 +1,15 @@
+{
+  "base": "8efeb06dc118f4721a51df2c623c55744636432a",
+  "files": [
+    "AGENTS.md",
+    "docs/CURRENT_STATUS.md",
+    "docs/F405_CLAW_CALIBRATION.md",
+    "tools/F405ClawCalibrator.cs",
+    "tools/F405ClawCalibrator.tcl",
+    "tools/Start-F405ClawCalibrator.ps1"
+  ],
+  "index": "C:\\Users\\29459\\Desktop\\F407\\WWW\\tmp\\claw_definition_0279178ed8224458a390f92550233b3b.index",
+  "original_staged_raw_hex": "3a30303030303020313030363434203030303030303020346339343233352041092e696465612f575757322e696d6c0a3a30303030303020313030363434203030303030303020313035636532642041092e696465612f696e7370656374696f6e50726f66696c65732f70726f66696c65735f73657474696e67732e786d6c0a",
+  "tree": "33bfdc588de1a6e6910fed0959ae565eddbbc28b",
+  "commit": "8e07528d399b1ee6a64dd9e2510953ebb79b2dfb"
+}

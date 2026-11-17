@@ -1829,6 +1829,8 @@ static void task_initialize(uint32_t now_ms)
   nav_locked_heading_deg = 0.0f;
   tracking_report_generation = 0U;
   tracking_tick_ms = 0U;
+
+  
   approach_report_generation = 0U;
   approach_phase_path_mm = 0U;
   mission_sequence = 0U;
@@ -6783,10 +6785,14 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
   } else if ((command->command == VISION_CMD_NAVIGATE_WAYPOINT) &&
-             state == TASK_TRANSPORT_AUDIT && task_status.gripper_closed &&
+             (state == TASK_TRANSPORT_AUDIT ||
+              (state == TASK_ALIGN_SAFE_ZONE && !route_to_stash &&
+               audit_destination_injury == transport_stage_injury)) &&
+             task_status.gripper_closed &&
              ((audit_received && audit_valid && !audit_initial_stash) ||
               ((command->flags & VISION_CMD_REUSE_CONFIRMED_LOAD) != 0U &&
-               task_confirmed_load_available())) &&
+               task_confirmed_load_available() &&
+               (state != TASK_ALIGN_SAFE_ZONE || confirmed_load.active))) &&
              task_stage_command(command) &&
              task_distance_command_valid(command, VISION_CMD_NAVIGATE_WAYPOINT)) {
     task_status.acknowledged_sequence = command->sequence;
@@ -6876,6 +6882,21 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
              task_align_command_valid(command, false)) {
     /* A formal STAGE must pass mode48 before pose ALIGN. A changed
      * destination must use a fresh STAGE NAV instead of entering this zone. */
+    task_status.acknowledged_sequence = command->sequence;
+    command_accepted = true;
+    task_begin_safe_align(now_ms);
+  } else if ((command->command == VISION_CMD_ALIGN_SAFE_ZONE) &&
+             state == TASK_ALIGN_SAFE_ZONE && task_status.gripper_closed &&
+             !route_to_stash &&
+             ((audit_received && audit_valid && !audit_initial_stash &&
+               audit_destination_injury == transport_stage_injury) ||
+              ((command->flags & VISION_CMD_REUSE_CONFIRMED_LOAD) != 0U &&
+               confirmed_load.active && task_confirmed_load_available())) &&
+             (command->action_id != accepted_context.action_id ||
+              command->task_id != accepted_context.task_id) &&
+             task_align_command_valid(command, false)) {
+    /* A new pose action starts a new alignment, even after visual DONE.
+     * Repeated packets below keep the same alignment and camera preparation. */
     task_status.acknowledged_sequence = command->sequence;
     command_accepted = true;
     task_begin_safe_align(now_ms);
@@ -7349,6 +7370,10 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
       accepted_context.action_id == UINT16_MAX && incoming.action_id == 0U;
   const bool new_target = new_task && !task_rollover;
   const bool new_action = new_task || incoming.action_id != accepted_context.action_id;
+  /* A staging repair is a new movement of the same held batch. Existing
+   * NAV packets still update H/D in place after this transition. */
+  if (state == TASK_ALIGN_SAFE_ZONE && incoming.command == VISION_CMD_NAVIGATE_WAYPOINT &&
+      (new_target || !new_action || incoming.vision_frame != 0U)) goto rejected;
   const bool cancel_capture = task_capture_cancel_command(&incoming) && task_capture_cancel_state();
   const bool cancel_replay = !new_action && task_capture_cancel_command(&incoming) &&
       accepted_context.opcode == VISION_CMD_RELEASE_BOTH &&

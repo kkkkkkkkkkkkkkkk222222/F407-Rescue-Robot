@@ -1,0 +1,20 @@
+Temporary breakpoint 1 at 0x14001e57c: file tools/test_audit_handshake.c, line 946.
+[New Thread 48680.0xb980]
+
+Thread 1 hit Temporary breakpoint 1, main () at tools/test_audit_handshake.c:946
+946	  test_distance_search_accumulation_and_transport_sort();
+CHECK real_first_green_ready22=1
+CHECK metadata_not_sample=1
+CHECK actual_one_green_READY_invalid=1
+CHECK audit_clear_keeps_veto=1
+CHECK missed_core_does_not_requalify=1
+CHECK real_single_original_grip=1
+CHECK unfinished_keeps_veto=1
+CHECK selective_DONE_clears=1
+CHECK old_DONE_no_clear=1
+CHECK fresh_real_reaudit=1
+A debugging session is active.
+
+	Inferior 1 [process 48680] will be killed.
+
+Quit anyway? (y or n) [answered Y; input not from terminal]

@@ -1,0 +1,393 @@
+diff --git a/Main/Inc/vision.h b/Main/Inc/vision.h
+index 32d9a5f..11d5548 100644
+--- a/Main/Inc/vision.h
++++ b/Main/Inc/vision.h
+@@ -181,7 +181,8 @@ typedef enum {
+   VISION_BULLDOZER_RIGHT_TO_STAGE,
+   VISION_BULLDOZER_PICKUP_READY,
+   VISION_BULLDOZER_EMPTY_BODY_MOVE,
+-  VISION_BULLDOZER_ATTACK_FACE_OPPONENT
++  VISION_BULLDOZER_ATTACK_FACE_OPPONENT,
++  VISION_BULLDOZER_ATTACK_BACK_100
+ } VisionBulldozerStep;
+ 
+ #define VISION_BULLDOZER_STEP(flags) ((uint8_t)((flags) >> 4U))
+diff --git a/Main/Src/Task.c b/Main/Src/Task.c
+index a5550cd..0f8f23d 100644
+--- a/Main/Src/Task.c
++++ b/Main/Src/Task.c
+@@ -4177,7 +4177,8 @@ static void task_process_bulldozer(const VisionMissionCommand *command,
+     }
+ 
+     case VISION_BULLDOZER_FORWARD_PARK:
+-    case VISION_BULLDOZER_BACK_200: {
++    case VISION_BULLDOZER_BACK_200:
++    case VISION_BULLDOZER_ATTACK_BACK_100: {
+       const float speed = remote_action.arg_a < 0 ?
+           APP_SAFE_SWEEP_RETURN_SPEED_MM_S : APP_SAFE_SWEEP_FORWARD_SPEED_MM_S;
+       const MotorDistanceStatus result = Motor_MoveDistanceHeading(
+@@ -4325,18 +4326,27 @@ static bool task_accept_bulldozer(const VisionMissionCommand *command,
+   if (attack_face && !attack_face_entry) {
+     return false;
+   }
++  const bool attack_back = VISION_BULLDOZER_STEP(command->flags) ==
++      VISION_BULLDOZER_ATTACK_BACK_100;
+   const bool empty_move = VISION_BULLDOZER_STEP(command->flags) ==
+       VISION_BULLDOZER_EMPTY_BODY_MOVE;
+   const bool empty_search_entry = empty_move && state == TASK_SEARCH &&
+       !task_status.gripper_closed;
+-  const bool release_done = empty_move && state == TASK_REMOTE_ACTION &&
++  const bool release_done = (empty_move || attack_back) && state == TASK_REMOTE_ACTION &&
+       remote_action.type == REMOTE_ACTION_RELEASE_BOTH && remote_action.done &&
+       remote_action.command == VISION_CMD_RELEASE_BOTH && accepted_context.valid &&
+       accepted_context.opcode == VISION_CMD_RELEASE_BOTH &&
+       owned_task && !task_status.gripper_closed;
++  if (attack_back) {
++    /* Only the first owned release hand-off may start this finite retreat.
++     * Reuse its load cleanup, without reopening claws or counting delivery. */
++    if (!release_done) { return false; }
++    task_bulldozer_clear_load();
++  }
+   if (empty_move) {
+     const bool next_empty_leg = previous_step_done &&
+-        remote_action.step == VISION_BULLDOZER_EMPTY_BODY_MOVE &&
++        (remote_action.step == VISION_BULLDOZER_EMPTY_BODY_MOVE ||
++         remote_action.step == VISION_BULLDOZER_ATTACK_BACK_100) &&
+         owned_task && !task_status.gripper_closed;
+     if (!release_done && !next_empty_leg && !empty_search_entry) {
+       return false;
+diff --git a/Main/Src/vision.c b/Main/Src/vision.c
+index 363766e..7013b46 100644
+--- a/Main/Src/vision.c
++++ b/Main/Src/vision.c
+@@ -226,6 +226,9 @@ static bool vision_bulldozer_payload_valid(uint8_t flags, int16_t a, int16_t b,
+       return a == 200 && b == 0 && heading == sweep_heading;
+     case VISION_BULLDOZER_BACK_200:
+       return a == -200 && b == 0 && heading == sweep_heading;
++    case VISION_BULLDOZER_ATTACK_BACK_100:
++      return a == -100 && b == 0 && heading ==
++          ((flags & VISION_CMD_RED_SIDE) != 0U ? 27000U : 9000U);
+     case VISION_BULLDOZER_SWEEP_1000:
+       return a == 1000 && b == 0 && heading == sweep_heading;
+     case VISION_BULLDOZER_BACK_TO_SWEEP:
+diff --git a/docs/CROSS_REPO_REQUESTS.md b/docs/CROSS_REPO_REQUESTS.md
+index e3a4b02..89f3e72 100644
+--- a/docs/CROSS_REPO_REQUESTS.md
++++ b/docs/CROSS_REPO_REQUESTS.md
+@@ -1,6 +1,6 @@
+ # 两端当前要求与回执
+ 
+-更新日期为 2026-11-14，时区 Asia/Shanghai。
++更新日期为 2026-11-15，时区 Asia/Shanghai。
+ 
+ ## 固定入口与协作方式
+ 
+@@ -16,6 +16,38 @@
+ 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
+ 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
+ 
++## MATCH-ATTACK-BACK100-WHEEL-20261115：接受并已实现，用户自行烧录
++
++已读取RDK最新固定入口、返程说明/合同及attack_return/obstacle_route/protocol/state_machine/runner，
++固定源提交`8709e43c62148197d94923db8af6af76873138f3`；入口blob`ecbe915a21cac6b4bdeda5f158d28b8de3864586`，
++机器合同blob`b91c65e20afb63fe0b0ad1c84435743dd4bf8352`。本端基于`cd0d3297673613468ecacab42ef17512ed6fabbe`增量实现。
++
++**接受仅首段100mm有限轮程后退，后三段保持原定位导航；不扩改转向/制动或上轮分析候选。**
++
++- 原TYPE0x18/opcode0x14追加15/ATTACK_BACK_100：P1红F9/蓝F1，A固定有符号-100mm、B=0、U红27000/蓝9000。
++  原0..14接收校验保持，step3仍仅-200mm原扫障航向；串口921600、原配对/完成回执不变。
++- 只从本任务已完成RELEASE_BOTH/mode34且逻辑空爪进入15，复用原首次空载交接清审核/预算一次；
++  不重放松爪、不记首绿/送达，无SEARCH随意发起15的入口，任务/action排序和编号回绕保持。
++- 直接复用原BACK_200的Motor_MoveDistanceHeading：-0.100m、原350mm/s请求、固定U；进度为本段M1/M2有符号编码器差。
++  motor.c未改，原3mm公差、起点/制动/加减速/PAUSE恢复/错误处理保持；地图XY/path_mm或纯转动不计满本段。
++  同action重发不重置起点，DONE后不走第二遍，仍本次mode25/COMPLETED。
++- 允许本任务完成15后的下一新action进入13 LEFT_500；后三段原目标、5cm、H/D和D0/配对DONE保持，最后仍12/SEARCH。
++  原13→13及SEARCH/释放入口保持；新15不受地图D0提前结束。旧step14和回抓单伤员审核复用不重复修改。
++- 搜索150、其他速度/PID/PWM、舵机、普通RETURN、STOP/mode51、ISR/遥测/时间政策不变；
++  无新增测试源码/独立程序、资格等待、握手、统计或FAULT。本轮未扩改上位REJECT出口/安全区无框策略。
++
++必要结果：NormalRun/MotionDebug构建、原FLOW_20261019_CHECK通过；原Task夹具直接调用核对红蓝mode34→15、
++  参数/地图变化/重发/PAUSE/本次DONE不重走、15→13动态→D0→12以及错误入口拒绝。14组原机器示例CRC/字段通过。
++夹具电机反馈为替身，只证明调用与状态交接；motor.c/配置及旧接收case差异核对为空，地面100mm/轮滑/转向余摆仍待人实测。
++
++**未烧录、未打开UART/SDK或执行实车动作，actual未亲自新读；用户自行烧录。** 上位18:43记录actual f14d2a4/dirty1仅历史身份，
++dirty差异未知，不能当新15部署证明。本机构建保留原Task初始化空白，如实dirty1；最终源码以本文件Git记录为准。
++需用户烧新NormalRun/TASK并重开RDK最新正式入口，旧f14d2a4/cd0d329无法执行新15。
++
++- [完整实现与检查边界](F405_ATTACK_BACK100_20261115.md)
++- [机器合同v3及原报文](contracts/f405_empty_body_move_20261114.json)
++- [固定上位请求](https://github.com/danmo-teng/shijue_fangan/blob/8709e43c62148197d94923db8af6af76873138f3/docs/CROSS_REPO_REQUESTS.md)
++
+ ## MATCH-ATTACK-FACING / MATCH-RECOVERED-INJURY-AUDIT-20261114：接受并已实现，用户自行烧录
+ 
+ 已读取RDK固定入口及详细任务/机器合同，核对protocol/state_machine/runner/路线源码，
+diff --git a/docs/CURRENT_STATUS.md b/docs/CURRENT_STATUS.md
+index eed7948..ae43342 100644
+--- a/docs/CURRENT_STATUS.md
++++ b/docs/CURRENT_STATUS.md
+@@ -1,5 +1,15 @@
+ # 当前状态：F405 烧录入口
+ 
++2026-11-15 MATCH-ATTACK-BACK100-WHEEL：进攻首段100mm轮程后退（未烧录）。
++- 审查接受RDK 8709e43的最小配套：原0x18/opcode0x14追加15，A=-100mm/B=0/U红270°蓝90°，只从本任务已完成双爪释放mode34/空爪进入。
++- 首次仅清一次放货审核/批次预算，不重放舵机/记送达；复用原BACK_200的Motor_MoveDistanceHeading，原350mm/s请求及本段M1/M2轮程。
++  原motor.c、3mm公差、制动/起点/减速/PAUSE恢复保持；同action不重启、DONE不重走，不用地图XY/path_mm或纯旋转结束首段。
++- 15 DONE接同任务下一新action的13，后三段原定位目标、5cm、H/D及12/SEARCH不改；原13的SEARCH/释放入口和0..14校验保留。
++  搜索150、PID/PWM/舵机、审核复用、ISR/遥测和时间政策不改，无新增测试程序/时间门/握手/FAULT。
++- NormalRun/MotionDebug构建及原FLOW检查通过；原Task夹具红蓝有限段/重发/地图变化/PAUSE/DONE→13→12、错误入口和14组CRC/字段核对通过。
++  夹具电机为替身，地面100mm/打滑及转向余摆未验收。本轮未开设备或烧录，actual未新读；原Task空白和独立改动保留，构建如实dirty1。
++  用户烧新NormalRun并重开最新RDK入口；新8709e43不能直接配旧f14d2a4/cd0d329固件。详见固定入口与[F405首段说明](F405_ATTACK_BACK100_20261115.md)。
++
+ 2026-11-15 原地搜索降速至150mm/s（未烧录）。
+ - 用户将搜索轮周速度200改150；120°/105°正常扫描及两圈无果后等待换点时的继续扫描同步降为150mm/s。
+   只改APP_SEARCH_ROTATE_SPEED_MM_S和APP_SEARCH_WAIT_RETURN_SPEED_MM_S；PID、换点平移、接近抓取及流程保持。
+diff --git a/docs/F405_ATTACK_BACK100_20261115.md b/docs/F405_ATTACK_BACK100_20261115.md
+new file mode 100644
+index 0000000..fd274de
+--- /dev/null
++++ b/docs/F405_ATTACK_BACK100_20261115.md
+@@ -0,0 +1,52 @@
++# 进攻返程首段：固定100mm轮程后退
++
++本轮请求MATCH-ATTACK-BACK100-WHEEL-20261115。核对上位固定入口、说明、机器合同及attack_return/obstacle_route/protocol/state_machine/runner，
++源提交`8709e43c62148197d94923db8af6af76873138f3`；本端以`cd0d3297673613468ecacab42ef17512ed6fabbe`为基线增量实现。
++接受最小方案：只有放货后首段改有限轮程，后面左移/长距离后退/右移保持原定位导航。
++
++## 为什么改
++
++上位18:43日志说明：首段曾在约0.306秒内从D100转D0/DONE，轮反馈积分约2.7～2.8cm。
++这支持地图修正和5cm到点容差使首段提前结束；轮反馈不是独立地面真值。
++上位记录的实际固件f14d2a4/dirty1仅历史回执，本窗口未读板端actual。
++转正完成后88～90°到返回开始64.9°的偏差仍是待办，本轮不改转向/制动、PID或定位来掩盖。
++
++## 当前接口和流程
++
++原物理UART4 921600/8N1、15字节帧、CRC16/MODBUS及0x1D→0x18同SEQ配对保持。
++TYPE0x18内部opcode0x14追加step15 ATTACK_BACK_100：P1红0xF9/蓝0xF1，A固定有符号-100mm，B=0，U红27000/蓝9000厘度。
++原step3仍只接受-200mm和原扫障航向；旧step0..14校验不放宽，协议1.3遥测和控制TYPE不变。
++
++1. 只从本任务已完成RELEASE_BOTH/mode34且逻辑空爪进入15。沿原任务/action排序及FFFF→0/task+1回绕；没有SEARCH发起15的入口。
++2. 仅首次交接复用task_bulldozer_clear_load清放货审核、旧退让和批次预算，不重放舵机、不记首绿/送达；同action重发不重复清理。
++3. case15直接共用原BACK_200的Motor_MoveDistanceHeading分支，-0.100m、原350mm/s后退请求及固定U。
++   motor.c完全未改：本段M1/M2起点后的有符号编码器差计算前向轮程，原3mm到位公差、加减速、制动、起点和错误处理保持。
++   不使用地图XY、pose.path_mm或纯旋转计满100mm；不加计时/等待/归零资格或新FAULT。
++4. 同action持续发送-100/0/U，不根据地图改D0；原有限控制器保持进度和PAUSE恢复。DONE后仍本次mode25/COMPLETED，重发不退第二次。
++5. 本任务已完成15后，允许下一新action的13进入LEFT_500；13→13、原SEARCH换点、最后12及STOP/mode51保持。
++   后三段目标仍由原释放参考构造，原5cm容差、动态H/D和D0完成不变；下位不重算坐标或替代上位路线。
++
++红方task10/action100、SEQ40（离线合成，未发送）：
++
++```text
++a3 b3 1d 28 00 0a 00 64 00 00 00 00 c5 a1 c3
++a3 b3 18 28 14 f9 ff 9c 00 00 69 78 8d e8 c3
++```
++
++蓝方同上下文：`a3 b3 18 28 14 f1 ff 9c 00 00 23 28 33 74 c3`。
++正式字段及红蓝原报文见[机器合同v3](contracts/f405_empty_body_move_20261114.json)。
++
++## 必要检查和部署边界
++
++- NormalRun/MotionDebug构建链接通过；原FLOW_20261019_CHECK通过。
++- 未新增检查源码/独立程序，直接调用原Task夹具核对红蓝mode34→15、原定距函数参数、地图变化/无效不在Task层结束首段、
++  重发/PAUSE恢复/本次DONE后不重走、15→13动态D/H→D0→12/SEARCH、无舵机重放/不记送达；
++  SEARCH、未完成释放、持货、错任务和非双爪释放入口拒绝。夹具电机反馈为替身，只证明调用及状态衔接。
++- 轮程算法、motor.c和参数文件未变；14组机器示例字段/CRC及旧校验差异核对通过。编码器轮程与软件DONE不等于卷尺100mm验收。
++- PID、全部速度（含搜索150mm/s）、舵机、原任务审核/复用、ISR/遥测和时间政策保持；原工具/IDE及Task初始化空白保留。
++- 本轮未烧录、未连接UART/SDK或发任何机构/车轮动作，actual未新读。用户自行烧新`build/F405/NormalRun/NormalRun.elf`，
++  再重开最新RDK正式入口；旧f14d2a4/cd0d329固件不能执行15。源码、构建、expected与实烧身份分开，本机构建如实dirty1。
++  地面后退距离、打滑、转向余摆和后三段轨迹仍待人实测；上轮分析的上位REJECT出口/安全区无框分支未在本轮扩改。
++
++依据：[上位固定请求](https://github.com/danmo-teng/shijue_fangan/blob/8709e43c62148197d94923db8af6af76873138f3/docs/CROSS_REPO_REQUESTS.md)、
++[返程说明](https://github.com/danmo-teng/shijue_fangan/blob/8709e43c62148197d94923db8af6af76873138f3/docs/COMPETITION_ATTACK_RETURN_20261114.md)。
+diff --git a/docs/F405_EMPTY_BODY_MOVE_20261114.md b/docs/F405_EMPTY_BODY_MOVE_20261114.md
+index 617edfc..929a074 100644
+--- a/docs/F405_EMPTY_BODY_MOVE_20261114.md
++++ b/docs/F405_EMPTY_BODY_MOVE_20261114.md
+@@ -1,5 +1,9 @@
+ # MATCH-ATTACK-RETURN-20261114：step13空载保向平移
+ 
++2026-11-15当前进攻返程改为首段step15执行固定100mm轮程后退，随后三段仍用本文step13定位移动，最后step12。
++原搜索换点全部step13及旧释放→13入口保持。新接口及部署见[F405首段轮程配套](F405_ATTACK_BACK100_20261115.md)，机器合同已更新v3。
++下文“四段step13”是此前版本的交付记录，不作为当前进攻首段的执行定义；用户需烧新NormalRun匹配RDK 8709e43。
++
+ 2026-11-14后续MATCH-ATTACK-FACING已配套step14：进攻藏点NAV完成后先保持闭爪带载转向，红270°/蓝90°，
+ 再原RELEASE_BOTH/mode34及本文step13返程。原0..13字段不变，详见[本次增量说明](F405_ATTACK_AUDIT_ADAPTATION_20261114.md)。
+ step14和原step13红蓝报文一并记录在本页机器合同，用户自行烧录；未称新转正已上板。
+diff --git a/docs/contracts/f405_empty_body_move_20261114.json b/docs/contracts/f405_empty_body_move_20261114.json
+index 361db34..1dcebf9 100644
+--- a/docs/contracts/f405_empty_body_move_20261114.json
++++ b/docs/contracts/f405_empty_body_move_20261114.json
+@@ -1,9 +1,9 @@
+ {
+   "id": "MATCH-ATTACK-RETURN-20261114",
+-  "version": 1,
+-  "status": "lower_implemented_build_checked_not_flashed",
+-  "human_approved_scope": "reuse_0x14_add_one_empty_fixed_yaw_body_move_substep",
+-  "actual_lower_version": "not_read_this_turn",
++  "version": 3,
++  "status": "lower_step15_implemented_build_checked_not_flashed",
++  "human_approved_scope": "Only opening attack first retreat becomes finite wheel-distance100mm; next three map legs and old steps0..14 remain",
++  "actual_lower_version": "not_read_this_turn; user_flashes; prior18:43_f14d2a4_dirty1_is_historical",
+   "base_steps_0_through_12": "unchanged",
+   "wire": {
+     "type": 24,
+@@ -17,8 +17,9 @@
+     "fields": {
+       "A": "unsigned semantic D 0..5000 mm in signed big-endian int16",
+       "B": "field-frame translation H -18000..18000 centidegrees in signed big-endian int16",
+-      "U": "frozen release-time chassis yaw 0..35999 centidegrees in big-endian uint16"
+-    }
++      "U": "fixed opponent-facing chassis yaw: red27000 / blue9000 centidegrees; release actual yaw logged separately"
++    },
++    "scope": "last three map legs only; first leg uses first_finite_back below"
+   },
+   "pairing": {
+     "context_type": 29,
+@@ -36,17 +37,17 @@
+     "transform": "body_angle=wrap(H-current_primary_yaw); hold U, never turn chassis toward H",
+     "D_positive": "RUNNING; do not report whole leg done from encoder initial D alone",
+     "D_zero": "existing brake then COMPLETED mode25; do not reset to SEARCH or start another action",
+-    "first_entry": "Owned completed RELEASE_BOTH/mode34 and open claw, or empty SEARCH under the original step0 task/action rules; cancelled SEARCH permits only a new step13 action.",
+-    "next_entry": "owned completed prior step13; existing action IDs distinguish legs",
+-    "final_search": "after fourth step13 DONE, upper sends existing step12/PICKUP_READY; retain paired DONE through mode3"
++    "first_entry": "legacy step13 release entry preserved; new flow uses step15 after release then owned step13 after step15 DONE",
++    "next_entry": "owned completed previous step15 or step13; existing action IDs distinguish subsequent map legs",
++    "final_search": "after finite step15 and three map step13 DONEs, existing step12/PICKUP_READY; retain paired DONE through mode3"
+   },
+   "route": {
+-    "reference": "actual release centre and primary-yaw field heading, frozen once",
++    "reference": "actual release centre, fixed red270deg / blue90deg opponent-facing frame; never arbitrary release yaw",
+     "moves": [
+-      "back 0.10m",
+-      "left 0.50m",
+-      "back to return longitudinal level",
+-      "right to return point"
++      "finite measured-wheel back100mm",
++      "map left0.50m",
++      "map back to return longitudinal level",
++      "map right to return point"
+     ],
+     "own_return_red_m": [
+       0,
+@@ -69,7 +70,8 @@
+         0.69,
+         90
+       ]
+-    }
++    },
++    "waypoint_tolerance_scope": "last three map legs only; first nominal waypoint remains a construction reference"
+   },
+   "non_changes": [
+     "no new handshake/freshness gate/ISR or timer",
+@@ -82,15 +84,17 @@
+     {
+       "side": "red",
+       "segment": 0,
+-      "name": "BACK_100",
+-      "D_mm": 100,
+-      "H_cdeg": 9000,
++      "name": "BACK_100_WHEEL",
+       "U_cdeg": 27000,
+       "task_id": 10,
+       "action_id": 100,
+       "seq": 40,
+       "context_hex": "a3 b3 1d 28 00 0a 00 64 00 00 00 00 c5 a1 c3",
+-      "command_hex": "a3 b3 18 28 14 d9 00 64 23 28 69 78 92 7d c3"
++      "command_hex": "a3 b3 18 28 14 f9 ff 9c 00 00 69 78 8d e8 c3",
++      "step": 15,
++      "A_mm": -100,
++      "B": 0,
++      "source": "synthetic_offline_not_transmitted"
+     },
+     {
+       "side": "red",
+@@ -134,15 +138,17 @@
+     {
+       "side": "blue",
+       "segment": 0,
+-      "name": "BACK_100",
+-      "D_mm": 100,
+-      "H_cdeg": -9000,
++      "name": "BACK_100_WHEEL",
+       "U_cdeg": 9000,
+       "task_id": 10,
+       "action_id": 100,
+       "seq": 40,
+       "context_hex": "a3 b3 1d 28 00 0a 00 64 00 00 00 00 c5 a1 c3",
+-      "command_hex": "a3 b3 18 28 14 d1 00 64 dc d8 23 28 1c c6 c3"
++      "command_hex": "a3 b3 18 28 14 f1 ff 9c 00 00 23 28 33 74 c3",
++      "step": 15,
++      "A_mm": -100,
++      "B": 0,
++      "source": "synthetic_offline_not_transmitted"
+     },
+     {
+       "side": "blue",
+@@ -278,6 +284,13 @@
+       "upper_commit": "b1b3531782b95d65cc7b4a24927935344ee98e7d",
+       "upper_contract_blob": "c48a89934dc2aab9fd5988b0d9b0e7131e6f9e1e",
+       "lower_base": "63d75a88c4e13cce11fb8731aca14383269e8ce5"
++    },
++    "attack_back100": {
++      "id": "MATCH-ATTACK-BACK100-WHEEL-20261115",
++      "status": "lower_implemented_build_checked_not_flashed",
++      "upper_commit": "8709e43c62148197d94923db8af6af76873138f3",
++      "upper_contract_blob": "b91c65e20afb63fe0b0ad1c84435743dd4bf8352",
++      "lower_base": "cd0d3297673613468ecacab42ef17512ed6fabbe"
+     }
+   },
+   "face_before_release": {
+@@ -319,5 +332,52 @@
+       "command_hex": "a3 b3 18 27 14 e1 00 00 00 00 23 28 a7 56 c3",
+       "source": "synthetic_offline_not_transmitted"
+     }
+-  ]
++  ],
++  "first_finite_back": {
++    "opcode": 20,
++    "step": 15,
++    "name": "ATTACK_BACK_100",
++    "P1_red": 249,
++    "P1_blue": 241,
++    "A_mm": -100,
++    "B": 0,
++    "U_red_cdeg": 27000,
++    "U_blue_cdeg": 9000,
++    "entry": "same owned completed RELEASE_BOTH/mode34 and open claw; no SEARCH entry for step15",
++    "reuse": "existing BACK_200 finite Motor_MoveDistanceHeading(-0.100f, APP_SAFE_SWEEP_RETURN_SPEED_MM_S, U*0.01f)",
++    "progress": "existing action-local signed encoder forward difference; no map displacement, pose.path_mm or pure rotation progress",
++    "completion": "existing finite controller DONE/tolerance, then same task/action/opcode COMPLETED mode25; upper never map-latches D0 in first leg",
++    "retransmit": "constant -100/0/U same action and new transport SEQ; no origin reset or repeat movement after DONE",
++    "handoff": "owned completed step15 -> new action step13 for LEFT_500; last three targets/5cm/map H-D unchanged",
++    "pause_stop": "reuse original finite PAUSE/resume preserving progress; original STOP unchanged",
++    "map_reference": "release P freezes original last-three targets once; map correction or temporarily missing map pose after start cannot finish/reset the first finite leg",
++    "not_authorized": [
++      "new time/freshness qualification",
++      "new handshake/wait/FAULT/ISR/telemetry",
++      "global distance tolerance/PID/speed changes",
++      "turning overshoot fix",
++      "localization/fusion changes",
++      "firmware deployment"
++    ]
++  },
++  "reviewed_lower_source": {
++    "main": "cd0d3297673613468ecacab42ef17512ed6fabbe",
++    "Task.c_blob": "a5550cd85c3e469b35d4561333f3f94b1baa6f9b",
++    "motor.c_blob": "66bfe506beeae195018799aabe414f2f72dfe579",
++    "Task_matches_f14d2a4": true
++  },
++  "existing_steps_0_through_14": "unchanged wire/control semantics",
++  "examples_source": "all examples synthetic offline, never transmitted; facing and return groups independent, actual face/release/return phases use distinct action IDs",
++  "verification_step15": {
++    "kind": "existing_Task_fixture_calls_with_mock_motor_status_and_source_review; no added test source",
++    "builds": [
++      "NormalRun",
++      "MotionDebug"
++    ],
++    "hardware": false,
++    "flashed": false,
++    "actual_read": false,
++    "distance_ground_truth": "not_measured",
++    "motor_source": "unchanged; signed M1/M2 segment-local encoder distance, original3mm tolerance"
++  }
+ }

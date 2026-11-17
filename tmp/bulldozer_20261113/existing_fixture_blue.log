@@ -1,0 +1,61 @@
+Temporary breakpoint 1 at 0x14001d815: file tools/test_audit_handshake.c, line 933.
+[New Thread 14544.0x97d4]
+
+Thread 1 hit Temporary breakpoint 1, main () at tools/test_audit_handshake.c:933
+933	  test_normalrun_start_and_delivery_exit();
+blue step0 accepted=1 opcode=20 action=600 mode=25
+blue step0 repeat_start_same=1
+blue step0 done=1 mode=25 cancelled=0 complete=1
+blue step1 accepted=1 opcode=20 action=601 mode=25
+blue step1 finite_running=1 D=0.200 H=180.000
+blue step1 repeat_start_same=1
+blue step1 done=1 mode=25 cancelled=0 complete=1
+blue step2 accepted=1 opcode=20 action=602 mode=25
+blue step2 repeat_start_same=1
+blue step2 done=1 mode=25 cancelled=0 complete=1
+blue release closed=0 stable=0 audit=0 sweep=0 claw=120/60
+blue step3 accepted=1 opcode=20 action=603 mode=25
+blue step3 finite_running=1 D=-0.200 H=180.000
+blue step3 repeat_start_same=1
+blue step3 done=1 mode=25 cancelled=0 complete=1
+blue step4 accepted=1 opcode=20 action=604 mode=25
+blue step4 repeat_start_same=1
+blue step4 done=1 mode=25 cancelled=0 complete=1
+blue step5 accepted=1 opcode=20 action=605 mode=25
+blue step5 live=1 completed=0 H=180.000 speed=350.000
+blue step5 repeat_start_same=1
+blue step5 nonzero_done=0 speed=200.000
+blue step5 done=1 mode=25 cancelled=0 complete=1
+blue step6 accepted=1 opcode=20 action=606 mode=25
+blue step6 live=1 completed=0 H=180.000 speed=350.000
+blue step6 repeat_start_same=1
+blue step6 nonzero_done=0 speed=200.000
+blue step6 done=1 mode=25 cancelled=0 complete=1
+blue step7 accepted=1 opcode=20 action=607 mode=25
+blue step7 repeat_start_same=1
+blue step7 done=1 mode=25 cancelled=0 complete=1
+blue full_open=180/0 pulses=500/2500
+blue step8 accepted=1 opcode=20 action=608 mode=25
+blue step8 finite_running=1 D=1.000 H=180.000
+blue step8 repeat_start_same=1
+blue step8 done=1 mode=25 cancelled=0 complete=1
+blue step9 accepted=1 opcode=20 action=609 mode=25
+blue step9 repeat_start_same=1
+blue step9 done=1 mode=25 cancelled=0 complete=1
+blue raised=61 claw=180/0
+blue step10 accepted=1 opcode=20 action=610 mode=25
+blue step10 live=1 completed=0 H=180.000 speed=350.000
+blue step10 repeat_start_same=1
+blue step10 nonzero_done=0 speed=200.000
+blue step10 done=1 mode=25 cancelled=0 complete=1
+blue step11 accepted=1 opcode=20 action=611 mode=25
+blue step11 live=1 completed=0 H=180.000 speed=350.000
+blue step11 repeat_start_same=1
+blue step11 nonzero_done=0 speed=200.000
+blue step11 done=1 mode=25 cancelled=0 complete=1
+blue step12 accepted=1 opcode=20 action=612 mode=25
+blue step12 repeat_start_same=1
+blue step12 done=1 mode=3 cancelled=0 complete=1
+blue ready_repeat mode=3 complete=1 camera=120 lift=85 claw=120/60
+blue normal_approach accepted=1 state=4 opcode=9
+

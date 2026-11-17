@@ -1,0 +1,349 @@
+diff --git a/.idea/WWW.iml b/.idea/WWW.iml
+index 4c94235..54daf84 100644
+--- a/.idea/WWW.iml
++++ b/.idea/WWW.iml
+@@ -1,2 +1,8 @@
+ <?xml version="1.0" encoding="UTF-8"?>
+-<module classpath="CIDR" type="CPP_MODULE" version="4" />
+\ No newline at end of file
++<module type="PYTHON_MODULE" version="4">
++  <component name="NewModuleRootManager">
++    <content url="file://$MODULE_DIR$" />
++    <orderEntry type="jdk" jdkName="Python 3.13 (PythonProject)" jdkType="Python SDK" />
++    <orderEntry type="sourceFolder" forTests="false" />
++  </component>
++</module>
+\ No newline at end of file
+diff --git a/.idea/misc.xml b/.idea/misc.xml
+index 0b76fe5..e2b4296 100644
+--- a/.idea/misc.xml
++++ b/.idea/misc.xml
+@@ -4,4 +4,5 @@
+     <option name="pythonIntegrationState" value="YES" />
+   </component>
+   <component name="CMakeWorkspace" PROJECT_DIR="$PROJECT_DIR$" />
++  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.13 (PythonProject)" project-jdk-type="Python SDK" />
+ </project>
+\ No newline at end of file
+diff --git a/.idea/modules.xml b/.idea/modules.xml
+index 2a3dc7e..866ad86 100644
+--- a/.idea/modules.xml
++++ b/.idea/modules.xml
+@@ -3,6 +3,7 @@
+   <component name="ProjectModuleManager">
+     <modules>
+       <module fileurl="file://$PROJECT_DIR$/.idea/WWW.iml" filepath="$PROJECT_DIR$/.idea/WWW.iml" />
++      <module fileurl="file://$PROJECT_DIR$/.idea/WWW2.iml" filepath="$PROJECT_DIR$/.idea/WWW2.iml" />
+     </modules>
+   </component>
+ </project>
+\ No newline at end of file
+diff --git a/.idea/vcs.xml b/.idea/vcs.xml
+index d0652a3..7c3b078 100644
+--- a/.idea/vcs.xml
++++ b/.idea/vcs.xml
+@@ -2,6 +2,19 @@
+ <project version="4">
+   <component name="VcsDirectoryMappings">
+     <mapping directory="$PROJECT_DIR$" vcs="Git" />
++    <mapping directory="$PROJECT_DIR$/tmp/imu660rx_official_review" vcs="Git" />
++    <mapping directory="$PROJECT_DIR$/tmp/imu660rx_reference" vcs="Git" />
++    <mapping directory="$PROJECT_DIR$/tmp/lsm6dsv16x_reference" vcs="Git" />
++    <mapping directory="$PROJECT_DIR$/tmp/seekfree_tc264_imu_review" vcs="Git" />
+     <mapping directory="$PROJECT_DIR$/tmp/shijue_gamepad_check" vcs="Git" />
++    <mapping directory="$PROJECT_DIR$/tmp/shijue_latest_gamepad" vcs="Git" />
++    <mapping directory="$PROJECT_DIR$/tmp/shijue_latest_main" vcs="Git" />
++    <mapping directory="$PROJECT_DIR$/tmp/upper_gamepad_review_0e30088" vcs="Git" />
++    <mapping directory="$PROJECT_DIR$/tmp/upper_latest_review_6848456" vcs="Git" />
++    <mapping directory="$PROJECT_DIR$/tmp/upper_review_0247bdd" vcs="Git" />
++    <mapping directory="$PROJECT_DIR$/tmp/upper_review_81879e0" vcs="Git" />
++    <mapping directory="$PROJECT_DIR$/tmp/upper_review_c84d77e" vcs="Git" />
++    <mapping directory="$PROJECT_DIR$/tmp/upper_review_e01ffb9" vcs="Git" />
++    <mapping directory="$PROJECT_DIR$/tmp/upper_sync_c9323aa" vcs="Git" />
+   </component>
+ </project>
+\ No newline at end of file
+diff --git a/Main/Inc/vision.h b/Main/Inc/vision.h
+index a8d125a..32d9a5f 100644
+--- a/Main/Inc/vision.h
++++ b/Main/Inc/vision.h
+@@ -116,6 +116,8 @@
+ /* APPROACH_TARGET describes the centre of a pile that must be approached
+  * before the upper computer requests visual selective separation. */
+ #define VISION_CMD_CLUSTER_TARGET    0x20U
++/* STAGE NAV bit5 requests reuse of the task's real post-grab single-injury audit. */
++#define VISION_CMD_REUSE_POST_GRAB_AUDIT 0x20U
+ /* APPROACH bit6 + DISTANCE_VALID: P2/P3=latched travel mm,
+  * P4/P5=fixed measuring pitch cdeg (10500/12000), P6/P7=0. */
+ #define VISION_CMD_APPROACH_RANGE     0x40U
+@@ -178,7 +180,8 @@ typedef enum {
+   VISION_BULLDOZER_BACK_TO_STAGE,
+   VISION_BULLDOZER_RIGHT_TO_STAGE,
+   VISION_BULLDOZER_PICKUP_READY,
+-  VISION_BULLDOZER_EMPTY_BODY_MOVE
++  VISION_BULLDOZER_EMPTY_BODY_MOVE,
++  VISION_BULLDOZER_ATTACK_FACE_OPPONENT
+ } VisionBulldozerStep;
+ 
+ #define VISION_BULLDOZER_STEP(flags) ((uint8_t)((flags) >> 4U))
+diff --git a/Main/Src/Task.c b/Main/Src/Task.c
+index a9f65eb..4a4020c 100644
+--- a/Main/Src/Task.c
++++ b/Main/Src/Task.c
+@@ -351,6 +351,7 @@ static bool audit_destination_injury;
+ static bool cargo_recheck_pending;
+ static bool opening_claw_probe_active;
+ static bool route_to_stash;
++static bool nav_reuse_post_grab_audit;
+ static bool stash_backoff_pending;
+ static bool cluster_target_active;
+ static bool cluster_claws_ready;
+@@ -845,6 +846,13 @@ static bool task_audit_has_danger(void)
+       audit_last_right_class == VISION_CARGO_DANGER;
+ }
+ 
++static bool task_closed_single_injury_audit(void)
++{
++  return task_status.gripper_closed && audit_received && audit_host_stable &&
++      audit_valid && !audit_initial_stash && audit_destination_injury &&
++      audit_last_semantic == AUDIT_SEMANTIC_INJURY_SINGLE;
++}
++
+ static bool task_disperse_keep_side_valid(
+     const VisionMissionCommand *command)
+ {
+@@ -1146,6 +1154,7 @@ static void task_latch_audit(const VisionMissionCommand *command, uint32_t now_m
+ 
+ static void task_clear_audit_result(void)
+ {
++  nav_reuse_post_grab_audit = false;
+   audit_observation_gap = false;
+   if (accepted_context.opcode == VISION_CMD_CARGO_AUDIT) {
+     accepted_context.completed = false;
+@@ -1323,6 +1332,11 @@ static void task_enter(TaskState next, uint32_t now_ms)
+       (state == TASK_FACE_FIELD_CENTER) && (next == TASK_SEARCH);
+   Motor_Stop();
+   state = next;
++  if (next != TASK_NAVIGATE) {
++    /* The grant belongs only to this NAV. ALIGN consumes it while retaining
++     * the real audit; release/recovery/SEARCH must never carry it onward. */
++    nav_reuse_post_grab_audit = false;
++  }
+   if (next != TASK_GRAB_OBSERVE) {
+     opening_claw_probe_active = false;
+   }
+@@ -1625,6 +1639,8 @@ static void task_initialize(uint32_t now_ms)
+   nav_locked_heading_deg = 0.0f;
+   tracking_report_generation = 0U;
+   tracking_tick_ms = 0U;
++
++  
+   approach_report_generation = 0U;
+   approach_phase_path_mm = 0U;
+   mission_sequence = 0U;
+@@ -1674,6 +1690,7 @@ static void task_initialize(uint32_t now_ms)
+   cargo_recheck_pending = false;
+   route_to_stash = false;
+   stash_backoff_pending = false;
++  nav_reuse_post_grab_audit = false;
+   cluster_target_active = false;
+   cluster_claws_ready = false;
+   separation_keep_side = 0;
+@@ -4142,7 +4159,8 @@ static void task_process_bulldozer(const VisionMissionCommand *command,
+ 
+   switch (remote_action.step) {
+     case VISION_BULLDOZER_TURN_RIGHT:
+-    case VISION_BULLDOZER_TURN_LEFT: {
++    case VISION_BULLDOZER_TURN_LEFT:
++    case VISION_BULLDOZER_ATTACK_FACE_OPPONENT: {
+       const LocationPose pose = Location_GetPose();
+       if (!pose.valid) {
+         Motor_Stop();
+@@ -4300,6 +4318,15 @@ static bool task_accept_bulldozer(const VisionMissionCommand *command,
+       (command->task_id == accepted_context.task_id ||
+        (command->task_id == (uint16_t)(accepted_context.task_id + 1U) &&
+         accepted_context.action_id == UINT16_MAX && command->action_id == 0U));
++  const bool attack_face = VISION_BULLDOZER_STEP(command->flags) ==
++      VISION_BULLDOZER_ATTACK_FACE_OPPONENT;
++  const bool attack_face_entry = attack_face && owned_task &&
++      state == TASK_NAVIGATE && distance_command_done && route_to_stash &&
++      accepted_context.opcode == VISION_CMD_NAVIGATE_WAYPOINT &&
++      task_status.gripper_closed && audit_received && audit_valid && audit_initial_stash;
++  if (attack_face && !attack_face_entry) {
++    return false;
++  }
+   const bool empty_move = VISION_BULLDOZER_STEP(command->flags) ==
+       VISION_BULLDOZER_EMPTY_BODY_MOVE;
+   const bool empty_search_entry = empty_move && state == TASK_SEARCH &&
+@@ -4327,7 +4354,8 @@ static bool task_accept_bulldozer(const VisionMissionCommand *command,
+       ((state == TASK_ALIGN_SAFE_ZONE && safe_align_done &&
+         task_status.gripper_closed && audit_received && audit_valid) ||
+        (state == TASK_SEARCH && !task_status.gripper_closed));
+-  if (!previous_step_done && !start && !release_done && !empty_search_entry) {
++  if (!previous_step_done && !start && !release_done && !empty_search_entry &&
++      !attack_face_entry) {
+     return false;
+   }
+   task_start_remote_action(REMOTE_ACTION_BULLDOZER, command, now_ms);
+@@ -6131,12 +6159,17 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
+              audit_received && audit_valid &&
+              ((state == TASK_WAIT_NAVIGATION) ||
+               ((state == TASK_REMOTE_ACTION) && remote_action.done))) {
++    const bool reuse_audit = state == TASK_WAIT_NAVIGATION &&
++        task_stage_command(command) &&
++        (command->flags & VISION_CMD_REUSE_POST_GRAB_AUDIT) != 0U &&
++        task_closed_single_injury_audit();
+     task_status.acknowledged_sequence = command->sequence;
+     command_accepted = true;
+     route_to_stash = audit_initial_stash;
+     task_enter(TASK_NAVIGATE, now_ms);
+     route_to_stash = audit_initial_stash;
+     delivery_stage_only = !route_to_stash && task_stage_command(command);
++    nav_reuse_post_grab_audit = delivery_stage_only && reuse_audit;
+   } else if ((command->command == VISION_CMD_NAVIGATE_WAYPOINT) &&
+              !task_status.gripper_closed && (state == TASK_SEARCH) &&
+              task_distance_command_valid(command,
+@@ -6157,6 +6190,24 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
+              (delivery_stage_only == task_stage_command(command))) {
+     task_status.acknowledged_sequence = command->sequence;
+     command_accepted = true;
++    /* Withdrawal is final for this NAV. Re-adding the bit cannot manufacture
++     * a new post-grab audit or restart an already accepted movement. */
++    if ((command->flags & VISION_CMD_REUSE_POST_GRAB_AUDIT) == 0U ||
++        !task_closed_single_injury_audit()) {
++      nav_reuse_post_grab_audit = false;
++    }
++  } else if ((command->command == VISION_CMD_ALIGN_SAFE_ZONE) &&
++             state == TASK_NAVIGATE && delivery_stage_only && !route_to_stash &&
++             distance_command_done &&
++             accepted_context.opcode == VISION_CMD_NAVIGATE_WAYPOINT &&
++             nav_reuse_post_grab_audit && task_closed_single_injury_audit() &&
++             task_align_command_valid(command, false)) {
++    /* Only the marked NAV that retained its real closed single-injury audit
++     * may consume it here. Ordinary STAGE still uses the existing mode48. */
++    task_status.acknowledged_sequence = command->sequence;
++    command_accepted = true;
++    transport_stage_injury = audit_destination_injury;
++    task_begin_safe_align(now_ms);
+   } else if ((command->command == VISION_CMD_ALIGN_SAFE_ZONE) &&
+              task_status.gripper_closed &&
+              (state == TASK_TRANSPORT_AUDIT) &&
+@@ -6588,6 +6639,15 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
+       accepted_context.action_id == UINT16_MAX && incoming.action_id == 0U;
+   const bool new_target = new_task && !task_rollover;
+   const bool new_action = new_task || incoming.action_id != accepted_context.action_id;
++  /* The upper action key includes flags. A withdrawal may therefore allocate
++   * a new action; changing only this NAV bit must not restart its coarse leg.
++   * Enabling a bit during NAV never grants reuse (only mode22 entry does). */
++  const bool reuse_nav_toggle = accepted_context.valid &&
++      (!new_task || task_rollover) && state == TASK_NAVIGATE &&
++      delivery_stage_only && !route_to_stash &&
++      incoming.command == VISION_CMD_NAVIGATE_WAYPOINT &&
++      accepted_context.opcode == VISION_CMD_NAVIGATE_WAYPOINT &&
++      (incoming.flags ^ accepted_context.flags) == VISION_CMD_REUSE_POST_GRAB_AUDIT;
+   const bool range_request = incoming.command == VISION_CMD_APPROACH_TARGET &&
+       (incoming.flags & VISION_CMD_APPROACH_RANGE) != 0U;
+   const bool live_bulldozer = incoming.command == VISION_CMD_BULLDOZER_STEP &&
+@@ -6617,7 +6677,7 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
+       if (!task_serial16_newer(incoming.action_id, accepted_context.action_id)) goto rejected;
+     } else if (!overlay &&
+                (incoming.command != accepted_context.opcode ||
+-                incoming.flags != accepted_context.flags)) {
++                (incoming.flags != accepted_context.flags && !reuse_nav_toggle))) {
+       goto rejected;
+     }
+     if (!new_target && accepted_context.cancelled && !overlay &&
+@@ -6720,6 +6780,7 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
+                  incoming.sequence, incoming.vision_frame, incoming.flags);
+ 
+   if (new_target) {
++    nav_reuse_post_grab_audit = false;
+     capture_budget_active = capture_wait_active = false;
+     separation_total_attempts = 0U;
+     safe_enter_resume_mm = safe_enter_resume_push_ms = 0U;
+@@ -6734,8 +6795,8 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
+     app_visual_valid = false;
+   }
+   if (new_action) {
+-    if (incoming.command == VISION_CMD_NAVIGATE_WAYPOINT ||
+-        incoming.command == VISION_CMD_RETURN_CENTER) {
++    if (!reuse_nav_toggle && (incoming.command == VISION_CMD_NAVIGATE_WAYPOINT ||
++        incoming.command == VISION_CMD_RETURN_CENTER)) {
+       nav_reset_coarse();
+     }
+     accepted_context.task_id = incoming.task_id;
+@@ -6744,6 +6805,8 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
+     accepted_context.flags = incoming.flags;
+     accepted_context.completed = false;
+     if (incoming.command == VISION_CMD_APPROACH_TARGET) app_visual_valid = false;
++  } else if (reuse_nav_toggle) {
++    accepted_context.flags = incoming.flags;
+   }
+   accepted_context.valid = true;
+   /* Old accepted-action heartbeats cannot erase a newer rejection. Control
+diff --git a/Main/Src/vision.c b/Main/Src/vision.c
+index ebe15da..363766e 100644
+--- a/Main/Src/vision.c
++++ b/Main/Src/vision.c
+@@ -237,6 +237,9 @@ static bool vision_bulldozer_payload_valid(uint8_t flags, int16_t a, int16_t b,
+     case VISION_BULLDOZER_EMPTY_BODY_MOVE:
+       return a >= 0 && a <= APP_NAV_REMOTE_MAX_DISTANCE_MM &&
+           b >= -18000 && b <= 18000 && heading < 36000U;
++    case VISION_BULLDOZER_ATTACK_FACE_OPPONENT:
++      return a == 0 && b == 0 && heading ==
++          ((flags & VISION_CMD_RED_SIDE) != 0U ? 27000U : 9000U);
+     case VISION_BULLDOZER_RELEASE_LOAD:
+     case VISION_BULLDOZER_FULL_OPEN:
+     case VISION_BULLDOZER_RAISE_RETURN:
+@@ -264,6 +267,7 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
+       VISION_CMD_DISTANCE_VALID |
+       ((code == VISION_CMD_APPROACH_TARGET) ?
+           (VISION_CMD_CLUSTER_TARGET | VISION_CMD_APPROACH_RANGE) : 0U) |
++      ((code == VISION_CMD_NAVIGATE_WAYPOINT) ? VISION_CMD_REUSE_POST_GRAB_AUDIT : 0U) |
+       (((code == VISION_CMD_NAVIGATE_WAYPOINT) ||
+         (code == VISION_CMD_ALIGN_SAFE_ZONE) ||
+         (code == VISION_CMD_ENTER_SAFE_ZONE)) ?
+@@ -305,6 +309,10 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
+         (code == VISION_CMD_NAVIGATE_WAYPOINT) &&
+         ((flags & VISION_CMD_STAGE_ONLY) != 0U);
+     const uint8_t direction = flags & direction_flags;
++    if (code == VISION_CMD_NAVIGATE_WAYPOINT &&
++        (flags & VISION_CMD_REUSE_POST_GRAB_AUDIT) != 0U && !stage_nav) {
++      goto rejected_payload;
++    }
+ 
+     /* The current host uses the heading field as a field-frame translation
+      * direction for STAGE_ONLY NAV, but deliberately omits the two legacy
+diff --git a/tools/F405ClawSweep.ini b/tools/F405ClawSweep.ini
+index 1439696..4cb0d34 100644
+--- a/tools/F405ClawSweep.ini
++++ b/tools/F405ClawSweep.ini
+@@ -5,7 +5,7 @@
+ Port=COM18
+ StartDeg=18
+ EndDeg=22
+-LeftTrimDeg=5
++LeftTrimDeg=0
+ # StepDeg 为目标步幅（度），按整微秒向下换算，实际步幅显示在窗口里。
+ # IntervalMs 为步间隔，最短 20 ms（一帧 PWM）。步幅与间隔组合限 60 度/120 ms。
+ StepDeg=0.18
+diff --git a/tools/Test-F405ClawSweep.ps1 b/tools/Test-F405ClawSweep.ps1
+index 57804e5..c361a91 100644
+--- a/tools/Test-F405ClawSweep.ps1
++++ b/tools/Test-F405ClawSweep.ps1
+@@ -69,10 +69,13 @@ $stepDeg = Read-Number StepDeg 0.09 180
+ $intervalMs = Read-Integer IntervalMs 20 10000
+ $holdMs = Read-Integer HoldMs 0 60000
+ $cycles = Read-Integer Cycles 1 10000
++$clawsInverted = Select-String -LiteralPath (Join-Path $repo 'Main/Inc/app_config.h') `
++    -Pattern '^\s*#define\s+APP_CLAW_SERVOS_INVERTED\s+1\b' -Quiet
+ 
+ function Convert-ToPulse([decimal]$Angle) {
+-    $outputAngle = $Angle + $trimDeg
+-    if ($outputAngle -lt 0 -or $outputAngle -gt 180) { throw 'Angle plus LeftTrimDeg must be within 0..180.' }
++    $mountedAngle = if ($clawsInverted) { 180 - $Angle } else { $Angle }
++    $outputAngle = $mountedAngle + $trimDeg
++    if ($outputAngle -lt 0 -or $outputAngle -gt 180) { throw 'Mounted angle plus LeftTrimDeg must be within 0..180.' }
+     return (500 + [int][Math]::Floor($outputAngle * 2000 / 180))
+ }
+ 

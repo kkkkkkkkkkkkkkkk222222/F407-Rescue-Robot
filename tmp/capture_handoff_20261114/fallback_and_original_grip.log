@@ -1,0 +1,14 @@
+Temporary breakpoint 1 at 0x14001de29: file tools/test_audit_handshake.c, line 946.
+[New Thread 2508.0x578c]
+
+Thread 1 hit Temporary breakpoint 1, main () at tools/test_audit_handshake.c:946
+946	  test_distance_search_accumulation_and_transport_sort();
+$1 = true
+old_deadline before4s mode=21 escape=0
+$2 = true
+old_deadline at4s mode=24 escape=1 fault=0
+pure_blue release accepted=0 mode=21
+missing_near rejected=1 attempts=0
+wrong_side rejected=1 attempts=0
+ordinary_selected accepted=1 grip=20 count=5 mask=1
+

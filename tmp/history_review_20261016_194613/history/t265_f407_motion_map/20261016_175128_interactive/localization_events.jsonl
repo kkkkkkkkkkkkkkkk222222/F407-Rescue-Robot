@@ -1,0 +1,12 @@
+{"timestamp_monotonic_ns":1206700538948,"event":"t265_debug_option","data":{"name":"enable_mapping","supported":true,"before":1,"after":1}}
+{"timestamp_monotonic_ns":1206700680158,"event":"t265_debug_option","data":{"name":"enable_relocalization","supported":true,"before":1,"after":1}}
+{"timestamp_monotonic_ns":1206700744492,"event":"t265_debug_option","data":{"name":"enable_pose_jumping","supported":true,"before":1,"after":1}}
+{"timestamp_monotonic_ns":1206700805742,"event":"t265_debug_option","data":{"name":"enable_map_preservation","supported":true,"before":0,"after":0}}
+{"timestamp_monotonic_ns":1206738456826,"event":"t265_pose_jumping_final","data":{"value":1.000000}}
+{"timestamp_monotonic_ns":1206738650953,"event":"pipeline_started","data":{"t265_map_enabled":false}}
+{"timestamp_monotonic_ns":1207236655701,"event":"t265_first_pose_frame","data":{"wait_ms":497.905331}}
+{"timestamp_monotonic_ns":1216252948949,"event":"t265_pose_gap","data":{"t265_timestamp_s":1792144298.57264,"dt_s":0.10024094581604,"displacement_m":0.00035177693516801,"velocity_residual_m":0.000449790974783082,"tracker_confidence":2,"mapper_confidence":0}}
+{"timestamp_monotonic_ns":1223253426253,"event":"t265_position_discontinuity","data":{"t265_timestamp_s":1792144305.57366,"dt_s":0.00501179695129395,"displacement_m":0.0537204874095992,"velocity_residual_m":0.0543339219759512,"tracker_confidence":2,"mapper_confidence":0}}
+{"timestamp_monotonic_ns":1227098972527,"event":"t265_pose_gap","data":{"t265_timestamp_s":1792144309.41745,"dt_s":0.0601389408111572,"displacement_m":0.00808058954986633,"velocity_residual_m":0.00864458212397827,"tracker_confidence":3,"mapper_confidence":0}}
+{"timestamp_monotonic_ns":1237994298062,"event":"t265_pose_gap","data":{"t265_timestamp_s":1792144320.3124,"dt_s":0.0701608657836914,"displacement_m":0.000236035780078731,"velocity_residual_m":0.0003443835906395,"tracker_confidence":3,"mapper_confidence":0}}
+{"timestamp_monotonic_ns":1244122548606,"event":"t265_pose_gap","data":{"t265_timestamp_s":1792144326.44145,"dt_s":0.0501153469085693,"displacement_m":0.00216956181733317,"velocity_residual_m":0.00497034033723792,"tracker_confidence":3,"mapper_confidence":0}}

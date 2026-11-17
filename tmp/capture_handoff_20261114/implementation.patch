@@ -1,0 +1,413 @@
+diff --git a/Main/Inc/app_config.h b/Main/Inc/app_config.h
+index 89ad230..51797df 100644
+--- a/Main/Inc/app_config.h
++++ b/Main/Inc/app_config.h
+@@ -469,6 +469,8 @@
+ #define APP_APPROACH_RANGE_SPEED_MM_S   500.0f
+ #define APP_APPROACH_RANGE_END_MM_S     200.0f
+ #define APP_APPROACH_RANGE_SLOW_MM      250.0f
++/* Mode53 handoff only; all other finite moves retain their 3mm tolerance. */
++#define APP_APPROACH_RANGE_HANDOFF_TOLERANCE_MM 10.0f
+ #define APP_AUDIT_ACCUMULATE_WINDOW_MS   500U
+ #define APP_CAPTURE_DECISION_WAIT_MS    4000U
+ #define APP_CAPTURE_ESCAPE_DISTANCE_MM  300U
+diff --git a/Main/Inc/vision.h b/Main/Inc/vision.h
+index ffed3ae..a8d125a 100644
+--- a/Main/Inc/vision.h
++++ b/Main/Inc/vision.h
+@@ -124,6 +124,8 @@
+ /* DISPERSE_PILE bit5: first formal green only. Execute the short local
+  * backoff/Touch/forward/back/open bump, then return directly to SEARCH. */
+ #define VISION_CMD_FIRST_GREEN_BUMP  0x20U
++/* DISPERSE P1 bit4: near-claw keep-side evidence, never a cargo count/VALID. */
++#define VISION_CMD_DISPERSE_NEAR_KEEP 0x10U
+ /* Bit 6 is opcode-specific in shijue_fangan's current protocol. */
+ #define VISION_CMD_STAGE_ONLY        0x40U
+ #define VISION_CMD_VISUAL_CORRECTION_VALID 0x40U
+diff --git a/Main/Src/Task.c b/Main/Src/Task.c
+index 291dc98..a9f65eb 100644
+--- a/Main/Src/Task.c
++++ b/Main/Src/Task.c
+@@ -838,15 +838,33 @@ static bool task_release_command_valid(uint8_t command)
+   return command == VISION_CMD_RELEASE_BOTH;
+ }
+ 
++static bool task_audit_has_danger(void)
++{
++  return (audit_last_flags & VISION_AUDIT_DANGER_PRESENT) != 0U ||
++      audit_last_left_class == VISION_CARGO_DANGER ||
++      audit_last_right_class == VISION_CARGO_DANGER;
++}
++
+ static bool task_disperse_keep_side_valid(
+     const VisionMissionCommand *command)
+ {
+-  if ((command == NULL) ||
+-      ((command->flags & VISION_CMD_SIDE_VALID) == 0U)) {
++  if (command == NULL) {
+     return true;
+   }
++  if ((command->flags & VISION_CMD_SIDE_VALID) == 0U) {
++    return (command->flags & VISION_CMD_DISPERSE_NEAR_KEEP) == 0U;
++  }
+   const uint8_t left_count = audit_last_counts & 0x03U;
+   const uint8_t right_count = (audit_last_counts >> 2) & 0x03U;
++  if ((command->flags & VISION_CMD_DISPERSE_NEAR_KEEP) != 0U) {
++    const bool keep_right = (command->flags & VISION_CMD_TARGET_RIGHT) != 0U;
++    const uint8_t keep_count = keep_right ? right_count : left_count;
++    const uint8_t other_count = keep_right ? left_count : right_count;
++    /* Only the side choice comes from near-claw evidence. Keep the audit
++     * illegal and the selected real count at zero, hence the existing soft grip. */
++    return audit_received && audit_host_stable && !audit_valid &&
++        task_audit_has_danger() && keep_count == 0U && other_count > 0U;
++  }
+   const bool selected_nonempty =
+       ((command->flags & VISION_CMD_TARGET_RIGHT) != 0U) ?
+           (right_count > 0U) : (left_count > 0U);
+@@ -2443,7 +2461,12 @@ static bool task_capture_observe(uint32_t now_ms)
+    * audit watchdog still bounds the wait if the host sends no action. */
+   if (audit_received && separation_total_attempts > 0U &&
+       (task_capture_has_eligible() || ambiguous_multi)) { return true; }
+-  if ((audit_received && !task_capture_has_eligible() && !ambiguous_multi) ||
++  const bool danger_ready_for_host = audit_received && audit_host_stable && !audit_valid &&
++      audit_last_total_count > 0U && task_audit_has_danger();
++  /* Preserve the original decision deadline; only suppress the immediate
++   * no-eligible-cargo escape while the host chooses near separation/release. */
++  if ((audit_received && !task_capture_has_eligible() && !ambiguous_multi &&
++       !danger_ready_for_host) ||
+       (uint32_t)(now_ms - capture_wait_started_ms) >= APP_CAPTURE_DECISION_WAIT_MS) {
+     task_begin_capture_escape(now_ms);
+     return true;
+@@ -2559,7 +2582,11 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
+           approach_range_mm * 0.001f, APP_APPROACH_RANGE_SPEED_MM_S,
+           APP_APPROACH_RANGE_SLOW_MM, APP_APPROACH_RANGE_END_MM_S);
+       task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
+-      if (result == MOTOR_DISTANCE_DONE) {
++      const bool range_done = result == MOTOR_DISTANCE_DONE ||
++          (result == MOTOR_DISTANCE_RUNNING &&
++           (float)approach_range_mm - Motor_GetDistanceTravelledMm() <=
++               APP_APPROACH_RANGE_HANDOFF_TOLERANCE_MM);
++      if (range_done) {
+         Motor_Stop();
+         task_status.motors_active = false;
+         approach_phase = cluster_target_active ?
+@@ -5998,7 +6025,7 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
+     if (cluster != cluster_target_active) {
+       task_enter(TASK_APPROACH, now_ms);
+       cluster_target_active = cluster;
+-    } else if (!cluster && approach_phase == APPROACH_RANGE_WAIT && command_visual_new &&
++    } else if (approach_phase == APPROACH_RANGE_WAIT && command_visual_new &&
+                task_abs((float)command->target_x_mm - APP_VISION_TARGET_X) >
+                    APP_APPROACH_TRACK_CENTER_TOLERANCE_PX) {
+       approach_phase = APPROACH_TRACK;
+diff --git a/Main/Src/vision.c b/Main/Src/vision.c
+index 136acff..ebe15da 100644
+--- a/Main/Src/vision.c
++++ b/Main/Src/vision.c
+@@ -363,6 +363,13 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
+                  VISION_CMD_TARGET_RIGHT)) != 0U)) {
+     goto rejected_payload;
+   }
++  if (code == VISION_CMD_DISPERSE_PILE &&
++      (flags & VISION_CMD_DISPERSE_NEAR_KEEP) != 0U &&
++      (((flags & VISION_CMD_SIDE_VALID) == 0U) ||
++       ((flags & VISION_CMD_FIRST_GREEN_BUMP) != 0U) ||
++       arg_a != 0 || arg_b != 0 || heading != 0U)) {
++    goto rejected_payload;
++  }
+   if ((code == VISION_CMD_CARGO_AUDIT) &&
+       ((payload[2] > VISION_CARGO_MIXED_MATERIAL) ||
+        (payload[3] > VISION_CARGO_MIXED_MATERIAL) ||
+diff --git a/docs/CROSS_REPO_REQUESTS.md b/docs/CROSS_REPO_REQUESTS.md
+index 52b60b8..1ababec 100644
+--- a/docs/CROSS_REPO_REQUESTS.md
++++ b/docs/CROSS_REPO_REQUESTS.md
+@@ -16,6 +16,38 @@
+ 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
+ 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
+ 
++## MATCH-CAPTURE-HANDOFF-20261114：接受并已实现，用户自行烧录
++
++已读取RDK固定入口、详细说明/机器合同及协议/状态机，并核对固定快照`a13a66d87d55437a542bcc2c5a126a40e8c2c8e9`；
++合同blob`d3d331c9f9c58efa0e96433170497543bd80bf72`，本端基于`6ee665b64dceddc36ef9936adfd78f115cdd1ff1`增量配套。
++上位引用14:59 UART实际6ee665b/dirty1属上场记录，本窗口未新读actual，不能以dirty1认定板内字节与Git完全一致。
++
++**接受本轮五项最小修复，45%绿色ROI与近爪几何仍由RDK负责；下位不接面积、不改真实审核数量/运输规则。**
++
++- mode52去掉!cluster例外，真实新像素>原64px也使聚堆回TRACK；保留CLUSTER/task/action/测距角/预算和已准备爪姿，不重启整个Task。
++- 仅mode53，Linear结果RUNNING且剩余=本次目标-Motor_GetDistanceTravelledMm()≤10mm时走原DONE的Stop/140°/审核交接。
++  全局3mm及其他运动/导航/扫障保持，12s只是原兜底，不用时间/目标速度/T265冒充轮程，不加停滞检测。
++- 原0x18/opcode0x10的P1 bit4=0x10命名DISPERSE_NEAR_KEEP；仅补SIDE_VALID、禁FIRST_GREEN_BUMP及A/B/U零组合校验。
++  通用mask原来已允许bit4，不新增TYPE/opcode或握手；该位不是0x14的step，也不是0x12的audit STABLE。
++- 稳定非法、非空含蓝审核继续输出真实READY，普通mode21、聚堆沿原流程进入37，供上位选择分离或原纯蓝释放。
++  只排除这时“无合格载荷”的立即退让，原4s决策和15s审核兜底不延长，不加最低等待，不置非法VALID。
++- near标志仅在原稳定非法危险审核、所选侧真实计数0且另一侧>0时允许选侧；数量/直方图/单件掩码/首绿不改。
++  保留侧0自然使counts_known=false，沿原5°软握/10°曲线；正常已确认单件20°握持不改，分离后仍须真实合格审核及GRAB才能运输。
++- 既有step13/SEARCH入口、普通DISPERSE/释放、速度/PID/PWM、舵机、串口/ISR/时间政策和STOP/PAUSE/mode51保持。
++  本轮不含mode52取消或其他历史候选，无新时间资格/遥测/永久FAULT/独立测试程序；原夹具只补新增getter的必要链接替身，无新用例。
++
++必要结果：NormalRun/MotionDebug编译通过，原FLOW_20261019_CHECK通过。原夹具独立条件核对普通/聚堆10.1/10/5.1mm、原故障恢复，
++mode52新帧74px/64px/重复帧及预算/CLUSTER保持；两帧非法蓝READY21/37、左右近爪5°/真实计数/掩码/VALID不变、重发不加尝试与直接GRAB拒绝。
++独立核对原4s兜底、纯蓝上位释放、无标志/错侧拒绝和普通20°握持；原成对例CRC/字段核对通过，不宣称整套旧套件或实车精度通过。
++
++**本端未烧录、未打开UART/设备或执行动作，按用户约定自行烧录；actual未新读。** 构建dirty1保留原Task初始化空白，
++最终源码以本文件Git记录为准。需烧新NormalRun/TASK并重开最新正式入口；旧固件无法完整执行本次聚堆复核与近爪标志。
++近爪旁证不保证已夹持，轮滑/卡料、10mm末端及机械分离成功率仍需人安排实跑，不能以软件DONE/编码通过替代。
++
++- [完整下位合同与检查边界](F405_CAPTURE_HANDOFF_20261114.md)
++- [机器合同、原左右成对示例](contracts/f405_near_claw_separation_20261114.json)
++- [固定上位任务](https://github.com/danmo-teng/shijue_fangan/blob/a13a66d87d55437a542bcc2c5a126a40e8c2c8e9/docs/COMPETITION_CAPTURE_HANDOFF_20261114.md)
++
+ ## MATCH-SEARCH-ROTATION-20261114：接受并已补空爪SEARCH入口，用户自行烧录
+ 
+ 已读取RDK最新固定入口/说明/机器合同并核对源码快照`8db11ec29b297d8c00173f42ecc6b371c01958dd`，
+diff --git a/docs/CURRENT_STATUS.md b/docs/CURRENT_STATUS.md
+index 1cf4a84..61cc6a4 100644
+--- a/docs/CURRENT_STATUS.md
++++ b/docs/CURRENT_STATUS.md
+@@ -1,5 +1,17 @@
+ # 当前状态：F405 烧录入口
+ 
++2026-11-14 MATCH-CAPTURE-HANDOFF-20261114：聚堆接近与近爪分离（未烧录）。
++- 审查接受RDK a13a66d配套：mode52新像素偏心>64px时聚堆也回TRACK，不重建Task或清CLUSTER/预算；
++  仅mode53结果RUNNING且实测轮程剩余≤10mm复用原完成交接，其他全局3mm及原12s兜底/PID/速度保持。
++- 稳定非法非空含蓝审核不再按“无合格载荷”立即自行后退，普通保留21/READY、聚堆沿原分支到37；
++  原4s决策/15s审核兜底不延长，纯蓝仍可接上位原释放，不把非法改VALID或新增最低等待。
++- 原DISPERSE P1 bit4命名NEAR_KEEP，须SIDE_VALID、禁FIRST_GREEN_BUMP、A/B/U零；只允许稳定非法含危险、
++  所选侧真实0且另一侧非空的近爪选侧。数量/单件掩码/首绿不改，counts_known=false复用原5°软握/10°曲线。
++  正式绿色45%阈值及近爪像素判断由上位处理，分离后仍需真实审核/GRAB才能运输；step13/SEARCH及其他流程保持。
++- NormalRun/MotionDebug构建、原测距流程及相关独立条件调用核对通过；原夹具仅补getter链接替身，无新增用例/程序。
++  相关检查不等于地面精度/机械分离通过。用户自行烧录，本端未烧录或启设备/动作，actual未新读，原Task空白保留/构建dirty1。
++  完整合同/机器示例及两端回执见固定入口；原上位14:59实跑6ee665b/dirty1仅作历史身份，不冒充本次新固件。
++
+ 2026-11-14 MATCH-SEARCH-ROTATION-20261114：空爪SEARCH进入step13（未烧录）。
+ - 审查接受RDK 8db11ec的最小配套：只扩task_accept_bulldozer的空爪SEARCH首入口和前置同场景cancelled-context新action例外。
+   首次进入清旧放弃批次/审核/退让残留，不重开爪、不记首绿；同段更新或下一段不重复清理，原任务/action与编号回绕保持。
+diff --git a/docs/F405_CAPTURE_HANDOFF_20261114.md b/docs/F405_CAPTURE_HANDOFF_20261114.md
+new file mode 100644
+index 0000000..afdd5c4
+--- /dev/null
++++ b/docs/F405_CAPTURE_HANDOFF_20261114.md
+@@ -0,0 +1,57 @@
++# MATCH-CAPTURE-HANDOFF-20261114：聚堆接近与近爪分离
++
++审查基线为本端`6ee665b64dceddc36ef9936adfd78f115cdd1ff1`；上位固定源码快照
++`a13a66d87d55437a542bcc2c5a126a40e8c2c8e9`，机器合同blob`d3d331c9f9c58efa0e96433170497543bd80bf72`。
++接受本轮最小配套，绿色45%门槛由RDK处理。实际上次UART身份6ee665b/dirty1来自对端14:59日志引用，
++不是本窗口新读；dirty1不证明源码与板内字节相同。本轮未烧录、未开UART/设备或执行动作，用户自行烧录。
++
++## 三处交接修复
++
++- mode52：去掉仅普通目标可回TRACK的聚堆例外。原新像素帧误差>64px时普通/聚堆均重新对准，
++  保留CLUSTER、task/action、相机测距角、已用接近预算和准备好的爪子，不重启整个Task；重复帧不触发。
++- mode53：仅本阶段的Motor_MoveDistanceLinear返回RUNNING且本次实测轮程剩余≤10mm时，沿原DONE分支
++  Stop→相机140°→审核。剩余来自Motor_GetDistanceTravelledMm，不来自目标速度、时间或T265。
++  原12s仅兜底，全局3mm及其他有限运动/导航/扫障不变；不是把超时当完成，也不添加停滞检测。
++- 稳定非法、非空且含蓝/危险的审核，不再仅因“没有合格载荷”立即自行后退。普通保持mode21/READY，
++  聚堆按原分支进入mode37，交上位选择分离或原释放。READY真实保留、VALID仍false。
++  原4s决策及15s审核兜底不延长；不加最低等待或新握手，真正空爪/纯蓝由原业务出口处理。
++
++## 新标志：只表示近爪保留侧
++
++原TYPE0x18/opcode0x10（DISPERSE_PILE）的P1 bit4=0x10命名为`DISPERSE_NEAR_KEEP`。
++它与该opcode原SIDE_VALID一起使用，TARGET_RIGHT沿原含义；禁FIRST_GREEN_BUMP，A/B/U必须全0。
++通用allowed_flags原来已允许bit4，本次不新增TYPE/opcode或改变帧布局/CRC/0x1D配对。
++不要与opcode0x14的step高四位或opcode0x12的audit_flags/STABLE混用。
++
++下位仅在原稳定非法审核含蓝/危险、所选保留侧真实计数0、另一侧计数>0时接受这个例外。
++不把未达ROI门槛的绿色伪造成1，不改原单件确认掩码和audit_valid，不记首绿或投送。
++这种零计数侧使既有counts_known=false，直接沿原5°软握和10°曲线；普通已确认单件的20°握持保持。
++分离后必须按实际画面重新达到正式类别/数量规则，才能走原GRAB/运输；图像近爪旁证不是物理夹持证明。
++
++上位左侧离线示例：审核仍是左0、右蓝1、total1；分离选左侧，P1=0x59：
++
++```text
++audit ctx: a3 b3 1d 0a 00 0a 00 64 00 00 37 21 93 28 c3
++audit cmd: a3 b3 18 0a 12 01 00 04 04 12 07 01 8d c8 c3
++split ctx: a3 b3 1d 0b 00 0a 00 65 00 00 37 21 a3 78 c3
++split cmd: a3 b3 18 0b 10 59 00 00 00 00 00 00 4b 41 c3
++```
++
++SEQ分别10/11，task10、audit action100/分离action101，原上下文frame14113仅作证据追溯，未增加帧年龄门。
++该左例来自记录几何的离线编码，右侧例是镜像合成；都不是本端实际发送记录。完整字段/两例见
++[机器合同](contracts/f405_near_claw_separation_20261114.json)。
++
++## 保持与检查边界
++
++PID/速度、舵机、原普通DISPERSE/释放/首绿规则、全局轮程3mm、step13/SEARCH入口、STOP/PAUSE/mode51保持。
++没有新增ISR、定时/新鲜度资格、遥测、永久FAULT或独立测试程序；本轮不含mode52取消或其他历史任务。
++原夹具只补生产新增getter的必要链接替身，不增加测试用例/程序。相关条件由原夹具独立会话直接调试核对，
++不将这些合成输入或回执当作真实设备执行证据。
++
++NormalRun/MotionDebug构建通过；原FLOW_20261019_CHECK通过。相关调用核对覆盖普通/聚堆剩余10.1/10/5.1mm、
++原故障恢复、新帧74px/64px/重复帧、预算/CLUSTER保留；原两帧审核链的左右近爪软握与真实计数/VALID/掩码不变，
++重复请求不增加尝试、禁止直接GRAB；独立条件核对原4s兜底、纯蓝上位释放、无标志/错侧拒绝和普通20°握持。
++原成对示例CRC/字段核对通过。这些是源码/宿主夹具结果，不是板上或分离精度验收。
++
++部署需要用户烧新的NormalRun/TASK并重开上位正式入口；本端回执/源码/expected不冒充实际固件。
++本机保留原Task初始化空白，构建如实dirty1。实体卡料、10mm末端效果与机械分离成功率仍需人安排实跑。
+diff --git a/docs/contracts/f405_near_claw_separation_20261114.json b/docs/contracts/f405_near_claw_separation_20261114.json
+new file mode 100644
+index 0000000..70803b1
+--- /dev/null
++++ b/docs/contracts/f405_near_claw_separation_20261114.json
+@@ -0,0 +1,131 @@
++{
++  "id": "MATCH-CAPTURE-HANDOFF-20261114",
++  "version": 1,
++  "status": "lower_implemented_build_checked_user_flash_pending",
++  "human_decision": "A near-claw keep-side flag; real audit counts unchanged; green qualification45percent",
++  "actual_last_run": {
++    "upper": "8db11ec29b297d8c00173f42ecc6b371c01958dd",
++    "lower": "6ee665b64dceddc36ef9936adfd78f115cdd1ff1",
++    "lower_source_dirty": 1,
++    "identity_source": "20261114_145911_competition_wheel/chassis_identity.json",
++    "requeried_this_turn": false
++  },
++  "wire": {
++    "type": 24,
++    "opcode": 16,
++    "flag_name": "DISPERSE_NEAR_KEEP",
++    "flag_mask": 16,
++    "required_flags": [
++      "VALID",
++      "SIDE_VALID"
++    ],
++    "optional_flags": [
++      "RED_SIDE",
++      "TARGET_RIGHT"
++    ],
++    "forbidden_flag": "FIRST_GREEN_BUMP",
++    "A": 0,
++    "B": 0,
++    "U": 0,
++    "context": {
++      "type": 29,
++      "same_seq": true,
++      "same_task": true,
++      "source_frame": "existing vision_frame, real near-claw evidence frame; provenance only",
++      "new_handshake": false
++    }
++  },
++  "audit": {
++    "opcode": 18,
++    "layout_changed": false,
++    "counts_changed": false,
++    "danger_remains": true,
++    "transport_permission": false
++  },
++  "receiver": {
++    "eligibility": "existing stable invalid danger audit; selected real count0, opposite count>0; explicit near-side flag",
++    "grip": "existing soft grip; never fabricate counts or confirmed-singleton mask",
++    "decision": "original READY goes to host separation/release; no autonomous capture_escape before host choice, no new minimum wait",
++    "range_realign": "remove only !cluster exception in RANGE_WAIT; preserve cluster/action",
++    "range_finish": "mode53 RUNNING with encoder remaining<=10mm -> existing stop/camera140/audit; global3mm unchanged"
++  },
++  "roi": {
++    "green_overlap_min": 0.45,
++    "green_bottom_center_required": false,
++    "other_default_min": 0.6,
++    "near_only": "formal audit all cyan; partial green0<overlap<.45 and foot in original ROI, visible/unclipped/outside safe zone, opposite side from blue",
++    "near_counts_as_real_cargo": false
++  },
++  "scope_exclusions": [
++    "no new opcode/packet",
++    "no fresh/age/handshake/ISR rules",
++    "no new FAULT",
++    "no speed/PID or global navigation tolerance change",
++    "no lower test program",
++    "no model/ROI shape/T265/lidar change"
++  ],
++  "examples": [
++    {
++      "keep_side": "left",
++      "real_green_count": 0,
++      "real_blue_count": 1,
++      "source_frame": 14113,
++      "audit_context_hex": "a3 b3 1d 0a 00 0a 00 64 00 00 37 21 93 28 c3",
++      "audit_command_hex": "a3 b3 18 0a 12 01 00 04 04 12 07 01 8d c8 c3",
++      "disperse_context_hex": "a3 b3 1d 0b 00 0a 00 65 00 00 37 21 a3 78 c3",
++      "disperse_command_hex": "a3 b3 18 0b 10 59 00 00 00 00 00 00 4b 41 c3",
++      "example_kind": "offline_from_logged_geometry",
++      "actual_capture_frame": 14113
++    },
++    {
++      "keep_side": "right",
++      "real_green_count": 0,
++      "real_blue_count": 1,
++      "source_frame": 24113,
++      "audit_context_hex": "a3 b3 1d 0a 00 0a 00 64 00 00 5e 31 bc b4 c3",
++      "audit_command_hex": "a3 b3 18 0a 12 01 04 00 01 12 07 01 7d 40 c3",
++      "disperse_context_hex": "a3 b3 1d 0b 00 0a 00 65 00 00 5e 31 8c e4 c3",
++      "disperse_command_hex": "a3 b3 18 0b 10 d9 00 00 00 00 00 00 ca 89 c3",
++      "example_kind": "mirrored_synthetic_protocol_example",
++      "actual_capture_frame": null
++    }
++  ],
++  "upstream_source": {
++    "repository": "danmo-teng/shijue_fangan",
++    "branch": "codex/gamepad-teleop",
++    "commit": "a13a66d87d55437a542bcc2c5a126a40e8c2c8e9",
++    "contract_blob": "d3d331c9f9c58efa0e96433170497543bd80bf72"
++  },
++  "lower_implementation": {
++    "repository": "kkkkkkkkkkkkkkkk222222/F407-Rescue-Robot",
++    "branch": "main",
++    "source_base_commit": "6ee665b64dceddc36ef9936adfd78f115cdd1ff1",
++    "profile": "NormalRun/TASK",
++    "physical_uart": "UART4 921600 8N1",
++    "mode52": "Fresh pixel error>64 returns TRACK for both ordinary and cluster without resetting task/cluster/capture budget.",
++    "mode53": "DONE or RUNNING with remaining=approach_range_mm-Motor_GetDistanceTravelledMm() <=10mm uses original stop/camera140/audit path; global finite tolerance stays3mm.",
++    "capture_ready": "Stable invalid nonempty danger audit no longer triggers immediate no-eligible-cargo retreat; ordinary stays21/READY and cluster follows existing37 handoff. Original4s decision and15s audit deadlines unchanged.",
++    "near_side": "NEAR_KEEP requires existing stable invalid danger audit, selected real count0 and opposite count>0; real counts, AUDIT_VALID and singleton mask are never changed.",
++    "grip": "Existing counts_known=false gives5deg soft grip and original10deg curve; ordinary confirmed-singleton20deg grip unchanged.",
++    "transport": "Only subsequent real qualified audit/GRAB may authorize transport. The new flag is side evidence only.",
++    "fixture_maintenance": "Existing fixture only gains the Motor_GetDistanceTravelledMm getter substitute needed to link production Task; no new test cases or program.",
++    "flashed_by_this_task": false,
++    "board_actual_requeried": false,
++    "source_dirty": 1,
++    "source_dirty_reason": "Original Task initialization whitespace retained."
++  },
++  "verification": {
++    "builds": [
++      "NormalRun",
++      "MotionDebug"
++    ],
++    "software_only": true,
++    "existing_range_fixture": "Ordinary/cluster mode53 at10.1/10/5.1mm remaining; fault recovery; mode52 fresh74px/exact64px/duplicate frame and preserved cluster/claws/budget checked.",
++    "existing_capture_fixture": "Synthetic2-frame production audit chain, ordinary/cluster left/right near cases: READY21/37, raw total1/danger1/selected0 preserved, invalid and singleton mask0, soft grip5/curve10, duplicate no retry increment, no direct GRAB.",
++    "isolated_existing_cases": "Original4s deadline, pure-blue host release, missing-flag/wrong-side rejection; original ordinary green1+blue1 grip20 checked.",
++    "existing_flow": "FLOW_20261019_CHECK passed; not a full legacy-suite or hardware qualification.",
++    "frame_examples": "Both original upstream audit/disperse context pairs CRC/layout checked; left offline-from-geometry and right synthetic provenance retained.",
++    "global_motion_and_search": "Motor/servo/IMU/UART and step13/executor source unchanged.",
++    "hardware_accuracy_verified": false
++  }
++}
+diff --git a/tools/test_injury_backoff.c b/tools/test_injury_backoff.c
+index a1a0370..cf75445 100644
+--- a/tools/test_injury_backoff.c
++++ b/tools/test_injury_backoff.c
+@@ -19,6 +19,7 @@ static float fine_speed_request;
+ static unsigned heading_calls;
+ static MotorDistanceStatus distance_result;
+ static float distance_request;
++static float distance_travelled_mm;
+ static unsigned distance_calls, finite_pauses, finite_resumes;
+ void Servo_SetAngle(uint8_t id, uint8_t angle) { servo_angles[id - 1U] = angle; }
+ uint8_t Servo_GetAngle(uint8_t id) { return servo_angles[id - 1U]; }
+@@ -95,6 +96,7 @@ MotorDistanceStatus Motor_MoveDistanceLinear(float distance, float speed, float
+   (void)speed; (void)slow; (void)end;
+   return distance_result;
+ }
++float Motor_GetDistanceTravelledMm(void) { return distance_travelled_mm; }
+ MotorDistanceStatus Motor_MoveDistanceConstant(float distance, float speed)
+ { (void)distance; (void)speed; return MOTOR_DISTANCE_DONE; }
+ MotorTurnStatus Motor_TurnAngle(float angle) { (void)angle; return MOTOR_TURN_DONE; }
+@@ -155,6 +157,7 @@ static void prepare(void)
+   heading_output = 0.0f;
+   distance_result = MOTOR_DISTANCE_DONE;
+   distance_request=0.0f;
++  distance_travelled_mm=0.0f;
+   distance_calls=finite_pauses=finite_resumes=0U;
+   complete_flow_active = true;
+   task_status.gripper_closed = true;

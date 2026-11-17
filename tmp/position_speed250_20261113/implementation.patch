@@ -1,0 +1,186 @@
+diff --git a/Main/Inc/app_config.h b/Main/Inc/app_config.h
+index d28ce54..89ad230 100644
+--- a/Main/Inc/app_config.h
++++ b/Main/Inc/app_config.h
+@@ -538,7 +538,7 @@
+ #define APP_NAV_FINAL_APPROACH_DISTANCE_MM 300U
+ #define APP_NAV_FINAL_APPROACH_SPEED_MM_S 400.0f
+ /* Terminal XY correction only; keep the coarse-leg120mm/s base separate. */
+-#define APP_NAV_TERMINAL_MIN_SPEED_MM_S   200.0f
++#define APP_NAV_TERMINAL_MIN_SPEED_MM_S   250.0f
+ #define APP_NAV_LINEAR_SLOWDOWN_MM       600.0f
+ /* End the encoder-bounded coarse leg before the global waypoint. */
+ #define APP_NAV_COARSE_RESERVE_MM        250.0f
+@@ -547,7 +547,7 @@
+ #define APP_NAV_STAGE_COARSE_RESERVE_MM  150.0f
+ #define APP_NAV_STAGE_FINE_ENTRY_MM      180.0f
+ /* STAGE FINE tuning for low-speed closed-loop translation. */
+-#define APP_NAV_FINE_MIN_SPEED_MM_S      200.0f
++#define APP_NAV_FINE_MIN_SPEED_MM_S      250.0f
+ #define APP_NAV_FINE_MAX_SPEED_MM_S      360.0f
+ #define APP_NAV_FINE_DISTANCE_GAIN_S_INV   1.0f
+ #define APP_NAV_FINE_WHEEL_ZERO_MM_S       0.5f
+@@ -585,6 +585,9 @@
+  * The original gyro hold also owns the subsequent local-wheel ENTER stroke. */
+ #define APP_SAFE_ALIGN_TOLERANCE_DEG        3.0f
+ #define APP_SAFE_ALIGN_HOLD_TOLERANCE_DEG   6.0f
++/* Positioning/sweep absolute-yaw alignment only; keep finite TURN unchanged. */
++#define APP_POSITION_ALIGN_TURN_MIN_MM_S  200.0f
++#define APP_POSITION_ALIGN_TURN_MAX_MM_S  400.0f
+ #define APP_SAFE_ALIGN_CAMERA_ANGLE           120U
+ #define APP_SAFE_ALIGN_RAISED_CAMERA_ANGLE    115U
+ #define APP_SAFE_ALIGN_CAMERA_SETTLE_MS       300U
+@@ -621,8 +624,8 @@
+ #define APP_SAFE_SWEEP_LATERAL_SPEED_MM_S   350.0f
+ #define APP_SAFE_SWEEP_FORWARD_SPEED_MM_S   300.0f
+ #define APP_SAFE_SWEEP_RETURN_SPEED_MM_S    350.0f
+-#define APP_SAFE_SWEEP_RETURN_FINE_MIN_MM_S 200.0f
+-#define APP_SAFE_SWEEP_RETURN_FINE_MAX_MM_S 240.0f
++#define APP_SAFE_SWEEP_RETURN_FINE_MIN_MM_S 250.0f
++#define APP_SAFE_SWEEP_RETURN_FINE_MAX_MM_S 250.0f
+ #define APP_SAFE_SWEEP_MODE39_HOLD_MS         500U
+ #define APP_SAFE_SWEEP_SEARCH_SPEED_MM_S      160.0f
+ #define APP_SAFE_SWEEP_APPROACH_SPEED_MM_S    250.0f
+diff --git a/Main/Src/Task.c b/Main/Src/Task.c
+index dfc2448..daa323c 100644
+--- a/Main/Src/Task.c
++++ b/Main/Src/Task.c
+@@ -3205,6 +3205,16 @@ static float nav_yaw(float heading_error_deg)
+   return correction;
+ }
+ 
++static float task_position_align_speed(float heading_error_deg)
++{
++  /* Reuse NAV's angular P/dead band, without its unrelated 300 mm/s cap. */
++  const float requested =
++      (task_abs(heading_error_deg) - APP_NAV_HEADING_TOLERANCE_DEG) *
++      APP_NAV_HEADING_KP_MM_S_PER_DEG;
++  return fminf(APP_POSITION_ALIGN_TURN_MAX_MM_S,
++      fmaxf(APP_POSITION_ALIGN_TURN_MIN_MM_S, requested));
++}
++
+ static bool nav_realign_due(float heading_error_deg, float threshold_deg,
+                             uint32_t hold_ms, uint32_t now_ms)
+ {
+@@ -3666,10 +3676,9 @@ static void task_process_safe_align(uint32_t now_ms)
+     safe_align_done = false;
+     accepted_context.completed = false;
+     if (task_abs(error_deg) > APP_SAFE_ALIGN_TOLERANCE_DEG) {
+-      /* ALIGN is a continuous heading goal, not another finite TURN with
+-       * its own timeout. Keep the existing slow/fast turn speed bounds. */
+-      const float yaw_mm_s = fminf(APP_MOTOR_TURN_FAST_MM_S,
+-          fmaxf(APP_MOTOR_TURN_SLOW_MM_S, task_abs(nav_yaw(error_deg))));
++      /* ALIGN is continuous; its positioning speed bounds are independent
++       * of finite TURN's speed profile and timeout. */
++      const float yaw_mm_s = task_position_align_speed(error_deg);
+       task_move_body(0.0f, 0.0f, copysignf(yaw_mm_s, error_deg));
+       task_status.motors_active = true;
+     } else {
+@@ -4115,8 +4124,7 @@ static void task_process_bulldozer(const VisionMissionCommand *command,
+       if (task_abs(error) <= APP_SAFE_ALIGN_TOLERANCE_DEG) {
+         task_remote_action_finish();
+       } else {
+-        const float yaw = fminf(APP_MOTOR_TURN_FAST_MM_S,
+-            fmaxf(APP_MOTOR_TURN_SLOW_MM_S, task_abs(nav_yaw(error))));
++        const float yaw = task_position_align_speed(error);
+         task_move_body(0.0f, 0.0f, copysignf(yaw, error));
+         task_status.motors_active = true;
+       }
+diff --git a/docs/CROSS_REPO_REQUESTS.md b/docs/CROSS_REPO_REQUESTS.md
+index d929af9..aa8a00c 100644
+--- a/docs/CROSS_REPO_REQUESTS.md
++++ b/docs/CROSS_REPO_REQUESTS.md
+@@ -16,6 +16,16 @@
+ 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
+ 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
+ 
++## 2026-11-13 定位速度后续调整（未烧录）
++
++用户新指定定位平移最低250mm/s、原地回正200～400mm/s轮周速度。
++当前预备点/入口视觉横移250～360、返中心/藏点末段250～400、新0x14动态定位250～350；
++旧沿迹扫障返位因原上限240低于新下限，最小调整为250～250。其他平移上限不变。
++回正使用独立Task常量，普通有限TURN及MotionDebug原速度不受影响；PID/PWM/舵机/流程与原协议字段保持。
++回正复用原角度比例/死区，独立应用400上限，不受普通NAV内部300封顶影响。
++仅做NormalRun构建及数值/差异检查，不新增测试程序或新门控，不实施先前扫障卡住分析候选。
++本轮未烧录、未动作、actual未读；初版13步的离线验证记录与后续调参区分，当前合同/JSON已同步数值。
++
+ ## MATCH-BULLDOZER-20261113：已实现分段接口，未烧录
+ 
+ 本端基于`1b74001bb05e6ce0487fe9a96c0214b61ac72776`增量实现，保留该提交的找物近中心减旋及新机械标定。
+diff --git a/docs/CURRENT_STATUS.md b/docs/CURRENT_STATUS.md
+index 6facb3c..105d928 100644
+--- a/docs/CURRENT_STATUS.md
++++ b/docs/CURRENT_STATUS.md
+@@ -1,5 +1,15 @@
+ # 当前状态：F405 烧录入口
+ 
++2026-11-13 定位微调提速至250mm/s（未烧录）。
++- 用户明确将定位平移最低请求200改250，原地回正改为200～400mm/s轮周速度。
++  预备点/入口视觉横移250～360，返中心/藏点末段250～400，新分段扫障定位250～350mm/s。
++  旧沿迹扫障返位原上限240低于新下限，同步改250～250，避免夹限后仍输出240。
++- 原地回正新增独立速度常量，仅供Task安全区回正与新扫障绝对航向转向；普通有限TURN及MotionDebug原速度保持。
++  复用原角度比例/死区计算，不经过普通NAV内部300mm/s封顶，确保本次400上限确实可请求。
++  PID/PWM、距离、舵机、阈值及动作流程保持；不实施上一轮只分析的扫障入口/拒绝处理候选，不增加其他限制。
++- NormalRun构建及本次数值/调用点差异核对通过；不新增测试程序，不重跑整套检查，未烧录或执行动作，板端actual未读。
++  原Task初始化空白及独立工具/IDE工作区保留，构建如实dirty1；接口字段/示例不变，当前动作速度已同步分段合同。
++
+ 2026-11-13 MATCH-BULLDOZER-20261113分段扫障（未烧录）。
+ - 按上位固定入口及4e9ff10快照实现原0x18内部opcode0x14的13步，复用task/action、mode25和原0x1E完成回执。
+   同动作幂等，四个动态段保持U航向接实时D/H，D=0才完成；不调用旧0x13宏，不改路线编排或原正常抓取流程。
+diff --git a/docs/F405_BULLDOZER_STEP_20261113.md b/docs/F405_BULLDOZER_STEP_20261113.md
+index 0819b77..11c2547 100644
+--- a/docs/F405_BULLDOZER_STEP_20261113.md
++++ b/docs/F405_BULLDOZER_STEP_20261113.md
+@@ -4,6 +4,7 @@
+ 上位机固定快照为`4e9ff10f50f1e9e6eeb77ecee9b6ff3d286ac296`，
+ 其合同blob为`fc72bed22425e3e628108a1cffff5c11137d9b8d`。
+ 本端已实现并编译，未烧录、未开启串口或执行车轮/机构动作；板端actual未知。
++用户随后调整定位速度：平移最低250mm/s、原地回正200～400mm/s；本页与机器合同已同步当前请求值。
+ 
+ ## 审查结论与范围
+ 
+@@ -58,9 +59,9 @@ CRC16/MODBUS初值FFFF，校验字节2至11，CRC低字节先发。
+   可从这个入口开始；不解除其他取消条件，不从mode51直接重放旧动作。后续新段从已完成的0x14动作进入。
+ - 同task/action本地段不重新设轮程、转向或舵机。四个动态段允许同action更新D/H，U不变；D>0不报完成，
+   收到D=0立即沿原刹车结束本段。完成后同action不能重新开始，不能以本地粗段完成替代定位到位。
+-- 转向复用原连续yaw和120～250mm/s轮周速度、3°到中条件，不调用有限TURN，也不套旧远程宏整体超时。
++- 转向复用原连续yaw和200～400mm/s轮周速度、3°到中条件，不调用有限TURN，也不套旧远程宏整体超时。
+   200mm/1000mm复用原本地编码器定距及固定U保向：前进300mm/s、后退350mm/s，保留原有限距离控制的失败恢复。
+-- 动态平移复用原向量斜坡、换向、航向PI与Fine补偿，速度200～350mm/s；新共用封装只让Fine显式保持U，
++- 动态平移复用原向量斜坡、换向、航向PI与Fine补偿，速度250～350mm/s；新共用封装只让Fine显式保持U，
+   原接口仍使用fine=false，PID/前馈系数和60%PWM上限未改。爬升尚未完成不作为新故障。
+ - step2仅普通开爪120°，完成后清载荷审核/STABLE、旧扫障角色和已放弃载荷的接近/分离预算；
+   不自动后退、转弯、再合爪，不改变first_delivery_done或投送计数。
+@@ -81,6 +82,7 @@ NormalRun和MotionDebug编译链接通过。复用原Task夹具直接调试调
+ 
+ 原NORMALRUN_FLOW_REVIEW_CHECK在tools/test_audit_handshake.c:693的固定320ms收爪断言失败，
+ 已用修改前1b74001的同一源码重现。它未跟随后续舵机到位估算更新，本轮未改该旧断言，不宣称完整旧套件全通过。
++后续本次速度调整只做NormalRun构建和相关差异/数值核对，不新增测试程序或重跑整套夹具；上述夹具结果属于初版实现。
+ 
+ 本轮不烧录、不发动作，actual未知。最终源码提交见本端Git；本机保留原Task初始化空白差异，构建如实source_dirty=1。
+ 部署应烧NormalRun/TASK并读回真实身份；RDK随后按已交付入口设置RDK_ENABLE_BULLDOZER=1或--enable-bulldozer。
+diff --git a/docs/contracts/f405_bulldozer_step_20261113.json b/docs/contracts/f405_bulldozer_step_20261113.json
+index 1e11ef3..c46f233 100644
+--- a/docs/contracts/f405_bulldozer_step_20261113.json
++++ b/docs/contracts/f405_bulldozer_step_20261113.json
+@@ -553,16 +553,16 @@
+       5000
+     ],
+     "live_speed_range_mm_s": [
+-      200,
++      250,
+       350
+     ],
+     "live_completion": "Only accepted D=0 finishes. D>0 never sets DONE. After DONE the same action cannot restart.",
+     "yaw_tangent_speed_mm_s": [
+-      120,
+-      250
++      200,
++      400
+     ],
+     "yaw_tolerance_deg": 3,
+-    "turn_control": "Existing continuous yaw/nav_yaw. No finite TURN or outer remote-action timeout for this opcode.",
++    "turn_control": "Existing continuous yaw with NAV's angular P/dead band and an independent200..400mm/s positioning cap. No finite TURN or outer remote-action timeout for this opcode.",
+     "fine_heading": "Existing motor vector ramp, heading PI and STAGE FINE assistance combined by a thin API; all previous callers keep fine=false.",
+     "actuators": {
+       "normal_claw_opening_deg": 120,

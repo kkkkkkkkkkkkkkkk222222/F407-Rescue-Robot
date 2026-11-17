@@ -85,6 +85,9 @@ static int64_t move_log_yaw_origin;
 static bool post_motion_trace;
 static uint32_t post_motion_started_ms;
 static bool calibration_active;
+static bool yaw_trial_active;
+static int16_t yaw_trial_speed;
+static uint32_t yaw_trial_start_ms, yaw_trial_duration_ms;
 static uint8_t calibration_id;
 static int16_t calibration_pwm;
 static int16_t calibration_left_pwm;
@@ -325,7 +328,9 @@ static void calibration_report(void)
 
 static void wheel_finish(bool cancelled)
 {
-  const bool was_active = sequence_active || calibration_active;
+  const bool was_active = sequence_active || calibration_active || yaw_trial_active;
+  const bool was_yaw_trial = yaw_trial_active;
+  yaw_trial_active = false;
   const bool was_calibration = calibration_active;
   if (was_calibration) {
     calibration_report();
@@ -341,7 +346,7 @@ static void wheel_finish(bool cancelled)
   cancel_requested = false;
   next_id = 0U;
   if (was_active) {
-    wheel_send(was_calibration ? (cancelled ? "CAL_END CANCELLED\r\n" : "CAL_END EXPIRED\r\n") :
+    wheel_send(was_yaw_trial ? "YAW END STOPPED\r\n" : was_calibration ? (cancelled ? "CAL_END CANCELLED\r\n" : "CAL_END EXPIRED\r\n") :
         (cancelled ? "WHEELS CANCELLED\r\n" : "WHEELS DONE\r\n"));
   }
 }
@@ -698,6 +703,11 @@ static void wheel_execute(void)
     wheel_send("ERR ARGUMENTS; SEND HELP\r\n");
     return;
   }
+  if (yaw_trial_active && strcmp(command, "STOP") != 0 && strcmp(command, "STAT") != 0 &&
+      strcmp(command, "GYRO") != 0 && strcmp(command, "IMU") != 0 && strcmp(command, "MOTOR") != 0 &&
+      strcmp(command, "ENC") != 0 && strcmp(command, "PING") != 0 && strcmp(command, "MLOG") != 0) {
+    wheel_send("BUSY: WAIT YAW END\r\n"); return;
+  }
 #if APP_BOARD_F405_ROBO
   if (strcmp(command, "S") == 0) {
     if (count != 2U || args[0] < 1 || args[0] > 4 || args[1] < 0 || args[1] > 180) {
@@ -780,6 +790,28 @@ static void wheel_execute(void)
           (unsigned long)calibration_step, calibration_id, calibration_pwm, (unsigned int)args[2], !first);
     }
     wheel_send(text);
+    return;
+  }
+  if (strcmp(command, "YAW") == 0) {
+    const DebugStatus status = Debug_GetStatus();
+    if (count != 2U || args[0] == 0 || args[0] < -400 || args[0] > 400 ||
+        args[1] < 100 || args[1] > 1500) {
+      wheel_send("ERR YAW: SIGNED WHEEL MM/S -400..400; DURATION100..1500MS\r\n"); return;
+    }
+    if (yaw_trial_active || sequence_active || calibration_active || status.console_pending ||
+        status.state == DEBUG_MOTION_RUNNING || Motor_IsBraking()) {
+      wheel_send("BUSY: STOP AND WAIT BEFORE YAW\r\n"); return;
+    }
+    Debug_SetWheelCheckActive(true);
+    cancel_requested = false;
+    yaw_trial_speed = (int16_t)args[0];
+    yaw_trial_duration_ms = (uint32_t)args[1];
+    yaw_trial_start_ms = HAL_GetTick();
+    yaw_trial_active = true;
+    char reply[96];
+    (void)snprintf(reply, sizeof(reply), "YAW BEGIN WHEEL_MM_S=%d DURATION_MS=%lu CCW_POSITIVE=1\r\n",
+        yaw_trial_speed, (unsigned long)yaw_trial_duration_ms);
+    wheel_send(reply);
     return;
   }
 #if APP_BOARD_F405_ROBO
@@ -922,6 +954,7 @@ static void wheel_execute(void)
 #endif
     wheel_send("DIAG CRASH TRACE 0/1; MOTION TRACE + 2s POST-STOP; NO AUTO MOTION\r\n");
     wheel_send("TURN deg [deg/s=30]; MOVE mm [mm/s=150]\r\n"
+               "YAW signed_wheel_mm_s duration_ms: CCW+, MAX400,100..1500ms, AUTO STOP\r\n"
                "CIRCLES signed_count [deg/s=60]: 1..10 LAPS, RATE 60..120, 1s DWELL\r\n"
                "CIRCLES: FIXED REFERENCE; PROGRESS IS PER LAP; STOP CANCELS BATCH\r\n"
                "BODY forward_mm left_mm [mm/s=150]\r\n"
@@ -1158,6 +1191,14 @@ void WheelCheck_Process(void)
   if (calibration_active) {
     if ((uint32_t)(now_ms - calibration_sample_ms) >= 50U) { calibration_report(); }
     if (!Motor_WheelCheckRunning()) { wheel_finish(false); }
+  }
+  if (yaw_trial_active) {
+    if ((uint32_t)(now_ms - yaw_trial_start_ms) >= yaw_trial_duration_ms) {
+      Motor_Stop();
+      wheel_finish(false);
+    } else {
+      Motor_Move(0.0f, 0.0f, yaw_trial_speed * APP_OMNI_FIELD_YAW_TO_DRIVE_SIGN);
+    }
   }
   if (motion_tracking) {
     const DebugStatus status = Debug_GetStatus();

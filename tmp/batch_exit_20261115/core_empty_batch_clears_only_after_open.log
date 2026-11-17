@@ -1,0 +1,15 @@
+Temporary breakpoint 1 at 0x14001e588: file tools/test_audit_handshake.c, line 946.
+[New Thread 48540.0xad8c]
+
+Thread 1 hit Temporary breakpoint 1, main () at tools/test_audit_handshake.c:946
+946	  test_distance_search_accumulation_and_transport_sort();
+$1 = false
+$2 = true
+CHECK placeholder_preserves_veto=1
+CHECK actual_empty_still_waits_open=1
+CHECK actual_empty_SEARCH_ends_veto_and_budget=1
+A debugging session is active.
+
+	Inferior 1 [process 48540] will be killed.
+
+Quit anyway? (y or n) [answered Y; input not from terminal]

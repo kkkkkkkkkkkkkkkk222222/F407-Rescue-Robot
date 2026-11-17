@@ -1,0 +1,64 @@
+Temporary breakpoint 1 at 0x14001f645: file tools/test_audit_handshake.c, line 944.
+[New Thread 32200.0x6c08]
+
+Thread 1 hit Temporary breakpoint 1, main () at tools/test_audit_handshake.c:944
+944	  test_distance_search_accumulation_and_transport_sort();
+$1 = false
+$2 = true
+CHECK enter_budget_origin=1
+CHECK normal_front_running=1
+CHECK early_complete_owns_open_not_done=1
+CHECK complete_repeat_no_reopen=1
+CHECK old_enter_cannot_resume_push=1
+CHECK actual_open_then_exit_done=1
+CHECK return_waits_for_original_exit=1
+$3 = false
+$4 = true
+CHECK 3999ms_not_timeout=1
+CHECK 4000ms_local_open_keeps_enter=1
+CHECK late_complete_rejected_keeps_reason=1
+CHECK new_enter_cannot_replay_mechanics=1
+CHECK timeout_exit_enter_done=1
+$5 = false
+$6 = true
+CHECK pause_keeps_used1000=1
+CHECK pause_excluded=1
+CHECK resume_not_new_budget=1
+CHECK resumed_budget_timeout=1
+$7 = false
+$8 = true
+CHECK manual_stop_no_auto_open=1
+CHECK stop_resume_retains_budget=1
+CHECK stop_resume_timeout=1
+$9 = false
+$10 = true
+CHECK hold_cannot_reset_or_block_timeout=1
+CHECK hold_does_not_stall_local_open=1
+$11 = false
+$12 = true
+CHECK front400_switches_to_original_final=1
+CHECK final1499_running=1
+CHECK final1500_normal_open=1
+CHECK normal_path_still_mode15=1
+CHECK normal_complete_no_extra_second=1
+$13 = false
+$14 = true
+CHECK same_action_opcode_change_rejected=1
+CHECK old_action_rejected=1
+CHECK other_task_rejected=1
+CHECK wrong_side_rejected=1
+CHECK malformed_complete_rejected=1
+$15 = false
+$16 = true
+CHECK reached400_at_deadline_uses_final=1
+CHECK complete_during_open_preserves_servo_epoch=1
+CHECK second_complete_action_cannot_replace_owner=1
+CHECK pause_during_release_not_done=1
+CHECK resume_release_no_reopen=1
+$17 = false
+$18 = true
+CHECK stop_during_local_open_cancels=1
+$19 = false
+$20 = true
+CHECK blue_formal_enter=1
+CHECK blue_early_completion=1

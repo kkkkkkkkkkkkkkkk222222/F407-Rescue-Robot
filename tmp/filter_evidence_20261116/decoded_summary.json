@@ -1,0 +1,496 @@
+{
+  "source_sha": "39d2b67b3bb2c3bfcc338db9898fc6891e3992e8",
+  "raw_rows": 394,
+  "status_rows": 197,
+  "crc_and_pairing_valid": true,
+  "mode47_in_published_excerpt": 0,
+  "fault_values": [
+    0
+  ],
+  "episodes": [
+    {
+      "start_s": 317.716406402,
+      "last50_s": 318.915577398,
+      "exit_s": 318.975371257,
+      "duration_s": 1.258964855,
+      "samples": 21,
+      "max_gap_ms": 60.962451,
+      "entry": {
+        "seq": 14,
+        "task": 19426,
+        "action": 18650,
+        "cmd": 18,
+        "status": 1,
+        "rejected": 0
+      },
+      "exit_mode": 22,
+      "exit_context": {
+        "seq": 35,
+        "task": 19426,
+        "action": 18650,
+        "cmd": 18,
+        "status": 3,
+        "rejected": 0
+      },
+      "exit_line": 25640,
+      "flags": [
+        86,
+        82
+      ]
+    },
+    {
+      "start_s": 340.756127973,
+      "last50_s": 341.720943999,
+      "exit_s": 341.777020202,
+      "duration_s": 1.020892229,
+      "samples": 17,
+      "max_gap_ms": 65.669092,
+      "entry": {
+        "seq": 142,
+        "task": 19427,
+        "action": 18664,
+        "cmd": 18,
+        "status": 1,
+        "rejected": 0
+      },
+      "exit_mode": 22,
+      "exit_context": {
+        "seq": 159,
+        "task": 19427,
+        "action": 18664,
+        "cmd": 18,
+        "status": 3,
+        "rejected": 0
+      },
+      "exit_line": 46452,
+      "flags": [
+        86
+      ]
+    },
+    {
+      "start_s": 535.68832472,
+      "last50_s": 538.569407049,
+      "exit_s": 538.628203879,
+      "duration_s": 2.939879159,
+      "samples": 49,
+      "max_gap_ms": 66.181386,
+      "entry": {
+        "seq": 63,
+        "task": 19437,
+        "action": 18799,
+        "cmd": 18,
+        "status": 1,
+        "rejected": 0
+      },
+      "exit_mode": 22,
+      "exit_context": {
+        "seq": 112,
+        "task": 19437,
+        "action": 18799,
+        "cmd": 18,
+        "status": 3,
+        "rejected": 0
+      },
+      "exit_line": 221103,
+      "flags": [
+        86,
+        82
+      ]
+    },
+    {
+      "start_s": 581.471122911,
+      "last50_s": 582.727899217,
+      "exit_s": 582.788191916,
+      "duration_s": 1.317069005,
+      "samples": 22,
+      "max_gap_ms": 64.045561,
+      "entry": {
+        "seq": 58,
+        "task": 19444,
+        "action": 18824,
+        "cmd": 18,
+        "status": 1,
+        "rejected": 0
+      },
+      "exit_mode": 22,
+      "exit_context": {
+        "seq": 80,
+        "task": 19444,
+        "action": 18824,
+        "cmd": 18,
+        "status": 3,
+        "rejected": 0
+      },
+      "exit_line": 260024,
+      "flags": [
+        82,
+        86
+      ]
+    }
+  ],
+  "black_transitions": [
+    {
+      "ns": 358514788045,
+      "line": 61330,
+      "mode": 20,
+      "flags": 8,
+      "camera": 12200,
+      "ack": 20,
+      "fault": 0,
+      "context": {
+        "seq": 182,
+        "task": 19429,
+        "action": 18678,
+        "cmd": 9,
+        "status": 1,
+        "rejected": 0
+      },
+      "hex": "a3b317b608142fa814000000e83fc3"
+    },
+    {
+      "ns": 359173626963,
+      "line": 61916,
+      "mode": 21,
+      "flags": 1,
+      "camera": 14000,
+      "ack": 86,
+      "fault": 0,
+      "context": {
+        "seq": 193,
+        "task": 19429,
+        "action": 18678,
+        "cmd": 9,
+        "status": 3,
+        "rejected": 0
+      },
+      "hex": "a3b317c1011536b0560000004d14c3"
+    },
+    {
+      "ns": 359234251172,
+      "line": 61978,
+      "mode": 21,
+      "flags": 5,
+      "camera": 14000,
+      "ack": 91,
+      "fault": 0,
+      "context": {
+        "seq": 194,
+        "task": 19429,
+        "action": 18679,
+        "cmd": 18,
+        "status": 1,
+        "rejected": 0
+      },
+      "hex": "a3b317c2051536b05b0000005abbc3"
+    },
+    {
+      "ns": 359596536970,
+      "line": 62315,
+      "mode": 8,
+      "flags": 85,
+      "camera": 14000,
+      "ack": 126,
+      "fault": 0,
+      "context": {
+        "seq": 200,
+        "task": 19429,
+        "action": 18680,
+        "cmd": 2,
+        "status": 1,
+        "rejected": 0
+      },
+      "hex": "a3b317c8550836b07e000000e72ac3"
+    },
+    {
+      "ns": 361153463104,
+      "line": 63590,
+      "mode": 23,
+      "flags": 3,
+      "camera": 14000,
+      "ack": 25,
+      "fault": 0,
+      "context": {
+        "seq": 226,
+        "task": 19429,
+        "action": 18680,
+        "cmd": 2,
+        "status": 3,
+        "rejected": 0
+      },
+      "hex": "a3b317e2031736b01900000074e8c3"
+    },
+    {
+      "ns": 361213927174,
+      "line": 63655,
+      "mode": 23,
+      "flags": 3,
+      "camera": 14000,
+      "ack": 33,
+      "fault": 0,
+      "context": {
+        "seq": 227,
+        "task": 19429,
+        "action": 18681,
+        "cmd": 18,
+        "status": 1,
+        "rejected": 0
+      },
+      "hex": "a3b317e3031736b0210000007418c3"
+    },
+    {
+      "ns": 361513227655,
+      "line": 63927,
+      "mode": 22,
+      "flags": 82,
+      "camera": 14000,
+      "ack": 63,
+      "fault": 0,
+      "context": {
+        "seq": 232,
+        "task": 19429,
+        "action": 18681,
+        "cmd": 18,
+        "status": 3,
+        "rejected": 0
+      },
+      "hex": "a3b317e8521636b03f000000d530c3"
+    },
+    {
+      "ns": 361634144110,
+      "line": 64042,
+      "mode": 10,
+      "flags": 82,
+      "camera": 14000,
+      "ack": 75,
+      "fault": 0,
+      "context": {
+        "seq": 234,
+        "task": 19429,
+        "action": 18682,
+        "cmd": 3,
+        "status": 1,
+        "rejected": 0
+      },
+      "hex": "a3b317ea520a36b04b0000000a61c3"
+    },
+    {
+      "ns": 362474515392,
+      "line": 64742,
+      "mode": 48,
+      "flags": 2,
+      "camera": 14000,
+      "ack": 154,
+      "fault": 0,
+      "context": {
+        "seq": 248,
+        "task": 19429,
+        "action": 18683,
+        "cmd": 18,
+        "status": 1,
+        "rejected": 0
+      },
+      "hex": "a3b317f8023036b09a00000078c2c3"
+    },
+    {
+      "ns": 363133307720,
+      "line": 65255,
+      "mode": 10,
+      "flags": 86,
+      "camera": 12000,
+      "ack": 218,
+      "fault": 0,
+      "context": {
+        "seq": 3,
+        "task": 19429,
+        "action": 18684,
+        "cmd": 4,
+        "status": 1,
+        "rejected": 0
+      },
+      "hex": "a3b31703560a2ee0da000000472ec3"
+    },
+    {
+      "ns": 365292924452,
+      "line": 67292,
+      "mode": 11,
+      "flags": 82,
+      "camera": 12000,
+      "ack": 179,
+      "fault": 0,
+      "context": {
+        "seq": 39,
+        "task": 19429,
+        "action": 18684,
+        "cmd": 4,
+        "status": 3,
+        "rejected": 0
+      },
+      "hex": "a3b31727520b2ee0b3000000e080c3"
+    },
+    {
+      "ns": 365473953971,
+      "line": 67398,
+      "mode": 11,
+      "flags": 82,
+      "camera": 12000,
+      "ack": 197,
+      "fault": 0,
+      "context": {
+        "seq": 42,
+        "task": 19429,
+        "action": 18685,
+        "cmd": 4,
+        "status": 3,
+        "rejected": 0
+      },
+      "hex": "a3b3172a520b2ee0c5000000a258c3"
+    },
+    {
+      "ns": 365594880027,
+      "line": 67469,
+      "mode": 10,
+      "flags": 86,
+      "camera": 12000,
+      "ack": 208,
+      "fault": 0,
+      "context": {
+        "seq": 44,
+        "task": 19429,
+        "action": 18686,
+        "cmd": 5,
+        "status": 1,
+        "rejected": 0
+      },
+      "hex": "a3b3172c560a2ee0d00000009cc7c3"
+    },
+    {
+      "ns": 367992438538,
+      "line": 69571,
+      "mode": 12,
+      "flags": 82,
+      "camera": 12000,
+      "ack": 186,
+      "fault": 0,
+      "context": {
+        "seq": 84,
+        "task": 19429,
+        "action": 18686,
+        "cmd": 5,
+        "status": 1,
+        "rejected": 0
+      },
+      "hex": "a3b31754520c2ee0ba000000e4eec3"
+    },
+    {
+      "ns": 368652233311,
+      "line": 70093,
+      "mode": 15,
+      "flags": 80,
+      "camera": 12000,
+      "ack": 251,
+      "fault": 0,
+      "context": {
+        "seq": 95,
+        "task": 19429,
+        "action": 18686,
+        "cmd": 5,
+        "status": 3,
+        "rejected": 0
+      },
+      "hex": "a3b3175f500f2ee0fb000000313bc3"
+    },
+    {
+      "ns": 368952272681,
+      "line": 70382,
+      "mode": 16,
+      "flags": 0,
+      "camera": 12000,
+      "ack": 23,
+      "fault": 0,
+      "context": {
+        "seq": 100,
+        "task": 19429,
+        "action": 18687,
+        "cmd": 6,
+        "status": 3,
+        "rejected": 0
+      },
+      "hex": "a3b3176400102ee017000000c967c3"
+    },
+    {
+      "ns": 369012341398,
+      "line": 70430,
+      "mode": 16,
+      "flags": 4,
+      "camera": 12000,
+      "ack": 29,
+      "fault": 0,
+      "context": {
+        "seq": 101,
+        "task": 19429,
+        "action": 18688,
+        "cmd": 8,
+        "status": 1,
+        "rejected": 0
+      },
+      "hex": "a3b3176504102ee01d000000c6dcc3"
+    },
+    {
+      "ns": 370392107597,
+      "line": 71763,
+      "mode": 3,
+      "flags": 0,
+      "camera": 12000,
+      "ack": 164,
+      "fault": 0,
+      "context": {
+        "seq": 124,
+        "task": 19429,
+        "action": 18688,
+        "cmd": 8,
+        "status": 3,
+        "rejected": 0
+      },
+      "hex": "a3b3177c00032ee0a40000006722c3"
+    },
+    {
+      "ns": 370453238371,
+      "line": 71838,
+      "mode": 25,
+      "flags": 4,
+      "camera": 12000,
+      "ack": 170,
+      "fault": 0,
+      "context": {
+        "seq": 125,
+        "task": 19429,
+        "action": 18689,
+        "cmd": 20,
+        "status": 1,
+        "rejected": 0
+      },
+      "hex": "a3b3177d04192ee0aa000000d268c3"
+    },
+    {
+      "ns": 373273040073,
+      "line": 74290,
+      "mode": 3,
+      "flags": 0,
+      "camera": 12000,
+      "ack": 190,
+      "fault": 0,
+      "context": {
+        "seq": 172,
+        "task": 19429,
+        "action": 18690,
+        "cmd": 20,
+        "status": 3,
+        "rejected": 0
+      },
+      "hex": "a3b317ac00032ee0be000000fdffc3"
+    }
+  ],
+  "whole_run_status_count_reported_by_upper": 5182,
+  "whole_run_mode47_reported_by_upper": 0,
+  "whole_run_raw_independently_available": false
+}

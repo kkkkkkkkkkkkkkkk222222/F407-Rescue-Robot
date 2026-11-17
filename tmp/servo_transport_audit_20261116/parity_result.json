@@ -1,0 +1,16 @@
+{
+  "integer_cases": 724,
+  "claw_panel_cases": 362,
+  "s1": {
+    "61": 1177,
+    "65": 1222,
+    "80": 1388,
+    "81": 1400,
+    "82": 1411,
+    "85": 1444
+  },
+  "board_git": "6b05d9450b740848bf9436e63b6e9da10a293579",
+  "board_firmware_id": "8f2ce629deab61a03f97dc2d284c585b68d15028d5d3530b61e2ee52829eee7f",
+  "actual_matches_saved_binary": true,
+  "hardware_commands": "read only; no actuation/reset/flash"
+}

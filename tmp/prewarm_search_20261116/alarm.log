@@ -1,0 +1,48 @@
+Temporary breakpoint 1 at 0x140021c84: file tools/test_audit_handshake.c, line 944.
+[New Thread 3724.0x492c]
+
+Thread 1 hit Temporary breakpoint 1, main () at tools/test_audit_handshake.c:944
+944	  test_distance_search_accumulation_and_transport_sort();
+CHECK boot_silent=1
+$1 = (void *) 0x7ff6d840f1c0 <sound_payload>
+CHECK alarm_starts=1
+$2 = (void *) 0x7ff6d840f1c0 <sound_payload>
+$3 = (void *) 0x7ff6d840f1c0 <sound_payload>
+CHECK repeated_on_and_v1_preserve_phase=1
+CHECK alarm_on120=1
+CHECK alarm_gap60=1
+CHECK alarm_continues_past_four_beeps=1
+$4 = (void *) 0x7ff6d840f1c0 <sound_payload>
+CHECK silence_before_next_edge=1
+CHECK no_old_query_replay=1
+$5 = (void *) 0x7ff6d840f1c0 <sound_payload>
+CHECK v1_double_short_preserved=1
+$6 = (void *) 0x7ff6d840f1c0 <sound_payload>
+CHECK v1_long350_preserved=1
+$7 = (void *) 0x7ff6d840f1c0 <sound_payload>
+$8 = (void *) 0x7ff6d840f1c0 <sound_payload>
+$9 = (void *) 0x7ff6d840f1c0 <sound_payload>
+$10 = (void *) 0x7ff6d840f1c0 <sound_payload>
+CHECK invalid_version_operation_reserved_ignored=1
+$11 = (void *) 0x7ff6d840f1c0 <sound_payload>
+CHECK bad_crc_cannot_silence=1
+$12 = (void *) 0x7ff6d840f1c0 <sound_payload>
+CHECK invalid_config_does_not_clear=1
+CHECK accepted_config_clears_alarm=1
+$13 = (void *) 0x7ff6d840f1c0 <sound_payload>
+$14 = (void *) 0x7ff6d840f1c0 <sound_payload>
+CHECK ignored_config_repeat_not_new_match=1
+$15 = (void *) 0x7ff6d840f1c0 <sound_payload>
+$16 = (void *) 0x7ff6d840f1c0 <sound_payload>
+$17 = (void *) 0x7ff6d840f1c0 <sound_payload>
+CHECK latest_silence_wins_pending_alarm=1
+$18 = (void *) 0x7ff6d840f1c0 <sound_payload>
+$19 = (void *) 0x7ff6d840f1c0 <sound_payload>
+CHECK silence_cancels_pending_v1=1
+$20 = (void *) 0x7ff6d840f1c0 <sound_payload>
+$21 = (void *) 0x7ff6d840f1c0 <sound_payload>
+$22 = (void *) 0x7ff6d840f1c0 <sound_payload>
+$23 = (void *) 0x7ff6d840f1c0 <sound_payload>
+CHECK audio_preserves_pending_pair=1
+$24 = (void *) 0x7ff6d840f1c0 <sound_payload>
+CHECK mission_pair_still_accepted=1

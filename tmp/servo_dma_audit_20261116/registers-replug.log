@@ -1,0 +1,39 @@
+Open On-Chip Debugger 0.12.0 (2026-03-02) [https://github.com/sysprogs/openocd]
+Licensed under GNU GPL v2
+libusb1 d52e355daa09f17ce64819122cb067b8a2ee0d4b
+For bug reports, read
+	http://openocd.org/doc/doxygen/bugs.html
+Info : Using CMSIS-DAPv2 interface with VID:PID=0xfaed:0x4870, serial=288485686040
+Info : CMSIS-DAP: SWD supported
+Info : CMSIS-DAP: JTAG supported
+Info : CMSIS-DAP: Atomic commands supported
+Info : CMSIS-DAP: UART via USB COM port supported
+Info : CMSIS-DAP: FW Version = Horco v0.2
+Info : CMSIS-DAP: Interface Initialised (SWD)
+Info : SWCLK/TCK = 1 SWDIO/TMS = 1 TDI = 1 TDO = 1 nTRST = 0 nRESET = 1
+Info : CMSIS-DAP: Interface ready
+Info : clock speed 2000 kHz
+Info : SWD DPIDR 0x2ba01477
+Info : [stm32f4x.cpu] Cortex-M4 r0p1 processor detected
+Info : [stm32f4x.cpu] target has 6 breakpoints, 4 watchpoints
+Info : [stm32f4x.cpu] Examination succeed
+Info : [stm32f4x.cpu] starting gdb server on 3333
+Info : Listening on port 3333 for gdb connections
+IDENT_RCC
+TIM4
+TIM1
+DMA1_S0
+DMA2_S6
+OK 1177 1 1083 1 1500 1 2154 1
+TIMING_TABLE
+GPIO_TABLE
+SNAP 0 CNT=0xa59/0x1994 D1=0x6 CCR1=0x13ec D2=0x5
+SNAP 1 CNT=0x3945/0x4b4d D1=0x1 CCR1=0x64 D2=0x8
+SNAP 2 CNT=0x1674/0x2837 D1=0x4 CCR1=0x2774 D2=0x4
+SNAP 3 CNT=0x42f5/0x6fe D1=0x8 CCR1=0x64 D2=0x7
+SNAP 4 CNT=0x22cf/0x3375 D1=0x4 CCR1=0x2d50 D2=0x2
+SNAP 5 CNT=0x37a/0x1557 D1=0x6 CCR1=0x13ec D2=0x6
+SNAP 6 CNT=0x2fed/0x437b D1=0x2 CCR1=0x3afc D2=0x1
+SNAP 7 CNT=0xd46/0x1f14 D1=0x6 CCR1=0x1827 D2=0x4
+ERROR_FLAGS_AFTER
+shutdown command invoked

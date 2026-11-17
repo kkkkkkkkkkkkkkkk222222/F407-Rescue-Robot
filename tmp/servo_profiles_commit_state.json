@@ -1,0 +1,25 @@
+{
+  "base": "afd51a769f1a956e5cc08cfece09cbc9fc4b7d36",
+  "files": [
+    "AGENTS.md",
+    "Boards/F405/Src/servo_f405.c",
+    "Main/Inc/app_config.h",
+    "Main/Inc/mechanism.h",
+    "Main/Inc/servo.h",
+    "Main/Src/DebugConsole.c",
+    "Main/Src/mechanism.c",
+    "Main/Src/servo.c",
+    "docs/CURRENT_STATUS.md",
+    "docs/F405_CLAW_CALIBRATION.md",
+    "docs/F405_SERIAL_GUIDE.txt",
+    "tools/F405ClawCalibrator.cs",
+    "tools/Start-F405ClawCalibrator.ps1",
+    "tools/Update-F405SerialGuide.ps1",
+    "tools/test_audit_handshake.c",
+    "tools/test_injury_backoff.c"
+  ],
+  "index": "C:\\Users\\29459\\Desktop\\F407\\WWW\\tmp\\servo_profiles_8794e2bd2f6645768ac105ecd2fa8b83.index",
+  "tree": "3899856bb61269e8bc70557ed6ad0638ed47e366",
+  "original_staged_raw_hex": "3a30303030303020313030363434203030303030303020346339343233352041092e696465612f575757322e696d6c0a3a30303030303020313030363434203030303030303020313035636532642041092e696465612f696e7370656374696f6e50726f66696c65732f70726f66696c65735f73657474696e67732e786d6c0a",
+  "commit": "5ac69330f1fdc7a56848ec30541b5b64ff09574d"
+}

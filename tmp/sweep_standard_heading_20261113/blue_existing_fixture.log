@@ -1,0 +1,14 @@
+Temporary breakpoint 1 at 0x14001dad8: file tools/test_audit_handshake.c, line 946.
+[New Thread 6248.0x8568]
+
+Thread 1 hit Temporary breakpoint 1, main () at tools/test_audit_handshake.c:946
+946	  test_distance_search_accumulation_and_transport_sort();
+blue start phase=1 speed=300.0 heading=180.0 distance_calls=0
+blue rotation done=0 speed=300.0
+blue backward done=0 speed=300.0
+blue repeat origin_same=1 done=0 heading=180.0
+blue resume origin_same=1 done=0
+blue slow speed=207.382 done=0
+blue finish done=1 speed=0.0 complete=1
+blue done_repeat same_calls=1 done=1
+

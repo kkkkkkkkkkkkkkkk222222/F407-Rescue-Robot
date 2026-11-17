@@ -1,0 +1,641 @@
+diff --git a/Main/Inc/vision.h b/Main/Inc/vision.h
+index a8d125a..32d9a5f 100644
+--- a/Main/Inc/vision.h
++++ b/Main/Inc/vision.h
+@@ -116,6 +116,8 @@
+ /* APPROACH_TARGET describes the centre of a pile that must be approached
+  * before the upper computer requests visual selective separation. */
+ #define VISION_CMD_CLUSTER_TARGET    0x20U
++/* STAGE NAV bit5 requests reuse of the task's real post-grab single-injury audit. */
++#define VISION_CMD_REUSE_POST_GRAB_AUDIT 0x20U
+ /* APPROACH bit6 + DISTANCE_VALID: P2/P3=latched travel mm,
+  * P4/P5=fixed measuring pitch cdeg (10500/12000), P6/P7=0. */
+ #define VISION_CMD_APPROACH_RANGE     0x40U
+@@ -178,7 +180,8 @@ typedef enum {
+   VISION_BULLDOZER_BACK_TO_STAGE,
+   VISION_BULLDOZER_RIGHT_TO_STAGE,
+   VISION_BULLDOZER_PICKUP_READY,
+-  VISION_BULLDOZER_EMPTY_BODY_MOVE
++  VISION_BULLDOZER_EMPTY_BODY_MOVE,
++  VISION_BULLDOZER_ATTACK_FACE_OPPONENT
+ } VisionBulldozerStep;
+ 
+ #define VISION_BULLDOZER_STEP(flags) ((uint8_t)((flags) >> 4U))
+diff --git a/Main/Src/Task.c b/Main/Src/Task.c
+index a9f65eb..a5550cd 100644
+--- a/Main/Src/Task.c
++++ b/Main/Src/Task.c
+@@ -351,6 +351,7 @@ static bool audit_destination_injury;
+ static bool cargo_recheck_pending;
+ static bool opening_claw_probe_active;
+ static bool route_to_stash;
++static bool nav_reuse_post_grab_audit;
+ static bool stash_backoff_pending;
+ static bool cluster_target_active;
+ static bool cluster_claws_ready;
+@@ -845,6 +846,13 @@ static bool task_audit_has_danger(void)
+       audit_last_right_class == VISION_CARGO_DANGER;
+ }
+ 
++static bool task_closed_single_injury_audit(void)
++{
++  return task_status.gripper_closed && audit_received && audit_host_stable &&
++      audit_valid && !audit_initial_stash && audit_destination_injury &&
++      audit_last_semantic == AUDIT_SEMANTIC_INJURY_SINGLE;
++}
++
+ static bool task_disperse_keep_side_valid(
+     const VisionMissionCommand *command)
+ {
+@@ -1146,6 +1154,7 @@ static void task_latch_audit(const VisionMissionCommand *command, uint32_t now_m
+ 
+ static void task_clear_audit_result(void)
+ {
++  nav_reuse_post_grab_audit = false;
+   audit_observation_gap = false;
+   if (accepted_context.opcode == VISION_CMD_CARGO_AUDIT) {
+     accepted_context.completed = false;
+@@ -1323,6 +1332,11 @@ static void task_enter(TaskState next, uint32_t now_ms)
+       (state == TASK_FACE_FIELD_CENTER) && (next == TASK_SEARCH);
+   Motor_Stop();
+   state = next;
++  if (next != TASK_NAVIGATE) {
++    /* The grant belongs only to this NAV. ALIGN consumes it while retaining
++     * the real audit; release/recovery/SEARCH must never carry it onward. */
++    nav_reuse_post_grab_audit = false;
++  }
+   if (next != TASK_GRAB_OBSERVE) {
+     opening_claw_probe_active = false;
+   }
+@@ -1674,6 +1688,7 @@ static void task_initialize(uint32_t now_ms)
+   cargo_recheck_pending = false;
+   route_to_stash = false;
+   stash_backoff_pending = false;
++  nav_reuse_post_grab_audit = false;
+   cluster_target_active = false;
+   cluster_claws_ready = false;
+   separation_keep_side = 0;
+@@ -4142,7 +4157,8 @@ static void task_process_bulldozer(const VisionMissionCommand *command,
+ 
+   switch (remote_action.step) {
+     case VISION_BULLDOZER_TURN_RIGHT:
+-    case VISION_BULLDOZER_TURN_LEFT: {
++    case VISION_BULLDOZER_TURN_LEFT:
++    case VISION_BULLDOZER_ATTACK_FACE_OPPONENT: {
+       const LocationPose pose = Location_GetPose();
+       if (!pose.valid) {
+         Motor_Stop();
+@@ -4300,6 +4316,15 @@ static bool task_accept_bulldozer(const VisionMissionCommand *command,
+       (command->task_id == accepted_context.task_id ||
+        (command->task_id == (uint16_t)(accepted_context.task_id + 1U) &&
+         accepted_context.action_id == UINT16_MAX && command->action_id == 0U));
++  const bool attack_face = VISION_BULLDOZER_STEP(command->flags) ==
++      VISION_BULLDOZER_ATTACK_FACE_OPPONENT;
++  const bool attack_face_entry = attack_face && owned_task &&
++      state == TASK_NAVIGATE && distance_command_done && route_to_stash &&
++      accepted_context.opcode == VISION_CMD_NAVIGATE_WAYPOINT &&
++      task_status.gripper_closed && audit_received && audit_valid && audit_initial_stash;
++  if (attack_face && !attack_face_entry) {
++    return false;
++  }
+   const bool empty_move = VISION_BULLDOZER_STEP(command->flags) ==
+       VISION_BULLDOZER_EMPTY_BODY_MOVE;
+   const bool empty_search_entry = empty_move && state == TASK_SEARCH &&
+@@ -4327,7 +4352,8 @@ static bool task_accept_bulldozer(const VisionMissionCommand *command,
+       ((state == TASK_ALIGN_SAFE_ZONE && safe_align_done &&
+         task_status.gripper_closed && audit_received && audit_valid) ||
+        (state == TASK_SEARCH && !task_status.gripper_closed));
+-  if (!previous_step_done && !start && !release_done && !empty_search_entry) {
++  if (!previous_step_done && !start && !release_done && !empty_search_entry &&
++      !attack_face_entry) {
+     return false;
+   }
+   task_start_remote_action(REMOTE_ACTION_BULLDOZER, command, now_ms);
+@@ -6131,12 +6157,17 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
+              audit_received && audit_valid &&
+              ((state == TASK_WAIT_NAVIGATION) ||
+               ((state == TASK_REMOTE_ACTION) && remote_action.done))) {
++    const bool reuse_audit = state == TASK_WAIT_NAVIGATION &&
++        task_stage_command(command) &&
++        (command->flags & VISION_CMD_REUSE_POST_GRAB_AUDIT) != 0U &&
++        task_closed_single_injury_audit();
+     task_status.acknowledged_sequence = command->sequence;
+     command_accepted = true;
+     route_to_stash = audit_initial_stash;
+     task_enter(TASK_NAVIGATE, now_ms);
+     route_to_stash = audit_initial_stash;
+     delivery_stage_only = !route_to_stash && task_stage_command(command);
++    nav_reuse_post_grab_audit = delivery_stage_only && reuse_audit;
+   } else if ((command->command == VISION_CMD_NAVIGATE_WAYPOINT) &&
+              !task_status.gripper_closed && (state == TASK_SEARCH) &&
+              task_distance_command_valid(command,
+@@ -6157,6 +6188,24 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
+              (delivery_stage_only == task_stage_command(command))) {
+     task_status.acknowledged_sequence = command->sequence;
+     command_accepted = true;
++    /* Withdrawal is final for this NAV. Re-adding the bit cannot manufacture
++     * a new post-grab audit or restart an already accepted movement. */
++    if ((command->flags & VISION_CMD_REUSE_POST_GRAB_AUDIT) == 0U ||
++        !task_closed_single_injury_audit()) {
++      nav_reuse_post_grab_audit = false;
++    }
++  } else if ((command->command == VISION_CMD_ALIGN_SAFE_ZONE) &&
++             state == TASK_NAVIGATE && delivery_stage_only && !route_to_stash &&
++             distance_command_done &&
++             accepted_context.opcode == VISION_CMD_NAVIGATE_WAYPOINT &&
++             nav_reuse_post_grab_audit && task_closed_single_injury_audit() &&
++             task_align_command_valid(command, false)) {
++    /* Only the marked NAV that retained its real closed single-injury audit
++     * may consume it here. Ordinary STAGE still uses the existing mode48. */
++    task_status.acknowledged_sequence = command->sequence;
++    command_accepted = true;
++    transport_stage_injury = audit_destination_injury;
++    task_begin_safe_align(now_ms);
+   } else if ((command->command == VISION_CMD_ALIGN_SAFE_ZONE) &&
+              task_status.gripper_closed &&
+              (state == TASK_TRANSPORT_AUDIT) &&
+@@ -6588,6 +6637,15 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
+       accepted_context.action_id == UINT16_MAX && incoming.action_id == 0U;
+   const bool new_target = new_task && !task_rollover;
+   const bool new_action = new_task || incoming.action_id != accepted_context.action_id;
++  /* The upper action key includes flags. A withdrawal may therefore allocate
++   * a new action; changing only this NAV bit must not restart its coarse leg.
++   * Enabling a bit during NAV never grants reuse (only mode22 entry does). */
++  const bool reuse_nav_toggle = accepted_context.valid &&
++      (!new_task || task_rollover) && state == TASK_NAVIGATE &&
++      delivery_stage_only && !route_to_stash &&
++      incoming.command == VISION_CMD_NAVIGATE_WAYPOINT &&
++      accepted_context.opcode == VISION_CMD_NAVIGATE_WAYPOINT &&
++      (incoming.flags ^ accepted_context.flags) == VISION_CMD_REUSE_POST_GRAB_AUDIT;
+   const bool range_request = incoming.command == VISION_CMD_APPROACH_TARGET &&
+       (incoming.flags & VISION_CMD_APPROACH_RANGE) != 0U;
+   const bool live_bulldozer = incoming.command == VISION_CMD_BULLDOZER_STEP &&
+@@ -6617,7 +6675,7 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
+       if (!task_serial16_newer(incoming.action_id, accepted_context.action_id)) goto rejected;
+     } else if (!overlay &&
+                (incoming.command != accepted_context.opcode ||
+-                incoming.flags != accepted_context.flags)) {
++                (incoming.flags != accepted_context.flags && !reuse_nav_toggle))) {
+       goto rejected;
+     }
+     if (!new_target && accepted_context.cancelled && !overlay &&
+@@ -6720,6 +6778,7 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
+                  incoming.sequence, incoming.vision_frame, incoming.flags);
+ 
+   if (new_target) {
++    nav_reuse_post_grab_audit = false;
+     capture_budget_active = capture_wait_active = false;
+     separation_total_attempts = 0U;
+     safe_enter_resume_mm = safe_enter_resume_push_ms = 0U;
+@@ -6734,8 +6793,8 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
+     app_visual_valid = false;
+   }
+   if (new_action) {
+-    if (incoming.command == VISION_CMD_NAVIGATE_WAYPOINT ||
+-        incoming.command == VISION_CMD_RETURN_CENTER) {
++    if (!reuse_nav_toggle && (incoming.command == VISION_CMD_NAVIGATE_WAYPOINT ||
++        incoming.command == VISION_CMD_RETURN_CENTER)) {
+       nav_reset_coarse();
+     }
+     accepted_context.task_id = incoming.task_id;
+@@ -6744,6 +6803,8 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
+     accepted_context.flags = incoming.flags;
+     accepted_context.completed = false;
+     if (incoming.command == VISION_CMD_APPROACH_TARGET) app_visual_valid = false;
++  } else if (reuse_nav_toggle) {
++    accepted_context.flags = incoming.flags;
+   }
+   accepted_context.valid = true;
+   /* Old accepted-action heartbeats cannot erase a newer rejection. Control
+diff --git a/Main/Src/vision.c b/Main/Src/vision.c
+index ebe15da..363766e 100644
+--- a/Main/Src/vision.c
++++ b/Main/Src/vision.c
+@@ -237,6 +237,9 @@ static bool vision_bulldozer_payload_valid(uint8_t flags, int16_t a, int16_t b,
+     case VISION_BULLDOZER_EMPTY_BODY_MOVE:
+       return a >= 0 && a <= APP_NAV_REMOTE_MAX_DISTANCE_MM &&
+           b >= -18000 && b <= 18000 && heading < 36000U;
++    case VISION_BULLDOZER_ATTACK_FACE_OPPONENT:
++      return a == 0 && b == 0 && heading ==
++          ((flags & VISION_CMD_RED_SIDE) != 0U ? 27000U : 9000U);
+     case VISION_BULLDOZER_RELEASE_LOAD:
+     case VISION_BULLDOZER_FULL_OPEN:
+     case VISION_BULLDOZER_RAISE_RETURN:
+@@ -264,6 +267,7 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
+       VISION_CMD_DISTANCE_VALID |
+       ((code == VISION_CMD_APPROACH_TARGET) ?
+           (VISION_CMD_CLUSTER_TARGET | VISION_CMD_APPROACH_RANGE) : 0U) |
++      ((code == VISION_CMD_NAVIGATE_WAYPOINT) ? VISION_CMD_REUSE_POST_GRAB_AUDIT : 0U) |
+       (((code == VISION_CMD_NAVIGATE_WAYPOINT) ||
+         (code == VISION_CMD_ALIGN_SAFE_ZONE) ||
+         (code == VISION_CMD_ENTER_SAFE_ZONE)) ?
+@@ -305,6 +309,10 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
+         (code == VISION_CMD_NAVIGATE_WAYPOINT) &&
+         ((flags & VISION_CMD_STAGE_ONLY) != 0U);
+     const uint8_t direction = flags & direction_flags;
++    if (code == VISION_CMD_NAVIGATE_WAYPOINT &&
++        (flags & VISION_CMD_REUSE_POST_GRAB_AUDIT) != 0U && !stage_nav) {
++      goto rejected_payload;
++    }
+ 
+     /* The current host uses the heading field as a field-frame translation
+      * direction for STAGE_ONLY NAV, but deliberately omits the two legacy
+diff --git a/docs/CROSS_REPO_REQUESTS.md b/docs/CROSS_REPO_REQUESTS.md
+index 1ababec..e3a4b02 100644
+--- a/docs/CROSS_REPO_REQUESTS.md
++++ b/docs/CROSS_REPO_REQUESTS.md
+@@ -16,6 +16,43 @@
+ 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
+ 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
+ 
++## MATCH-ATTACK-FACING / MATCH-RECOVERED-INJURY-AUDIT-20261114：接受并已实现，用户自行烧录
++
++已读取RDK固定入口及详细任务/机器合同，核对protocol/state_machine/runner/路线源码，
++固定快照`b1b3531782b95d65cc7b4a24927935344ee98e7d`，入口blob`813a4503a2afd20eb917c866cf66a9494c329ef2`；
++本端基于`63d75a88c4e13cce11fb8731aca14383269e8ce5`增量配套，不重做此前step13/SEARCH/聚堆近爪实现。
++进攻机器合同blob`c48a89934dc2aab9fd5988b0d9b0e7131e6f9e1e`，回抓机器合同blob`91e7581d72930a1641bef9a59a5bfc108cab0267`。
++
++**接受当前两项最小方案；少一次末端复核的取舍仅限上位确认回抓来源的单伤员，普通运输不变。**
++
++- 原0x18/opcode0x14追加step14：红270°/蓝90°、A=B=0、P1红0xE9/蓝0xE1。
++  只从本任务已完成initial-stash NAV、真实合法审核、闭爪进入，复用原连续回正200～400mm/s及3°窗口，
++  完成仍mode25/本次COMPLETED；旧NAV DONE不能完成新转向，同action重发不重开。
++  带载转正保持真实审核/闭爪/route_to_stash，随后原RELEASE_BOTH→mode34→step13→step12；不重复放货或记送达。
++- STAGE NAV bit5=REUSE_POST_GRAB_AUDIT，仅原mode22真实单伤员、闭爪、非藏点、伤员目的地审核可授权。
++  找回来源由RDK负责，本端无独立来源字段；不能把任意普通伤员都自动复用。
++  D0仍mode10/DONE并保留真实审核，只有获授权的完成NAV能接下一条原pose ALIGN，沿原task_begin_safe_align。
++  普通/不合资格/晚加标志仍原0x12→mode48，不改变H/D/粗末段/速度、容差、制动或伪造READY/VALID。
++- 只变bit5可同action撤销；当前runner按flags换新action也保留原nav_coarse基准/阶段，不重跑高速段。
++  撤销后再加位不能恢复授权；原0x12、清审核、释放/分离、恢复、SEARCH、换目标、ABORT清授权。
++  新旧task/action排序及其他flags不可变规则保留，不加时间窗口/资格等待。
++- 上位两帧缺框ALIGN缓存及确认原伤员/物资丢失后24/47/实际空爪SEARCH出口已有兼容，本端不重复加动作/协议。
++  原15s审核恢复、STOP/PAUSE/mode51、step0..13参数、PID/速度/PWM/舵机/串口/ISR/遥测均保持。
++
++必要结果：两原构建通过，原FLOW_20261019_CHECK通过；原Task夹具直接核对红蓝真实审核到ALIGN/ENTER、
++普通/标记物资/晚加位不能跳mode48及原占位入口，同/新action撤销不重启、各原退出清授权；
++藏点NAV→新转向→原放货mode34→13、重复幂等及错误入口拒绝；原示例CRC/字段核对通过。
++没有新增测试代码/独立程序、时间门、握手、巡检、FAULT或ISR。
++
++**未烧录、未连接设备或发动作，actual未亲自新读；用户自行烧录。** 上位16:40的63d75a8/dirty1仅历史身份。
++本机构建保留原Task初始化空白，如实dirty1；最终源码以本文件Git记录为准。转向/载荷保持和真实比赛仍待人实测。
++需新NormalRun/TASK并重开最新RDK正式入口，旧63d75a8不支持本次新位/step14，不能称已部署。
++
++- [完整实现/调用链/检查边界](F405_ATTACK_AUDIT_ADAPTATION_20261114.md)
++- [step14及原step13机器合同](contracts/f405_empty_body_move_20261114.json)
++- [回抓单伤员机器合同](contracts/f405_recovered_injury_audit_20261114.json)
++- [固定上位入口](https://github.com/danmo-teng/shijue_fangan/blob/b1b3531782b95d65cc7b4a24927935344ee98e7d/docs/CROSS_REPO_REQUESTS.md)
++
+ ## MATCH-CAPTURE-HANDOFF-20261114：接受并已实现，用户自行烧录
+ 
+ 已读取RDK固定入口、详细说明/机器合同及协议/状态机，并核对固定快照`a13a66d87d55437a542bcc2c5a126a40e8c2c8e9`；
+diff --git a/docs/CURRENT_STATUS.md b/docs/CURRENT_STATUS.md
+index 61cc6a4..7e7a0b0 100644
+--- a/docs/CURRENT_STATUS.md
++++ b/docs/CURRENT_STATUS.md
+@@ -1,5 +1,19 @@
+ # 当前状态：F405 烧录入口
+ 
++2026-11-14 MATCH-ATTACK-FACING / MATCH-RECOVERED-INJURY-AUDIT：进攻带载转正及回抓单伤员审核复用（未烧录）。
++- 已审查RDK b1b3531固定入口/合同和实际runner，接受两项最小配套；旧step13/SEARCH/近爪成果保持。
++- 原0x14追加14：本任务藏点NAV完成、真实initial审核/闭爪后，红270°/蓝90°原连续回正，保留审核和载荷；
++  原mode25 DONE→RELEASE_BOTH/mode34→13→12，同action不重放；旧0/4参数不改，不用有限TURN超时。
++- 原STAGE NAV bit5仅mode22真实合法单伤员、闭爪/非藏点/伤员目的地授权；回抓来源由上位确认。
++  D0仍原mode10/DONE并保留真实审核，授权NAV可沿原pose ALIGN进入，不强制本次重复mode48。
++  普通/物资/缺审核/晚加位沿原0x12→48；不造计数/READY/VALID，不改H/D/粗末段/速度和原15s恢复。
++- 撤销bit5兼容同/新action且不重建导航基准；再加位不恢复资格。原复审、清审核、开爪/分离、恢复、SEARCH、
++  新目标/ABORT清授权；不新增时间/握手/资格/诊断/FAULT。上位缺框缓存与丢失后24/47/3出口无需新下位动作。
++- 两原构建、原测距/审核流程及原Task夹具相关路径、红蓝原报文CRC/字段核对通过，无新增测试源码/独立程序。
++  PID/PWM/速度/舵机、ISR/遥测及原独立工具/IDE改动保留，原Task初始化空白保留，本机构建如实dirty1。
++  未烧录/启设备/动作，actual未新读；用户需烧新NormalRun并重开最新RDK入口，地面/机构结果尚未验收。
++  完整记录/机器合同和两端回执见[固定入口](CROSS_REPO_REQUESTS.md)及[本次说明](F405_ATTACK_AUDIT_ADAPTATION_20261114.md)。
++
+ 2026-11-14 MATCH-CAPTURE-HANDOFF-20261114：聚堆接近与近爪分离（未烧录）。
+ - 审查接受RDK a13a66d配套：mode52新像素偏心>64px时聚堆也回TRACK，不重建Task或清CLUSTER/预算；
+   仅mode53结果RUNNING且实测轮程剩余≤10mm复用原完成交接，其他全局3mm及原12s兜底/PID/速度保持。
+diff --git a/docs/F405_ATTACK_AUDIT_ADAPTATION_20261114.md b/docs/F405_ATTACK_AUDIT_ADAPTATION_20261114.md
+new file mode 100644
+index 0000000..95f8337
+--- /dev/null
++++ b/docs/F405_ATTACK_AUDIT_ADAPTATION_20261114.md
+@@ -0,0 +1,91 @@
++# 进攻带载转正与回抓单伤员审核复用
++
++## 核对范围与结论
++
++已读取RDK固定入口、两份任务/机器合同、protocol.py、state_machine.py、run_competition_rescue.py及路线实现，
++固定源码为`b1b3531782b95d65cc7b4a24927935344ee98e7d`，本端从`63d75a88c4e13cce11fb8731aca14383269e8ce5`增量修改。
++接受MATCH-ATTACK-FACING-20261114及MATCH-RECOVERED-INJURY-AUDIT-20261114的当前最小配套。
++上位原两帧缺框缓存、原物资/伤员找回失败出口不需要新增下位动作，未重复实现。
++
++原固件已支持step13及SEARCH入口，但不支持新step14和NAV bit5复用语义。
++RDK引用的16:40板端63d75a8/dirty1仅是历史回执，本窗口未连接设备，不能证明板内字节与Git完全相同。
++本轮未烧录、未打开UART或发实车命令；用户自行烧录。
++
++## 进攻点先带载转正
++
++原15字节A3 B3封包、CRC16/MODBUS、物理UART4 921600/8N1及0x1D→0x18同SEQ配对不变。
++TYPE0x18、opcode0x14追加step14 ATTACK_FACE_OPPONENT；不是新TYPE0x14，也不改旧step0/4。
++
++| 字段 | 红方 | 蓝方 |
++|---|---|---|
++| P1（step14＋原VALID/RED） | 0xE9 | 0xE1 |
++| A/B | 0/0 | 0/0 |
++| U（绝对场地yaw，厘度） | 27000 | 9000 |
++
++仅本任务已完成initial-stash NAV、真实合法initial-stash审核及闭爪状态可以开始。
++沿原动作编号检查及FFFF→0/task+1回绕；旧NAV DONE不当作新转向DONE。
++复用原连续定位回正：轮周请求200～400mm/s、到角3°；不调用有10s超时的有限TURN，不改其参数。
++保持原审核、READY/VALID、闭爪、route_to_stash；此步不松爪、不清载荷、不增加投送计数。
++完成仍为本次task/action/opcode、mode25/COMPLETED。同action重发不重开已接受/已完成动作。
++
++上位随后发原RELEASE_BOTH；仍由原开爪流程到mode34。再接已有step13四段返程和step12回SEARCH。
++U由上位固定红270°/蓝90°；下位不硬编码路线坐标，不将step13 D=0改为转向。
++原step0..13的参数与执行不变；step14仅共享原0/4的连续转向代码。
++
++红方task10/action99、SEQ39示例（离线合成，未发送）：
++
++```text
++a3 b3 1d 27 00 0a 00 63 00 00 00 00 31 91 c3
++a3 b3 18 27 14 e9 00 00 00 00 69 78 19 ca c3
++```
++
++两侧完整示例及原step13合同见[机器合同](contracts/f405_empty_body_move_20261114.json)。
++
++## 回抓单伤员短送复用真实审核
++
++原NAV opcode0x03的P1 bit5=0x20为REUSE_POST_GRAB_AUDIT，只有STAGE NAV可带此位；
++须同时保留原VALID/DISTANCE_VALID/STAGE_ONLY。compact红0x79、蓝0x71；原完整方向双位形式也兼容，部分方向位仍非法。
++A为剩余毫米、B=0、U为场地平移方向厘度。APPROACH的CLUSTER、DISPERSE的FIRST_GREEN_BUMP及0x14高四位step含义不变。
++
++上位负责确认原载荷找回来源。本端没有来源字段，不能假装能独立核实“回抓”；
++只在mode22→STAGE NAV时，根据真实已有audit_received/host_stable/valid、单伤员语义、伤员目的地、非initial-stash及闭爪记录授权。
++普通未带标志、物资、缺少真实审核或到NAV之后才加标志，均不能获得直通ALIGN资格。
++
++不改H/D、转向、速度、粗段/末段、容差或制动。STAGE D=0仍先报告mode10/distance_done/nav_done，
++保留真实审核；满足授权的当前完成NAV可接受下一条原pose ALIGN，设置原伤员运输角色并调用task_begin_safe_align。
++ALIGN消费本次授权，原真实审核仍在。随后原回正、视觉横移和ENTER保持。
++普通/不合资格NAV仍由上位发原0x12占位请求进入mode48；不改成到D0自动切mode48，也不伪造VALID或强制ENTER。
++
++撤销NAV标志立即撤销本次授权，重新加位不能恢复。实际runner把flags加入action键，所以只变此位时即使换新action，
++也沿原NAV更新保留nav_coarse原点/阶段，不重开高速段；同action只变此位也兼容。
++其余编号排序、flags不可变规则及新目标规则不放开。原0x12复审、开爪/分离、原失败恢复、空爪SEARCH、换目标、ABORT和初始化清授权。
++人工PAUSE仍保留当前动作；不新增时间窗口、新鲜度门、反复握手、等待或永久FAULT。
++
++实际取舍：仅该类回抓连续闭爪短送减少一次独立末端掉货/混入检查；原真实合爪审核和已观察冲突后的复审仍保留。
++普通运输、数量/首绿/目的地规则、原15s审核恢复不改；原上位24/47/实际空爪SEARCH失败出口直接兼容。
++
++蓝方task10/action100、SEQ40，D245mm/H339.93°示例（离线合成，未发送）：
++
++```text
++a3 b3 1d 28 00 0a 00 64 00 00 00 00 c5 a1 c3
++a3 b3 18 28 03 71 00 f5 00 00 84 c9 00 28 c3
++```
++
++完整字段、撤销/降级及红蓝D0示例见[机器合同](contracts/f405_recovered_injury_audit_20261114.json)。
++
++## 必要结果与部署边界
++
++- NormalRun、MotionDebug构建链接通过。复用原FLOW_20261019_CHECK及其现有Task夹具直接调试调用，未新增测试代码/独立程序。
++- 红蓝真实两帧审核→闭爪mode22→标记NAV→D0→原pose ALIGN→ENTER符合预期；普通伤员/标记物资/晚加标志不能跳mode48，原0x12入口保持。
++- 同/新action撤销只变bit5不重置导航；重新加位不获资格；原清审核、释放、恢复、SEARCH和ABORT清授权符合预期。
++- 红蓝真实initial-stash审核→NAV DONE→step14 RUNNING/DONE→原RELEASE_BOTH/mode34→step13通过；重发不重开/重复放货。
++  未到点、无合法审核、非藏点、开爪、错误归属不能进入step14。原报文CRC/字段及旧step0..13校验差异核对通过。
++- PID、速度/PWM、舵机、0x19/0x1A、07/08/0x1F、ISR及时间政策均未修改；原独立工具/IDE改动及Task初始化空白保留。
++  本机构建如实source_dirty=1；源码提交/构建标识不能冒充设备actual。
++- 用户需要烧新`build/F405/NormalRun/NormalRun.elf`并重新开启最新RDK正式入口。本端没有烧录或读取板端actual；
++  转向/轮滑、机械分离/载荷保持及实际比赛时序仍待人安排实测，不把模拟/DONE/编码通过当作地面精度验收。
++
++固定上位依据：
++[入口](https://github.com/danmo-teng/shijue_fangan/blob/b1b3531782b95d65cc7b4a24927935344ee98e7d/docs/CROSS_REPO_REQUESTS.md)、
++[进攻转正](https://github.com/danmo-teng/shijue_fangan/blob/b1b3531782b95d65cc7b4a24927935344ee98e7d/docs/COMPETITION_ATTACK_RETURN_20261114.md)、
++[回抓审核](https://github.com/danmo-teng/shijue_fangan/blob/b1b3531782b95d65cc7b4a24927935344ee98e7d/docs/COMPETITION_RECOVERED_INJURY_20261114.md)。
+diff --git a/docs/F405_EMPTY_BODY_MOVE_20261114.md b/docs/F405_EMPTY_BODY_MOVE_20261114.md
+index 12c8045..617edfc 100644
+--- a/docs/F405_EMPTY_BODY_MOVE_20261114.md
++++ b/docs/F405_EMPTY_BODY_MOVE_20261114.md
+@@ -1,5 +1,9 @@
+ # MATCH-ATTACK-RETURN-20261114：step13空载保向平移
+ 
++2026-11-14后续MATCH-ATTACK-FACING已配套step14：进攻藏点NAV完成后先保持闭爪带载转向，红270°/蓝90°，
++再原RELEASE_BOTH/mode34及本文step13返程。原0..13字段不变，详见[本次增量说明](F405_ATTACK_AUDIT_ADAPTATION_20261114.md)。
++step14和原step13红蓝报文一并记录在本页机器合同，用户自行烧录；未称新转正已上板。
++
+ 审查接受原0x14/step13布局，基于本端`f1f8f183c5f14fb24462a76834b0ab0613e75967`增量实现。
+ 已核对RDK固定快照`a8d1242ac19b0e69d9c709be80adcfdafc76e1c5`及机器合同blob`4610fe8cb88e93313087a38e210224c9f57a5972`。
+ NormalRun和MotionDebug已编译通过；本轮未烧录、未打开UART或执行任何机构/车轮动作，板端actual未读。
+diff --git a/docs/contracts/f405_empty_body_move_20261114.json b/docs/contracts/f405_empty_body_move_20261114.json
+index 41f4ee3..361db34 100644
+--- a/docs/contracts/f405_empty_body_move_20261114.json
++++ b/docs/contracts/f405_empty_body_move_20261114.json
+@@ -270,5 +270,54 @@
+       "upstream_commit": "8db11ec29b297d8c00173f42ecc6b371c01958dd",
+       "contract": "f405_search_station_20261114.json"
+     }
+-  }
++  },
++  "extensions": {
++    "attack_facing": {
++      "id": "MATCH-ATTACK-FACING-20261114",
++      "status": "lower_implemented_build_checked_not_flashed",
++      "upper_commit": "b1b3531782b95d65cc7b4a24927935344ee98e7d",
++      "upper_contract_blob": "c48a89934dc2aab9fd5988b0d9b0e7131e6f9e1e",
++      "lower_base": "63d75a88c4e13cce11fb8731aca14383269e8ce5"
++    }
++  },
++  "face_before_release": {
++    "opcode": 20,
++    "step": 14,
++    "name": "ATTACK_FACE_OPPONENT",
++    "A": 0,
++    "B": 0,
++    "U_red_cdeg": 27000,
++    "U_blue_cdeg": 9000,
++    "entry": "owned completed initial-stash NAV, closed claws, actual legal initial-stash audit; before RELEASE_BOTH",
++    "implementation": "reuse existing continuous turning controller and arrival window; no servo/release or audit reset",
++    "completion": "same task/action/opcode, original COMPLETED mode25; then existing RELEASE_BOTH action",
++    "preserve": "audit, cargo, route_to_stash and original release acceptance; old step0/4 heading validation unchanged",
++    "not_authorized": "no fresh handshake, time qualification, PID/speed/ISR/telemetry or firmware deployment",
++    "speed_mm_s_wheel_request": [
++      200,
++      400
++    ],
++    "arrival_deg": 3,
++    "duplicate": "same action idempotent while RUNNING/DONE; old NAV DONE is not this turn DONE"
++  },
++  "facing_examples": [
++    {
++      "side": "red",
++      "task_id": 10,
++      "action_id": 99,
++      "sequence": 39,
++      "context_hex": "a3 b3 1d 27 00 0a 00 63 00 00 00 00 31 91 c3",
++      "command_hex": "a3 b3 18 27 14 e9 00 00 00 00 69 78 19 ca c3",
++      "source": "synthetic_offline_not_transmitted"
++    },
++    {
++      "side": "blue",
++      "task_id": 10,
++      "action_id": 99,
++      "sequence": 39,
++      "context_hex": "a3 b3 1d 27 00 0a 00 63 00 00 00 00 31 91 c3",
++      "command_hex": "a3 b3 18 27 14 e1 00 00 00 00 23 28 a7 56 c3",
++      "source": "synthetic_offline_not_transmitted"
++    }
++  ]
+ }
+diff --git a/docs/contracts/f405_recovered_injury_audit_20261114.json b/docs/contracts/f405_recovered_injury_audit_20261114.json
+new file mode 100644
+index 0000000..5eb094c
+--- /dev/null
++++ b/docs/contracts/f405_recovered_injury_audit_20261114.json
+@@ -0,0 +1,150 @@
++{
++  "id": "MATCH-RECOVERED-INJURY-AUDIT-20261114",
++  "version": 1,
++  "status": "lower_implemented_build_checked_not_flashed",
++  "scope": "recovered original single injury after real post-grab audit, same continuously closed batch through existing STAGE NAV",
++  "actual_lower_observed": "16:40 raw UART 63d75a88c4e13cce11fb8731aca14383269e8ce5 dirty1; not evidence of this new feature",
++  "wire": {
++    "type": 24,
++    "opcode": 3,
++    "reuse_flag": 32,
++    "flag_name": "REUSE_POST_GRAB_AUDIT",
++    "required_existing_flags": [
++      "VALID",
++      "DISTANCE_VALID",
++      "STAGE_ONLY"
++    ],
++    "compact_flags_blue": 113,
++    "compact_flags_red": 121,
++    "fields": "unchanged A=D(mm), B=0, U=field translation H(cdeg)",
++    "context_type": 29,
++    "status_type": 30,
++    "no_new_handshake": true
++  },
++  "upper": {
++    "origin": "original-load recovery tracked for injury and material; audit reuse only for single injury destination",
++    "authorization": "actual mode22 paired post-grab CARGO_AUDIT confirmation; one injury / closed claws / original READY and VALID",
++    "completion": "current paired NAV DONE with original READY/VALID then existing pose ALIGN, no additional audit frame/count",
++    "revoke": [
++      "observed open claw",
++      "release/separation/recovery",
++      "new batch/clear carried load",
++      "positive carried class/count conflict",
++      "normal mode48 entered or lower audit absent"
++    ],
++    "negative_detection": "does not invent empty load or new positive evidence"
++  },
++  "lower_requested": {
++    "accept": "NAV bit5 only with original STAGE payload; retain real legal single-injury audit from post-grab mode22",
++    "motion": "preserve original H/D, D0 braking, heading and DONE",
++    "handoff": "marked completed current NAV may accept existing pose ALIGN without mode48; reuse original safe-align controller",
++    "fallback": "ordinary STAGE/mode48 for unmarked or no matching real local audit",
++    "revoke": "honor NAV clearing bit or original CARGO_AUDIT, release/separation/original failure recovery/empty SEARCH/new task/ABORT; never leave one-end-only permission"
++  },
++  "tradeoff": "one independent end-of-short-return load recheck removed; original physical close audit and observed-conflict recheck retained",
++  "unchanged": [
++    "original ordinary mode48",
++    "15s audit recovery",
++    "class/count/first-green/transport legality",
++    "PID/speeds/servo/ISR/telemetry",
++    "STOP/PAUSE/mode51"
++  ],
++  "no_additions": [
++    "age/time qualification",
++    "freshness gate",
++    "extra handshake or wait",
++    "FAULT/permanent stop",
++    "independent lower test code/program"
++  ],
++  "examples": [
++    {
++      "side": "blue",
++      "D_mm": 245,
++      "H_cdeg": 33993,
++      "task_id": 10,
++      "action_id": 100,
++      "sequence": 40,
++      "context_hex": "a3 b3 1d 28 00 0a 00 64 00 00 00 00 c5 a1 c3",
++      "command_hex": "a3 b3 18 28 03 71 00 f5 00 00 84 c9 00 28 c3",
++      "source": "synthetic_offline_not_transmitted"
++    },
++    {
++      "side": "blue",
++      "D_mm": 0,
++      "H_cdeg": 33993,
++      "task_id": 10,
++      "action_id": 100,
++      "sequence": 41,
++      "context_hex": "a3 b3 1d 29 00 0a 00 64 00 00 00 00 c8 31 c3",
++      "command_hex": "a3 b3 18 29 03 71 00 00 00 00 84 c9 81 ad c3",
++      "source": "synthetic_offline_not_transmitted"
++    },
++    {
++      "side": "red",
++      "D_mm": 245,
++      "H_cdeg": 15993,
++      "task_id": 10,
++      "action_id": 100,
++      "sequence": 40,
++      "context_hex": "a3 b3 1d 28 00 0a 00 64 00 00 00 00 c5 a1 c3",
++      "command_hex": "a3 b3 18 28 03 79 00 f5 00 00 3e 79 fb 3c c3",
++      "source": "synthetic_offline_not_transmitted"
++    },
++    {
++      "side": "red",
++      "D_mm": 0,
++      "H_cdeg": 15993,
++      "task_id": 10,
++      "action_id": 100,
++      "sequence": 41,
++      "context_hex": "a3 b3 1d 29 00 0a 00 64 00 00 00 00 c8 31 c3",
++      "command_hex": "a3 b3 18 29 03 79 00 00 00 00 3e 79 7a b9 c3",
++      "source": "synthetic_offline_not_transmitted"
++    }
++  ],
++  "lost_original_load": {
++    "scope": [
++      "injured_orange",
++      "green_supply",
++      "core_black"
++    ],
++    "evidence": [
++      "existing bounded original-pickup observation has no candidate",
++      "MCU mode24 abandonment/recovery",
++      "MCU mode47 abandonment-return handoff",
++      "open-claw mode3 after actual approach/close execution or confirmed carried manifest"
++    ],
++    "action": "drop original route/target/carried manifest/audit reuse/delivery evidence; original recovery/return then ordinary SEARCH for other targets; never increment delivery count",
++    "protocol_pending": "handle the actual recovery observation before waiting for old NAV/ALIGN ACK",
++    "not_loss": [
++      "initial PICKUP_READY mode3 before new approach executes",
++      "detector gap alone while claws stay closed"
++    ],
++    "lower_change": "no new recovery protocol/action/timer; clear any audit-reuse latch on the existing failure/search exits"
++  },
++  "source": {
++    "upper_commit": "b1b3531782b95d65cc7b4a24927935344ee98e7d",
++    "upper_contract_blob": "91e7581d72930a1641bef9a59a5bfc108cab0267",
++    "lower_base": "63d75a88c4e13cce11fb8731aca14383269e8ce5"
++  },
++  "actual_lower_version": "not_read_this_turn; user_flashes; previous observed UART identity is historical",
++  "lower_implementation": {
++    "grant": "Only WAIT_NAVIGATION/mode22 -> STAGE NAV: closed, audit_received/host_stable/valid, non-initial, destination injury, actual INJURY_SINGLE semantic. Recovery origin remains upper-owned because wire has no recovery-origin field.",
++    "motion": "No navigation/controller changes. D0 keeps original mode10/distance_done/nav_done and retained raw audit. No automatic mode48 transition.",
++    "handoff": "Only the marked completed owned NAV with retained grant and actual audit may accept a new existing pose ALIGN; consumes grant, sets injury transport role and calls original task_begin_safe_align.",
++    "fallback": "Unmarked/ineligible/late-added marker cannot authorize direct ALIGN; original D0 then 0x12 placeholder -> mode48 preserved. No fabricated READY/VALID.",
++    "withdrawal": "Only bit5 toggles can update same owned STAGE NAV flags. A newer action caused solely by this flag change retains nav_coarse origin/phase. Withdrawal cannot be reversed during NAV by re-adding the bit.",
++    "revoke": "Raw audit clear, any task_enter outside NAV (including direct ALIGN consumption), new target and initialization clear the grant. Existing release/recovery/SEARCH/ABORT paths retained.",
++    "qualification": "No new age/time/detection/handshake rules; original actual audit and action ownership conditions only."
++  },
++  "verification": {
++    "kind": "offline_existing_Task_fixture_and_CRC; not on-board or ground-truth",
++    "builds": [
++      "NormalRun",
++      "MotionDebug"
++    ],
++    "hardware": false,
++    "flashed": false,
++    "actual_read": false
++  }
++}
