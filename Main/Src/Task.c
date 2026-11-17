@@ -377,8 +377,9 @@ static struct {
   DeliveryFinishReason finish;
 } delivery;
 static bool first_delivery_done;
-/* Field yaw is CCW-positive. Before the first delivery retain the old + scan. */
+/* Field yaw is CCW-positive. Explicit station direction survives deliveries. */
 static int8_t search_yaw_direction;
+static bool search_direction_latched;
 static bool first_green_core_conflict;
 static bool first_green_bump_done;
 static bool complete_flow_active;
@@ -1906,6 +1907,7 @@ static void task_initialize(uint32_t now_ms, bool claws_already_stowed)
   delivery_exit_path_valid = false;
   first_delivery_done = false;
   search_yaw_direction = 1;
+  search_direction_latched = false;
   memset(&delivery, 0, sizeof(delivery));
   safe_align_done = safe_align_visual_confirmed = safe_align_lateral_active = false;
   safe_align_pixel_error_px = 0;
@@ -4583,9 +4585,10 @@ static void task_finish_delivery_exit(uint32_t now_ms)
 {
   /* Called only after the original Claw_Open reports its mechanical finish. */
   if (state != TASK_OPEN_FOR_RAM && state != TASK_RAM_VERIFY) { return; }
-  /* Exactly one update at the common physical release exit, never per command,
-   * cargo item, SEARCH entry or RETURN repeat. First/third/... are field CCW. */
-  search_yaw_direction = first_delivery_done ? -search_yaw_direction : 1;
+  /* Legacy delivery parity applies until an explicit station direction wins. */
+  if (!search_direction_latched) {
+    search_yaw_direction = first_delivery_done ? -search_yaw_direction : 1;
+  }
   first_delivery_done = true;
   task_bulldozer_clear_load();
   safe_enter_resume_mm = safe_enter_resume_push_ms = 0U;
@@ -4770,6 +4773,36 @@ static void task_bulldozer_clear_load(void)
   task_clear_sweep_audit_evidence();
 }
 
+static void task_bulldozer_prepare_search(uint32_t now_ms, bool begin_scan)
+{
+  Motor_Stop();
+  task_status.motors_active = false;
+  if (remote_action.phase == 0U) {
+    const uint32_t lift_wait = Lift_PositionWaitMs(APP_LIFT_TRAVEL_ANGLE);
+    const uint32_t camera_wait = Camera_PositionWaitMs(APP_SEARCH_HIGH_CAMERA_ANGLE);
+    remote_action.actuator_wait_ms = lift_wait > camera_wait ? lift_wait : camera_wait;
+    Lift_SetTravelPosition();
+    Camera_SetAngle(APP_SEARCH_HIGH_CAMERA_ANGLE);
+    camera_angle = (float)APP_SEARCH_HIGH_CAMERA_ANGLE;
+    step_started_ms = now_ms;
+    remote_action.phase = 1U;
+  }
+  if (Claw_OpenIfNeeded(now_ms) &&
+      (uint32_t)(now_ms - step_started_ms) >= remote_action.actuator_wait_ms) {
+    task_bulldozer_clear_load();
+    task_enter(TASK_SEARCH, now_ms);
+    if (begin_scan) {
+      search_phase = SEARCH_SWEEP_120;
+      (void)task_full_turn_reached();
+    }
+    /* The posture action owns this SEARCH handoff and its completion. */
+    accepted_context.cancelled = false;
+    accepted_context.completed = true;
+    remote_action.done = true;
+    remote_action.type = REMOTE_ACTION_NONE;
+  }
+}
+
 static void task_process_bulldozer(const VisionMissionCommand *command,
                                    uint32_t now_ms)
 {
@@ -4799,17 +4832,36 @@ static void task_process_bulldozer(const VisionMissionCommand *command,
     case VISION_BULLDOZER_TURN_RIGHT:
     case VISION_BULLDOZER_TURN_LEFT:
     case VISION_BULLDOZER_ATTACK_FACE_OPPONENT: {
+      const bool station_turn = remote_action.step == VISION_BULLDOZER_ATTACK_FACE_OPPONENT &&
+          remote_action.arg_a == 1;
+      if (remote_action.step == VISION_BULLDOZER_ATTACK_FACE_OPPONENT &&
+          remote_action.arg_a == 2) {
+        task_bulldozer_prepare_search(now_ms, true);
+        return;
+      }
       const LocationPose pose = Location_GetPose();
       if (!pose.valid) {
         Motor_Stop();
         task_status.motors_active = false;
         return;
       }
-      const float error = task_wrap_angle(heading_deg - pose.heading_mdeg * 0.001f);
-      if (task_abs(error) <= APP_SAFE_ALIGN_TOLERANCE_DEG) {
+      float error = task_wrap_angle(heading_deg - pose.heading_mdeg * 0.001f);
+      bool aligned = task_abs(error) <= APP_SAFE_ALIGN_TOLERANCE_DEG;
+      if (station_turn) {
+        int32_t delta = ((int32_t)remote_action.heading_cdeg * 10 -
+                         pose.heading_mdeg) % 360000;
+        if (delta > 180000) delta -= 360000;
+        if (delta < -180000) delta += 360000;
+        aligned = task_abs((float)delta) <= APP_SAFE_ALIGN_TOLERANCE_DEG * 1000.0f;
+        if (delta == 180000 || delta == -180000) {
+          error = 180.0f * remote_action.arg_b;
+        }
+      }
+      if (aligned) {
         task_remote_action_finish();
       } else {
-        const float yaw = task_position_align_speed(error);
+        const float yaw = station_turn ? APP_SEARCH_ROTATE_SPEED_MM_S :
+            task_position_align_speed(error);
         task_move_body(0.0f, 0.0f, copysignf(yaw, error));
         task_status.motors_active = true;
       }
@@ -4910,29 +4962,7 @@ static void task_process_bulldozer(const VisionMissionCommand *command,
       return;
 
     case VISION_BULLDOZER_PICKUP_READY:
-      Motor_Stop();
-      task_status.motors_active = false;
-      if (remote_action.phase == 0U) {
-        const uint32_t lift_wait = Lift_PositionWaitMs(APP_LIFT_TRAVEL_ANGLE);
-        const uint32_t camera_wait = Camera_PositionWaitMs(APP_SEARCH_HIGH_CAMERA_ANGLE);
-        remote_action.actuator_wait_ms = lift_wait > camera_wait ? lift_wait : camera_wait;
-        Lift_SetTravelPosition();
-        Camera_SetAngle(APP_SEARCH_HIGH_CAMERA_ANGLE);
-        camera_angle = (float)APP_SEARCH_HIGH_CAMERA_ANGLE;
-        step_started_ms = now_ms;
-        remote_action.phase = 1U;
-      }
-      if (Claw_OpenIfNeeded(now_ms) &&
-          (uint32_t)(now_ms - step_started_ms) >= remote_action.actuator_wait_ms) {
-        task_bulldozer_clear_load();
-        task_enter(TASK_SEARCH, now_ms);
-        /* SEARCH normally cancels an old action. This transition is the
-         * explicit completion of step12, whose paired receipt must survive. */
-        accepted_context.cancelled = false;
-        accepted_context.completed = true;
-        remote_action.done = true;
-        remote_action.type = REMOTE_ACTION_NONE;
-      }
+      task_bulldozer_prepare_search(now_ms, false);
       return;
 
     default:
@@ -4970,6 +5000,12 @@ static bool task_accept_bulldozer(const VisionMissionCommand *command,
       (remote_action.step == VISION_BULLDOZER_ATTACK_BACK_100 ||
        remote_action.step == VISION_BULLDOZER_EMPTY_BODY_MOVE) &&
       !task_status.gripper_closed;
+  const bool station_turn = attack_face &&
+      (command->target_x_mm == 1 || command->target_x_mm == 2);
+  if (station_turn && (!empty_turn_entry ||
+      remote_action.step != VISION_BULLDOZER_EMPTY_BODY_MOVE)) {
+    return false;
+  }
   if (attack_face && !attack_face_entry && !empty_turn_entry) {
     return false;
   }
@@ -5015,6 +5051,10 @@ static bool task_accept_bulldozer(const VisionMissionCommand *command,
     return false;
   }
   task_start_remote_action(REMOTE_ACTION_BULLDOZER, command, now_ms);
+  if (station_turn) {
+    search_yaw_direction = (int8_t)command->target_y_mm;
+    search_direction_latched = true;
+  }
   /* A new owned SEARCH action may follow RETURN's cancelled context. */
   accepted_context.cancelled = false;
   return true;

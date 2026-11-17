@@ -16,6 +16,24 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-STATION-TURN-SEARCH-20261117：下位已按上位实际代码局部配套并构建，未烧录
+
+按用户本轮“对照上位机的代码，修改我的代码”，读取并复核上位`codex/gamepad-teleop`当前4e91fb3546a507bf0291606e95171a9bb556a3de。固定入口blob adcead511c5beb56ff011d23e091278e0bffac18，合同0f4e36bcfd360d35409e3d197b29b7a2dc51dde3；实际protocol.py c95cb9e9、state_machine.py e212d570、attack_return.py 49c3461f及search_transfer.py已核对。上位首次A1与后续A2的请求/回包出口已实现，下位原解析仅A0/B0，现接受本项局部适配。
+
+- 原0x18/opcode0x14/step14及1D context不变，新增严格A1/2、B±1、U0～35999，解析器及本地Python工具同步。新入口只接同任务新action、空爪、原step13真实移动DONE；未完成动作、其他step旧DONE、带载/跨任务不能进入。原A0/B0及其他step含义与速度保持。
+- **首次A1：** 继续原绝对航向/最短误差闭环，只有本搜索点形式使用原APP_SEARCH_ROTATE_SPEED_MM_S=150，原3°停止范围保持；新入口以整数毫度比较原到位范围，避免恰3°浮点舍入到范围外。恰180°服从B，接近或轻微越过仍按当前最短误差回正，B只作为后续扫描方向锁存。实际转正才mode25/DONE，后续step12不覆盖方向，首次独占转正不计扫描预算。
+- **后续A2：** 抽取并复用原step12的大舵机、开爪和相机120°机械准备，无额外固定等待。原机构行程实际完成后进入原SEARCH，沿同动作mode3/12000/ACCEPT+DONE交接；DONE是姿态已好并开始搜索，不宣称朝中心已完成。直接从该处累计第一圈，原150及B扫描，越过中心不停、不反向或重新清零；原换角105°/第二圈继续继承。合法新目标沿原APPROACH/聚堆承接；同action重发/HOLD保持原SEARCH，不重做机构或旧转向。
+- 站点B接受后锁存方向，普通投送出口不再按奇偶改写它，投送完成计数/资格保持。目标丢失恢复和原相机观察出口不清此方向；下一站新A1/A2更新，新局初始化清除锁存。原恢复CONFIG布局不增字段，临时奇偶初值仍可被随后新站点B覆盖。未收到新站点形式的旧客户端继续原奇偶兼容。
+- 本轮不改进攻返程平移、40cm两点、载荷审核、速度/PID参数、ROI/定位、停车收纳或扫障1000mm的500mm/s。先前“所有到点转完再搜”的要求仅在本项新报文范围内由首次/后续区分替代；抬头确认上位待接续的状态不冒称完成。
+
+必要检查：生产Task/mechanism硬件替身通过红蓝×A1/A2×双向，首次150、180°两边/跨零/轻微越过/恰3°停止、转正前不接step12、原step12完成与方向保持；后续原机构完成前不报DONE、配对mode3/120°/DONE、重复/HOLD不重启、过中心累计100°继续到换角、105°方向、补位及合法目标接管。另核对闭爪/未DONE/非同任务/错误前置动作拒接、PAUSE恢复和ABORT优先、旧A0仍原转速、投送锁存及旧奇偶/新局初始化。未新增提交独立测试程序，临时夹具仅留本地。
+
+用所读提交实际上位mission_frame与command_context_frame生成8组红蓝A1/A2/B±1，逐字节等于原合同和本地工具，均经真实vision.c解析通过；严格非法形状及原step0/12/13/14兼容通过。Python协议29项通过，直接相关原aux3观察/测距回归通过。NormalRun/MotionDebug最终编译链接通过，自动备份关闭，build_git=e791427/dirty1，含原独立WheelCheck及Task空白工作区内容，不是干净提交构建。
+NormalRun firmware ID=16709cfc9125622bfb6cddbf186b1e06ad5da9ea06835ab6246e03f9c22e4926；
+MotionDebug firmware ID=991eec404f5b7446fc529c0cd72c07b888b7402a45f16ddf29496c184cd4ac72。
+
+[接口与8组红蓝配对帧](contracts/f405_station_turn_search_20261117.json)已在本端落盘并标记实现状态。本轮未连接设备、烧录、复位、发物理动作或读取板端actual；配套源码与离线检查不能证明实际转向/场地位置/选物效果，需部署新NormalRun后联合实测。
+
 ## MATCH-SEARCH-ZONE-VIEW-20261117：下位局部配套并构建，未烧录；上位流程待接续
 
 按用户本轮“读取上位机交接并改好，只需要适配、小改”，核对RDK `codex/gamepad-teleop` 的7f1bfcb46223a7e2ba86023efd42e17fd0fd32e4。固定入口blob b6e7b479de63281984d08a9daae702fecd0e638d，观察合同blob 3a7fcdaebc79afcfddf855c72227a77daed4b14f，并读同提交侧边交接。下位原vision.c/Task.c确实拒绝aux3，现接受本项最小接口，不恢复旧几何/路径方案。

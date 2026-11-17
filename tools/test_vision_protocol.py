@@ -5,6 +5,24 @@ from tools import vision_protocol as protocol
 
 
 class VisionProtocolTests(unittest.TestCase):
+    def test_station_turn_search_contract(self) -> None:
+        import json
+        from pathlib import Path
+        contract = json.loads((Path(__file__).resolve().parents[1] /
+            "docs/contracts/f405_station_turn_search_20261117.json").read_text(encoding="utf-8"))
+        for row in contract["examples"]:
+            expected = bytes.fromhex(row["command_hex"])
+            flags = 0xE1 | (8 if row["side"] == "red" else 0)
+            self.assertEqual(protocol.mission_frame(expected[3], 0x14, flags,
+                row["mode"], row["direction"], row["target_heading_cdeg"]), expected)
+        self.assertEqual(len(protocol.mission_frame(1, 0x14, 0xE1, 0, 0, 9000)), 15)
+        for a, b, heading in ((0, 1, 0), (1, 0, 0), (2, 2, 0), (3, 1, 0),
+                              (-1, -1, 0), (1, 1, 36000)):
+            with self.assertRaises(ValueError):
+                protocol.mission_frame(1, 0x14, 0xE1, a, b, heading)
+        with self.assertRaises(ValueError):
+            protocol.mission_frame(1, 0x14, 0x01, 1, 1, 0)
+
     def test_search_zone_view_contract(self) -> None:
         import json
         from pathlib import Path

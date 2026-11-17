@@ -1,5 +1,12 @@
 # 当前状态：F405 烧录入口
 
+2026-11-17 MATCH-STATION-TURN-SEARCH：搜索点首次慢转/后续边转边搜已配套、已构建，未烧录。
+- 对照上位4e91fb3实际代码，原step14新增空爪、同任务step13真实DONE后的A1/B±1及A2/B±1，原A0/B0带载/空爪转向保持。
+- A1复用原朝中心闭环，轮周转速150mm/s，沿原3°到位范围完成mode25/DONE，再走原step12搜索姿态；180°平局遵循B，轻微越过仍最短回正。
+- A2复用原step12机构行程，姿态就绪后原mode3/120°/DONE进入搜索，B锁定扫描方向；过中心不停止或清预算，原105°阶段继承。显式方向不再被投送奇偶覆盖；普通新局初始化及旧报文兼容保留。
+- 红蓝及双向状态机、3°/180°/跨零/越过边界、8组真实上位配对帧→真实C解析、Python协议29项和原相机观察/测距回归通过；NormalRun/MotionDebug编译链接通过。未连接、烧录或读取actual，地面方向和识别效果待实测。
+  [详细回执](CROSS_REPO_REQUESTS.md)、[接口及8组配对帧](contracts/f405_station_turn_search_20261117.json)。
+
 2026-11-17 MATCH-SEARCH-ZONE-VIEW：下位相机观察已局部配套、已构建，未烧录。
 - 核对上位7f1bfcb交接：空爪从120°SEARCH进入原APPROACH、已转正mode52后，同task新action的RANGE aux3/A0/B10500只停轮并将相机移至105°，原机械行程结束才报告该动作DONE。同action重发不重新动作；aux0/1/2原义保持。
 - 完成后接105°新图的原像素重对准/正常新action测距；同观察action的HOLD回105°SEARCH，保留本站扫描阶段、累计转角及方向。普通HOLD、速度/PID/抓取和停车收纳不变。

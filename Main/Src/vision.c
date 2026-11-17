@@ -265,7 +265,8 @@ static bool vision_bulldozer_payload_valid(uint8_t flags, int16_t a, int16_t b,
       return a >= 0 && a <= APP_NAV_REMOTE_MAX_DISTANCE_MM &&
           b >= -18000 && b <= 18000 && heading < 36000U;
     case VISION_BULLDOZER_ATTACK_FACE_OPPONENT:
-      return a == 0 && b == 0 && heading < 36000U;
+      return heading < 36000U && ((a == 0 && b == 0) ||
+          ((a == 1 || a == 2) && (b == -1 || b == 1)));
     case VISION_BULLDOZER_RELEASE_LOAD:
     case VISION_BULLDOZER_FULL_OPEN:
     case VISION_BULLDOZER_RAISE_RETURN:
