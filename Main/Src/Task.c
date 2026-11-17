@@ -1829,8 +1829,6 @@ static void task_initialize(uint32_t now_ms)
   nav_locked_heading_deg = 0.0f;
   tracking_report_generation = 0U;
   tracking_tick_ms = 0U;
-
-  
   approach_report_generation = 0U;
   approach_phase_path_mm = 0U;
   mission_sequence = 0U;

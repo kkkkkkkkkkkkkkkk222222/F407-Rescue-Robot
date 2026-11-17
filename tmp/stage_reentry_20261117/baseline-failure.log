@@ -1,7 +1,0 @@
-FAIL C:\Users\29459\Desktop\F407\WWW\tools\test_audit_handshake.c:1056: command_accepted&&state==TASK_NAVIGATE&&delivery_stage_only&&!route_to_stash
-Traceback (most recent call last):
-  File "C:\Users\29459\Desktop\F407\WWW\tmp\stage_reentry_20261117\check.py", line 135, in <module>
-    subprocess.run([str(exe)],check=True)
-  File "C:\msys64\ucrt64\lib\python3.11\subprocess.py", line 571, in run
-    raise CalledProcessError(retcode, process.args,
-subprocess.CalledProcessError: Command '['C:\\Users\\29459\\Desktop\\F407\\WWW\\tmp\\stage_reentry_20261117\\check.exe']' returned non-zero exit status 1.

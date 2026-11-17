@@ -1,5 +1,0 @@
-ParentContainsErrorRecordException: C:\Users\29459\Desktop\F407\WWW\tmp\left_wheel_runin_30min.ps1:26
-Line |
-  26 |          $portHandle.Write([string]$character)
-     |          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-     | Exception calling "Write" with "1" argument(s): "信号灯超时时间已到 : 'COM18'."

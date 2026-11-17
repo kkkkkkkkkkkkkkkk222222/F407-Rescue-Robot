@@ -1,2 +1,0 @@
-{"time":"2026-11-13T01:11:43.7425192+08:00","message":"保存文件未载入：Could not load type \u0027System.Web.Util.Utf16StringValidator\u0027 from assembly \u0027System.Web, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a\u0027."}
-{"time":"2026-11-13T01:11:43.7939080+08:00","message":"先连接读取当前姿态。初次折算offset只是保持原姿态的起点，不是自动测得的安装误差。"}

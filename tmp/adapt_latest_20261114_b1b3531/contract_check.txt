@@ -1,1 +1,0 @@
-18 paired examples CRC/fields PASS; old turn/step13 validation and existing navigation/ALIGN/live execution unchanged.

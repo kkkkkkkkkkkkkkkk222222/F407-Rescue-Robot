@@ -1,1 +1,0 @@
-{"timestamp_monotonic_ns": 1249400073976, "name": "STOP", "sequence": 0, "description": "程序退出安全停车", "frame_hex": "A3 B3 19 00 00 09 00 00 00 00 00 00 38 BD C3", "test_id": 0, "test_parameters": {}, "wire": {"type": 25, "opcode": 0, "flags": 9, "arg1": 0, "arg2": 0, "speed": 0}}

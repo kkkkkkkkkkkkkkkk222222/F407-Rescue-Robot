@@ -1,7 +1,0 @@
-Temporary breakpoint 1 at 0x14001de29: file tools/test_audit_handshake.c, line 946.
-[New Thread 6000.0x6454]
-
-Thread 1 hit Temporary breakpoint 1, main () at tools/test_audit_handshake.c:946
-946	  test_distance_search_accumulation_and_transport_sort();
-request accepted=0 mode=21 attempts=0
-
