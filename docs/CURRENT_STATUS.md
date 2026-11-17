@@ -1,5 +1,11 @@
 # 当前状态：F405 烧录入口
 
+2026-11-18 上下位同类交接检查：等上位cfc697b完成提交后，修复一个下位动作归属缺陷，NormalRun已构建，未烧录。
+- 上位96936aa的52/53实际task/action匹配传递、fd1fea8的闭爪绿黑重叠观察修复不要求新下位协议；现有aux1同角续段/aux0最终140度、三件材料审核可接续。
+- 复现并修复REMOTE_ACTION同opcode分支把新action直接ACK、沿用旧phase/DONE的问题。仅原task/action可重发确认；合法连续step13及新动作原入口保持，无新等待/FAULT/握手。
+- 同时离线确认上位TODO53禁轮恢复遗漏仍存在：扫障后mode3/op20到SEARCH/APPROACH仍suppressed。定位本轮仅分析，未改上位策略/融合；aux3上位尚未启用仍是功能缺口。
+- 只对该缺陷做修前/修后直接检查及一次上位策略复现，正式NormalRun编译链接通过，未跑整套回归；MotionDebug未重建，未连接/烧录/读actual。详见[逐项检查与剩余问题](F405_UPPER_LOWER_FLOW_AUDIT_20261118.md)。
+
 2026-11-18 MATCH-SAME-SIDE-BLUE-ABANDON / SAFE-ALIGN-LATERAL-270-400：已等上位提交完成后适配、构建，未烧录。
 - 已确认上位本轮结束并推送ebca61c，核对df449f3同侧混蓝U1、cc30054相机恢复和ebca61c速度交接。相机恢复仅上位负责，下位不增加巡检/日志/等待；旧aux3未启用、归档抽障等不夹带。
 - 同侧混蓝、另一侧空由上位完整组成判断；下位同归属新action的RELEASE_BOTH A0/B0/U1只在原普通非法非空、真实received/host_stable、含DANGER且非搬堆等入口接受。四件溢出仍保留原count3/total4/UNKNOWN编码，不伪造数量或分离次数。

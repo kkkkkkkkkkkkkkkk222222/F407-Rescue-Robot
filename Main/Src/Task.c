@@ -7337,6 +7337,13 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
     task_enter(TASK_FACE_FIELD_CENTER, now_ms);
   } else if ((state == TASK_REMOTE_ACTION) &&
              (command->command == remote_action.command)) {
+    /* Only the owned action may reuse this execution or its completion.
+     * A new epoch needs its original entry/audit, never the previous DONE. */
+    if (!accepted_context.valid || command->task_id != accepted_context.task_id ||
+        command->action_id != accepted_context.action_id) {
+      task_status.command_reject_reason = TASK_COMMAND_REJECT_STATE;
+      return;
+    }
     /* The upper computer repeats commands with new SEQs. ACK each one while
      * keeping the already-running or completed physical action idempotent. */
     task_status.acknowledged_sequence = command->sequence;

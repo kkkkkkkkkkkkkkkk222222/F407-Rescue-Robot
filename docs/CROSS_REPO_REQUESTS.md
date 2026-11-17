@@ -16,6 +16,16 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## FLOW-HANDOFF-AUDIT-20261118：等上位本轮完成后核对并修补动作归属，未烧录
+
+用户本轮要求对照最新上位、等其提交完成后再改，并详细检查同类bug，只做必要测试。已确认上位本轮结束且最终推送cfc697b2ece4f3d906bd3793d182926045433eb1；96936aa的52/53上下文匹配修复、fd1fea8的闭爪绿黑重叠观察例外均无新增下位接口，cfc697b仅定位多局分析。本端57ddffe的U1/视觉横移及更早aux4/运输角/取消附加10保持，不因上位旧回执未更新而重复改动。
+
+本端新复现：Task.c的REMOTE_ACTION同opcode重发入口没有比较task/action，新action会被ACK且沿用旧机械phase，旧DONE能归给新action。现只加原归属核对，原重复action及合法连续step13保持；不新增协议、等待、新鲜度、审核帧数、握手或FAULT。修前/修后生产Task直接dispatch替身已验证，仅针对本缺陷，未跑整段运动及整套回归。
+
+同时离线生产类复现上位LocalizationWheelPolicy.update的既有TODO53：安全区扫障后经OBSTACLE_PICKUP到SEARCH(mode3/op20)、APPROACH(mode20/op9)仍suppressed，未发normal_motion恢复。这是可复现的阶段出口遗漏，不把它当作全部定位偏差根因；上位本轮定位仅分析，本端未改其融合/轮式策略/雷达。aux3上位未启用仍未完成，归档0x15不恢复为任务。源码逐项范围、原因、复现和剩余项详见[检查报告](F405_UPPER_LOWER_FLOW_AUDIT_20261118.md)，本记录不代上位批准定位策略更改。
+
+仅受影响的NormalRun编译链接通过，APP_AUTO_BACKUP=OFF，build_git=57ddffe/dirty1（含原独立WheelCheck及Task空白工作区内容，不夹带提交），firmware ID=fc109a70ad0f02900dfbfe51ee13f2bef13c7642cdc71dff1d9cbe033331b887。MotionDebug本轮未重建；未连接设备、烧录、复位、发动作或读actual。模拟和代码完成不等于全部流程/机械精度实车通过。
+
 ## MATCH-SAME-SIDE-BLUE-ABANDON-20261118 / MATCH-SAFE-ALIGN-LATERAL-270-400-20261118：已实施并构建，未烧录
 
 按用户要求，先以只读状态确认上位本轮已结束且提交推送，再核对`danmo-teng/shijue_fangan`的`codex/gamepad-teleop` ebca61cabcbf6013d680b4eb11af1e88ca1a9cc0。相对d92f451只有df449f3同侧混蓝、cc30054相机故障恢复及ebca61c速度交接需要本轮评估；相机节点200ms故障重试/阶段日志属于RDK，不在F405增加计时、巡检、握手或诊断。本端以f1dd046为基线只实施以下两项。
