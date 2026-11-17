@@ -16,6 +16,16 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-CANCEL-ORANGE-EXTRA-GRIP-20261118：一行参数已实施并构建，未烧录
+
+按用户要求等上位本轮完成并推送后，核对`codex/gamepad-teleop` d92f45183a9136a4e1dc7585123013f3b99fefbe及先前已提交的取消交接a23e731205f9574e7686a7e26a93db3464b64951；固定入口blob795ece2db12685a958f2c45cb51344aa278e9d42。当前下位c6480b3仍保留附加10，现仅将APP_CLAW_SEPARATE_ORANGE_EXTRA_DEG=10U改为0U。
+
+已核对实际Claw_SetOrangeSeparationHold：同一附加参数同时用于目标和专用上限，因此原橙15/20/30回到基础5/10/20，上限30回20；基础APP_CLAW_SEPARATE_THREE_CLOSE_DEG=10没有清零，普通夹紧、放开侧、镜像/倒装/偏置、运输82/88、滤除82和分离U8200保持。此回执取代旧GRIP及V2里“继续保留+10”的要求；橙分离具体轨迹/顺序仍不扩改。
+
+本轮只做实际diff/基础档位/计算入口核对和NormalRun、MotionDebug编译链接，均通过；没有新增测试程序或运行整套回归。自动备份关闭，build_git=c6480b3/dirty1，含原独立WheelCheck及Task空白工作区内容。NormalRun firmware ID=bd570e81760d0552db98028c9dde6298cac88de9c7f550266241cc2748abdf0b；MotionDebug firmware ID=5113f75193fd1637eb86e0d91c9aba29524e6c0112fb2c34821b7b508c33618e。未连接设备、烧录、发物理动作或读取actual，不能把源代码取消视为板端已更新。
+
+另已对照上位d92f451实际state_machine.py/sweep_boundaries.py/edit_capture_roi.py差异：仅蓝色的扫障区域归属使用框中心，其他颜色仍底边中点，原安全区/载荷排除保持，无协议或扫障动作参数变更，下位现有入口可直接承接，无新增固件修改或专项测试需要。前项远橙aux4已在本端c6480b3实现，不因上位旧“待配套”文字重复改动。
+
 ## MATCH-ORANGE-TOP-VIEW-20261118：已等上位提交后配套并构建，未烧录
 
 按用户本轮要求，等待上位本轮修改完成并推送，再读取固定提交`codex/gamepad-teleop` a266c97e13603c261b3684b4582a416e4ad8927a。固定入口blob4bdb19a8fa158e9e55af64d7ee924791294d710a、protocol.py a94712c69f2087b90c53e87c191525d482d103ea、state_machine.py 282824869116000783fb7011eac7e6fc9df77bb2、合同27aadd6a9782939a82db9bc356d2e9362e795562已核对。上位已负责贴顶+B1及换角后唯一水平重叠橙框接续；下位原1136492确实只有aux3的对准后观察，本次只局部增加aux4，不改橙块分离。
