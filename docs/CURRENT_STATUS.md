@@ -1,5 +1,11 @@
 # 当前状态：F405 烧录入口
 
+2026-11-17 扫障step8前进1000mm速度改为500mm/s（已构建、未烧录）。
+- 仅新增APP_SAFE_SWEEP_1000_SPEED_MM_S=500并用于step8；前进放载300、返回/横移250～350及转向/机构阶段不变。
+- 保留原加减速/航向及3mm到距规则；按原速度比例公式，末段减速区随500自动变为约166.7mm，末速仍120mm/s，不是全段恒速500。
+- 两目标编译链接通过，实际diff核对仅上述参数及引用。build_git=d3c58f8/dirty1，含原独立工作区改动；未连接设备、烧录或动作测试，actual未读。
+  NormalRun firmware ID=69763bd699f6d8b7deb31599eae66e914f4f180f5e8c7d49d083704361b6fe0f；MotionDebug firmware ID=ad34c62c527ac0f6f7d3c5d394f90195b2ad5cbf4f3f365d7bb0fef40fa0e9cf。
+
 2026-11-17 MATCH-ATTACK-LATERAL-CENTRE / RECOVERED-INJURY-STAGE：已配套并构建，未烧录。
 - 核对RDK f6b37be实际路线/状态机/runner及40组合同帧。当前进攻返程为轮程退100mm→保持朝向横移→保持朝向后退→朝实际场地中心→搜索；上位分配连续两段step13的独立action。
 - 下位step14新增同任务空爪、step13实际DONE后的入口，复用原任意绝对航向及最短转角；载荷进攻点朝对方限制保持。step12仍须转向DONE才接收，旧step15后转向及-150兼容不删除，但不作为当前路线。

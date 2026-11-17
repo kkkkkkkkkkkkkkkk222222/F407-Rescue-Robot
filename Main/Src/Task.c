@@ -4790,7 +4790,7 @@ static void task_process_bulldozer(const VisionMissionCommand *command,
         task_remote_action_finish();
         return;
       }
-      const float cruise = APP_SAFE_SWEEP_FORWARD_SPEED_MM_S;
+      const float cruise = APP_SAFE_SWEEP_1000_SPEED_MM_S;
       const float slowdown = fminf(remote_action.arg_a * 0.5f,
           APP_GO_DISTANCE_SLOWDOWN_MM * cruise / APP_GO_DISTANCE_SPEED_MM_S);
       float speed = cruise;

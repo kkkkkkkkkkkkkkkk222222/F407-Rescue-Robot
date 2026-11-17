@@ -16,6 +16,16 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## 2026-11-17 扫障前进1000mm单段提速：无需上位接口修改
+
+2026-11-17 扫障step8前进1000mm速度改为500mm/s（已构建、未烧录）。
+- 仅新增APP_SAFE_SWEEP_1000_SPEED_MM_S=500并用于step8；前进放载300、返回/横移250～350及转向/机构阶段不变。
+- 保留原加减速/航向及3mm到距规则；按原速度比例公式，末段减速区随500自动变为约166.7mm，末速仍120mm/s，不是全段恒速500。
+- 两目标编译链接通过，实际diff核对仅上述参数及引用。build_git=d3c58f8/dirty1，含原独立工作区改动；未连接设备、烧录或动作测试，actual未读。
+  NormalRun firmware ID=69763bd699f6d8b7deb31599eae66e914f4f180f5e8c7d49d083704361b6fe0f；MotionDebug firmware ID=ad34c62c527ac0f6f7d3c5d394f90195b2ad5cbf4f3f365d7bb0fef40fa0e9cf。
+
+其余step速度/距离、报文布局及两档点位保持；上位无需调整。当前构建不代表实车速度通过。
+
 ## MATCH-ATTACK-LATERAL-CENTRE / MATCH-RECOVERED-INJURY-STAGE-20261117：已实施并构建，未烧录
 
 按用户本轮“对照上位机修改代码”核对RDK功能及收尾分支，均为f6b37beac2a508e949da5e3c82f83c8088d3bad4。
