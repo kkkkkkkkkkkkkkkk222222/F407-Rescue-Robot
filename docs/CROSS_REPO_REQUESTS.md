@@ -16,6 +16,14 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-POST-FIRST-LEGAL-KEEP-20261117：已核对，现有下位接口兼容，无控制代码改动
+
+按用户本轮“对照上位机的代码，修改我的代码，只需要做必要的测试”，读取上位`codex/gamepad-teleop`当前6e6a28b52abbc4fcdf6cda2e8b893f6bc9e0cfeb，固定入口blob77afc059f7eb2931b3138f11ef531d68744bea72、实际state_machine.py blob93ec5756cd680168d6769b9d244117d7f3c3fae7。新合法侧选择、绿色数量优先及保留类别记忆都在上位；本端64f355d已有所需执行接口，不重复将选侧策略写入下位。
+
+已核对task_disperse_keep_side_valid、task_accept_mission_legacy、task_prepare_separation及原动作分支：普通SIDE_VALID只核对指定侧真实非空，不按绿色或单件重新选侧；TARGET_RIGHT为保右，未置位为保左，保持到机构分支。单侧RELEASE沿所释放侧真实非空审核，锁存另一侧。整批audit_valid时原分离拒绝入口保持，不能因上位旧目标再分离。危险/未知另一侧不覆盖明确指定的非空合法侧；不把该侧选择当作整批载荷已合法，机械完成后的原真实审核仍需执行。
+
+只运行一次生产Task/机构替身的5组直接入口检查：1绿对3绿指定保右；绿蓝/未知混装对单橙保右；镜像保左；释放左侧时保右；合法总数3绿拒绝额外分离，均通过。未运行整套协议/状态机回归，未新增提交独立测试程序。固件控制源和接口均未变化，未重复构建或产生新固件身份；沿用64f355d的构建状态。此次仅更新核对回执，无需新增合同、位或动作参数；舵机/力度/分离轨迹/速度/等待保持。未连接、烧录、发物理动作或读取actual，不能据源码核对宣称实板已部署或机械分离有效。
+
 ## MATCH-STATION-TURN-SEARCH-20261117：下位已按上位实际代码局部配套并构建，未烧录
 
 按用户本轮“对照上位机的代码，修改我的代码”，读取并复核上位`codex/gamepad-teleop`当前4e91fb3546a507bf0291606e95171a9bb556a3de。固定入口blob adcead511c5beb56ff011d23e091278e0bffac18，合同0f4e36bcfd360d35409e3d197b29b7a2dc51dde3；实际protocol.py c95cb9e9、state_machine.py e212d570、attack_return.py 49c3461f及search_transfer.py已核对。上位首次A1与后续A2的请求/回包出口已实现，下位原解析仅A0/B0，现接受本项局部适配。
