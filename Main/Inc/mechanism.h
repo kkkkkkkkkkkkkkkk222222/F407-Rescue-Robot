@@ -13,9 +13,12 @@ void Lift_SetReleaseRaisePosition(void);
 /* Estimate the wait before commanding the given angle. */
 uint32_t Lift_PositionWaitMs(uint8_t angle);
 void Lift_SetTravelPosition(void);
+uint8_t Lift_LoadedTravelAngle(bool has_core);
+void Lift_SetLoadedTravelPosition(bool has_core);
 /* Explicit maintenance preset; no autonomous filter sequence implied. */
 void Lift_SetFirstGreenFilterPosition(void);
 void Claw_SetSeparationHold(uint8_t extra_close_deg);
+void Claw_SetOrangeSeparationHold(uint8_t base_close_deg);
 void Claw_RestartAction(void);
 bool Claw_Open(uint32_t now_ms);
 /* Route-only reuse of an already completed ordinary-open pose. */

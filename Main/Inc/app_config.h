@@ -669,6 +669,7 @@
 #define APP_LIFT_START_ANGLE              61U
 #define APP_LIFT_RELEASE_RAISE_ANGLE      65U
 #define APP_LIFT_TRAVEL_ANGLE             85U
+#define APP_LIFT_CORE_TRAVEL_ANGLE        88U
 /* Calibrated pose only; the autonomous first-green filter is not enabled here. */
 #define APP_LIFT_FIRST_GREEN_FILTER_ANGLE 82U
 #define APP_SINGLE_CARGO_FILTER_BACK_SPEED_MM_S 250.0f
@@ -719,6 +720,7 @@
 #define APP_CLAW_SEPARATE_ONE_OR_TWO_CLOSE_DEG    20U
 #define APP_CLAW_SEPARATE_THREE_CLOSE_DEG         10U
 #define APP_CLAW_SEPARATE_SOFT_CLOSE_DEG           5U
+#define APP_CLAW_SEPARATE_ORANGE_EXTRA_DEG        10U
 #define APP_CLAW_SEPARATE_STEP_DEG                 4U /* Per 20 ms Task period. */
 #define APP_CLAW_SEPARATE_SETTLE_MS              260U /* After the final angle command. */
 #define APP_CARGO_SEPARATE_ARC_BACK_MM_S        300.0f

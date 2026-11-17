@@ -16,6 +16,18 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-CORE-TRANSPORT-88-20261117 / MATCH-ORANGE-SEPARATION-GRIP-20261117：下位已实现并构建，未烧录
+
+按用户本轮“对照上位机的代码，修改我的代码，只需要做必要的测试”核对RDK `codex/gamepad-teleop` bca14a48c661ede028a3dda1d263c7cd1176b70e，固定入口blob b9a83fe8d7c771b7c6d0e7be68498af19ac75017、实际state_machine.py b983ac3a53f0a5d9d57832740fef0920a246086d。已核对原CargoAudit.to_protocol真实类别/数量及code6/7，沿现有审核配套，无新增消息或合同。
+
+- **含黑运输88°：** 保留原空车Lift_SetTravelPosition=85，新增独立含黑运输88。只从本次真实稳定、合法且闭爪的载荷审核记录黑事实，code6/7按原真实组成归一；开局临时持载明确含黑同样覆盖，UNKNOWN但无明确黑不伪造。普通合爪恢复、运输复审和载荷复用使用同次持载目标，清审核缓存/漏框/非法单帧不清黑事实，新的稳定合法非黑组成才更新为85。实际全开、单侧释放/分离、新目标/新局清旧持载；空车和放货阶段仍由原入口控制。
+- **滤除：** 82°目标、闭爪、退100mm保持，正常恢复及负证据退出用同一持载88/85目标计算Lift_PositionWaitMs并发舵机输出。中断后普通重新合爪也恢复对应运输角，不把滤除完成当黑已掉落，不改数量，不加140°复审、固定等待或资格门。
+- **橙色分离：** 原task_prepare_separation算完基础20/10/5后，仅指定保留侧真实count1且类别INJURED时加10，得到30/20/15；复用单侧RELEASE和带侧DISPERSE入口。橙专用上限30，原Claw_SetSeparationHold仍封顶20；左目标84-extra、右镜像96+extra，最紧54/126均在原该侧普通机械范围内，继续原倒装/安装偏置映射。放开侧不加量，未知/混橙及普通绿黑不启用。相同action不重新计算/累计，新普通分离恢复原上限，动作完成清配置但不额外发舵机动作。
+
+仅复用一次生产Task/mechanism硬件替身的5组直接检查：黑/code6/code7及开局已知/未知组成；漏框、清缓存与真实复审更新；82→退100mm→88及匹配机械行程、中断再合爪；橙左右三档、重复、单侧释放、普通上限与结束清除；实际全开/新批/新局以及原85/61/65入口，均通过。未运行整套协议/状态机回归，临时夹具未提交，未向上位新增测试任务。MATCH-ORANGE-FIRST-THREE-ROUNDS由上位实现，本端原SEARCH/HOLD/APPROACH可承接，不重复改扫描圈数。
+
+NormalRun/MotionDebug编译链接通过，自动备份关闭；build_git=63bf1d6/dirty1，包含原独立WheelCheck及Task空白工作区内容。NormalRun firmware ID=2242873ca4157dffe9a01de8e13fec0b19a646a831d32ba539dd3f035bc8d16f；MotionDebug firmware ID=22c655e5b8523eee34f0c19ef051968867363d835807bb931363767f13eafcf9。源代码/构建不是烧录证明，本轮未连接设备、烧录、复位、发物理动作或读取actual；不能据此宣称已修复实车黑块漏出或保证橙色不滑脱。
+
 ## MATCH-POST-FIRST-LEGAL-KEEP-20261117：已核对，现有下位接口兼容，无控制代码改动
 
 按用户本轮“对照上位机的代码，修改我的代码，只需要做必要的测试”，读取上位`codex/gamepad-teleop`当前6e6a28b52abbc4fcdf6cda2e8b893f6bc9e0cfeb，固定入口blob77afc059f7eb2931b3138f11ef531d68744bea72、实际state_machine.py blob93ec5756cd680168d6769b9d244117d7f3c3fae7。新合法侧选择、绿色数量优先及保留类别记忆都在上位；本端64f355d已有所需执行接口，不重复将选侧策略写入下位。

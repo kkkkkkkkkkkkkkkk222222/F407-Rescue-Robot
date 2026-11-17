@@ -403,6 +403,8 @@ static struct {
   uint8_t total, left, right;
   uint8_t classes[VISION_CARGO_CLASS_MAX + 1U];
 } confirmed_load;
+/* Mechanical carry pose survives a missing/invalid transport view. */
+static bool held_core_confirmed;
 static bool stash_backoff_pending;
 static bool cluster_target_active;
 static bool cluster_claws_ready;
@@ -953,6 +955,13 @@ static void task_note_first_green_core(const VisionMissionCommand *command)
   nav_reuse_post_grab_audit = false;
 }
 
+static bool task_open_claws(uint32_t now_ms)
+{
+  const bool done = Claw_Open(now_ms);
+  if (done) held_core_confirmed = false;
+  return done;
+}
+
 static bool task_disperse_keep_side_valid(
     const VisionMissionCommand *command)
 {
@@ -999,7 +1008,7 @@ static void task_begin_close_claw(uint32_t now_ms)
 {
   /* Recovery can abandon the 82-degree filter before its restore phase.
    * A new ordinary grab always starts at the calibrated transport height. */
-  Lift_SetTravelPosition();
+  Lift_SetLoadedTravelPosition(held_core_confirmed);
   single_filter_armed = true;
   injury_recheck_pending = false;
   const bool advance_for_core = complete_flow_active &&
@@ -1061,6 +1070,22 @@ static void task_normalize_load_classes(uint8_t *counts, uint8_t left,
 
 static void task_remember_confirmed_load(void)
 {
+  if (task_status.gripper_closed && audit_received && audit_valid &&
+      audit_host_stable && audit_last_total_count != 0U) {
+    uint8_t classes[VISION_CARGO_CLASS_MAX + 1U];
+    memcpy(classes, audit_last_class_counts, sizeof(classes));
+    task_normalize_load_classes(classes, audit_last_left_class,
+                                audit_last_right_class, audit_last_counts);
+    if (classes[VISION_CARGO_CORE] != 0U) {
+      held_core_confirmed = true;
+    } else if ((audit_last_flags & VISION_AUDIT_UNKNOWN_PRESENT) == 0U &&
+               classes[VISION_CARGO_UNKNOWN] == 0U && audit_last_zero_classes == 0U) {
+      uint8_t assigned = 0U;
+      for (uint8_t i = 1U; i <= VISION_CARGO_CLASS_MAX; ++i) assigned += classes[i];
+      if (assigned == audit_last_total_count) held_core_confirmed = false;
+    }
+    if (!single_filter_active) Lift_SetLoadedTravelPosition(held_core_confirmed);
+  }
   if (!task_status.gripper_closed || !audit_received || !audit_valid ||
       !audit_host_stable || audit_initial_stash || audit_last_total_count == 0U ||
       (first_green_core_conflict && !first_delivery_done)) { return; }
@@ -1489,6 +1514,9 @@ static void task_update_match_time(uint32_t now_ms)
 
 static void task_enter(TaskState next, uint32_t now_ms)
 {
+  if (next == TASK_SEARCH || next == TASK_APPROACH || next == TASK_STOPPED) {
+    held_core_confirmed = false;
+  }
   if (next == TASK_APPROACH && state == TASK_SEARCH) {
     memset(&zone_view, 0, sizeof(zone_view));
     zone_view.search_entry = Camera_GetAngle() == APP_SEARCH_HIGH_CAMERA_ANGLE;
@@ -1798,6 +1826,7 @@ static void task_enter(TaskState next, uint32_t now_ms)
 
 static void task_initialize(uint32_t now_ms, bool claws_already_stowed)
 {
+  held_core_confirmed = false;
   task_clear_confirmed_load();
   recovery_reference_ready = false;
   recovery_pose_hits = 0U;
@@ -2306,7 +2335,7 @@ static void task_process_start(const VisionFusedPose *fused_pose, uint32_t now_m
     task_status.motors_active = result == MOTOR_TURN_RUNNING;
     if (result == MOTOR_TURN_DONE) {
       Motor_Stop();
-      (void)Claw_Open(now_ms);
+      (void)task_open_claws(now_ms);
       start_motion_phase = START_TURN_SETTLE;
       step_started_ms = now_ms;
     } else if (result == MOTOR_TURN_FAULT || result == MOTOR_TURN_INVALID) {
@@ -2317,7 +2346,7 @@ static void task_process_start(const VisionFusedPose *fused_pose, uint32_t now_m
   if (start_motion_phase == START_TURN_SETTLE) {
     Motor_Stop();
     task_status.motors_active = false;
-    const bool claws_ready = Claw_Open(now_ms);
+    const bool claws_ready = task_open_claws(now_ms);
     if (now_ms - step_started_ms >= APP_START_SETTLE_MS && claws_ready) {
       start_motion_phase = START_FORWARD;
     }
@@ -2727,7 +2756,7 @@ static void task_process_capture_escape(uint32_t now_ms)
     case 0U:
       Motor_Stop();
       task_status.motors_active = false;
-      if (Claw_Open(now_ms)) {
+      if (task_open_claws(now_ms)) {
         LocationPose pose;
         if (!task_get_location_pose(&pose, now_ms)) return;
         task_status.gripper_closed = false;
@@ -2972,7 +3001,13 @@ static bool task_prepare_separation(int8_t keep_side, uint32_t now_ms)
     close_deg = release_three ? APP_CLAW_SEPARATE_THREE_CLOSE_DEG :
         APP_CLAW_SEPARATE_ONE_OR_TWO_CLOSE_DEG;
   }
-  Claw_SetSeparationHold(close_deg);
+  const uint8_t keep_count = keep_side > 0 ? left_count : right_count;
+  const uint8_t keep_class = keep_side > 0 ? audit_last_left_class : audit_last_right_class;
+  if (keep_count == 1U && keep_class == VISION_CARGO_INJURED) {
+    Claw_SetOrangeSeparationHold(close_deg);
+  } else {
+    Claw_SetSeparationHold(close_deg);
+  }
   separation_keep_side = keep_side;
   if (separation_total_attempts < UINT8_MAX) { ++separation_total_attempts; }
   capture_wait_active = false;
@@ -3019,7 +3054,7 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
         /* A pile is approached with both claws fully open.  Do not infer
          * cargo entry from camera angle or image Y and do not back away or
          * close both claws before the fresh 140-degree claw audit. */
-        if (Claw_Open(now_ms)) {
+        if (task_open_claws(now_ms)) {
           cluster_claws_ready = true;
           task_reset_tracking();
         }
@@ -3438,7 +3473,7 @@ static void task_process_post_grab_audit(uint32_t now_ms)
 
     case POST_AUDIT_RELEASE:
       Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
-      if (Claw_Open(now_ms)) {
+      if (task_open_claws(now_ms)) {
         task_status.gripper_closed = false;
         task_clear_audit_result();
         task_enter(TASK_SEARCH, now_ms);
@@ -3549,8 +3584,8 @@ static void task_process_single_filter(uint32_t now_ms)
       single_filter_phase != 3U) {
     Motor_Stop();
     task_status.motors_active = false;
-    single_filter_wait_ms = Lift_PositionWaitMs(APP_LIFT_TRAVEL_ANGLE);
-    Lift_SetTravelPosition();
+    single_filter_wait_ms = Lift_PositionWaitMs(Lift_LoadedTravelAngle(held_core_confirmed));
+    Lift_SetLoadedTravelPosition(held_core_confirmed);
     step_started_ms = now_ms;
     single_filter_phase = 3U;
   }
@@ -3583,8 +3618,8 @@ static void task_process_single_filter(uint32_t now_ms)
     }
     if (result != MOTOR_DISTANCE_DONE) { return; }
     Motor_Stop();
-    single_filter_wait_ms = Lift_PositionWaitMs(APP_LIFT_TRAVEL_ANGLE);
-    Lift_SetTravelPosition();
+    single_filter_wait_ms = Lift_PositionWaitMs(Lift_LoadedTravelAngle(held_core_confirmed));
+    Lift_SetLoadedTravelPosition(held_core_confirmed);
     step_started_ms = now_ms;
     single_filter_phase = 3U;
     return;
@@ -4608,7 +4643,7 @@ static void task_process_delivery_open(const VisionMissionCommand *command,
   if (task_delivery_is_finishing() ? !local_finish_owned :
       !delivery_enter_command_ok(command)) { return; }
   if (task_status.gripper_closed) {
-    if (!Claw_Open(now_ms)) { return; }
+    if (!task_open_claws(now_ms)) { return; }
     task_status.gripper_closed = false;
     if (!local_finish_owned) {
       Camera_SetAngle(APP_DELIVERY_CAMERA_ANGLE);
@@ -4650,7 +4685,7 @@ static void task_process_face_center(const VisionData *vision,
     task_status.motors_active = false;
     distance_command_done = false;
     task_status.nav_done = false;
-    if (Claw_Open(now_ms)) {
+    if (task_open_claws(now_ms)) {
       capture_return_closed = capture_return_opening = false;
       first_green_core_conflict = false;
       task_status.gripper_closed = false;
@@ -4707,7 +4742,7 @@ static void task_process_face_center(const VisionData *vision,
       capture_return_opening = true;
       distance_command_done = false;
       task_status.nav_done = false;
-      (void)Claw_Open(now_ms);
+      (void)task_open_claws(now_ms);
     } else {
       task_enter(TASK_SEARCH, now_ms);
     }
@@ -4738,6 +4773,11 @@ static void task_remote_action_finish(void)
   Motor_Stop();
   task_status.motors_active = false;
   remote_action.done = true;
+  if (remote_action.type == REMOTE_ACTION_DISPERSE ||
+      remote_action.type == REMOTE_ACTION_RELEASE_LEFT ||
+      remote_action.type == REMOTE_ACTION_RELEASE_RIGHT) {
+    Claw_SetSeparationHold(0U);
+  }
   /* mode35/30 re-audit is performed from the physical 140-degree claw view.
    * Advertise it only after the curve/turn and camera settling are complete. */
   if (cargo_recheck_pending) {
@@ -4756,6 +4796,7 @@ static bool task_bulldozer_live_step(uint8_t step)
 
 static void task_bulldozer_clear_load(void)
 {
+  held_core_confirmed = false;
   single_filter_armed = false;
   first_green_core_conflict = false;
   task_status.gripper_closed = false;
@@ -4943,6 +4984,7 @@ static void task_process_bulldozer(const VisionMissionCommand *command,
       Motor_Stop();
       task_status.motors_active = false;
       if (Claw_FullOpen(now_ms)) {
+        held_core_confirmed = false;
         task_remote_action_finish();
       }
       return;
@@ -5754,7 +5796,7 @@ static void task_process_visual_sweep(uint32_t now_ms)
     case VS_RELEASE_LOAD:
     case VS_RELEASE_OBSTACLE:
     case VS_FAILED_OPEN:
-      if (Claw_Open(now_ms)) {
+      if (task_open_claws(now_ms)) {
         task_status.gripper_closed = false;
         task_sweep_next(visual_sweep_phase == VS_RELEASE_LOAD ? VS_BACK_PARK :
             visual_sweep_phase == VS_RELEASE_OBSTACLE ? VS_BACK_DROP : VS_FAILED_BACK, now_ms);
@@ -5851,7 +5893,7 @@ static void task_process_safe_sweep(uint32_t now_ms)
     case SAFE_SWEEP_RELEASE_LOAD:
       Motor_Stop();
       task_status.motors_active = false;
-      if (Claw_Open(now_ms)) {
+      if (task_open_claws(now_ms)) {
         task_status.gripper_closed = false;
         task_safe_sweep_advance(now_ms);
       }
@@ -5887,7 +5929,7 @@ static void task_process_safe_sweep(uint32_t now_ms)
     case SAFE_SWEEP_RELEASE_OBSTACLE:
       Motor_Stop();
       task_status.motors_active = false;
-      if (Claw_Open(now_ms)) {
+      if (task_open_claws(now_ms)) {
         task_status.gripper_closed = false;
         task_safe_sweep_advance(now_ms);
       }
@@ -6284,6 +6326,7 @@ static void task_process_remote_action(const VisionMissionCommand *command,
   switch (remote_action.type) {
     case REMOTE_ACTION_RELEASE_LEFT:
       if (Claw_OpenLeft(now_ms)) {
+        held_core_confirmed = false;
         task_status.gripper_closed = false;
         cargo_recheck_pending = true;
         task_clear_audit_result();
@@ -6293,6 +6336,7 @@ static void task_process_remote_action(const VisionMissionCommand *command,
 
     case REMOTE_ACTION_RELEASE_RIGHT:
       if (Claw_OpenRight(now_ms)) {
+        held_core_confirmed = false;
         task_status.gripper_closed = false;
         cargo_recheck_pending = true;
         task_clear_audit_result();
@@ -6301,7 +6345,7 @@ static void task_process_remote_action(const VisionMissionCommand *command,
       return;
 
     case REMOTE_ACTION_RELEASE_BOTH:
-      if (Claw_Open(now_ms)) {
+      if (task_open_claws(now_ms)) {
         /* Temporary-stash release and a second failed audit still require a
          * complete dual release. Stash RETURN retreats before turning. */
         stash_backoff_pending = route_to_stash;
@@ -6416,6 +6460,7 @@ static void task_process_remote_action(const VisionMissionCommand *command,
             Claw_ClusterOpenRight(now_ms) :
             Claw_ClusterOpenLeft(now_ms);
         if (ready) {
+          held_core_confirmed = false;
           task_status.gripper_closed = false;
           task_remote_action_advance(now_ms);
         }
@@ -7967,7 +8012,7 @@ static void task_check_boundary_guard(uint32_t now_ms)
 static void task_process_boundary_recover(uint32_t now_ms)
 {
   Lift_SetTravelPosition();
-  if (!boundary_claw_opened && Claw_Open(now_ms)) {
+  if (!boundary_claw_opened && task_open_claws(now_ms)) {
     boundary_claw_opened = true;
     task_status.gripper_closed = false;
   }
@@ -8269,7 +8314,7 @@ void Task_Process(uint32_t now_ms)
       break;
 
     case TASK_OPEN_CLAW:
-      if (Claw_Open(now_ms)) {
+      if (task_open_claws(now_ms)) {
         if (abandoned_batch_open_pending) { task_finish_abandoned_batch(); }
         task_enter(TASK_SEARCH, now_ms);
       }

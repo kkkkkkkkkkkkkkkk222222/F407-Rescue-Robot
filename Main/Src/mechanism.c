@@ -32,15 +32,29 @@ void Claw_RestartAction(void)
   claw_action = CLAW_ACTION_NONE;
 }
 
-void Claw_SetSeparationHold(uint8_t extra_close_deg)
+static void claw_set_separation_hold(uint8_t extra_close_deg, uint8_t limit_deg)
 {
-  if (extra_close_deg > APP_CLAW_SEPARATE_ONE_OR_TWO_CLOSE_DEG) {
-    extra_close_deg = APP_CLAW_SEPARATE_ONE_OR_TWO_CLOSE_DEG;
+  if (extra_close_deg > limit_deg) {
+    extra_close_deg = limit_deg;
   }
   if (extra_close_deg != separation_extra_close_deg) {
     separation_extra_close_deg = extra_close_deg;
     claw_action = CLAW_ACTION_NONE;
   }
+}
+
+void Claw_SetSeparationHold(uint8_t extra_close_deg)
+{
+  claw_set_separation_hold(extra_close_deg, APP_CLAW_SEPARATE_ONE_OR_TWO_CLOSE_DEG);
+}
+
+void Claw_SetOrangeSeparationHold(uint8_t base_close_deg)
+{
+  if (base_close_deg > APP_CLAW_SEPARATE_ONE_OR_TWO_CLOSE_DEG) {
+    base_close_deg = APP_CLAW_SEPARATE_ONE_OR_TWO_CLOSE_DEG;
+  }
+  claw_set_separation_hold(base_close_deg + APP_CLAW_SEPARATE_ORANGE_EXTRA_DEG,
+      APP_CLAW_SEPARATE_ONE_OR_TWO_CLOSE_DEG + APP_CLAW_SEPARATE_ORANGE_EXTRA_DEG);
 }
 
 static uint8_t claw_relaxed_left(void)
@@ -157,6 +171,16 @@ uint32_t Lift_PositionWaitMs(uint8_t angle)
 void Lift_SetTravelPosition(void)
 {
   Servo_SetAngle(1U, APP_LIFT_TRAVEL_ANGLE);
+}
+
+uint8_t Lift_LoadedTravelAngle(bool has_core)
+{
+  return has_core ? APP_LIFT_CORE_TRAVEL_ANGLE : APP_LIFT_TRAVEL_ANGLE;
+}
+
+void Lift_SetLoadedTravelPosition(bool has_core)
+{
+  Servo_SetAngle(1U, Lift_LoadedTravelAngle(has_core));
 }
 
 void Lift_SetFirstGreenFilterPosition(void)
