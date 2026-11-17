@@ -1935,6 +1935,13 @@ static void task_initialize(uint32_t now_ms)
   safe_sweep_center_y_mm = 0;
   sweep_pickup_phase = SWEEP_PICKUP_SEARCH;
   sweep_pickup_target_active = false;
+  sweep_trace_recording = sweep_retrieving = sweep_forward_commanded = false;
+  sweep_trace_count = 0U;
+  sweep_reverse = (SweepReverse){0};
+  sweep_original_injury = false;
+  sweep_original_left = sweep_original_right = sweep_original_total = 0U;
+  sweep_forward_used_mm = 0U;
+  sweep_budget_exhausted = false;
   sweep_audit_consistent_count = 0U;
   sweep_audit_last_id = 0U;
   sweep_audit_last_id_valid = false;
@@ -5036,6 +5043,19 @@ static void task_pause_runtime(uint32_t now_ms)
   task_pause_final_push(now_ms);
 }
 
+static void task_start_configured_round(const VisionData *vision, uint32_t now_ms)
+{
+  configured_color = vision->color;
+  first_delivery_done = vision->config_resume &&
+      (vision->config_resume_flags & VISION_RESUME_FIRST_GREEN) != 0U;
+  /* A recognized first delivery plus low byte 0 is a positive even count. */
+  search_yaw_direction = first_delivery_done &&
+      (vision->config_delivery_count & 1U) == 0U ? -1 : 1;
+  Location_Reset((LocationStart)vision->start_zone);
+  Vision_RequestConfigAck();
+  task_enter(TASK_START, now_ms);
+}
+
 static void task_account_manual_pause(uint32_t now_ms)
 {
   if (!mission_paused || !pause_clock_active) {
@@ -7386,6 +7406,8 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     }
     active_mission = incoming;
     Vision_ClearAbort();
+    /* The snapshot predates RearmConfig. A STOP in this tick wins over it. */
+    vision->config_ready = false;
     vision->mission = active_mission;
     ++diag_accept_count;
     TaskDiag_Event("ABORT", incoming.task_id, incoming.action_id, abort_owned,
@@ -7623,6 +7645,9 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     task_accept_mission_legacy(&incoming, now_ms);
   }
   if (!command_accepted) goto rejected;
+  if (state == TASK_STOPPED && incoming.command == VISION_CMD_STOP) {
+    vision->config_ready = false;
+  }
   if (state == TASK_ALIGN_SAFE_ZONE && incoming.command == VISION_CMD_ALIGN_SAFE_ZONE) {
     const uint8_t pitch = incoming.target_y_mm == APP_SAFE_ALIGN_RAISED_CAMERA_ANGLE * 100 ?
         APP_SAFE_ALIGN_RAISED_CAMERA_ANGLE : APP_SAFE_ALIGN_CAMERA_ANGLE;
@@ -8082,10 +8107,7 @@ void Task_Process(uint32_t now_ms)
     case TASK_WAIT_CONFIG:
       Motor_Stop();
       if (vision.config_ready) {
-        configured_color = vision.color;
-        Location_Reset((LocationStart)vision.start_zone);
-        Vision_RequestConfigAck();
-        task_enter(TASK_START, now_ms);
+        task_start_configured_round(&vision, now_ms);
       }
       break;
 

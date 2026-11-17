@@ -56,6 +56,10 @@
 
 
 #define VISION_MSG_CONFIG         0x11U
+#define VISION_CONFIG_RESUME      0x52U
+#define VISION_RESUME_FIRST_GREEN 0x01U
+#define VISION_RESUME_ATTACK_DONE 0x02U
+#define VISION_RESUME_CONFIRM_FRAMES 3U
 #define VISION_MSG_REPORT         0x12U
 #define VISION_MSG_ODOM           0x15U
 #define VISION_MSG_FUSED_POSE     0x16U
@@ -268,6 +272,9 @@ typedef struct {
   uint8_t color;
   uint8_t start_zone;
   uint8_t config_sequence;
+  uint8_t config_resume_flags;
+  uint8_t config_delivery_count;
+  bool config_resume;
   uint8_t sequence;
   uint8_t cargo_counts;
   uint8_t last_frame[VISION_FRAME_SIZE];

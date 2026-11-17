@@ -16,6 +16,17 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-ROUND-RESUME-20261117：下位已配套并构建，未烧录
+
+核对RDK 8660064786c6ef970e9d584531decf0e030db8d9 的短4/短3处理、恢复报文和串口STOP串号校验。固定入口blob 4f43d35ebfd7286f51738fa945ae09eb2efe8778，合同blob 3f1f927bc67b6f76184c4694cfadcf4870d467a1。
+
+- 原0x11新增0x52恢复配置，须已有开赛配置且停车重置后，原阵营和出发区一致，保留位合法，SEQ 0/1/2三帧完整payload一致。P5纳入一致性比较，最近物理STOP串号由RDK串口转发核对。普通CONFIG仍一帧确认，回包沿原格式与次数；接受后的重复不会开始第二次起步。
+- ABORT待处理时配置不能完成确认，RearmConfig丢弃旧确认和待发ACK。Task同轮消费停车时同步撤掉旧快照的配置可用标记。之后沿原任务初始化清除未完成动作、审核、滤除armed、载荷与扫障寄存，走原收纳和起步脱离。
+- 原起步前恢复首绿资格；首绿未完或投送趟数奇数使用原正向，首绿已完且偶数使用反向，低8位0按正偶数处理。进攻标志保存在已接受配置中，是否重做、比赛计时、返①/③由上位决定；原空爪step13→14→12已具备。无新倒计时、握手或滤后复审。
+- 真实C解析器通过合同18帧、错阵营/区号、混合配置、缺序号、保留位、CRC、重复和中途停车检查。生产Task硬件替身通过红蓝各5种恢复状态、旧动作清空、停车优先和新比赛初始化；原协议27项通过。
+- NormalRun/MotionDebug编译链接通过，build_git=2db6858/dirty1，包含原工作区独立改动。NormalRun ID=417176f999ebe35a0a2f5dd0ad12034400a6f0b7c8cbe1b791b46aecd928fe36。MotionDebug ID=4e7149aa425fdab1d5356391fa298cfcf5f9ae01a76168e4958d8efec73d8ae4。未烧录或读板端actual，待与RDK联合实测。
+- [恢复配置合同及18条交接帧](contracts/f405_round_resume_20261117.json)。
+
 ## MATCH-THREE-MATERIAL-FILTER-20261117：下位已配套并构建，未烧录
 
 按用户本轮“根据上位机的代码修改代码”读取RDK功能及收尾分支，均为47f1db80f9c4b663264a4fe85f13fc2c44f3fa79。
