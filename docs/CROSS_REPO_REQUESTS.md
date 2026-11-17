@@ -16,7 +16,18 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
-## MATCH-WHEEL-POLICY-RESTORE-20261118：用户请求上位修复禁轮恢复遗漏，已复现、待接收实施
+## MATCH-WHEEL-POLICY-RESTORE-20261118：上位519fb57已修复，本端核对兼容，无需下位修改
+
+按用户本轮要求，已等上位本轮结束并提交推送后读取`codex/gamepad-teleop` / `519fb578ce8a7e869baf6e57461d2bc2c19553c8`。已核对实际run_competition_rescue.py blob `3070f8d53a229cfa679005cd3b7e2188799bb6cf`、固定交接blob `faf7b2abede62e465f475cbd18cec4a13b345891`及本端当前Task.c；本次控制代码和协议无需新配套，只更新相关状态，不恢复其他历史任务。
+
+- 上位发布器在分配下一动作前传入本task/action实际已发出的accepted_request，以原回包确认当前完成步骤，不把待发的第12步或旧第11步DONE作为离区证据。扫障PICKUP_READY=12须匹配接受/完成、mode3、空爪，普通等图HOLD才可沿该完成恢复轮式输入；暂停/停止/故障/禁止发布和接触中的步骤保持原含义。
+- 下位step12原搜索姿态函数本就先完成姿态/开爪/行程，再进入TASK_SEARCH，保留accepted opcode20及task/action并设置completed；状态发布为mode3、原ACCEPT/DONE及实际空爪，满足上位新逻辑。step14 A2也沿该搜索姿态完成出口承接。
+- 投送后的RETURN mode3完成回包，以及已接受的空爪搜索点13/14/12由上位补齐恢复；下位mode16期间原RETURN只缓存/ACK，先完成原退出再到mode17/搜索。空爪搜索点原入口不在未完成投送退出时接步13。无需为恢复定位策略放宽入口、提前DONE或增加下位字段。
+- 上位此次仅改LocalizationWheelPolicy及发布调用，原单向策略通道、F405命令/状态布局及行车动作不变；本端现有U1、aux4、动作归属修补和速度参数保持。
+
+本轮必要检查为上述生产源码与实际状态发布/入口核对；上位已报告5项直接检查通过，本端不冒称重跑，也未重复原全套测试、编译或烧录。上位是否已重开加载、地面定位改善尚未验证；本端运行代码未改，HEAD/构建/板端actual仍分别按原记录，actual本轮未读。[历史复现与本次接续状态](F405_UPPER_LOWER_FLOW_AUDIT_20261118.md)。
+
+### 原请求与复现依据（971768f发布时的状态，已由上方回执接续）
 
 用户本轮明确要求将此问题写入交接，供上位机修改。此前“定位仅分析”的记录是当时状态；本条新增的修复请求仅针对**业务阶段退出后恢复原轮式定位输入**。当前只发布问题与范围，尚无上位实施/部署回执，不把交接发布视为已修复。
 
@@ -24,7 +35,7 @@
 
 这里“禁轮”指上位定位策略的`suppressed=true`，即暂停使用轮编码器数据辅助定位，车辆运动和电机速度闭环仍正常。进入安全区推物/接触围栏期间沿原策略屏蔽轮式输入，离开并接回正常阶段后应恢复。漏恢复会使后续搜索/靠近继续缺少轮式定位后备；这不证明全部雷达/T265定位误差都由此引起。
 
-2026-11-18再次只读核对上位最新`codex/gamepad-teleop` / `cfc697b2ece4f3d906bd3793d182926045433eb1`，`competition_rescue/run_competition_rescue.py` blob `7d1075f2241772f682c2c7ddbc699e230ed4609b`的`LocalizationWheelPolicy.update`（约1504行）。原恢复条件只有`face_center`、`later_navigation`和默认关闭候选的`deflect_motion`；`later_navigation`只认可RETURN_CENTER/NAVIGATE操作码，没有接住原扫障step20回搜索的出口。对应上位TODO53。详见[已提交的检查/复现记录](F405_UPPER_LOWER_FLOW_AUDIT_20261118.md#仍未解决上位禁轮策略恢复遗漏)。
+原请求发布时只读核对上位`codex/gamepad-teleop` / `cfc697b2ece4f3d906bd3793d182926045433eb1`，`competition_rescue/run_competition_rescue.py` blob `7d1075f2241772f682c2c7ddbc699e230ed4609b`的`LocalizationWheelPolicy.update`（约1504行）。当时恢复条件只有`face_center`、`later_navigation`和默认关闭候选的`deflect_motion`；`later_navigation`只认可RETURN_CENTER/NAVIGATE操作码，没有接住原扫障step20回搜索的出口。对应上位TODO53。详见[检查/复现记录及后续修复状态](F405_UPPER_LOWER_FLOW_AUDIT_20261118.md)。
 
 ### 已复现的路径与期望
 
@@ -41,7 +52,7 @@
 - 不夹带雷达阈值/墙线匹配、T265融合权重、地图、起点、底盘速度或机构动作修改；不为此新增下位协议、等待、新鲜度检查、高频日志、停车/FAULT或额外硬件动作。本项不要求下位修改/重编译/烧录。
 - 只做该恢复出口和原禁轮保持的必要针对性检查，优先复用现有夹具；不新增独立测试程序任务、不要求整套历史回归。回传实际修改的上位提交、检查结果、尚未验证项和是否已加载运行；实车定位效果与代码恢复分别说明。
 
-本端本轮只更新交接文档，未修改两端运行代码、未启动设备。待上位接收、核对并实施。
+原请求发布时本端只更新交接文档，未修改两端运行代码、未启动设备；上位后续已在519fb57实施，最新配套及待验状态见本节开头。
 
 ## FLOW-HANDOFF-AUDIT-20261118：等上位本轮完成后核对并修补动作归属，未烧录
 
