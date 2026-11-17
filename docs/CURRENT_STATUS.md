@@ -1,5 +1,14 @@
 # 当前状态：F405 烧录入口
 
+2026-11-17 MATCH-SWEEP-STAGING-TWO-POINTS：补位/重新对准已配套并构建，未烧录。
+- 核对RDK b0237c5实际state_machine/runner/obstacle_route/protocol：两档扫障点由上位选择，原step5/6实时H/D及step8固定1000mm可直接承接。
+- 下位原ALIGN状态新增同批闭爪新action的STAGE NAV入口，要求真实合法运输审核或明确bit5且正在使用的已确认载荷；保留载荷/目的地，清旧ALIGN/DONE，沿原D0及mode48/定位/视觉对准出口。
+- 已视觉对准后，新action定位ALIGN重建原对准状态，不能继承旧视觉完成；同action重发不重启。原速度/PID/舵机、审核与相机等待保持，没有新增时间门/ISR/FAULT。
+- 改前复现补位被拒；改后16条红蓝/载荷/复用补位链、4条重新对准、12条拒绝边界通过；原缺框复用/撤销/取消回归通过。26组上位生成报文与本地Python及真实C解析器一致，临时夹具已恢复。
+- NormalRun/MotionDebug编译链接通过；build_git=eb879c6/dirty1（包含原工作区独立改动），固件指纹分别608959a2…e8407377、06ec709d…6dd777c8。本轮未连接设备、烧录或读actual，地面效果未验证。
+- 构建自动备份曾误将临时目录/独立改动推到2b75d33；eb879c6后续提交已恢复远端这些路径至原状态，本地文件与原暂存保留，未改写历史。两个构建缓存现设APP_AUTO_BACKUP=OFF，本轮后续按范围提交。
+  [配套回执与完整构建身份](CROSS_REPO_REQUESTS.md)、[接口及26组合成示例](contracts/f405_sweep_staging_20261117.json)。
+
 2026-11-16收到上位39d2b67实跑证据，撤回21:28局“过滤中断残留82°”解释。
 - 本端独立校验394条原始报文/197组状态配对：四次过滤均同task/action由50→22并DONE；黑块19429批未进入过滤，滑移发生在361.634→362.475秒普通NAV窗口。
 - 已匹配板端的actual6b05d94/8f2ce629…ELF反汇编确认正常完成先调用Servo_SetAngle(1,85)，再进入mode22；flags82不是舵机角度。

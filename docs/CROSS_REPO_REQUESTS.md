@@ -1,6 +1,6 @@
 # 两端当前要求与回执
 
-更新日期为 2026-11-16，时区 Asia/Shanghai。
+更新日期为 2026-11-17，时区 Asia/Shanghai。
 
 ## 固定入口与协作方式
 
@@ -15,6 +15,40 @@
 人保留知情、拒绝和选择权。已经明确批准的范围直接推进，超范围的重要取舍先由人决定，AI 不能互相授权。
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
+
+## MATCH-SWEEP-STAGING-TWO-POINTS-20261117：下位已配套、构建，未烧录
+
+按用户本轮“对照上位机的代码，修改代码”核对RDK codex/gamepad-teleop：
+源提交b0237c574298c1aca26559d45e57bf3d87b2bbf9；固定入口blob 4b154dbe38379600786589a37bf00bd9c39641f7；
+state_machine.py 49228ecb0e01857a606417a69dca77862197d4f1；
+protocol.py 2d4b569b30dadc06d5df500ca32ca0418b661f25；
+obstacle_route.py 0d400ce059f2f3dda46b82f933a91a38152dc734；
+run_competition_rescue.py 22af6eab6c3d3bedc7c8123856ec519af5f786af。
+
+### 实际差异及最小配套
+
+- 上位_ensure_delivery_staging保留视觉修正后的X，补到红Y=.54/蓝Y=-.54；_navigation_command发送原STAGE NAV，普通形式不带旧直行/最终航向位，已有下位解析器支持；复用载荷时保留bit5。
+- 旧下位ALIGN状态拒绝这条NAV；旧safe_align_visual_confirmed还阻止后续新定位ALIGN。本轮只改Task.c两处承接和补位归属约束，协议布局/解析器不需修改。
+- TASK_ALIGN_SAFE_ZONE中，同任务新action（保留原编号溢出连续性）、闭爪、非藏点、同目的地，真实audit_received/valid或明确bit5且confirmed_load.active/available，才能接合法STAGE NAV。补位源frame=0；错归属/旧action/无许可不接。
+- 接受沿task_enter(TASK_NAVIGATE)停止旧对准输出并清旧safe_align_done/visual_confirmed、distance_done等状态；新action清旧COMPLETED。保留实际载荷和目的地，不开爪、不计送达、不制造审核样本。
+- 后续NAV同action仍原H/D实时更新，PAUSE/恢复保持本段；D0完成后普通路径回mode48真实审核，已明确复用载荷沿原定位ALIGN入口。没有增加准入等待或新的完成握手。
+- ALIGN状态已视觉完成后，同批新action合法定位ALIGN调用原task_begin_safe_align重建对准；115/120相机形式沿原处理。旧视觉DONE不能完成新动作，重复同action定位ALIGN只确认，旧视觉action不能抢回。
+- 该入口使用原内部ALIGN状态（线上未完成10/完成11），不把线上10一概当导航。已进入ENTER的TASK_NAVIGATE不会被补位NAV取消；原新上位“已发ENTER不撤回”约束保持。
+- 两档扫障点红(-.56,.91)/蓝(.56,-.91)与红(-.56,.76)/蓝(.56,-.76)只由上位计算；现有step5/6已经消费实时D/H，step8仍固定1000。下位不增加坐标常量、不放开1150，不恢复抽障/挤障。
+- 上位已撤回的20cm圆/整段路径检查未纳入本次；本地没有该候选。未增加ISR、高频诊断、时间/新鲜度门、普通FAULT，原审核/速度/PID/舵机/相机机械等待保持。
+
+### 检查、提交与部署
+
+- 原Task改前运行同一夹具，在ALIGN→STAGE补位入口被拒，已复现。改后16条红蓝×绿/黑/橙/混合×真实/复用载荷链通过，覆盖补位→同action更新→PAUSE/恢复→D0→原复审或复用ALIGN→视觉→ENTER，以及ENTER后拒接补位。
+- 4条红蓝/真实或复用的直接重新定位对准路径通过，检查旧DONE清除、115°相机、同action幂等、旧视觉action拒绝。12条报文参数/阵营/任务/动作/开爪/许可撤销边界通过。
+- 复用原缺框检查：16条已有运输路径、18条明确取消路径及真实矛盾撤销/原生命周期/单次相机微调/旧单橙入口通过。
+- 使用该RDK提交实际protocol.py及obstacle_route.py生成26组context+command；与本地构帧逐字节一致，实际vision.c解析全部通过。包含两档step5/6及固定step8，不是现场轨迹。
+- 临时修改的原C夹具已恢复，没有提交新测试程序。[本端接口与合成示例](contracts/f405_sweep_staging_20261117.json)记录本次状态入口变化。
+- 两固件目标编译链接通过，build_git=eb879c6/dirty1；构建包含原本地WheelCheck独立改动及Task空白，不能当干净提交构建。
+  NormalRun firmware ID=608959a2ae8199fa0d99b7dfe9a2363c5f08d5d47eb5b9697aeaa6e4e8407377；
+  MotionDebug firmware ID=06ec709d3c3ee2af6c691e2ebd52dc4979430c5f0671e4aa41a1d09c6dd777c8。
+- NormalRun首次构建触发仓库原自动备份，把临时目录、IDE/WheelCheck独立改动一并推入2b75d33。后续eb879c6已恢复远端无关路径至本轮前c2ff087状态；与c2ff087的净代码差异仅Task.c。保留了所有本地文件及原IDE暂存，未强推或改写历史，误备份提交仍在历史中。两个本地构建缓存已关闭APP_AUTO_BACKUP，随后范围提交；未改仓库构建脚本。
+- 本轮未连接设备、烧录、复位、发动作或读取板端actual。需要部署新NormalRun配套RDK b0237c5后验证地面补位/两档扫障；不宣称上位发车无确认问题或实车精度已解决。
 
 ## MATCH-FILTER-HEIGHT-EVIDENCE-20261116：已核对原帧与实际镜像，现场解释更正
 
