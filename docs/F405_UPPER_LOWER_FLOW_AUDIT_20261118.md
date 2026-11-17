@@ -27,6 +27,8 @@
 
 ## 仍未解决：上位禁轮策略恢复遗漏
 
+2026-11-18后续：用户已要求形成上位修复交接，固定入口新增`MATCH-WHEEL-POLICY-RESTORE-20261118`，明确修复范围及回执要求；此前“定位仅分析”是审查时状态，本项现为待上位接收实施，雷达/T265等其他定位改动仍不扩展。尚未收到修复或加载运行回执。
+
 位置为当前`competition_rescue/run_competition_rescue.py`的`LocalizationWheelPolicy.update`，亦是上位TODO53已记录的问题。当前恢复只覆盖mode17、部分RETURN/NAV以及默认关闭的抽障候选；以下原业务阶段没有匹配到恢复分支：
 
 `ALIGN_SAFE_ZONE -> OBSTACLE_ROUTE -> OBSTACLE_PICKUP -> SEARCH(mode3/accepted20) -> APPROACH(mode20/accepted9)`。

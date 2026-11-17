@@ -16,6 +16,33 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-WHEEL-POLICY-RESTORE-20261118：用户请求上位修复禁轮恢复遗漏，已复现、待接收实施
+
+用户本轮明确要求将此问题写入交接，供上位机修改。此前“定位仅分析”的记录是当时状态；本条新增的修复请求仅针对**业务阶段退出后恢复原轮式定位输入**。当前只发布问题与范围，尚无上位实施/部署回执，不把交接发布视为已修复。
+
+### 含义、源代码与影响
+
+这里“禁轮”指上位定位策略的`suppressed=true`，即暂停使用轮编码器数据辅助定位，车辆运动和电机速度闭环仍正常。进入安全区推物/接触围栏期间沿原策略屏蔽轮式输入，离开并接回正常阶段后应恢复。漏恢复会使后续搜索/靠近继续缺少轮式定位后备；这不证明全部雷达/T265定位误差都由此引起。
+
+2026-11-18再次只读核对上位最新`codex/gamepad-teleop` / `cfc697b2ece4f3d906bd3793d182926045433eb1`，`competition_rescue/run_competition_rescue.py` blob `7d1075f2241772f682c2c7ddbc699e230ed4609b`的`LocalizationWheelPolicy.update`（约1504行）。原恢复条件只有`face_center`、`later_navigation`和默认关闭候选的`deflect_motion`；`later_navigation`只认可RETURN_CENTER/NAVIGATE操作码，没有接住原扫障step20回搜索的出口。对应上位TODO53。详见[已提交的检查/复现记录](F405_UPPER_LOWER_FLOW_AUDIT_20261118.md#仍未解决上位禁轮策略恢复遗漏)。
+
+### 已复现的路径与期望
+
+1. 同会话进入`ALIGN_SAFE_ZONE_BY_POSE`，策略发`suppressed=true`，符合原设计。
+2. 经`OBSTACLE_ROUTE`完成原扫障，再进入`OBSTACLE_PICKUP`。
+3. 返回`SEARCH`，匹配任务回包为mode3、accepted_command=20（BULLDOZER_STEP）；随后进入`APPROACH`，mode20、accepted_command=9。
+4. 提取当前真实生产类进行离线阶段回放、用替身接收策略包，结果仍只有禁用包，`suppressed`一直为true，没有`normal_motion`恢复。此复现未连接真实socket、SDK、相机或串口。
+
+期望：上位核对原扫障/找回的实际退出交接，在确认本轮已脱离接触区并回到普通运动的原动作出口，恢复原轮式定位输入、沿现有单向策略通道发`suppressed=false` / `normal_motion`，随后搜索和靠近不继承旧禁轮。不要仅看任意SEARCH/mode3字样就放行旧回包；复用原会话、任务/动作和真实完成交接，不增加资格等待或新握手。
+
+### 最小范围与回执
+
+- 仅补齐上位阶段恢复遗漏；保留安全区内原禁轮，以及mode16尚未完成退出、HOLD/PAUSE、恢复/FAULT和人工STOP的原含义。不能用全局取消禁轮或无条件进入SEARCH就清状态代替修复。
+- 不夹带雷达阈值/墙线匹配、T265融合权重、地图、起点、底盘速度或机构动作修改；不为此新增下位协议、等待、新鲜度检查、高频日志、停车/FAULT或额外硬件动作。本项不要求下位修改/重编译/烧录。
+- 只做该恢复出口和原禁轮保持的必要针对性检查，优先复用现有夹具；不新增独立测试程序任务、不要求整套历史回归。回传实际修改的上位提交、检查结果、尚未验证项和是否已加载运行；实车定位效果与代码恢复分别说明。
+
+本端本轮只更新交接文档，未修改两端运行代码、未启动设备。待上位接收、核对并实施。
+
 ## FLOW-HANDOFF-AUDIT-20261118：等上位本轮完成后核对并修补动作归属，未烧录
 
 用户本轮要求对照最新上位、等其提交完成后再改，并详细检查同类bug，只做必要测试。已确认上位本轮结束且最终推送cfc697b2ece4f3d906bd3793d182926045433eb1；96936aa的52/53上下文匹配修复、fd1fea8的闭爪绿黑重叠观察例外均无新增下位接口，cfc697b仅定位多局分析。本端57ddffe的U1/视觉横移及更早aux4/运输角/取消附加10保持，不因上位旧回执未更新而重复改动。

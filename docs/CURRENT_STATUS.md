@@ -1,5 +1,9 @@
 # 当前状态：F405 烧录入口
 
+2026-11-18 MATCH-WHEEL-POLICY-RESTORE：用户请求上位修复禁轮恢复遗漏，已发布专门交接、待上位实施。
+- 固定入口已写明当前源cfc697b、LocalizationWheelPolicy.update位置、扫障→找回→SEARCH(mode3/op20)→APPROACH(mode20/op9)的复现，以及恢复normal_motion的期望和最小范围。禁轮是定位输入策略，不是电机停转。
+- 本次只补文档；上位尚无实施/加载运行回执。雷达阈值/T265融合及下位代码不在本请求范围，不追加整套测试。[修复交接](CROSS_REPO_REQUESTS.md#match-wheel-policy-restore-20261118用户请求上位修复禁轮恢复遗漏已复现待接收实施)。
+
 2026-11-18 上下位同类交接检查：等上位cfc697b完成提交后，修复一个下位动作归属缺陷，NormalRun已构建，未烧录。
 - 上位96936aa的52/53实际task/action匹配传递、fd1fea8的闭爪绿黑重叠观察修复不要求新下位协议；现有aux1同角续段/aux0最终140度、三件材料审核可接续。
 - 复现并修复REMOTE_ACTION同opcode分支把新action直接ACK、沿用旧phase/DONE的问题。仅原task/action可重发确认；合法连续step13及新动作原入口保持，无新等待/FAULT/握手。
