@@ -84,6 +84,7 @@ APPROACH_RANGE_PRE_GRAB = 2
 APPROACH_RANGE_ZONE_VIEW = 3
 APPROACH_ORANGE_TOP_VIEW = 4
 SEPARATION_ORANGE_CORE_82 = 8200
+RELEASE_SAME_SIDE_BLUE = 1
 MODE_APPROACH_RANGE_WAIT = 52
 MODE_APPROACH_RANGE_MOVE = 53
 CMD_FIRST_GREEN_BUMP = 0x20
@@ -369,6 +370,9 @@ def mission_frame(
                 raise ValueError("invalid 82-degree separation flags")
     if command == CMD_RELEASE_BOTH and heading_cdeg == SEPARATION_ORANGE_CORE_82:
         raise ValueError("release both cannot request retained-orange lift")
+    if command == CMD_RELEASE_BOTH and heading_cdeg == RELEASE_SAME_SIDE_BLUE:
+        if target_x_mm or target_y_mm or flags & ~(CMD_VALID | CMD_RED_SIDE):
+            raise ValueError("same-side blue abandonment requires zero motion payload")
     if command == CMD_BULLDOZER_STEP and not _bulldozer_payload_valid(
             flags, target_x_mm, target_y_mm, heading_cdeg):
         raise ValueError("invalid bulldozer step payload")

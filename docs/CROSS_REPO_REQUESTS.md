@@ -16,6 +16,18 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-SAME-SIDE-BLUE-ABANDON-20261118 / MATCH-SAFE-ALIGN-LATERAL-270-400-20261118：已实施并构建，未烧录
+
+按用户要求，先以只读状态确认上位本轮已结束且提交推送，再核对`danmo-teng/shijue_fangan`的`codex/gamepad-teleop` ebca61cabcbf6013d680b4eb11af1e88ca1a9cc0。相对d92f451只有df449f3同侧混蓝、cc30054相机故障恢复及ebca61c速度交接需要本轮评估；相机节点200ms故障重试/阶段日志属于RDK，不在F405增加计时、巡检、握手或诊断。本端以f1dd046为基线只实施以下两项。
+
+- **同侧混蓝U1：** 在原RELEASE_BOTH增加独立VISION_RELEASE_SAME_SIDE_BLUE=1，A/B0、flags仅VALID/阵营。Task只接同任务合法新action（保留原编号溢出）、原普通非法非空双开入口、真实received/host_stable/!valid且含DANGER、非初始搬堆/非扫障专用释放。完整左右组成由上位判定；下位不从UNKNOWN猜载荷，也不因四件溢出的原UNKNOWN位拒绝明确放弃，不改实际counts/total/分离次数。
+- **脱离与动作归属：** 沿原task_begin_capture_escape张爪、300mm后退/原300mm/s及原+90°转向，仅U1锁定capture_escape_return_center=false，因此已有两次分离仍完成90°；不追加后退、返点、相机/升降动作或固定等待。退距和转向未结束前保持mode24且无DONE，完成后原空爪SEARCH/mode3/DONE清本批。当前动作原因与task/action配对，HOLD/PAUSE不能丢失；重复包仅确认，不重开机构或归零轮程，同action不能换U0/U1，新动作不能抢在脱离中重启。ABORT沿原停车收纳优先；U0原次数相关出口保持。
+- **视觉横移速度：** 增加APP_SAFE_ALIGN_LATERAL_MIN_MM_S=270、MAX=400，只替换safe_align_visual_confirmed && safe_align_lateral_active的上下限。原每像素1mm/s、>64启动/≤32停止、左右方向、航向及7/24、17/24上位目标保持；APP_NAV_FINE_MIN/MAX仍250/360，其他定位/扫障/转向速度不变。
+
+仅5组直接检查通过：四个原审核入口及红蓝/左右、两次分离及四件溢出，真实机构替身推进张爪→300mm→90°→mode3/DONE；重复/HOLD、PAUSE恢复和STOP优先；归属/稳定/合法/空爪/危险标志/搬堆等入口与U0旧出口；视觉横移实际分支65/250/300/400/600px对应270/270/300/400/400mm/s及双向，共用限值保持；上位4组实际帧与两端生产构帧器逐字节一致，经真实vision.c解析及非法U1形状检查通过。临时夹具只留本地，未新增独立测试程序或跑整套回归。[4组上位原帧与接口来源](contracts/f405_same_side_blue_abandon_20261118.json)。
+
+NormalRun/MotionDebug均编译链接通过，APP_AUTO_BACKUP=OFF。build_git=f1dd046/dirty1，包含原独立WheelCheck及Task空白工作区内容，未将这些改动夹带到本次提交。NormalRun firmware ID=835258cb797d2f791d3318547f0f4ec3e29461e67fb02d0f0c3b056e4b636917；MotionDebug firmware ID=54ac7211079b95ebff3539510fccc8c33550c04b9f14a659064a171e62532a08。未连接、烧录、复位、发物理动作或读取actual，源码/模拟及DONE不等于车身退距、转角或横移效果已验收。旧aux3上位未启用和归档0x15抽障不在本次实施范围。
+
 ## MATCH-CANCEL-ORANGE-EXTRA-GRIP-20261118：一行参数已实施并构建，未烧录
 
 按用户要求等上位本轮完成并推送后，核对`codex/gamepad-teleop` d92f45183a9136a4e1dc7585123013f3b99fefbe及先前已提交的取消交接a23e731205f9574e7686a7e26a93db3464b64951；固定入口blob795ece2db12685a958f2c45cb51344aa278e9d42。当前下位c6480b3仍保留附加10，现仅将APP_CLAW_SEPARATE_ORANGE_EXTRA_DEG=10U改为0U。

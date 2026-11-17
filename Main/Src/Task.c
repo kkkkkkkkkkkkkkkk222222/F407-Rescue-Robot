@@ -213,6 +213,7 @@ typedef struct {
   uint8_t opcode, flags;
   uint32_t last_command_rx_ms, last_visual_update_ms, vision_frame;
   bool valid, visual_valid, completed, cancelled;
+  bool same_side_blue_release; /* Last action identity, preserved across HOLD. */
   bool rejection_valid;
   uint16_t rejected_action_id;
 } TaskContext;
@@ -4381,8 +4382,8 @@ static void task_process_safe_align(uint32_t now_ms)
   if (safe_align_visual_confirmed && safe_align_lateral_active) {
     safe_align_done = false;
     accepted_context.completed = false;
-    const float speed_mm_s = fminf(APP_NAV_FINE_MAX_SPEED_MM_S,
-        fmaxf(APP_NAV_FINE_MIN_SPEED_MM_S,
+    const float speed_mm_s = fminf(APP_SAFE_ALIGN_LATERAL_MAX_MM_S,
+        fmaxf(APP_SAFE_ALIGN_LATERAL_MIN_MM_S,
             task_abs((float)safe_align_pixel_error_px) * APP_SAFE_ALIGN_LATERAL_MM_S_PER_PX));
     /* MoveAngle's +90 is body-left. A target to the right needs -90. */
     task_status.motors_active = Motor_MoveAngleHeading(speed_mm_s,
@@ -7532,6 +7533,30 @@ static bool task_capture_cancel_command(const VisionMissionCommand *command)
       command->target_x_mm == 0 && command->target_y_mm == 0 && command->heading_cdeg == 0U;
 }
 
+static bool task_same_side_blue_release_command(const VisionMissionCommand *command)
+{
+  return command->command == VISION_CMD_RELEASE_BOTH &&
+      command->flags == (VISION_CMD_VALID | (command->flags & VISION_CMD_RED_SIDE)) &&
+      task_side_flag_valid(command->flags) && command->vision_frame == 0U &&
+      command->target_x_mm == 0 && command->target_y_mm == 0 &&
+      command->heading_cdeg == VISION_RELEASE_SAME_SIDE_BLUE;
+}
+
+static bool task_same_side_blue_release_allowed(void)
+{
+  const bool ordinary_pickup = state == TASK_GRAB_OBSERVE ||
+      state == TASK_DISPERSE_READY || state == TASK_POST_GRAB_AUDIT ||
+      state == TASK_TRANSPORT_AUDIT ||
+      (state == TASK_APPROACH && approach_phase == APPROACH_CLUSTER_CAPTURE) ||
+      (state == TASK_REMOTE_ACTION && remote_action.done && cargo_recheck_pending);
+  /* U1 carries the host's complete side histogram decision. UNKNOWN can be
+   * the original side-count overflow encoding, so it is not a veto here. */
+  return ordinary_pickup && !audit_initial_stash && !route_to_stash &&
+      !safe_sweep_recheck_pending && audit_received && audit_host_stable &&
+      !audit_valid && audit_last_total_count > 0U &&
+      (audit_last_flags & VISION_AUDIT_DANGER_PRESENT) != 0U;
+}
+
 static bool task_dynamic_opcode(uint8_t opcode)
 {
   return opcode == VISION_CMD_APPROACH_TARGET || opcode == VISION_CMD_CARGO_AUDIT ||
@@ -7637,6 +7662,16 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
       accepted_context.action_id == UINT16_MAX && incoming.action_id == 0U;
   const bool new_target = new_task && !task_rollover;
   const bool new_action = new_task || incoming.action_id != accepted_context.action_id;
+  const bool same_side_blue = incoming.command == VISION_CMD_RELEASE_BOTH &&
+      incoming.heading_cdeg == VISION_RELEASE_SAME_SIDE_BLUE;
+  const bool blue_replay = !new_action && accepted_context.same_side_blue_release &&
+      accepted_context.opcode == VISION_CMD_RELEASE_BOTH &&
+      task_same_side_blue_release_command(&incoming) &&
+      ((state == TASK_APPROACH_RECOVER && capture_escape_active) || state == TASK_SEARCH);
+  if (same_side_blue && (new_target || !task_same_side_blue_release_command(&incoming) ||
+      (new_action ? !task_same_side_blue_release_allowed() : !blue_replay))) goto rejected;
+  if (!new_action && incoming.command == VISION_CMD_RELEASE_BOTH &&
+      accepted_context.same_side_blue_release != same_side_blue) goto rejected;
   /* A staging repair is a new movement of the same held batch. Existing
    * NAV packets still update H/D in place after this transition. */
   if (state == TASK_ALIGN_SAFE_ZONE && incoming.command == VISION_CMD_NAVIGATE_WAYPOINT &&
@@ -7645,8 +7680,10 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
   const bool cancel_replay = !new_action && task_capture_cancel_command(&incoming) &&
       accepted_context.opcode == VISION_CMD_RELEASE_BOTH &&
       ((state == TASK_APPROACH_RECOVER && capture_escape_active) || state == TASK_SEARCH);
+  const bool release_replay = cancel_replay || blue_replay;
   if (incoming.command == VISION_CMD_RELEASE_BOTH && task_capture_cancel_state() &&
-      incoming.vision_frame == 0U && (!cancel_capture || new_target || !new_action)) goto rejected;
+      !same_side_blue && incoming.vision_frame == 0U &&
+      (!cancel_capture || new_target || !new_action)) goto rejected;
   const bool reuse_load = (incoming.command == VISION_CMD_NAVIGATE_WAYPOINT ||
       incoming.command == VISION_CMD_ALIGN_SAFE_ZONE) &&
       (incoming.flags & VISION_CMD_REUSE_CONFIRMED_LOAD) != 0U;
@@ -7710,7 +7747,7 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
                 (incoming.flags != accepted_context.flags && !reuse_nav_toggle))) {
       goto rejected;
     }
-    if (!new_target && accepted_context.cancelled && !overlay && !cancel_replay &&
+    if (!new_target && accepted_context.cancelled && !overlay && !release_replay &&
         !(state == TASK_RECOVERY_WAIT && new_action) &&
         !(state == TASK_SEARCH && new_action && !task_status.gripper_closed &&
           incoming.command == VISION_CMD_BULLDOZER_STEP &&
@@ -7904,6 +7941,14 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     task_status.acknowledged_sequence = incoming.sequence;
     command_accepted = true;
     mission_paused = false;
+  } else if (same_side_blue && new_action) {
+    task_status.acknowledged_sequence = incoming.sequence;
+    command_accepted = true;
+    task_begin_capture_escape(now_ms);
+    /* This reason always finishes the original quarter-turn, even after two
+     * separations. Keep the real attempt count and original 300 mm retreat. */
+    capture_escape_return_center = false;
+    mission_paused = false;
   } else if (cancel_capture) {
     task_status.acknowledged_sequence = incoming.sequence;
     command_accepted = true;
@@ -7980,6 +8025,7 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     accepted_context.opcode = incoming.command;
     accepted_context.flags = incoming.flags;
     accepted_context.completed = false;
+    accepted_context.same_side_blue_release = same_side_blue;
     if (incoming.command == VISION_CMD_APPROACH_TARGET) app_visual_valid = false;
   } else if (reuse_nav_toggle) {
     accepted_context.flags = incoming.flags;
