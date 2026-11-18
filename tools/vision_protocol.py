@@ -74,6 +74,7 @@ CMD_ORANGE_GATE_FILTER = 0x16
 
 CMD_VALID = 0x01
 CMD_DRIVE_STRAIGHT = 0x02
+CMD_KEEP_ORANGE = 0x02  # Selective separation with a retained side.
 CMD_USE_FINAL_HEADING = 0x04
 CMD_RED_SIDE = 0x08
 CMD_DISTANCE_VALID = 0x10
@@ -372,16 +373,18 @@ def mission_frame(
     if command in (CMD_DISPERSE_PILE, CMD_RELEASE_LEFT, CMD_RELEASE_RIGHT):
         if target_x_mm or target_y_mm or heading_cdeg not in (0, SEPARATION_ORANGE_CORE_82):
             raise ValueError("invalid separation lift payload")
+        if command == CMD_DISPERSE_PILE and flags & CMD_KEEP_ORANGE and not flags & CMD_SIDE_VALID:
+            raise ValueError("orange separation requires an explicit retained side")
         if heading_cdeg == SEPARATION_ORANGE_CORE_82:
-            permitted = CMD_VALID | CMD_RED_SIDE
+            permitted = CMD_VALID | CMD_RED_SIDE | CMD_KEEP_ORANGE
             if command == CMD_DISPERSE_PILE:
                 permitted |= CMD_SIDE_VALID | CMD_TARGET_RIGHT
                 if not flags & CMD_SIDE_VALID:
                     raise ValueError("82-degree separation requires an explicit retained side")
             if flags & ~permitted:
                 raise ValueError("invalid 82-degree separation flags")
-    if command == CMD_RELEASE_BOTH and heading_cdeg == SEPARATION_ORANGE_CORE_82:
-        raise ValueError("release both cannot request retained-orange lift")
+    if command == CMD_RELEASE_BOTH and (flags & CMD_KEEP_ORANGE or heading_cdeg == SEPARATION_ORANGE_CORE_82):
+        raise ValueError("release both has no retained orange side")
     if command == CMD_RELEASE_BOTH and heading_cdeg == RELEASE_SAME_SIDE_BLUE:
         if target_x_mm or target_y_mm or flags & ~(CMD_VALID | CMD_RED_SIDE):
             raise ValueError("same-side blue abandonment requires zero motion payload")

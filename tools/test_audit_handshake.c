@@ -246,25 +246,25 @@ static void test_quantity_grip_and_retry_budget(void)
   for (uint8_t single = 0U; single <= 1U; ++single) {
     prepare(); separation_audit(single, false);
     for (uint8_t attempt = 0U; attempt < 2U; ++attempt) {
-      assert(task_prepare_separation(1, 400U + attempt));
-      assert(separation_extra_close_deg == (single && attempt == 0U ? 20U : 5U));
+      assert(task_prepare_separation(1, false, 400U + attempt));
+      assert(separation_left_hold_angle == APP_CLAW_LEFT_TOUCH_ANGLE - (single && attempt == 0U ? 20U : 5U));
       assert(separation_turn_deg == 10.0f);
     }
-    assert(task_prepare_separation(-1, 410U) && separation_total_attempts == 3U);
-    assert(separation_extra_close_deg == 5U && !capture_escape_active);
+    assert(task_prepare_separation(-1, false, 410U) && separation_total_attempts == 3U);
+    assert(separation_left_hold_angle == APP_CLAW_LEFT_TOUCH_ANGLE - 5U && !capture_escape_active);
   }
   prepare(); separation_audit(false, false);
-  assert(task_prepare_separation(1, 400U) && separation_extra_close_deg == 5U);
+  assert(task_prepare_separation(1, false, 400U) && separation_left_hold_angle == APP_CLAW_LEFT_TOUCH_ANGLE - 5U);
   separation_audit_at(true, false, 400U);
-  assert(task_prepare_separation(-1, 800U) && separation_extra_close_deg == 5U);
+  assert(task_prepare_separation(-1, false, 800U) && separation_left_hold_angle == APP_CLAW_LEFT_TOUCH_ANGLE - 5U);
   assert(separation_total_attempts == 2U && separation_keep_side == -1);
   prepare(); separation_audit(true, true);
   assert(audit_single_side_mask == 0U);
-  assert(task_prepare_separation(1, 400U) && separation_extra_close_deg == 5U);
+  assert(task_prepare_separation(1, false, 400U) && separation_left_hold_angle == APP_CLAW_LEFT_TOUCH_ANGLE - 5U);
   prepare(); separation_audit(true, false);
   audit_last_counts = 1U | (3U << 2U);
   audit_last_total_count = 4U;
-  assert(task_prepare_separation(1, 400U) && separation_extra_close_deg == 10U);
+  assert(task_prepare_separation(1, false, 400U) && separation_left_hold_angle == APP_CLAW_LEFT_TOUCH_ANGLE - 10U);
   assert(separation_turn_deg == 15.0f);
   prepare();
   task_enter(TASK_GRAB_OBSERVE, 0U);
@@ -277,7 +277,7 @@ static void test_quantity_grip_and_retry_budget(void)
   }
   (void)task_capture_observe(400U);
   assert(state == TASK_GRAB_OBSERVE && !capture_escape_active);
-  assert(task_prepare_separation(1, 410U) && separation_extra_close_deg == 5U);
+  assert(task_prepare_separation(1, false, 410U) && separation_left_hold_angle == APP_CLAW_LEFT_TOUCH_ANGLE - 5U);
   assert(separation_turn_deg == 10.0f);
   VisionMissionCommand c = injury_audit(1U);
   assert(task_single_side_mask(&c) == 1U);
@@ -304,7 +304,7 @@ static void test_ready_mode_reaudit_and_stale_grip_rejection(void)
   }
   assert(state == TASK_DISPERSE_READY && task_status.claw_visible && task_audit_state());
   assert(audit_received && !audit_valid && audit_single_side_mask == 1U);
-  assert(!task_prepare_separation(1, 900U));
+  assert(!task_prepare_separation(1, false, 900U));
   assert(task_status.command_reject_reason == TASK_COMMAND_REJECT_AUDIT && separation_total_attempts == 0U);
 }
 
@@ -383,7 +383,7 @@ static void test_separation_retransmission_is_one_round(void)
             440U, 3U);
   assert(mission_paused && separation_total_attempts == 1U);
   wire_send(c, 460U, 4U);
-  assert(!mission_paused && separation_total_attempts == 1U && separation_extra_close_deg == 20U);
+  assert(!mission_paused && separation_total_attempts == 1U && separation_left_hold_angle == APP_CLAW_LEFT_TOUCH_ANGLE - 20U);
 }
 
 static void test_third_failure_recloses_and_reopens_at_center(void)
@@ -1064,8 +1064,8 @@ int main(void)
   assert(state == TASK_POST_GRAB_AUDIT && !capture_escape_active);
   audit_host_stable = true;
   audit_evidence_ms = 5100U;
-  assert(task_prepare_separation(1, 5100U) && separation_total_attempts == 3U);
-  assert(separation_extra_close_deg == 5U);
+  assert(task_prepare_separation(1, false, 5100U) && separation_total_attempts == 3U);
+  assert(separation_left_hold_angle == APP_CLAW_LEFT_TOUCH_ANGLE - 5U);
   puts("two-frame cadence/STABLE, disabled escape, progressive separation PASS");
   return 0;
 #endif

@@ -339,7 +339,7 @@ static void task_capture_budget_sample(void);
 static bool task_capture_observe(uint32_t now_ms);
 static void task_begin_capture_escape(uint32_t now_ms);
 static void task_process_capture_escape(uint32_t now_ms);
-static bool task_prepare_separation(int8_t keep_side, uint32_t now_ms);
+static bool task_prepare_separation(int8_t keep_side, bool keep_orange, uint32_t now_ms);
 static uint8_t locked_cargo_counts;
 static uint8_t configured_color;
 static bool initialized;
@@ -3092,7 +3092,7 @@ static void task_process_pre_grab(uint32_t now_ms)
   }
 }
 
-static bool task_prepare_separation(int8_t keep_side, uint32_t now_ms)
+static bool task_prepare_separation(int8_t keep_side, bool keep_orange, uint32_t now_ms)
 {
   if (!audit_received || !audit_host_stable || audit_consistent_count < APP_AUDIT_REQUIRED_SAMPLES ||
       now_ms - audit_evidence_ms > APP_AUDIT_EVIDENCE_MAX_GAP_MS) {
@@ -3129,7 +3129,7 @@ static bool task_prepare_separation(int8_t keep_side, uint32_t now_ms)
   }
   const uint8_t keep_count = keep_side > 0 ? left_count : right_count;
   const uint8_t keep_class = keep_side > 0 ? audit_last_left_class : audit_last_right_class;
-  if (keep_count == 1U && keep_class == VISION_CARGO_INJURED) {
+  if (keep_orange || (keep_count == 1U && keep_class == VISION_CARGO_INJURED)) {
     Claw_SetOrangeSeparationHold(close_deg);
   } else {
     Claw_SetSeparationHold(close_deg);
@@ -7590,7 +7590,7 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
     }
     if (!first_green_bump && (command->flags & VISION_CMD_SIDE_VALID) != 0U &&
         !task_prepare_separation((command->flags & VISION_CMD_TARGET_RIGHT) ? -1 : 1,
-                                  now_ms)) {
+                                  (command->flags & VISION_CMD_KEEP_ORANGE) != 0U, now_ms)) {
       return;
     }
     task_status.acknowledged_sequence = command->sequence;
@@ -7629,7 +7629,7 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
             REMOTE_ACTION_RELEASE_RIGHT : REMOTE_ACTION_RELEASE_BOTH;
     if (action != REMOTE_ACTION_RELEASE_BOTH &&
         !task_prepare_separation(action == REMOTE_ACTION_RELEASE_LEFT ? -1 : 1,
-                                  now_ms)) {
+                                  (command->flags & VISION_CMD_KEEP_ORANGE) != 0U, now_ms)) {
       return;
     }
     task_status.acknowledged_sequence = command->sequence;

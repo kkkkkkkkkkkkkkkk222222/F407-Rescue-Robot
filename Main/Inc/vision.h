@@ -148,6 +148,7 @@
 /* DISPERSE_PILE bit5: first formal green only. Execute the short local
  * backoff/Touch/forward/back/open bump, then return directly to SEARCH. */
 #define VISION_CMD_FIRST_GREEN_BUMP  0x20U
+#define VISION_CMD_KEEP_ORANGE 0x02U /* Scoped to selective separation opcodes. */
 /* DISPERSE P1 bit4: near-claw keep-side evidence, never a cargo count/VALID. */
 #define VISION_CMD_DISPERSE_NEAR_KEEP 0x10U
 /* Bit 6 is opcode-specific in shijue_fangan's current protocol. */

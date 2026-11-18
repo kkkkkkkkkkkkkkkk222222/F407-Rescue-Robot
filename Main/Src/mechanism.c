@@ -25,46 +25,42 @@ static uint8_t claw_step;
 static uint32_t claw_step_ms;
 static uint32_t claw_wait_ms;
 static bool claw_done;
-static uint8_t separation_extra_close_deg;
+static uint8_t separation_left_hold_angle = APP_CLAW_LEFT_TOUCH_ANGLE;
 
 void Claw_RestartAction(void)
 {
   claw_action = CLAW_ACTION_NONE;
 }
 
-static void claw_set_separation_hold(uint8_t extra_close_deg, uint8_t limit_deg)
+static void claw_set_separation_angle(uint8_t left_angle)
 {
-  if (extra_close_deg > limit_deg) {
-    extra_close_deg = limit_deg;
-  }
-  if (extra_close_deg != separation_extra_close_deg) {
-    separation_extra_close_deg = extra_close_deg;
+  if (left_angle != separation_left_hold_angle) {
+    separation_left_hold_angle = left_angle;
     claw_action = CLAW_ACTION_NONE;
   }
 }
 
+static uint8_t claw_hold_angle(uint8_t close_deg)
+{
+  if (close_deg > APP_CLAW_SEPARATE_ONE_OR_TWO_CLOSE_DEG) {
+    close_deg = APP_CLAW_SEPARATE_ONE_OR_TWO_CLOSE_DEG;
+  }
+  return APP_CLAW_LEFT_TOUCH_ANGLE - close_deg;
+}
+
 void Claw_SetSeparationHold(uint8_t extra_close_deg)
 {
-  claw_set_separation_hold(extra_close_deg, APP_CLAW_SEPARATE_ONE_OR_TWO_CLOSE_DEG);
+  claw_set_separation_angle(claw_hold_angle(extra_close_deg));
 }
 
 void Claw_SetOrangeSeparationHold(uint8_t base_close_deg)
 {
-  if (base_close_deg > APP_CLAW_SEPARATE_ONE_OR_TWO_CLOSE_DEG) {
-    base_close_deg = APP_CLAW_SEPARATE_ONE_OR_TWO_CLOSE_DEG;
-  }
-  claw_set_separation_hold(base_close_deg + APP_CLAW_SEPARATE_ORANGE_EXTRA_DEG,
-      APP_CLAW_SEPARATE_ONE_OR_TWO_CLOSE_DEG + APP_CLAW_SEPARATE_ORANGE_EXTRA_DEG);
-}
-
-static uint8_t claw_relaxed_left(void)
-{
-  return APP_CLAW_LEFT_TOUCH_ANGLE - separation_extra_close_deg;
+  claw_set_separation_angle(claw_hold_angle(base_close_deg) + APP_CLAW_SEPARATE_ORANGE_OPEN_DEG);
 }
 
 static uint8_t claw_relaxed_right(void)
 {
-  return APP_CLAW_RIGHT_FROM_LEFT(claw_relaxed_left());
+  return APP_CLAW_RIGHT_FROM_LEFT(separation_left_hold_angle);
 }
 
 static uint32_t servo_pulse_wait_ms(uint16_t from_us, uint16_t to_us)
@@ -119,7 +115,7 @@ static bool claw_move_together(ClawAction action, uint32_t now_ms,
 
 void Mechanism_Init(void)
 {
-  separation_extra_close_deg = 0U;
+  separation_left_hold_angle = APP_CLAW_LEFT_TOUCH_ANGLE;
   claw_action = CLAW_ACTION_NONE;
   claw_step = 0U;
   claw_step_ms = 0U;
@@ -275,7 +271,7 @@ bool Claw_OpenRight(uint32_t now_ms)
 {
   /* Mirror of Claw_OpenLeft: a smaller left-servo angle closes it farther. */
   return claw_move_separation(CLAW_ACTION_OPEN_RIGHT, now_ms,
-                              claw_relaxed_left(), APP_CLAW_RIGHT_RELEASE_ANGLE,
+                              separation_left_hold_angle, APP_CLAW_RIGHT_RELEASE_ANGLE,
                               APP_CLAW_SEPARATE_SETTLE_MS);
 }
 
@@ -291,7 +287,7 @@ bool Claw_ClusterOpenRight(uint32_t now_ms)
 {
   /* Mirror of Claw_ClusterOpenLeft for a retained left-side target. */
   return claw_move_separation(CLAW_ACTION_CLUSTER_OPEN_RIGHT, now_ms,
-                              claw_relaxed_left(), APP_CLAW_RIGHT_RELEASE_ANGLE,
+                              separation_left_hold_angle, APP_CLAW_RIGHT_RELEASE_ANGLE,
                               APP_CLAW_SEPARATE_SETTLE_MS);
 }
 

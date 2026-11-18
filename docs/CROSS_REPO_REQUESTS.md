@@ -16,6 +16,12 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## 2026-11-19 NormalRun 保橙分离的保留爪向外放宽 10°
+
+已对照上位比赛分支 `8119e42` 的选侧逻辑和实际构帧。指定保留侧的 0x10、释放左爪的 0x0D 和释放右爪的 0x0E 用 flags 的 0x02 表示保橙，覆盖单橙、同侧橙绿和同侧橙黑。双爪释放及未选侧的分散观察拒收该位。U=8200 仍单独指定大舵机的 82° 分离高度。[上位代码与交接](https://github.com/danmo-teng/shijue_fangan/commit/8119e42a902a7c5417831ebb186d9fb1ca0b21d3)
+
+按当前合爪开度 84°，原内收 20°、10°、5° 三档在保橙时分别使用机械开度 74°、84°、89°，两侧镜像。未标记的旧请求中，审核已明确保留侧只有一个橙块时，也使用保橙角。上位构帧与下位工具逐字节相符，已用固件解析器和任务、夹爪定向仿真核对。实际留橙效果待实车。
+
 ## MATCH-OPENING-GRAB-ORANGE-20261118 含核心物资直接合爪，单橙运输 86°
 
 已配套上位 `58359b3` 的全场抓取修订，并核对比赛分支至 `dc038ed`。上位负责首绿优先选干净侧、单黑入区跟踪、先发布 TASK_COMPLETE 再保存进度，以及本次投送耗时记录，均沿用现有命令和回包。[上位交接](https://github.com/danmo-teng/shijue_fangan/blob/dc038ed97494e914eb85ef45bb511955ff2346fb/docs/CROSS_REPO_REQUESTS.md)

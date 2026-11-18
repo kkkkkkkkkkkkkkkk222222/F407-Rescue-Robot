@@ -294,8 +294,10 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
       code == VISION_CMD_RELEASE_RIGHT) {
     if (arg_a != 0 || arg_b != 0 ||
         (heading != 0U && heading != VISION_SEPARATION_ORANGE_CORE_82)) goto rejected_payload;
+    if (code == VISION_CMD_DISPERSE_PILE && (flags & VISION_CMD_KEEP_ORANGE) != 0U &&
+        (flags & VISION_CMD_SIDE_VALID) == 0U) goto rejected_payload;
     if (heading == VISION_SEPARATION_ORANGE_CORE_82) {
-      uint8_t permitted = VISION_CMD_VALID | VISION_CMD_RED_SIDE;
+      uint8_t permitted = VISION_CMD_VALID | VISION_CMD_RED_SIDE | VISION_CMD_KEEP_ORANGE;
       if (code == VISION_CMD_DISPERSE_PILE) {
         permitted |= VISION_CMD_SIDE_VALID | VISION_CMD_TARGET_RIGHT;
         if ((flags & VISION_CMD_SIDE_VALID) == 0U) goto rejected_payload;
@@ -303,7 +305,8 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
       if ((flags & (uint8_t)~permitted) != 0U) goto rejected_payload;
     }
   }
-  if (code == VISION_CMD_RELEASE_BOTH && heading == VISION_SEPARATION_ORANGE_CORE_82)
+  if (code == VISION_CMD_RELEASE_BOTH &&
+      ((flags & VISION_CMD_KEEP_ORANGE) != 0U || heading == VISION_SEPARATION_ORANGE_CORE_82))
     goto rejected_payload;
   if (code == VISION_CMD_RELEASE_BOTH && heading == VISION_RELEASE_SAME_SIDE_BLUE &&
       (arg_a != 0 || arg_b != 0 ||
