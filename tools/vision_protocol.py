@@ -463,8 +463,8 @@ def mission_frame(
         fallback_heading = 9000 if flags & CMD_RED_SIDE else 27000
         if (not flags & CMD_DRIVE_STRAIGHT or
                 flags & CMD_DISTANCE_VALID or
-                target_x_mm or target_y_mm):
-            raise ValueError("ENTER uses F407 encoder distance with zero D")
+                target_x_mm not in (0, -1) or (target_x_mm == -1 and not visual) or target_y_mm):
+            raise ValueError("ENTER requires zero payload or a visual nudge-credit request")
         if visual:
             if flags & CMD_USE_FINAL_HEADING or heading_cdeg:
                 raise ValueError("invalid visual ENTER payload")

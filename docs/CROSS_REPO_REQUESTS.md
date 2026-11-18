@@ -16,6 +16,14 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-NUDGE-CREDIT-THREE-REPUSH 侧挤后就地续推与三件材料重推（NormalRun 已接入）
+
+已核对上位比赛分支 `c1425ef`。侧挤中间直行结束时保存实测正向毫米数，最后横移回线完成才报同动作 DONE/mode54。上位从当前位置重做航向及视觉对准、判通道；通道清空后发送视觉 ENTER（A=-1、B=0、U=0），F405 仅在该次 ENTER 开始时抵扣 400 mm 前段。横移和后续对准行程不参与抵扣。回预备线、弃批、换会话或故障恢复后不能复用该值。[上位交接](https://github.com/danmo-teng/shijue_fangan/blob/c1425ef1117010640b08e92e1bd3a1dbc5715dfb/docs/CROSS_REPO_REQUESTS.md)
+
+ENTER 受理时按已审核载荷锁存三件绿黑材料。视觉确认本趟全部入区可提前完成；否则正常首推结束或前段 4 秒超时后开爪，抬 65°、退 100 mm、降至 86°，张爪前推 150 mm，最多 1.5 秒有效运动，然后接原 300 mm 退出。正常首推卸货抬臂报 55，超时抬臂报 12；退让与降臂报 56，重推报 57。正常重推由 ENTER 报 58/DONE，超时重推保留 16/17；COMPLETE 与退出交错时沿用同一退出进度。上位凭这些回包区分接触推送和退让，控制轮速辅助。
+
+定向离线验证覆盖红蓝续推报文、230 mm 指令实走 228 mm 后仅抵扣一次、三件重推与两件对照、暂停计时及提前完成。等待实车核对实际轮程与入区效果。
+
 ## MATCH-PICKUP-PAIR-STRAIGHT 抓取点一橙一黑合双爪直退（NormalRun 已接入）
 
 已对照上位 `ccca133` 的生产构帧与状态机。首绿投送后，普通抓取的同爪或分爪一橙一黑，须已收到稳定混装审核。上位在同批内发送 0x18（A=-100、B=8600、U=8200），下位合双爪后锁存抓取航向，抬 82°，按原滤除速度直退 100 mm，再回 86°。同动作重发沿用当前进度，完成回闭爪 mode23 报 DONE；只有新的合法审核才能放行运输。复审为单橙时不重复直退，仍为原组合时上位发 0x0F，沿已有开爪弃批流程退出。门口混黑的 0x16 横移保留。[上位提交](https://github.com/danmo-teng/shijue_fangan/commit/ccca1335f746216c4cb3c26dfa9bdd7b3d52af6a)

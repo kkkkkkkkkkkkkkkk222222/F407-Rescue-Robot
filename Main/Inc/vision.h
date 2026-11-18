@@ -145,6 +145,11 @@
 #define VISION_PRE_GRAB_ADVANCE_MM      50U
 #define VISION_MODE_APPROACH_RANGE_WAIT 52U
 #define VISION_MODE_APPROACH_RANGE_MOVE 53U
+#define VISION_MODE_NUDGE_CREDIT_READY 54U
+#define VISION_MODE_REPUSH_OPENED 55U
+#define VISION_MODE_REPUSH_RETREAT 56U
+#define VISION_MODE_REPUSH_FORWARD 57U
+#define VISION_MODE_REPUSH_EXIT 58U
 /* DISPERSE_PILE bit5: first formal green only. Execute the short local
  * backoff/Touch/forward/back/open bump, then return directly to SEARCH. */
 #define VISION_CMD_FIRST_GREEN_BUMP  0x20U

@@ -413,7 +413,7 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
     const uint16_t fallback_heading = red ? 9000U : 27000U;
     if (((flags & VISION_CMD_DRIVE_STRAIGHT) == 0U) ||
         ((flags & VISION_CMD_DISTANCE_VALID) != 0U) ||
-        (arg_a != 0) || (arg_b != 0) ||
+        (arg_a != 0 && !(visual && arg_a == -1)) || (arg_b != 0) ||
         (visual ? (((flags & VISION_CMD_USE_FINAL_HEADING) != 0U) ||
                    (heading != 0U)) :
                   (((flags & VISION_CMD_USE_FINAL_HEADING) == 0U) ||
