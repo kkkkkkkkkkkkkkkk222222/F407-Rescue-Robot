@@ -16,9 +16,19 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
-## 2026-11-18 请上位核查聚堆补进完成回包与双墙航向同步
+## MATCH-STATION-105-20261118 ①无果去③到站直接从 105° 搜索
 
-核查版本为上位 `codex/gamepad-teleop@baa279f`、下位 `main@d8a4281`。两项均待上位核查回执。
+已对照上位比赛分支 `18bffb5`。①和③各累计搜索 540° 仍无合法目标时，由上位决定直达另一点。仅①无果去③时，上位发送空车移动步骤 13，到站后发送 `opcode 0x14 / step14 / A=3`，B 为扫描方向 ±1，U 为场地中心方向。③无果返①及投送后直返原点使用 A=2。[上位交接](https://github.com/danmo-teng/shijue_fangan/blob/18bffb5a9d5789923eefd07e5c10f33e19ba1016/docs/CROSS_REPO_REQUESTS.md)
+
+F405 在同任务空车移动完成后接受 A=3，停车开爪、升到行进高度并抬到 105°。机构就绪后，以同任务、同动作回报 `mode3 / 10500 / ACCEPT|DONE`，按 B 的方向开始扫描。上位从对应视角的新图选物。A=2 仍从 120° 开始。[协议与配对报文](contracts/f405_station_turn_search_20261117.json)
+
+正式固件构建和定向离线检查通过。已核对上位构帧到下位 C 解析、两种方向的 105° 起扫、机构就绪前的回包、动作重发及原 A=2 入口。未烧录，地面换点和实际有效视角待实车确认。[镜像身份](CURRENT_STATUS.md)
+
+## 2026-11-18 聚堆补进完成与双墙航向同步已获上位修复回执
+
+已核对上位 `18bffb5` 的实现。从 38 发起的 50 mm 补进现可接同任务、同动作、opcode 9 的 37 或 38 完成回包，再等新图审核。双墙校正在下位采用后保留本轮待同步结果，按轮次和已写偏移区分提交与刷新，成功同步后才清除待处理标记。两项均沿用 F405 原接口，待实车核验。[补进完成判定](https://github.com/danmo-teng/shijue_fangan/blob/18bffb5a9d5789923eefd07e5c10f33e19ba1016/competition_rescue/state_machine.py#L4305-L4319) · [航向同步处理](https://github.com/danmo-teng/shijue_fangan/blob/18bffb5a9d5789923eefd07e5c10f33e19ba1016/localization/tools/lidar_yaw_debug/competition_yaw.py#L63-L78)
+
+以下为上位 `baa279f`、下位 `d8a4281` 时的原核查记录。
 
 ### 聚堆补进 50 mm 后的 37/DONE 已离线复现
 
@@ -27,7 +37,7 @@
 - **复现结果**　下位离线回包为 `task=7, action=12, opcode=9, mode=37, action_status=0x83`，含 ACCEPT 和 DONE，本批累计已走 50 mm。上位完成分支收到匹配回包后连续处理三张新图，仍返回 `pre_grab_advance_move`。对照组仅将回包状态换为 38，下一张新图即进入复审。[上位完成判定](https://github.com/danmo-teng/shijue_fangan/blob/baa279f6bf544fc5338cf6a05ea613d203b6c324/competition_rescue/state_machine.py#L4273-L4311)
 - **请上位核查**　对从 38 发起的聚堆补进，同 task、同 action、opcode 9 且 ACCEPT 和 DONE 均置位时，能否同时接受 38 或 37 作为本段完成，随后按原逻辑等下一张新图复审。普通抓取仍按原 mode21 判定，沿用本批 200 mm 和已确认的 4 秒规则。
 
-### 双墙航向采用回报后的上位同步异常待核查
+### 双墙航向采用回报后的原异常分支
 
 F405 在规定的停车交接点采用本轮偏移后，会回传同一轮次标识及 `action_status & 0x40`。上位匹配到该回报后，先调用 `wall_yaw_commit` 写入定位参考，再调用 `refresh_native()` 刷新状态。两步共用一个异常分支，捕获异常时记录 `wall_yaw_commit_error`，随后仍执行 `wall_tag=0`。这条风险来自源码检查，目前没有实车触发证据。[上位回报处理](https://github.com/danmo-teng/shijue_fangan/blob/baa279f6bf544fc5338cf6a05ea613d203b6c324/localization/tools/lidar_yaw_debug/worker.py#L761-L778) · [定位偏移写入与重复采用检查](https://github.com/danmo-teng/shijue_fangan/blob/baa279f6bf544fc5338cf6a05ea613d203b6c324/localization/src/motion_runtime.cpp#L343-L361)
 

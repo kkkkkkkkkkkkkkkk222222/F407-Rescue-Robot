@@ -16,7 +16,7 @@ class VisionProtocolTests(unittest.TestCase):
             self.assertEqual(protocol.mission_frame(expected[3], 0x14, flags,
                 row["mode"], row["direction"], row["target_heading_cdeg"]), expected)
         self.assertEqual(len(protocol.mission_frame(1, 0x14, 0xE1, 0, 0, 9000)), 15)
-        for a, b, heading in ((0, 1, 0), (1, 0, 0), (2, 2, 0), (3, 1, 0),
+        for a, b, heading in ((0, 1, 0), (1, 0, 0), (2, 2, 0), (3, 0, 0), (4, 1, 0),
                               (-1, -1, 0), (1, 1, 36000)):
             with self.assertRaises(ValueError):
                 protocol.mission_frame(1, 0x14, 0xE1, a, b, heading)

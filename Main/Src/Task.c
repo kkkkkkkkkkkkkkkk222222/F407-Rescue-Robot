@@ -2544,10 +2544,8 @@ static void task_process_search(const VisionData *vision, uint32_t now_ms)
       if (task_full_turn_reached()) {
         Motor_Stop();
         task_status.motors_active = false;
-        /* Two complete 120/90-degree sweeps found nothing. The upper computer
-         * owns the RETURN command, but its T265 yaw accumulator may have
-         * missed a few samples. Continue a slow scan instead of stopping at
-         * 719.x degrees and creating a permanent two-controller wait. */
+        /* Stay at 105 degrees and keep scanning in the same direction.
+         * The host owns the accumulated angle and the next station transfer. */
         search_phase = SEARCH_WAIT_RETURN;
         task_reset_turn_tracker();
         step_started_ms = now_ms;
@@ -4989,15 +4987,17 @@ static void task_bulldozer_clear_load(void)
 
 static void task_bulldozer_prepare_search(uint32_t now_ms, bool begin_scan)
 {
+  const bool start_at_105 = begin_scan && remote_action.arg_a == 3;
+  const uint8_t pitch = start_at_105 ? APP_SEARCH_LOW_CAMERA_ANGLE : APP_SEARCH_HIGH_CAMERA_ANGLE;
   Motor_Stop();
   task_status.motors_active = false;
   if (remote_action.phase == 0U) {
     const uint32_t lift_wait = Lift_PositionWaitMs(APP_LIFT_TRAVEL_ANGLE);
-    const uint32_t camera_wait = Camera_PositionWaitMs(APP_SEARCH_HIGH_CAMERA_ANGLE);
+    const uint32_t camera_wait = Camera_PositionWaitMs(pitch);
     remote_action.actuator_wait_ms = lift_wait > camera_wait ? lift_wait : camera_wait;
     Lift_SetTravelPosition();
-    Camera_SetAngle(APP_SEARCH_HIGH_CAMERA_ANGLE);
-    camera_angle = (float)APP_SEARCH_HIGH_CAMERA_ANGLE;
+    Camera_SetAngle(pitch);
+    camera_angle = (float)pitch;
     step_started_ms = now_ms;
     remote_action.phase = 1U;
   }
@@ -5006,7 +5006,7 @@ static void task_bulldozer_prepare_search(uint32_t now_ms, bool begin_scan)
     task_bulldozer_clear_load();
     task_enter(TASK_SEARCH, now_ms);
     if (begin_scan) {
-      search_phase = SEARCH_SWEEP_120;
+      search_phase = start_at_105 ? SEARCH_SWEEP_90 : SEARCH_SWEEP_120;
       (void)task_full_turn_reached();
     }
     /* The posture action owns this SEARCH handoff and its completion. */
@@ -5049,7 +5049,7 @@ static void task_process_bulldozer(const VisionMissionCommand *command,
       const bool station_turn = remote_action.step == VISION_BULLDOZER_ATTACK_FACE_OPPONENT &&
           remote_action.arg_a == 1;
       if (remote_action.step == VISION_BULLDOZER_ATTACK_FACE_OPPONENT &&
-          remote_action.arg_a == 2) {
+          (remote_action.arg_a == 2 || remote_action.arg_a == 3)) {
         task_bulldozer_prepare_search(now_ms, true);
         return;
       }
@@ -5217,7 +5217,7 @@ static bool task_accept_bulldozer(const VisionMissionCommand *command,
        remote_action.step == VISION_BULLDOZER_EMPTY_BODY_MOVE) &&
       !task_status.gripper_closed;
   const bool station_turn = attack_face &&
-      (command->target_x_mm == 1 || command->target_x_mm == 2);
+      (command->target_x_mm == 1 || command->target_x_mm == 2 || command->target_x_mm == 3);
   if (station_turn && (!empty_turn_entry ||
       remote_action.step != VISION_BULLDOZER_EMPTY_BODY_MOVE)) {
     return false;

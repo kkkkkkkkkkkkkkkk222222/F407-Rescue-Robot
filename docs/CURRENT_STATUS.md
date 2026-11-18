@@ -1,5 +1,9 @@
 # 当前状态：F405 烧录入口
 
+2026-11-18 已配套上位 `18bffb5` 的两点搜索。①和③各扫满 540° 无果，由上位发起换点。①无果去③的步骤 14 新增 A=3，F405 空爪到 105° 并准备就绪后回报本动作 DONE，按指定方向扫描；③返①及投送后返回沿用 120° 起扫。上轮的聚堆补进和双墙航向同步已收到上位修复回执。[交接与检查结果](CROSS_REPO_REQUESTS.md)
+
+正式镜像 `build/F405/NormalRun/NormalRun.elf` 已构建，firmware ID 为 `ba3f5e7f1c6f9e9266581eae4857a9f0b8af9ee663a567438520c1f7345f5115`，构建基线为 `61633a6/dirty1`，含工作区已有的 WheelCheck 改动。本轮未烧录或读取板端身份。
+
 2026-11-18 对照上位 `baa279f` 修复首发及快速重发 CONFIG 截断按键确认音的问题。定向离线检查和 NormalRun 构建通过。本轮未烧录，实按听感待验。[交接回执](CROSS_REPO_REQUESTS.md)
 
 本次 `build/F405/NormalRun/NormalRun.elf` 的 firmware ID 为 `938db7acde9a3eef16b3a421bcaa30bc27f136d4e8deb366e472a4c775902056`，基线 `1ac74f5/dirty1`，镜像包含工作区已有的 WheelCheck 改动。

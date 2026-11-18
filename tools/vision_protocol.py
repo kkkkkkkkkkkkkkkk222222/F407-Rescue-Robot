@@ -327,7 +327,7 @@ def _bulldozer_payload_valid(flags: int, a: int, b: int, heading: int) -> bool:
         return a in (-100, -150) and b == 0 and heading == opponent
     if step == 14:
         return 0 <= heading < 36000 and ((a == b == 0) or
-                                        (a in (1, 2) and b in (-1, 1)))
+                                        (a in (1, 2, 3) and b in (-1, 1)))
     if step in (5, 6, 10, 11, 13):
         return (0 <= a <= 5000 and -18000 <= b <= 18000 and
                 (0 <= heading < 36000 if step == 13 else heading == sweep_heading))
