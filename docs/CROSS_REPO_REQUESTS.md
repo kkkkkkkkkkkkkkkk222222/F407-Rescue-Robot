@@ -16,6 +16,12 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-CORRIDOR-NUDGE-20261119 通道单障碍侧挤（NormalRun 已接入）
+
+已核对上位比赛分支 `90b80fa`。首绿后，抓取点一橙一黑由上位选黑侧，普通分离 U=0，保橙标志位为 0。门口已确认单橙混黑的 0x16 横移与复审继续沿用。[上位提交](https://github.com/danmo-teng/shijue_fangan/commit/90b80fa117d38cae9cc959e228b783d21816bdd5)
+
+预备线完成航向和视觉对准后，0x17 在同批闭爪状态锁存障碍侧、前进距离与航向。下位按模拟轮程核对了红方右障碍的向左 100 mm、前进 230 mm、向右 100 mm 返回，原动作重发只确认一次执行。蓝方左障碍取反方向，前进段失败时回报本动作拒绝号，DONE 清零。成功与失败均已验证能接现有补位 NAV。正式使用的 B3/B4/B5 前进量为 230/100/20 mm，补位并复查后由上位决定推入或安全扫障。地面效果待实车。
+
 ## MATCH-POST-GRAB-SIDE-SWAP-20261119 抓后复审换侧仍按旧侧分离（上位已修，离线联测通过）
 
 **电控回执（2026-11-19）。** 已核对上位 `1e2cbd8` 和 NormalRun `12a636f`。在 mode23 等待确认时换侧，上位在同一批次分配新的审核动作号，把换侧帧计作第一帧。下位接到新动作后清除旧审核。两个换侧方向均用上位实际生成的审核和动作报文做了定向联测：旧回包到达时只发审核；新审核得到确认后，本批首次横移按新黑块侧发 0x16，已横移过则按新保留侧发 0x10。四种情况均由下位正确受理。本轮无需修改固件，待实车验证。[上位修复提交](https://github.com/danmo-teng/shijue_fangan/commit/1e2cbd8a952164c94ee8e873cd1f0d71de55b915)

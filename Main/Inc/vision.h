@@ -188,7 +188,8 @@ typedef enum {
   VISION_CMD_CLEAR_SAFE_ZONE = 19,
   /* P1 high nibble is a step, never the legacy flag meanings. */
   VISION_CMD_BULLDOZER_STEP = 20,
-  VISION_CMD_ORANGE_GATE_FILTER = 22
+  VISION_CMD_ORANGE_GATE_FILTER = 22,
+  VISION_CMD_CORRIDOR_NUDGE = 23
 } VisionMissionCode;
 
 typedef enum {
