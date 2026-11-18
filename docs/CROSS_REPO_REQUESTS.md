@@ -16,6 +16,20 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-SEARCH-ZONE-VIEW-20261117 上位待实施 aux3，关联 TODO42
+
+核对上位比赛分支 `dfed2b5` 与本端 `781df37`。下位已有 aux3 解析、相机行程、完成回包和 105° 搜索出口。请上位补齐正式比赛入口并把 TODO42 的两端状态更新为实际进度。
+
+上位 `_choose_search_target` 从 `_visible_cargo` 取候选，后者排除了标为 `inside_safe_zone` 的物块。当前没有保留疑似误排候选并抬头复判的分支。直接调用该版本生产 `protocol.mission_frame(1, 9, 0x51, 0, 10500, 3)` 被范围校验拒绝，同一调用传 aux4 成功生成 15 字节报文。
+
+1. 空爪在 120° 搜索、没有正常候选时，临时保留仅被触边且未看全的安全区框遮盖的合格目标。按原首绿及类别规则原地转正。
+2. 到 mode52，用同任务新动作和真实图像帧号发 opcode9、A0/B10500/U3，仅换相机角度。收到匹配的 mode52、105°、DONE 后用新图复判。
+3. 确认区外才接像素对准和 105° 测距。确认区内或仍看不清时，沿观察动作的 HOLD 回到 105° 搜索并保留扫描进度。验收优先用原第 863 秒误排案例、真实区内及看不清的对照。[接口与配对帧](contracts/f405_search_zone_view_20261117.json)
+
+同期核对正式启动参数发现两项需要上位区分处理。TODO14 投送提前退出已有实现，正式启动命令未显式开启，现场还需核实环境变量 `RDK_ENABLE_DELIVERY_EARLY_EXIT`。TODO32 绿橙抓前 50 mm 补进已有 aux2，正式入口默认关闭，仓库所带两类标线均为 null，待人工标定后再启用。
+
+用户已明确废弃闭爪抽障 opcode 0x15，正式入口保持禁用，移出待适配清单。现行分段扫障 opcode 0x14 继续使用。
+
 ## MATCH-ORANGE-GATE-FILTER-20261118 门口横移与分离高度已按方案 2 实施
 
 对照上位 `dfed2b562c3ea93719beb4490389765a0e058d2f`。F405 在同任务 mode48 闭爪运输复审中，凭原已确认单橙、当前稳定的橙黑混装审核及上位给出的黑块侧接受 opcode 22。A=100、B=8600、U=红9000或蓝27000。[红蓝和左右四组配对帧](contracts/f405_orange_gate_filter_20261118.json)
