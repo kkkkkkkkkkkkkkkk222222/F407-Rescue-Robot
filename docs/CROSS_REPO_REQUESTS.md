@@ -16,6 +16,12 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-PICKUP-PAIR-STRAIGHT 抓取点一橙一黑合双爪直退（NormalRun 已接入）
+
+已对照上位 `ccca133` 的生产构帧与状态机。首绿投送后，普通抓取的同爪或分爪一橙一黑，须已收到稳定混装审核。上位在同批内发送 0x18（A=-100、B=8600、U=8200），下位合双爪后锁存抓取航向，抬 82°，按原滤除速度直退 100 mm，再回 86°。同动作重发沿用当前进度，完成回闭爪 mode23 报 DONE；只有新的合法审核才能放行运输。复审为单橙时不重复直退，仍为原组合时上位发 0x0F，沿已有开爪弃批流程退出。门口混黑的 0x16 横移保留。[上位提交](https://github.com/danmo-teng/shijue_fangan/commit/ccca1335f746216c4cb3c26dfa9bdd7b3d52af6a)
+
+定向离线核对了红蓝报文、分爪和同爪动作、重复命令及两种复审出口。同期的侧挤档位 B2/B3/B4/B5 由上位通过现有 0x17 的 B 参数传入；远处空爪取消和①③搜索换点沿用既有接口。实车退距及留橙效果待验。
+
 ## MATCH-CORRIDOR-NUDGE-20261119 通道单障碍侧挤（NormalRun 已接入）
 
 已核对上位比赛分支 `90b80fa`。首绿后，抓取点一橙一黑由上位选黑侧，普通分离 U=0，保橙标志位为 0。门口已确认单橙混黑的 0x16 横移与复审继续沿用。[上位提交](https://github.com/danmo-teng/shijue_fangan/commit/90b80fa117d38cae9cc959e228b783d21816bdd5)

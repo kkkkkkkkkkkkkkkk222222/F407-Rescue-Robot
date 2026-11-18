@@ -71,6 +71,7 @@ CMD_CARGO_AUDIT = 0x12
 CMD_CLEAR_SAFE_ZONE = 0x13
 CMD_BULLDOZER_STEP = 0x14
 CMD_ORANGE_FILTER_AT_PICKUP = 0x10  # Opcode 0x16 only.
+CMD_ORANGE_CORE_FILTER = 0x18
 CMD_CORRIDOR_NUDGE = 0x17
 CMD_ORANGE_GATE_FILTER = 0x16
 
@@ -347,7 +348,8 @@ def mission_frame(
     target_y_mm: int = 0,
     heading_cdeg: int = 0,
 ) -> bytes:
-    if (command not in (CMD_STOP, CMD_PAUSE, CMD_ORANGE_GATE_FILTER, CMD_CORRIDOR_NUDGE) and
+    if (command not in (CMD_STOP, CMD_PAUSE, CMD_ORANGE_GATE_FILTER,
+                        CMD_CORRIDOR_NUDGE, CMD_ORANGE_CORE_FILTER) and
             not CMD_GRAB_CONFIRMED <= command <= CMD_BULLDOZER_STEP):
         raise ValueError("invalid mission command")
     allowed_flags = 0xF9 if command == CMD_BULLDOZER_STEP else 0x1F
@@ -365,6 +367,10 @@ def mission_frame(
         )
     if not flags & CMD_VALID or flags & ~allowed_flags:
         raise ValueError("invalid mission flags")
+    if command == CMD_ORANGE_CORE_FILTER and (
+            flags not in (CMD_VALID, CMD_VALID | CMD_RED_SIDE) or
+            (target_x_mm, target_y_mm, heading_cdeg) != (-100, 8600, 8200)):
+        raise ValueError("invalid orange/core straight filter")
     if command == CMD_CORRIDOR_NUDGE:
         required = CMD_VALID | CMD_SIDE_VALID
         if (flags & required != required or flags & ~(required | CMD_RED_SIDE | CMD_TARGET_RIGHT) or
