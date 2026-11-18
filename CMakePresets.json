@@ -22,6 +22,14 @@
         {
             "name": "NormalRun",
             "inherits": "f405"
+        },
+        {
+            "name": "FinalRun",
+            "inherits": "f405",
+            "toolchainFile": "${sourceDir}/../Final_task/cmake/gcc-arm-none-eabi.cmake",
+            "cacheVariables": {
+                "APP_AUTO_BACKUP": "OFF"
+            }
         }
     ],
     "buildPresets": [
@@ -32,6 +40,10 @@
         {
             "name": "NormalRun",
             "configurePreset": "NormalRun"
+        },
+        {
+            "name": "FinalRun",
+            "configurePreset": "FinalRun"
         }
     ]
 }

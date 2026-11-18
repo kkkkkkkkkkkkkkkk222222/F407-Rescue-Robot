@@ -1,8 +1,8 @@
 # 协作入口
 
 先读 `docs/CURRENT_STATUS.md` 的当前摘要与相关 TODO，核对实际代码后推进。
-当前硬件固定为 F405。MotionDebug 用于运动测试，NormalRun 用于正式比赛；
-构建和下载只使用 README 页首列出的两个入口及 build/F405 下对应的镜像。
+当前硬件固定为 F405。MotionDebug 用于运动测试，NormalRun 用于原比赛，FinalRun 使用 Final_task 的决赛源码。
+构建和下载使用 README 页首对应的预设、DAPLink 配置及 build/F405 下的同名镜像。
 板级接线见 docs/F405_RESOURCE_MAP.md，历史交接中的旧名称仅供追溯。
 
 夹爪机械开度、原S命令及安装offset的区分见 `docs/F405_CLAW_CALIBRATION.md`。
