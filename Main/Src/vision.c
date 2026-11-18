@@ -233,6 +233,7 @@ static bool vision_mission_code_valid(uint8_t command)
 {
   return (command == VISION_CMD_STOP) ||
          (command == VISION_CMD_PAUSE) ||
+         (command == VISION_CMD_ORANGE_GATE_FILTER) ||
          ((command >= VISION_CMD_GRAB_CONFIRMED) &&
            (command <= VISION_CMD_BULLDOZER_STEP));
 }
@@ -300,7 +301,7 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
         (code == VISION_CMD_ALIGN_SAFE_ZONE) ||
         (code == VISION_CMD_ENTER_SAFE_ZONE)) ?
           VISION_CMD_STAGE_ONLY : 0U) |
-      ((code == VISION_CMD_DISPERSE_PILE) ?
+      (((code == VISION_CMD_DISPERSE_PILE) || (code == VISION_CMD_ORANGE_GATE_FILTER)) ?
           (VISION_CMD_FIRST_GREEN_BUMP |
            VISION_CMD_SIDE_VALID | VISION_CMD_TARGET_RIGHT) : 0U));
   if (!vision_mission_code_valid(code) ||
@@ -311,6 +312,14 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
 
   const int16_t arg_a = (int16_t)vision_u16_be(&payload[2]);
   const int16_t arg_b = (int16_t)vision_u16_be(&payload[4]);
+  if (code == VISION_CMD_ORANGE_GATE_FILTER) {
+    const uint8_t required = VISION_CMD_VALID | VISION_CMD_SIDE_VALID;
+    const uint8_t allowed = required | VISION_CMD_RED_SIDE | VISION_CMD_TARGET_RIGHT;
+    if ((flags & required) != required || (flags & (uint8_t)~allowed) != 0U ||
+        arg_a != 100 || arg_b != APP_LIFT_MATERIAL_TRAVEL_ANGLE * 100 ||
+        heading != ((flags & VISION_CMD_RED_SIDE) != 0U ? 9000U : 27000U))
+      goto rejected_payload;
+  }
   if (code == VISION_CMD_DISPERSE_PILE || code == VISION_CMD_RELEASE_LEFT ||
       code == VISION_CMD_RELEASE_RIGHT) {
     if (arg_a != 0 || arg_b != 0 ||

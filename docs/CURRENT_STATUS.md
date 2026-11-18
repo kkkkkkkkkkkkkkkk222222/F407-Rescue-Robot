@@ -1,5 +1,9 @@
 # 当前状态：F405 烧录入口
 
+2026-11-18 门口橙黑横移滤除已按上位 dfed2b5 的方案 2 配套。普通材料运输改为 86°。单橙途中保持 82°，门口横移滤除后本批以 86° 运输。复审仍需保橙拆黑时，U8200 临时抬至 82°，分离收尾回到 86° 再报完成。本轮实际横移距离、留橙效果和舵机角度待实车验证。[交接记录](CROSS_REPO_REQUESTS.md)
+
+本次 NormalRun 已编译链接，firmware ID 为 `f284da1c9f396a410b6ae14826e285901a59f4aaa3a39aad6507998aba2ad61c`。构建基线 f156707/dirty1，含工作区原有 WheelCheck 改动。本轮未烧录或读取板端身份。
+
 2026-11-18 MATCH-WHEEL-POLICY-RESTORE：已等上位519fb57完成提交并核对兼容，无需下位代码修改，待上位加载/实测。
 - 核对上位实际LocalizationWheelPolicy及发布入口：使用本次实际已发步骤和task/action回包，补齐扫障PICKUP_READY完成、投送退出后空爪回搜索点的normal_motion恢复；旧DONE、接触中步骤和暂停/停止沿原策略。
 - 下位现有step12/A2的mode3空爪/ACCEPT+DONE，以及RETURN和step13/14已接受状态可直接承接，无新协议或动作入口。上位报告5项相关检查通过；本端仅做生产源码/回包语义核对，不重复全套测试或编译。

@@ -69,6 +69,7 @@ CMD_CHANGE_LANE = 0x11
 CMD_CARGO_AUDIT = 0x12
 CMD_CLEAR_SAFE_ZONE = 0x13
 CMD_BULLDOZER_STEP = 0x14
+CMD_ORANGE_GATE_FILTER = 0x16
 
 CMD_VALID = 0x01
 CMD_DRIVE_STRAIGHT = 0x02
@@ -339,7 +340,7 @@ def mission_frame(
     target_y_mm: int = 0,
     heading_cdeg: int = 0,
 ) -> bytes:
-    if (command not in (CMD_STOP, CMD_PAUSE) and
+    if (command not in (CMD_STOP, CMD_PAUSE, CMD_ORANGE_GATE_FILTER) and
             not CMD_GRAB_CONFIRMED <= command <= CMD_BULLDOZER_STEP):
         raise ValueError("invalid mission command")
     allowed_flags = 0xF9 if command == CMD_BULLDOZER_STEP else 0x1F
@@ -351,12 +352,19 @@ def mission_frame(
         allowed_flags |= CMD_STAGE_ONLY
     if command in (CMD_NAVIGATE_WAYPOINT, CMD_ALIGN_SAFE_ZONE):
         allowed_flags |= CMD_REUSE_CONFIRMED_LOAD
-    if command == CMD_DISPERSE_PILE:
+    if command in (CMD_DISPERSE_PILE, CMD_ORANGE_GATE_FILTER):
         allowed_flags |= (
             CMD_FIRST_GREEN_BUMP | CMD_SIDE_VALID | CMD_TARGET_RIGHT
         )
     if not flags & CMD_VALID or flags & ~allowed_flags:
         raise ValueError("invalid mission flags")
+    if command == CMD_ORANGE_GATE_FILTER:
+        required = CMD_VALID | CMD_SIDE_VALID
+        allowed = required | CMD_RED_SIDE | CMD_TARGET_RIGHT
+        if (flags & required != required or flags & ~allowed or
+                target_x_mm != 100 or target_y_mm != 8600 or
+                heading_cdeg != (9000 if flags & CMD_RED_SIDE else 27000)):
+            raise ValueError("orange gate filter requires black side, 100mm, lift86 and safe heading")
     if command in (CMD_DISPERSE_PILE, CMD_RELEASE_LEFT, CMD_RELEASE_RIGHT):
         if target_x_mm or target_y_mm or heading_cdeg not in (0, SEPARATION_ORANGE_CORE_82):
             raise ValueError("invalid separation lift payload")

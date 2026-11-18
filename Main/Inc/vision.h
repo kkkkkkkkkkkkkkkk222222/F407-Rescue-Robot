@@ -178,7 +178,8 @@ typedef enum {
    * Legacy P2/P3=80..600 retains P4/P5=+/-150 lateral parking. P6/P7=0. */
   VISION_CMD_CLEAR_SAFE_ZONE = 19,
   /* P1 high nibble is a step, never the legacy flag meanings. */
-  VISION_CMD_BULLDOZER_STEP = 20
+  VISION_CMD_BULLDOZER_STEP = 20,
+  VISION_CMD_ORANGE_GATE_FILTER = 22
 } VisionMissionCode;
 
 typedef enum {

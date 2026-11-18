@@ -16,6 +16,16 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-ORANGE-GATE-FILTER-20261118 门口横移与分离高度已按方案 2 实施
+
+对照上位 `dfed2b562c3ea93719beb4490389765a0e058d2f`。F405 在同任务 mode48 闭爪运输复审中，凭原已确认单橙、当前稳定的橙黑混装审核及上位给出的黑块侧接受 opcode 22。A=100、B=8600、U=红9000或蓝27000。[红蓝和左右四组配对帧](contracts/f405_orange_gate_filter_20261118.json)
+
+每批执行一次。闭爪 82° 转正，向黑块异侧横移 100 mm，停车降到 86°，再反向横移 100 mm。两段分别按三轮编码器横移分量计程，巡航目标 250 mm/s。返回后以本动作 DONE 回到 mode48，接原 140° 新图复审。
+
+本批复审仍须保橙拆黑时，U8200 临时抬到 82°。保侧分离和单侧释放均在恢复 86° 的机构行程完成后报告 DONE。确认单橙后以 86° 运输，实际放下或结束本批后清除锁存。普通材料运输为 86°，普通单橙运输为 82°。
+
+本端用生产 Task、机构和协议解析器做了针对性离线检查，覆盖双向横移、暂停续走、每批一次、复审与放下、U8200 三种收尾以及旧 B=8800 的拒绝。正式镜像及部署状态见当前记录。本轮未烧录，实际横移距离和滤除效果待验。
+
 ## MATCH-WHEEL-POLICY-RESTORE-20261118：上位519fb57已修复，本端核对兼容，无需下位修改
 
 按用户本轮要求，已等上位本轮结束并提交推送后读取`codex/gamepad-teleop` / `519fb578ce8a7e869baf6e57461d2bc2c19553c8`。已核对实际run_competition_rescue.py blob `3070f8d53a229cfa679005cd3b7e2188799bb6cf`、固定交接blob `faf7b2abede62e465f475cbd18cec4a13b345891`及本端当前Task.c；本次控制代码和协议无需新配套，只更新相关状态，不恢复其他历史任务。
