@@ -442,7 +442,7 @@ static void test_recoverable_wait(void)
   assert(audit_received && audit_valid && state == TASK_RECOVERY_WAIT);
   VisionMissionCommand grab={.received=true,.flags=VISION_CMD_VALID,.command=VISION_CMD_GRAB_CONFIRMED};
   task_accept_mission_legacy(&grab,1010);
-  assert(state == TASK_CLOSE_CLAW && !grab_core_advance_required);
+  assert(state == TASK_CLOSE_CLAW);
 }
 
 static void test_initial_empty_capture_and_heading(void)
@@ -925,6 +925,39 @@ static void test_normalrun_safe_zone_team_heading(void)
   }
 }
 
+static void test_audited_core_closes_without_driving(bool opening, uint8_t cargo, uint8_t count)
+{
+  wire_prepare(TASK_GRAB_OBSERVE, 0U);
+  initial_claw_ready = true;
+  first_delivery_done = !opening;
+  task_status.gripper_closed = false;
+  opening_claw_probe_active = opening;
+  task_clear_audit_result();
+  VisionMissionCommand audit = {
+      .command = VISION_CMD_CARGO_AUDIT, .flags = VISION_CMD_VALID,
+      .audit_left_class = cargo, .audit_counts = count, .audit_total_count = count,
+      .audit_flags = opening ? VISION_AUDIT_INITIAL_STASH : 0U,
+      .audit_id = 1U, .vision_frame = 9U};
+  wire_send(audit, 100U, 1U);
+  assert(!audit_valid);
+  audit.audit_flags |= VISION_AUDIT_STABLE;
+  ++audit.audit_id;
+  ++audit.vision_frame;
+  wire_send(audit, 220U, 2U);
+  assert(audit_received && audit_valid && audit_core_seen_in_streak);
+
+  const VisionMissionCommand grab = {.command = VISION_CMD_GRAB_CONFIRMED, .flags = VISION_CMD_VALID};
+  wire_send_action(grab, 12U, 230U, 3U);
+  assert(command_accepted && state == TASK_CLOSE_CLAW);
+  test_vision = (VisionData){.config_ready = true, .mission = active_mission};
+  const unsigned moves = heading_calls;
+  for (uint32_t now = 240U; state == TASK_CLOSE_CLAW && now <= 2240U; now += APP_TASK_PERIOD_MS) {
+    Task_Process(now);
+    assert(heading_calls == moves && reverse_output == 0.0f);
+  }
+  assert(state == TASK_POST_GRAB_AUDIT && task_status.gripper_closed && !audit_valid);
+}
+
 static void test_filter_recovery_restores_transport_lift(void)
 {
   prepare(); configured_color = VISION_COLOR_RED;
@@ -949,7 +982,7 @@ static void test_filter_recovery_restores_transport_lift(void)
   VisionMissionCommand grab = {
       .command = VISION_CMD_GRAB_CONFIRMED, .flags = VISION_CMD_VALID, .received = true};
   task_accept_mission_legacy(&grab, 340U);
-  assert(state == TASK_CLOSE_CLAW && Servo_GetAngle(1U) == APP_LIFT_TRAVEL_ANGLE);
+  assert(state == TASK_CLOSE_CLAW && Servo_GetAngle(1U) == APP_LIFT_MATERIAL_TRAVEL_ANGLE);
   Claw_Touch(400U); assert(Claw_Touch(1500U));
   task_status.gripper_closed = true;
   task_clear_audit_result();
@@ -965,11 +998,14 @@ static void test_filter_recovery_restores_transport_lift(void)
       .flags = VISION_CMD_VALID | VISION_CMD_RED_SIDE | VISION_CMD_DISTANCE_VALID |
           VISION_CMD_STAGE_ONLY, .target_x_mm = 100, .heading_cdeg = 9000};
   task_accept_mission_legacy(&nav, 1800U);
-  assert(state == TASK_NAVIGATE && Servo_GetAngle(1U) == APP_LIFT_TRAVEL_ANGLE);
+  assert(state == TASK_NAVIGATE && Servo_GetAngle(1U) == APP_LIFT_MATERIAL_TRAVEL_ANGLE);
 }
 
 int main(void)
 {
+  test_audited_core_closes_without_driving(true, VISION_CARGO_CORE, 1U);
+  test_audited_core_closes_without_driving(false, VISION_CARGO_CORE, 1U);
+  test_audited_core_closes_without_driving(false, VISION_CARGO_MIXED_MATERIAL, 2U);
   test_filter_recovery_restores_transport_lift();
 #ifdef NORMALRUN_FLOW_REVIEW_CHECK
   test_normalrun_start_and_delivery_exit();

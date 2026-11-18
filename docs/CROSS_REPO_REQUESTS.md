@@ -16,6 +16,15 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-OPENING-GRAB-ORANGE-20261118 含核心物资直接合爪，单橙运输 86°
+
+已配套上位 `58359b3` 的全场抓取修订，并核对比赛分支至 `dc038ed`。上位负责首绿优先选干净侧、单黑入区跟踪、先发布 TASK_COMPLETE 再保存进度，以及本次投送耗时记录，均沿用现有命令和回包。[上位交接](https://github.com/danmo-teng/shijue_fangan/blob/dc038ed97494e914eb85ef45bb511955ff2346fb/docs/CROSS_REPO_REQUESTS.md)
+
+- 原抓前组成审核通过后，GRAB 就地合爪，完成后进入 mode23 做抓后复审。已删除含黑色核心或绿黑混合材料在 mode8 自动追加的 50 mm 行程、速度参数和运动状态。开局暂存、普通与聚堆合法抓取沿用同一合爪入口。上位按浅目标新图发起的 aux2 抓前补进仍按原 50 mm、总额度和超时执行。
+- 合法单橙日常运输改为 86°。单橙滤除仍在 82° 闭爪后退 100 mm，完成后回 86°。保橙拆黑 U8200 使用独立的 82° 滤除位；普通分离沿原退让、复审交接，确认留橙后以 86° 运输。门口橙黑横移仍在 82° 向外走，降至 86° 后移回；门口滤除后的 U8200 分离回到 86° 才报告 DONE。
+
+定向离线检查覆盖开局含黑、普通单黑、绿黑混合在轮程静止时接 GRAB 并进入 mode23，单橙滤除往返高度，以及门口横移后保橙拆黑的恢复高度和 DONE。正式 NormalRun 已构建。本轮未烧录或读取板端身份，实车夹取和滤除效果待验。[构建记录](CURRENT_STATUS.md)
+
 ## MATCH-STATION-105-20261118 ①无果去③到站直接从 105° 搜索
 
 已对照上位比赛分支 `18bffb5`。①和③各累计搜索 540° 仍无合法目标时，由上位决定直达另一点。仅①无果去③时，上位发送空车移动步骤 13，到站后发送 `opcode 0x14 / step14 / A=3`，B 为扫描方向 ±1，U 为场地中心方向。③无果返①及投送后直返原点使用 A=2。[上位交接](https://github.com/danmo-teng/shijue_fangan/blob/18bffb5a9d5789923eefd07e5c10f33e19ba1016/docs/CROSS_REPO_REQUESTS.md)

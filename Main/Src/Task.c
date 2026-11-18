@@ -443,10 +443,6 @@ static uint8_t audit_last_class_counts[VISION_CARGO_CLASS_MAX + 1U];
 static uint8_t audit_last_zero_classes;
 static AuditSemantic audit_last_semantic;
 static bool audit_core_seen_in_streak;
-static bool grab_core_advance_required;
-static bool grab_core_advance_started;
-static uint32_t grab_core_advance_start_path_mm;
-static float grab_core_advance_heading_deg;
 static PostGrabAuditPhase post_grab_audit_phase;
 static uint32_t post_grab_audit_phase_started_ms;
 static uint32_t post_grab_invalid_started_ms;
@@ -1039,13 +1035,7 @@ static void task_begin_close_claw(uint32_t now_ms)
   task_set_loaded_travel(current != LIFT_LOAD_UNKNOWN ? current : held_load);
   single_filter_armed = true;
   injury_recheck_pending = false;
-  const bool advance_for_core = complete_flow_active &&
-      audit_core_seen_in_streak;
   task_enter(TASK_CLOSE_CLAW, now_ms);
-  grab_core_advance_required = advance_for_core;
-  grab_core_advance_started = false;
-  grab_core_advance_start_path_mm = 0U;
-  grab_core_advance_heading_deg = 0.0f;
 }
 
 static bool task_audit_is_placeholder(const VisionMissionCommand *command)
@@ -1437,10 +1427,6 @@ static void task_clear_audit_result(void)
   }
   audit_last_semantic = AUDIT_SEMANTIC_INVALID;
   audit_core_seen_in_streak = false;
-  grab_core_advance_required = false;
-  grab_core_advance_started = false;
-  grab_core_advance_start_path_mm = 0U;
-  grab_core_advance_heading_deg = 0.0f;
   task_status.audit_left_class = 0U;
   task_status.audit_right_class = 0U;
   task_status.audit_total_count = 0U;
@@ -1497,7 +1483,7 @@ static void task_start_remote_action(RemoteAction type,
   const bool continue82 = previous_82 && !orange_gate_lowered &&
       type == REMOTE_ACTION_YIELD && cargo_recheck_pending;
   const LiftLoad restore = held_load == LIFT_LOAD_MATERIAL ? held_load : LIFT_LOAD_UNKNOWN;
-  const uint8_t lift_angle = lift82 || continue82 ? APP_LIFT_ORANGE_TRAVEL_ANGLE :
+  const uint8_t lift_angle = lift82 || continue82 ? APP_LIFT_FIRST_GREEN_FILTER_ANGLE :
       previous_82 ? task_loaded_travel_angle(restore) : 0U;
   task_enter(TASK_REMOTE_ACTION, now_ms);
   separation_motion = (SeparationMotion){0};
@@ -1521,7 +1507,7 @@ static void task_start_remote_action(RemoteAction type,
   };
   if (lift_angle != 0U && !continue82) {
     remote_action.actuator_wait_ms = Lift_PositionWaitMs(lift_angle);
-    if (lift82) Lift_SetLoadedTravelPosition(LIFT_LOAD_ORANGE);
+    if (lift82) Lift_SetFirstGreenFilterPosition();
     else task_set_loaded_travel(restore);
   }
 }
@@ -2048,10 +2034,6 @@ static void task_initialize(uint32_t now_ms, bool claws_already_stowed)
   audit_last_id = 0U;
   audit_last_semantic = AUDIT_SEMANTIC_INVALID;
   audit_core_seen_in_streak = false;
-  grab_core_advance_required = false;
-  grab_core_advance_started = false;
-  grab_core_advance_start_path_mm = 0U;
-  grab_core_advance_heading_deg = 0.0f;
   post_grab_audit_phase = POST_AUDIT_WAIT_PRIMARY;
   post_grab_audit_phase_started_ms = now_ms;
   post_grab_invalid_started_ms = now_ms;
@@ -6822,8 +6804,6 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
       command_accepted = true;
       task_status.acknowledged_sequence = command->sequence;
       task_begin_close_claw(now_ms);
-      /* Recovery must not repeat the interrupted CORE approach stroke. */
-      grab_core_advance_required = false;
     } else if (command->command == VISION_CMD_RELEASE_BOTH && audit_received && !audit_valid) {
       command_accepted = true;
       task_status.acknowledged_sequence = command->sequence;
@@ -8223,10 +8203,10 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     orange_gate_attempted = true;
     task_start_remote_action(REMOTE_ACTION_ORANGE_GATE_FILTER, &incoming, now_ms);
     remote_action.black_right = (incoming.flags & VISION_CMD_TARGET_RIGHT) != 0U;
-    remote_action.separation_lift_angle = APP_LIFT_ORANGE_TRAVEL_ANGLE;
+    remote_action.separation_lift_angle = APP_LIFT_FIRST_GREEN_FILTER_ANGLE;
     remote_action.lift_ready = false;
-    remote_action.actuator_wait_ms = Lift_PositionWaitMs(APP_LIFT_ORANGE_TRAVEL_ANGLE);
-    Lift_SetLoadedTravelPosition(LIFT_LOAD_ORANGE);
+    remote_action.actuator_wait_ms = Lift_PositionWaitMs(APP_LIFT_FIRST_GREEN_FILTER_ANGLE);
+    Lift_SetFirstGreenFilterPosition();
     task_clear_audit_result();
     Motor_Stop();
     task_status.motors_active = false;
@@ -8821,28 +8801,6 @@ void Task_Process(uint32_t now_ms)
       break;
 
     case TASK_CLOSE_CLAW:
-      if (grab_core_advance_required) {
-        LocationPose pose;
-        if (!task_get_location_pose(&pose, now_ms)) {
-          break;
-        }
-        if (!grab_core_advance_started) {
-          grab_core_advance_started = true;
-          grab_core_advance_start_path_mm = pose.path_mm;
-          grab_core_advance_heading_deg =
-              (float)pose.heading_mdeg * 0.001f;
-        }
-        const uint32_t travelled_mm =
-            pose.path_mm - grab_core_advance_start_path_mm;
-        if (travelled_mm < APP_CORE_GRAB_ADVANCE_DISTANCE_MM) {
-          (void)task_move_heading(APP_CORE_GRAB_ADVANCE_SPEED_MM_S,
-                                  grab_core_advance_heading_deg, now_ms);
-          break;
-        }
-        Motor_Stop();
-        task_status.motors_active = false;
-        grab_core_advance_required = false;
-      }
       if (Claw_Touch(now_ms)) {
         task_status.gripper_closed = true;
         Camera_SetAngle(APP_GRAB_VIEW_ANGLE);

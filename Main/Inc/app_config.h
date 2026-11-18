@@ -483,8 +483,6 @@
 #define APP_CAPTURE_ESCAPE_SPEED_MM_S   300.0f
 #define APP_CAPTURE_ESCAPE_TURN_DEG      90.0f
 #define APP_SEPARATION_MAX_ATTEMPTS        2U
-#define APP_CORE_GRAB_ADVANCE_DISTANCE_MM  50U
-#define APP_CORE_GRAB_ADVANCE_SPEED_MM_S 180.0f
 #define APP_POST_GRAB_AUDIT_WINDOW_MS     3500U
 #define APP_POST_GRAB_CAMERA_NUDGE_MS      400U
 #define APP_POST_GRAB_DECISION_WAIT_MS    4000U
@@ -672,8 +670,8 @@
 #define APP_LIFT_RELEASE_RAISE_ANGLE      65U
 #define APP_LIFT_TRAVEL_ANGLE             85U
 #define APP_LIFT_MATERIAL_TRAVEL_ANGLE    86U
-#define APP_LIFT_ORANGE_TRAVEL_ANGLE      82U
-/* Calibrated pose only; the autonomous first-green filter is not enabled here. */
+#define APP_LIFT_ORANGE_TRAVEL_ANGLE      86U
+/* Temporary lift position for filtering and orange/core separation. */
 #define APP_LIFT_FIRST_GREEN_FILTER_ANGLE 82U
 #define APP_SINGLE_CARGO_FILTER_BACK_SPEED_MM_S 250.0f
 /* S2/S4 mounting: 1 mirrors the PWM angle, 0 selects the original mounting. */
