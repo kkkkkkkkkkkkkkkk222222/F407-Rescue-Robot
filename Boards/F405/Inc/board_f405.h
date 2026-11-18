@@ -38,6 +38,8 @@ void BoardF405_ReportVersion(void);
 void BoardF405_RequestBeep(uint8_t count, bool long_tone);
 /* Persistent operator alarm; false cancels all queued/current operator sound. */
 void BoardF405_SetOperatorAlarm(bool enabled);
+/* CONFIG clears a persistent alarm and lets finite tones finish. */
+void BoardF405_ClearAlarmOnConfig(void);
 void BoardF405_ProcessBeep(uint32_t now_ms);
 
 #endif

@@ -16,6 +16,12 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-KEY-TONE-20261118 发车确认音回执
+
+已对照上位比赛分支 `baa279f` 完成下位适配。上位仍通过 0x20 请求按键确认音。F405 接受首发或重发 CONFIG 时，只清除持续报警。待播放的确认音会正常开始，已开始的确认音按原时长响完。上位显式消音仍在下一次蜂鸣器服务时取消当前及待播声音。[上位交接](https://github.com/danmo-teng/shijue_fangan/blob/baa279f6bf544fc5338cf6a05ea613d203b6c324/docs/CROSS_REPO_REQUESTS.md)
+
+用生产串口解析、蜂鸣器代码和模拟 GPIO 做了定向检查。首发 CONFIG 先于短音播放、重发 CONFIG 落在播放中，两种情况均只产生一个完整的 100 ms 脉冲。持续报警在接受配置后停止，错停车序号的重发配置不消音，上位显式消音可取消待播或正在播放的短音。正式固件构建通过，尚未烧录或实按。[镜像身份](CURRENT_STATUS.md)
+
 ## MATCH-WALL-YAW-20261118 首发、快速重发与停车航向校正回执
 
 已核对 RDK 比赛分支 `cc51217` 的 CONFIG 发布、停车序号校验、双墙候选和定位采用回报。[上位交接](https://github.com/danmo-teng/shijue_fangan/blob/cc51217d995313f3b3900bf154694cecd037bfd0/docs/CROSS_REPO_REQUESTS.md)

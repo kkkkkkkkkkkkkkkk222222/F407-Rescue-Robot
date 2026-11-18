@@ -1,5 +1,9 @@
 # 当前状态：F405 烧录入口
 
+2026-11-18 对照上位 `baa279f` 修复首发及快速重发 CONFIG 截断按键确认音的问题。定向离线检查和 NormalRun 构建通过。本轮未烧录，实按听感待验。[交接回执](CROSS_REPO_REQUESTS.md)
+
+本次 `build/F405/NormalRun/NormalRun.elf` 的 firmware ID 为 `938db7acde9a3eef16b3a421bcaa30bc27f136d4e8deb366e472a4c775902056`，基线 `1ac74f5/dirty1`，镜像包含工作区已有的 WheelCheck 改动。
+
 2026-11-18 已对照上位 `cc51217` 接入首发及快速重发的双墙场地航向校正。两种发车都以一份合法 CONFIG 生效。起步有双墙结果就用该偏移，否则照常发车；本轮后续候选只在规定的停车交接处采用一次。定向协议、任务与里程计联测及 NormalRun 构建通过。[两端交接回执](CROSS_REPO_REQUESTS.md)
 
 正式镜像 `build/F405/NormalRun/NormalRun.elf` 的 firmware ID 为 `4643f904211cb31bbb1d2e2463193a28bf7e4a2c23f72735773698e35d669c04`，构建基线为 `c7a95dc/dirty1`，包含工作区已有的 WheelCheck 改动。本轮未烧录，未读取板端身份。

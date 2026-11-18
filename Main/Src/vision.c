@@ -132,7 +132,7 @@ static void vision_save_config(const uint8_t *payload, uint8_t sequence)
   latest_data.mission = (VisionMissionCommand){0};
   context_pending = false;
 #if APP_BOARD_F405_ROBO
-  BoardF405_SetOperatorAlarm(false);
+  BoardF405_ClearAlarmOnConfig();
 #endif
 }
 

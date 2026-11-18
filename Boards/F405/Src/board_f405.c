@@ -122,6 +122,17 @@ void BoardF405_SetOperatorAlarm(bool enabled)
   __set_PRIMASK(mask);
 }
 
+void BoardF405_ClearAlarmOnConfig(void)
+{
+  const uint32_t mask = __get_PRIMASK();
+  __disable_irq();
+  if (operator_alarm_requested) {
+    operator_alarm_requested = false;
+    beep_request = BEEP_REQUEST_SILENCE;
+  }
+  __set_PRIMASK(mask);
+}
+
 void BoardF405_ProcessBeep(uint32_t now_ms)
 {
   static uint8_t remaining;
