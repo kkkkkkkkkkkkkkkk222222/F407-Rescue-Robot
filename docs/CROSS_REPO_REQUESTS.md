@@ -16,6 +16,14 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-POST-GRAB-SIDE-SWAP-20261119 抓后复审换侧仍按旧侧分离（待上位机修复）
+
+**离线复现。** 上位比赛分支 `fc5728a`，NormalRun `12a636f`。首绿已送完，本批尚未尝试横移。在抓取点闭爪 140° 复审（mode23）时，稳定审核为左橙、右黑。下位审核确认回包到达的同一周期，新图仍清楚看见一橙一黑，但已变成左黑、右橙。上位发出 `0x10 / flags=0x43 / U=8200`，要求保左橙；下位按已确认的旧审核接受，进入 mode25，大舵机抬至 82°。此时实际要保的橙块在新图右侧。侧别稳定的对照场景正常发出抓取点横移 `0x16`。以上为离线结果，实车触发情况待确认。
+
+**原因。** 审核签名只比较组成，左右互换后仍可相同。上位用待确认的旧审核与新图判断黑块侧别，二者冲突时跳过横移，随后把旧审核传给普通分离选侧。下位收到的保左指令与其已确认的审核一致，无法据此识别新图中的换侧。[上位审核签名](https://github.com/danmo-teng/shijue_fangan/blob/fc5728a2d269a120f2928fb6a64ab424b73389d2/competition_rescue/protocol.py#L344) · [上位横移与分离分支](https://github.com/danmo-teng/shijue_fangan/blob/fc5728a2d269a120f2928fb6a64ab424b73389d2/competition_rescue/state_machine.py#L3407) · [下位选侧校验](https://github.com/kkkkkkkkkkkkkkkk222222/F407-Rescue-Robot/blob/12a636f93cb083c7e34c494dd43a444bb729eb37/Main/Src/Task.c#L988)
+
+**请上位机修复。** 在 mode23 下发依赖侧别的动作前，若新图的明确左右归属与待确认审核相反，撤销旧选侧，按新图走已有复审。验收时覆盖左橙换到右侧及其镜像：旧审核的回包不能触发旧侧分离；新审核确认后，仍符合首次横移条件时，`0x16` 的黑块侧取新审核结果；本批已横移过时，普通分离按新审核选择保留侧。
+
 ## 2026-11-19 NormalRun 抓取点橙黑横移、复审弃批和保橙放宽 5°
 
 已核对上位比赛分支 `dc4b9b0`。首绿投送后，普通闭爪 140° 复审确认一橙一黑、黑块明确归侧时，上位发送 0x16，flags 加 0x10、U=0。下位在 mode23 按当前航向和原编码器轮程，闭爪抬至 82° 向黑块异侧移 100 mm，降至 86° 移回 100 mm，回 mode23 报同任务、同动作 DONE。新复审确认单橙才运输，仍混装走原分离。门口沿用本方正朝向和 mode48 完成回报，每批只尝试一次横移。[上位交接](https://github.com/danmo-teng/shijue_fangan/blob/dc4b9b0a056a94db498c340d609d25492e61d8dd/docs/CROSS_REPO_REQUESTS.md)
