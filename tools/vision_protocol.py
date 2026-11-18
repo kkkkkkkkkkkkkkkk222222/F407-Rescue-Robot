@@ -70,6 +70,7 @@ CMD_CHANGE_LANE = 0x11
 CMD_CARGO_AUDIT = 0x12
 CMD_CLEAR_SAFE_ZONE = 0x13
 CMD_BULLDOZER_STEP = 0x14
+CMD_ORANGE_FILTER_AT_PICKUP = 0x10  # Opcode 0x16 only.
 CMD_ORANGE_GATE_FILTER = 0x16
 
 CMD_VALID = 0x01
@@ -365,11 +366,12 @@ def mission_frame(
         raise ValueError("invalid mission flags")
     if command == CMD_ORANGE_GATE_FILTER:
         required = CMD_VALID | CMD_SIDE_VALID
-        allowed = required | CMD_RED_SIDE | CMD_TARGET_RIGHT
+        allowed = required | CMD_RED_SIDE | CMD_TARGET_RIGHT | CMD_ORANGE_FILTER_AT_PICKUP
+        heading = 0 if flags & CMD_ORANGE_FILTER_AT_PICKUP else (9000 if flags & CMD_RED_SIDE else 27000)
         if (flags & required != required or flags & ~allowed or
                 target_x_mm != 100 or target_y_mm != 8600 or
-                heading_cdeg != (9000 if flags & CMD_RED_SIDE else 27000)):
-            raise ValueError("orange gate filter requires black side, 100mm, lift86 and safe heading")
+                heading_cdeg != heading):
+            raise ValueError("orange filter requires black side, 100mm, lift86 and the site heading mode")
     if command in (CMD_DISPERSE_PILE, CMD_RELEASE_LEFT, CMD_RELEASE_RIGHT):
         if target_x_mm or target_y_mm or heading_cdeg not in (0, SEPARATION_ORANGE_CORE_82):
             raise ValueError("invalid separation lift payload")

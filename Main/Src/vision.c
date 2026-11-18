@@ -284,10 +284,12 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
   const int16_t arg_b = (int16_t)vision_u16_be(&payload[4]);
   if (code == VISION_CMD_ORANGE_GATE_FILTER) {
     const uint8_t required = VISION_CMD_VALID | VISION_CMD_SIDE_VALID;
-    const uint8_t allowed = required | VISION_CMD_RED_SIDE | VISION_CMD_TARGET_RIGHT;
+    const uint8_t allowed = required | VISION_CMD_RED_SIDE | VISION_CMD_TARGET_RIGHT | VISION_ORANGE_FILTER_AT_PICKUP;
+    const uint16_t expected_heading = (flags & VISION_ORANGE_FILTER_AT_PICKUP) ? 0U :
+        ((flags & VISION_CMD_RED_SIDE) ? 9000U : 27000U);
     if ((flags & required) != required || (flags & (uint8_t)~allowed) != 0U ||
         arg_a != 100 || arg_b != APP_LIFT_MATERIAL_TRAVEL_ANGLE * 100 ||
-        heading != ((flags & VISION_CMD_RED_SIDE) != 0U ? 9000U : 27000U))
+        heading != expected_heading)
       goto rejected_payload;
   }
   if (code == VISION_CMD_DISPERSE_PILE || code == VISION_CMD_RELEASE_LEFT ||
