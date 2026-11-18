@@ -1,15 +1,15 @@
 {
   "request_id": "MATCH-ROUND-RESUME-20261117",
   "status": "paired source implemented; deployment and joint hardware validation pending",
-  "packet": "existing TYPE0x11, 15 bytes; sequences 0,1,2 as original CONFIG",
+  "packet": "TYPE0x11, 15 bytes; the host repeats sequences 0,1,2. As of 2026-11-18 the first valid copy confirms both start and resume.",
   "payload": {
     "P0": "colour 0x11 red / 0x12 blue",
     "P1": "original zone 1..4",
     "P2": "0x52 explicit match resume",
     "P3": "bit0 first green complete, bit1 opening stash/attack placed; other bits zero",
     "P4": "delivery_count modulo256, preserve search rotation parity; first-green bit distinguishes never-delivered from positive even wrap",
-    "P5": "latest physical STOP serial low8; same value as direct ABORT SEQ; RDK sole UART owner compares before rearm",
-    "P6_P7": "zero"
+    "P5": "latest physical STOP serial low8; same value as direct ABORT SEQ; checked by RDK relay and F405 on resume",
+    "P6_P7": "big-endian: 0 for legacy, 0x4000+(1200+delta_cdeg) for a signed start offset within +/-1200, or 0x8000|tag to await a candidate with tag 1..32767"
   },
   "normal_config": "Original zero P2..P7 still means new match, clear old progress",
   "behavior": "Restore lower first-delivery qualification and search rotation after ordinary task reset and before original autonomous start; no load, no old task/action; no countdown or extra audit",

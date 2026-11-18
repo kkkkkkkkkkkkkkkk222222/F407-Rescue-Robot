@@ -223,6 +223,13 @@ void Location_Update10ms(void)
   location.valid = true;
 }
 
+void Location_AdjustFieldHeading(int16_t delta_cdeg)
+{
+  const uint32_t mask = location_enter_critical();
+  location.heading_unwrapped_mdeg += (int32_t)delta_cdeg * 10;
+  location_leave_critical(mask);
+}
+
 void Location_Reanchor(int32_t x_mm, int32_t y_mm, int32_t heading_mdeg)
 {
   const uint32_t mask = location_enter_critical();

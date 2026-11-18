@@ -395,6 +395,8 @@ static bool first_green_core_conflict;
 static bool first_green_bump_done;
 static bool complete_flow_active;
 static bool mission_paused;
+static uint16_t yaw_round_tag;
+static bool wall_yaw_taken;
 static bool pause_clock_active;
 static uint32_t pause_clock_ms;
 static bool audit_received;
@@ -626,7 +628,7 @@ static void task_stop(TaskFault fault, uint32_t now_ms)
   if (fault == TASK_FAULT_REMOTE_STOP) {
     /* A new confirmed TYPE=0x11 configuration is the only supported restart
      * request after an operator ABORT/STOP. Hardware faults remain latched. */
-    Vision_RearmConfig();
+    Vision_RearmConfig(task_status.acknowledged_sequence);
     if (state == TASK_STOPPED && task_status.fault == TASK_FAULT_REMOTE_STOP) {
       /* Another STOP cancels any pending restart but keeps the claw stroke. */
       return;
@@ -1545,6 +1547,13 @@ static void task_publish_status(uint32_t now_ms)
       VISION_STM_DISTANCE_DONE : 0U;
   flags |= (task_status.fault != TASK_FAULT_NONE) ? VISION_STM_FAULT : 0U;
 
+  uint8_t action_status = VISION_ACTION_YAW_SUPPORT;
+  if (wall_yaw_taken) { action_status |= VISION_ACTION_YAW_APPLIED; }
+  if (accepted_context.valid) {
+    action_status |= 1U;
+    if (accepted_context.completed || task_context_complete()) { action_status |= 2U; }
+    if (accepted_context.rejection_valid) { action_status |= 4U; }
+  }
   const VisionStmStatus status = {
     .camera_pitch_cdeg = (uint16_t)Camera_GetAngle() * 100U,
     .flags = flags,
@@ -1554,9 +1563,8 @@ static void task_publish_status(uint32_t now_ms)
     .task_id = accepted_context.task_id,
     .action_id = accepted_context.action_id,
     .accepted_opcode = accepted_context.opcode,
-    .action_status = accepted_context.valid ?
-        (uint8_t)(1U | ((accepted_context.completed || task_context_complete()) ? 2U : 0U) |
-                  (accepted_context.rejection_valid ? 4U : 0U)) : 0U,
+    .yaw_round_tag = yaw_round_tag,
+    .action_status = action_status,
     .rejected_action_id = accepted_context.rejection_valid ? accepted_context.rejected_action_id : 0U
   };
   Vision_QueueStmStatus(&status);
@@ -5335,6 +5343,13 @@ static void task_start_configured_round(const VisionData *vision, uint32_t now_m
   search_yaw_direction = first_delivery_done &&
       (vision->config_delivery_count & 1U) == 0U ? -1 : 1;
   Location_Reset((LocationStart)vision->start_zone);
+  const uint16_t word = vision->yaw_config_word;  /* validated by vision_save_config */
+  yaw_round_tag = word & VISION_YAW_ROUND_FLAG ? word & ~VISION_YAW_ROUND_FLAG : 0U;
+  wall_yaw_taken = word != 0U && yaw_round_tag == 0U;
+  if (wall_yaw_taken) {
+    Location_AdjustFieldHeading((int16_t)((int32_t)word - (int32_t)VISION_YAW_START_BASE -
+                                          VISION_YAW_MAX_CDEG));
+  }
   Vision_RequestConfigAck();
   task_enter(TASK_START, now_ms);
 }
@@ -8590,6 +8605,30 @@ static void task_recover_reference(const VisionData *vision)
   }
 }
 
+static void task_adopt_parked_yaw(const VisionData *vision)
+{
+  if (wall_yaw_taken || yaw_round_tag == 0U || vision->yaw_offer_tag != yaw_round_tag ||
+      !vision->config_ready || mission_paused || pre_grab.moving || task_status.motors_active) {
+    return;
+  }
+  const bool parked = state == TASK_WAIT_NAVIGATION || state == TASK_POST_GRAB_AUDIT ||
+      state == TASK_TRANSPORT_AUDIT || state == TASK_DISPERSE_READY ||
+      (state == TASK_APPROACH && approach_phase == APPROACH_RANGE_WAIT && !zone_view.active);
+  if (!parked || Motor_IsBraking()) { return; }
+  /* A control frame arriving in the same snapshot takes priority this tick. */
+  const VisionMissionCommand *incoming = &vision->mission;
+  if (incoming->received && incoming->payload_valid &&
+      (incoming->command == VISION_CMD_ABORT || incoming->command == VISION_CMD_PAUSE ||
+       incoming->command == VISION_CMD_STOP)) { return; }
+  EncoderStatus wheels[3];
+  Encoder_GetAll(wheels);
+  for (uint8_t i = 0U; i < 3U; ++i) {
+    if (wheels[i].delta_10ms != 0) { return; }
+  }
+  Location_AdjustFieldHeading(vision->yaw_offer_cdeg);
+  wall_yaw_taken = true;
+}
+
 void Task_Process(uint32_t now_ms)
 {
   TaskDiag_TaskTick();
@@ -8628,6 +8667,7 @@ void Task_Process(uint32_t now_ms)
       now_ms - sweep_audit_evidence_ms > APP_AUDIT_EVIDENCE_MAX_GAP_MS) {
     task_clear_sweep_audit_evidence();
   }
+  task_adopt_parked_yaw(&vision);
   task_accept_mission(&vision, now_ms);
   if (state == TASK_STOPPED && task_status.fault == TASK_FAULT_REMOTE_STOP) {
     Motor_Stop();

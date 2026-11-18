@@ -59,7 +59,7 @@
 #define VISION_CONFIG_RESUME      0x52U
 #define VISION_RESUME_FIRST_GREEN 0x01U
 #define VISION_RESUME_ATTACK_DONE 0x02U
-#define VISION_RESUME_CONFIRM_FRAMES 3U
+#define VISION_CONFIG_LAST_RETRY_SEQ 2U
 #define VISION_MSG_REPORT         0x12U
 #define VISION_MSG_ODOM           0x15U
 #define VISION_MSG_FUSED_POSE     0x16U
@@ -69,6 +69,13 @@
 #define VISION_MSG_STATUS_CONTEXT  0x1EU
 #define VISION_MSG_IMU             0x1FU
 #define VISION_MSG_OPERATOR_BEEP   0x20U
+#define VISION_MSG_WALL_YAW        0x21U
+
+#define VISION_YAW_START_BASE      0x4000U
+#define VISION_YAW_ROUND_FLAG      0x8000U
+#define VISION_YAW_MAX_CDEG        1200
+#define VISION_ACTION_YAW_APPLIED  0x40U
+#define VISION_ACTION_YAW_SUPPORT  0x80U
 
 #define VISION_IMU_VALID           0x01U
 #define VISION_IMU_READY           0x02U
@@ -279,6 +286,9 @@ typedef struct {
   uint8_t config_sequence;
   uint8_t config_resume_flags;
   uint8_t config_delivery_count;
+  uint16_t yaw_config_word;
+  uint16_t yaw_offer_tag;
+  int16_t yaw_offer_cdeg;
   bool config_resume;
   uint8_t sequence;
   uint8_t cargo_counts;
@@ -313,6 +323,7 @@ typedef struct {
   uint8_t accepted_opcode;
   uint8_t action_status;
   uint16_t rejected_action_id;
+  uint16_t yaw_round_tag;
 } VisionStmStatus;
 
 typedef struct {
@@ -340,7 +351,7 @@ void Vision_QueueMotionStatus(const VisionMotionStatus *status);
 
 void Vision_Init(void);
 void Vision_ResetParser(void);
-void Vision_RearmConfig(void);
+void Vision_RearmConfig(uint8_t stop_sequence);
 void Vision_ClearAbort(void);
 void Vision_ParseBytes(const uint8_t *data, size_t size, uint32_t tick_ms);
 VisionData Vision_GetSnapshot(void);

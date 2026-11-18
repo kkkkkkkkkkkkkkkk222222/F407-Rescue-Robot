@@ -1,5 +1,9 @@
 # 当前状态：F405 烧录入口
 
+2026-11-18 已对照上位 `cc51217` 接入首发及快速重发的双墙场地航向校正。两种发车都以一份合法 CONFIG 生效。起步有双墙结果就用该偏移，否则照常发车；本轮后续候选只在规定的停车交接处采用一次。定向协议、任务与里程计联测及 NormalRun 构建通过。[两端交接回执](CROSS_REPO_REQUESTS.md)
+
+正式镜像 `build/F405/NormalRun/NormalRun.elf` 的 firmware ID 为 `4643f904211cb31bbb1d2e2463193a28bf7e4a2c23f72735773698e35d669c04`，构建基线为 `c7a95dc/dirty1`，包含工作区已有的 WheelCheck 改动。本轮未烧录，未读取板端身份。
+
 2026-11-18 对照上位 `d6eccc2` 完成远橙分段与抓前补进配套。远橙 105° 续段沿用原 aux1，近档由 aux0 接 140°。下位已修复等图和可分组合交接被原 4 秒抢占的问题，并按本批 200 mm 行程处理初抓单蓝。普通和聚堆入口的定向仿真通过。[两端交接回执](CROSS_REPO_REQUESTS.md)
 
 正式镜像 `build/F405/NormalRun/NormalRun.elf` 已构建，firmware ID 为 `a782a69dfb861f5fbbb2472ac525cc63816e5d34c308e579b1f67f4ff169a4f8`，构建基线为 `e8d5a2d/dirty1`，包含工作区已有的 WheelCheck 改动。本轮未烧录，未读取板端身份。

@@ -19,10 +19,7 @@ static volatile VisionDiagnostic link_diag;
 static volatile VisionData latest_data;
 static uint8_t frame[VISION_FRAME_SIZE];
 static uint8_t frame_index;
-static uint8_t config_streak;
-static uint8_t config_last_sequence;
-static uint8_t config_candidate[VISION_PAYLOAD_SIZE];
-static bool config_sequence_valid;
+static uint8_t config_stop_sequence;
 static volatile uint8_t ack_remaining;
 static volatile bool status_pending;
 static volatile bool odom_pending;
@@ -108,62 +105,35 @@ static void vision_save_config(const uint8_t *payload, uint8_t sequence)
   const uint8_t color = payload[0];
   const uint8_t zone = payload[1];
   const bool resume = payload[2] == VISION_CONFIG_RESUME;
-  const uint8_t required = resume ? VISION_RESUME_CONFIRM_FRAMES : APP_CONFIG_CONFIRM_FRAMES;
-  const bool valid =
+  const uint16_t yaw_word = vision_u16_be(payload + 6);
+  const bool yaw_word_ok = yaw_word == 0U || yaw_word > VISION_YAW_ROUND_FLAG ||
+      (yaw_word >= VISION_YAW_START_BASE && yaw_word <= VISION_YAW_START_BASE + 2U * VISION_YAW_MAX_CDEG);
+  const bool valid = yaw_word_ok &&
       ((color == VISION_COLOR_RED) || (color == VISION_COLOR_BLUE)) &&
       (zone >= VISION_ZONE_1) && (zone <= VISION_ZONE_4) &&
       (resume ? (latest_data.session_generation != 0U &&
                  color == latest_data.color && zone == latest_data.start_zone &&
                  (payload[3] & ~(VISION_RESUME_FIRST_GREEN | VISION_RESUME_ATTACK_DONE)) == 0U &&
-                 vision_padding_zero(payload, 6U) && sequence < required) :
-                vision_padding_zero(payload, 2U));
+                 payload[5] == config_stop_sequence && sequence <= VISION_CONFIG_LAST_RETRY_SEQ) :
+                (payload[2] == 0U && payload[3] == 0U && payload[4] == 0U && payload[5] == 0U));
+  if (latest_data.config_ready || abort_pending || !valid) { return; }
 
-  if (latest_data.config_ready) {
-    return;
-  }
-  if (!valid || abort_pending) {
-    config_streak = 0U;
-    config_sequence_valid = false;
-    return;
-  }
-
-  bool same = config_sequence_valid;
-  for (uint8_t i = 0U; i < VISION_PAYLOAD_SIZE; ++i) {
-    same = same && config_candidate[i] == payload[i];
-  }
-  if (same && sequence == (uint8_t)(config_last_sequence + 1U)) {
-    if (config_streak < required) {
-      ++config_streak;
-    }
-  } else {
-    if (resume && sequence != 0U) {
-      config_streak = 0U;
-      config_sequence_valid = false;
-      return;
-    }
-    for (uint8_t i = 0U; i < VISION_PAYLOAD_SIZE; ++i) {
-      config_candidate[i] = payload[i];
-    }
-    config_streak = 1U;
-  }
-  config_last_sequence = sequence;
-  config_sequence_valid = true;
-  latest_data.config_ready = config_streak >= required;
-  if (latest_data.config_ready) {
-    latest_data.color = color;
-    latest_data.start_zone = zone;
-    latest_data.config_sequence = sequence;
-    latest_data.config_resume = resume;
-    latest_data.config_resume_flags = resume ? payload[3] : 0U;
-    latest_data.config_delivery_count = resume ? payload[4] : 0U;
-    ++latest_data.session_generation;
-    latest_data.mission = (VisionMissionCommand){0};
-    context_pending = false;
+  /* The host repeats CONFIG for delivery. Start once on the first valid copy. */
+  latest_data.config_ready = true;
+  latest_data.color = color;
+  latest_data.start_zone = zone;
+  latest_data.config_sequence = sequence;
+  latest_data.config_resume = resume;
+  latest_data.yaw_config_word = yaw_word;
+  latest_data.yaw_offer_tag = 0U;
+  latest_data.config_resume_flags = resume ? payload[3] : 0U;
+  latest_data.config_delivery_count = resume ? payload[4] : 0U;
+  ++latest_data.session_generation;
+  latest_data.mission = (VisionMissionCommand){0};
+  context_pending = false;
 #if APP_BOARD_F405_ROBO
-    /* Only an accepted new CONFIG cancels old operator audio; no sound ACK. */
-    BoardF405_SetOperatorAlarm(false);
+  BoardF405_SetOperatorAlarm(false);
 #endif
-  }
 }
 
 static void vision_save_report(const uint8_t *payload, uint8_t sequence,
@@ -635,6 +605,19 @@ static void vision_save_frame(uint32_t tick_ms)
   }
   latest_data.last_frame_tick_ms = tick_ms;
   latest_data.frame_received = true;
+  if (type == VISION_MSG_WALL_YAW) {
+    const uint16_t tag = vision_u16_be(payload);
+    const int16_t delta = (int16_t)vision_u16_be(payload + 2);
+    if (!abort_pending && latest_data.config_ready && tag > 0U && tag < VISION_YAW_ROUND_FLAG &&
+        latest_data.yaw_config_word == (VISION_YAW_ROUND_FLAG | tag) &&
+        delta >= -VISION_YAW_MAX_CDEG && delta <= VISION_YAW_MAX_CDEG &&
+        vision_padding_zero(payload, 4U) && latest_data.yaw_offer_tag == 0U) {
+      latest_data.yaw_offer_tag = tag;
+      latest_data.yaw_offer_cdeg = delta;
+    }
+    if (primask == 0U) { __enable_irq(); }
+    return;
+  }
   const bool paired = context_pending &&
       (type == VISION_MSG_MISSION) && (sequence == context_sequence);
   context_pending = false;
@@ -675,7 +658,8 @@ static bool vision_frame_valid(void)
   return (frame[FRAME_TAIL_INDEX] == VISION_FRAME_TAIL) &&
          ((type == VISION_MSG_CONFIG) || (type == VISION_MSG_REPORT) ||
           (type == VISION_MSG_FUSED_POSE) ||
-          (type == VISION_MSG_MISSION) || (type == VISION_MSG_COMMAND_CONTEXT)
+          (type == VISION_MSG_MISSION) || (type == VISION_MSG_COMMAND_CONTEXT) ||
+          (type == VISION_MSG_WALL_YAW)
 #if APP_BOARD_F405_ROBO
           || (type == VISION_MSG_OPERATOR_BEEP)
 #endif
@@ -752,9 +736,7 @@ void Vision_Init(void)
   latest_data = (VisionData){0};
   abort_pending = false;
   mission_generation = 0U;
-  config_streak = 0U;
-  config_last_sequence = 0U;
-  config_sequence_valid = false;
+  config_stop_sequence = 0U;
   ack_remaining = 0U;
   status_pending = false;
   odom_pending = false;
@@ -781,15 +763,13 @@ void Vision_ClearAbort(void)
   if (primask == 0U) { __enable_irq(); }
 }
 
-void Vision_RearmConfig(void)
+void Vision_RearmConfig(uint8_t stop_sequence)
 {
   const uint32_t primask = __get_PRIMASK();
   __disable_irq();
   latest_data.config_ready = false;
   ack_remaining = 0U;
-  config_streak = 0U;
-  config_last_sequence = 0U;
-  config_sequence_valid = false;
+  config_stop_sequence = stop_sequence;
   if (primask == 0U) {
     __enable_irq();
   }
@@ -880,8 +860,8 @@ void Vision_QueueStmStatus(const VisionStmStatus *status)
     (uint8_t)status->camera_pitch_cdeg,
     status->acknowledged_sequence,
     status->fault_code,
-    0U,
-    0U
+    (uint8_t)(status->yaw_round_tag >> 8U),
+    (uint8_t)status->yaw_round_tag
   };
   const uint8_t context_payload[VISION_PAYLOAD_SIZE] = {
     (uint8_t)(status->task_id >> 8), (uint8_t)status->task_id,

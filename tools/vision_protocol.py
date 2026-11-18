@@ -21,6 +21,7 @@ MSG_MISSION = 0x18
 MSG_COMMAND_CONTEXT = 0x1D
 MSG_STATUS_CONTEXT = 0x1E
 MSG_IMU = 0x1F
+MSG_WALL_YAW = 0x21
 
 IMU_VALID = 0x01
 IMU_READY = 0x02
@@ -126,7 +127,7 @@ def build_frame(message_type: int, sequence: int, payload: bytes) -> bytes:
     if message_type not in (
         MSG_CONFIG, MSG_REPORT, MSG_ODOM, MSG_IMU, MSG_FUSED_POSE,
         MSG_STM_STATUS, MSG_MISSION, MSG_MOTION_COMMAND, MSG_MOTION_STATUS,
-        MSG_COMMAND_CONTEXT, MSG_STATUS_CONTEXT,
+        MSG_COMMAND_CONTEXT, MSG_STATUS_CONTEXT, MSG_WALL_YAW,
     ):
         raise ValueError("unsupported message type")
     if not 0 <= sequence <= 0xFF:
@@ -148,7 +149,7 @@ def parse_frame(frame: bytes) -> tuple[int, int, bytes]:
     if frame[2] not in (
         MSG_CONFIG, MSG_REPORT, MSG_ODOM, MSG_IMU, MSG_FUSED_POSE,
         MSG_STM_STATUS, MSG_MISSION, MSG_MOTION_COMMAND, MSG_MOTION_STATUS,
-        MSG_COMMAND_CONTEXT, MSG_STATUS_CONTEXT,
+        MSG_COMMAND_CONTEXT, MSG_STATUS_CONTEXT, MSG_WALL_YAW,
     ):
         raise ValueError("unsupported message type")
     return frame[2], frame[3], frame[4:12]
@@ -261,12 +262,14 @@ def parse_stm_status_pair(data: bytes) -> dict[str, int | bool]:
     kind, sequence, context = parse_frame(data[:FRAME_SIZE])
     status = parse_stm_status(data[FRAME_SIZE:])
     if (kind != MSG_STATUS_CONTEXT or sequence != status["sequence"] or
-            context[5] & ~7 or (not context[5] & 4 and context[6:] != bytes(2))):
+            context[5] & ~0xC7 or (not context[5] & 4 and context[6:] != bytes(2))):
         raise ValueError("invalid status context pair")
     status.update(task_id=int.from_bytes(context[:2], "big"),
                   action_id=int.from_bytes(context[2:4], "big"),
                   accepted_opcode=context[4], action_status=context[5],
                   request_rejected=bool(context[5] & 4),
+                  wall_yaw_supported=bool(context[5] & 0x80),
+                  wall_yaw_applied=bool(context[5] & 0x40),
                   rejected_action_id=int.from_bytes(context[6:8], "big"),
                   context_valid=True)
     return status
@@ -290,7 +293,7 @@ def stm_status_frame(
 
 def parse_stm_status(frame: bytes) -> dict[str, int | bool]:
     message_type, sequence, payload = parse_frame(frame)
-    if message_type != MSG_STM_STATUS or payload[6:8] != bytes(2):
+    if message_type != MSG_STM_STATUS or payload[6] & 0x80:
         raise ValueError("not a valid STM32 status frame")
     flags = payload[0]
     return {
@@ -300,6 +303,7 @@ def parse_stm_status(frame: bytes) -> dict[str, int | bool]:
         "camera_pitch_cdeg": int.from_bytes(payload[2:4], "big"),
         "acknowledged_sequence": payload[4],
         "fault_code": payload[5],
+        "wall_yaw_tag": int.from_bytes(payload[6:8], "big"),
         "claw_visible": bool(flags & STM_CLAW_VISIBLE),
         "gripper_closed": bool(flags & STM_GRIPPER_CLOSED),
         "motors_active": bool(flags & STM_MOTORS_ACTIVE),

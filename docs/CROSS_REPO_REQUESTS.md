@@ -16,6 +16,16 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-WALL-YAW-20261118 首发、快速重发与停车航向校正回执
+
+已核对 RDK 比赛分支 `cc51217` 的 CONFIG 发布、停车序号校验、双墙候选和定位采用回报。[上位交接](https://github.com/danmo-teng/shijue_fangan/blob/cc51217d995313f3b3900bf154694cecd037bfd0/docs/CROSS_REPO_REQUESTS.md)
+
+- 用户本轮选择首发、快速重发均以第一份合法 CONFIG 为准。上位仍可连发三份，F405 收到其中任一份合法副本即可确认。本局重发核对原阵营、出发位及本次 STOP 序号，保留原发车进度。后续副本不会重复应用偏移或启动任务。
+- 起步偏移绑定在出发位里程计初始化后。没有起步偏移时按名义航向出发；收到本轮第一份 0x21 候选后，在原 mode22、23、37、48 或已对准且无换角动作的 mode52，满足原交接的静止条件才采用。只调整场地航向，在途动作和任务编号连续。与暂停或停车同周期到达的候选让该命令优先。
+- 下位 0x1E 始终声明支持。运行中采用后，原配对状态回传同一轮次标识和采用位，供上位同步坐标。协议含完整 CRC 示例。[协议与配对字段](../MISSION_PROTOCOL.md)
+
+已用生产串口解析、任务状态机及里程计做定向离线联测，覆盖单份首发与重发、重复与错停车序号、候选插在动作配对帧之间、运动时暂存和停车一次采用、原始 IMU 增量及 XY/累计轮程连续。NormalRun 构建通过，未烧录，实际双墙识别和两端上车同步待验证。[构建记录](CURRENT_STATUS.md)
+
 ## MATCH-CAPTURE-BLUE-HANDOFF-20261118 远橙与抓前补进回执
 
 已核对上位比赛分支 `d6eccc2` 的正式入口、分段选择和[本次交接](https://github.com/danmo-teng/shijue_fangan/blob/d6eccc2c378d1855d97c0e4251197fde0db44de6/docs/CROSS_REPO_REQUESTS.md)。TODO32 的 50 mm 补进现已在上位正式入口启用，按该机绿、橙标线判断。
@@ -210,6 +220,8 @@ MotionDebug firmware ID=e06c43ee1f68b54f06a7067b080ec996f441966a9bdfe7a1b56e5b97
 生产Task和实际机构状态机在硬件替身下通过即时停车、原收纳顺序、重复STOP、提前CONFIG、较晚STOP、新局及故障停车隔离检查。NormalRun/MotionDebug编译链接通过，build_git=b65e3c8/dirty1（含原独立工作区改动）。NormalRun ID=42ce5f7a583271ac0cd4d49079e766f3cad4d4c5373b70e7e1c02b928720762d，MotionDebug ID=6952cda0bb7c360af84df27cf3ce4471824124a3c0e8ef73a78a191be8b65687。未连接、烧录或实车验证。
 
 ## MATCH-ROUND-RESUME-20261117：下位已配套并构建，未烧录
+
+下述三帧确认是该版历史行为。当前首发及重发均为一帧确认，见本页 MATCH-WALL-YAW-20261118。
 
 核对RDK 8660064786c6ef970e9d584531decf0e030db8d9 的短4/短3处理、恢复报文和串口STOP串号校验。固定入口blob 4f43d35ebfd7286f51738fa945ae09eb2efe8778，合同blob 3f1f927bc67b6f76184c4694cfadcf4870d467a1。
 

@@ -63,7 +63,7 @@ MotorStatus Motor_GetStatus(uint8_t id)
 { (void)id; return (MotorStatus){.stall_fault = motor_fault}; }
 LocationPose Location_GetPose(void) { return test_pose; }
 VisionData Vision_GetSnapshot(void) { return test_vision; }
-void Vision_RearmConfig(void) {}
+void Vision_RearmConfig(uint8_t stop_sequence) { (void)stop_sequence; }
 void Vision_ClearAbort(void) {}
 void Vision_RequestConfigAck(void) {}
 void Vision_QueueStmStatus(const VisionStmStatus *value) { (void)value; }
@@ -75,6 +75,8 @@ bool Vision_FusedPoseIsFresh(const VisionFusedPose *p, uint32_t now, uint32_t ti
 { return p && p->received && (p->status & VISION_POSE_VALID) && now-p->tick_ms <= timeout; }
 void Location_Reanchor(int32_t x, int32_t y, int32_t heading)
 { test_pose.x_mm=x; test_pose.y_mm=y; test_pose.heading_mdeg=heading; }
+void Location_AdjustFieldHeading(int16_t delta_cdeg)
+{ test_pose.heading_mdeg = (test_pose.heading_mdeg + (int32_t)delta_cdeg * 10 + 360000) % 360000; }
 MotorDistanceStatus Motor_MoveDistance(float distance, float speed)
 { (void)distance; (void)speed; return MOTOR_DISTANCE_DONE; }
 MotorDistanceStatus Motor_MoveDistanceHeading(float distance, float speed, float heading)
