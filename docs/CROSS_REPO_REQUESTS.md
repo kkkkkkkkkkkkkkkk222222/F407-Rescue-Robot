@@ -16,6 +16,23 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## 2026-11-18 请上位核查聚堆补进完成回包与双墙航向同步
+
+核查版本为上位 `codex/gamepad-teleop@baa279f`、下位 `main@d8a4281`。两项均待上位核查回执。
+
+### 聚堆补进 50 mm 后的 37/DONE 已离线复现
+
+上位看到聚堆抓取 `mode38`，发出 `opcode=9, aux=2` 补进 50 mm，并把期望返回状态记为 38。在指令到达前，F405 可以因上一份稳定审核转入分离准备 `mode37`。37 允许接受该补进，走完本段后在 37 回报完成。[下位 38 转 37](https://github.com/kkkkkkkkkkkkkkkk222222/F407-Rescue-Robot/blob/d8a42815a54d2235f1d3f5ef412899fe0cc4a36b/Main/Src/Task.c#L3329-L3338) · [下位补进入口与完成回包](https://github.com/kkkkkkkkkkkkkkkk222222/F407-Rescue-Robot/blob/d8a42815a54d2235f1d3f5ef412899fe0cc4a36b/Main/Src/Task.c#L3055-L3112)
+
+- **复现结果**　下位离线回包为 `task=7, action=12, opcode=9, mode=37, action_status=0x83`，含 ACCEPT 和 DONE，本批累计已走 50 mm。上位完成分支收到匹配回包后连续处理三张新图，仍返回 `pre_grab_advance_move`。对照组仅将回包状态换为 38，下一张新图即进入复审。[上位完成判定](https://github.com/danmo-teng/shijue_fangan/blob/baa279f6bf544fc5338cf6a05ea613d203b6c324/competition_rescue/state_machine.py#L4273-L4311)
+- **请上位核查**　对从 38 发起的聚堆补进，同 task、同 action、opcode 9 且 ACCEPT 和 DONE 均置位时，能否同时接受 38 或 37 作为本段完成，随后按原逻辑等下一张新图复审。普通抓取仍按原 mode21 判定，沿用本批 200 mm 和已确认的 4 秒规则。
+
+### 双墙航向采用回报后的上位同步异常待核查
+
+F405 在规定的停车交接点采用本轮偏移后，会回传同一轮次标识及 `action_status & 0x40`。上位匹配到该回报后，先调用 `wall_yaw_commit` 写入定位参考，再调用 `refresh_native()` 刷新状态。两步共用一个异常分支，捕获异常时记录 `wall_yaw_commit_error`，随后仍执行 `wall_tag=0`。这条风险来自源码检查，目前没有实车触发证据。[上位回报处理](https://github.com/danmo-teng/shijue_fangan/blob/baa279f6bf544fc5338cf6a05ea613d203b6c324/localization/tools/lidar_yaw_debug/worker.py#L761-L778) · [定位偏移写入与重复采用检查](https://github.com/danmo-teng/shijue_fangan/blob/baa279f6bf544fc5338cf6a05ea613d203b6c324/localization/src/motion_runtime.cpp#L343-L361)
+
+**请上位核查两个异常时点**　若偏移写入前失败，F405 已校正，上位清掉标识后可能漏用本轮偏移。若写入成功、仅刷新失败，直接重加又有重复应用风险。建议按当前 `round_token` 查询定位参考中的 `wall_yaw_applied_cdeg`，区分尚未写入和已经写入，再决定重试提交或仅刷新。核查目标是同一轮两端各采用一次，旧轮结果不带入新轮。
+
 ## MATCH-KEY-TONE-20261118 发车确认音回执
 
 已对照上位比赛分支 `baa279f` 完成下位适配。上位仍通过 0x20 请求按键确认音。F405 接受首发或重发 CONFIG 时，只清除持续报警。待播放的确认音会正常开始，已开始的确认音按原时长响完。上位显式消音仍在下一次蜂鸣器服务时取消当前及待播声音。[上位交接](https://github.com/danmo-teng/shijue_fangan/blob/baa279f6bf544fc5338cf6a05ea613d203b6c324/docs/CROSS_REPO_REQUESTS.md)
