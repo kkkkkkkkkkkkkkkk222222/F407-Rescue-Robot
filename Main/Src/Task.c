@@ -3167,11 +3167,6 @@ static bool task_prepare_separation(int8_t keep_side, bool keep_orange, uint32_t
     task_status.command_reject_reason = TASK_COMMAND_REJECT_AUDIT;
     return false;
   }
-  if (!first_delivery_done && !audit_initial_stash &&
-      separation_total_attempts >= APP_FIRST_GREEN_MAX_SEPARATIONS) {
-    task_status.command_reject_reason = TASK_COMMAND_REJECT_AUDIT;
-    return false;
-  }
   const uint8_t left_count = audit_last_counts & 0x03U;
   const uint8_t right_count = (audit_last_counts >> 2U) & 0x03U;
   const uint8_t release_count = keep_side > 0 ? right_count : left_count;

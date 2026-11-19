@@ -67,17 +67,21 @@ bool Motor_MoveHeadingLowRearDeadband(float forward, float heading)
 MotorStatus Motor_GetStatus(uint8_t id)
 { (void)id; return (MotorStatus){.stall_fault = motor_fault}; }
 LocationPose Location_GetPose(void) { return test_pose; }
+#ifndef TEST_WITH_VISION_LINK
 VisionData Vision_GetSnapshot(void) { return test_vision; }
 void Vision_RearmConfig(uint8_t stop_sequence) { (void)stop_sequence; }
 void Vision_ClearAbort(void) {}
 void Vision_RequestConfigAck(void) {}
 void Vision_QueueStmStatus(const VisionStmStatus *value) { (void)value; }
+#endif
 IMUData IMU_GetData(void) { return (IMUData){.ready = true}; }
 void IMU_ConfirmHeadingReference(void) {}
 void Encoder_GetAll(EncoderStatus out[3])
 { for (uint8_t i=0;i<3;++i) out[i]=test_wheel_encoder[i]; }
+#ifndef TEST_WITH_VISION_LINK
 bool Vision_FusedPoseIsFresh(const VisionFusedPose *p, uint32_t now, uint32_t timeout)
 { return p && p->received && (p->status & VISION_POSE_VALID) && now-p->tick_ms <= timeout; }
+#endif
 void Location_Reanchor(int32_t x, int32_t y, int32_t heading)
 { test_pose.x_mm=x; test_pose.y_mm=y; test_pose.heading_mdeg=heading; }
 void Location_AdjustFieldHeading(int16_t delta_cdeg)

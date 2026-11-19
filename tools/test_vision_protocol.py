@@ -5,6 +5,16 @@ from tools import vision_protocol as protocol
 
 
 class VisionProtocolTests(unittest.TestCase):
+    def test_first_green_core_withdrawal(self) -> None:
+        conflict = protocol.AUDIT_FIRST_GREEN_CORE_CONFLICT
+        self.assertEqual(protocol.cargo_audit_frame(21, 0, 0, 0, 0, conflict, 0, 0),
+                         bytes.fromhex("a3 b3 18 15 12 01 00 00 00 80 00 00 93 15 c3"))
+        self.assertEqual(protocol.cargo_audit_frame(22, 0, 1, 0, 1, conflict | protocol.AUDIT_STABLE, 0, 1),
+                         bytes.fromhex("a3 b3 18 16 12 01 00 01 04 90 00 01 7b 10 c3"))
+        for invalid in (-1, 256):
+            with self.assertRaises(ValueError):
+                protocol.cargo_audit_frame(21, 0, 0, 0, 0, invalid, 0, 0)
+
     def test_station_turn_search_contract(self) -> None:
         import json
         from pathlib import Path

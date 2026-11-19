@@ -108,6 +108,7 @@ AUDIT_INJURY_MIXED = 0x08
 AUDIT_STABLE = 0x10
 AUDIT_DESTINATION_INJURY = 0x20
 AUDIT_SWEEP_PICKUP = 0x40
+AUDIT_FIRST_GREEN_CORE_CONFLICT = 0x80
 
 CARGO_NONE = 0
 CARGO_GREEN = 1
@@ -520,7 +521,7 @@ def cargo_audit_frame(
         if ((cargo == CARGO_MIXED_MATERIAL and count not in (2, 3)) or
                 (cargo == CARGO_MIXED_TWO_GREEN and count != 3)):
             raise ValueError("invalid mixed-material composition")
-    if audit_flags & ~0x7F:
+    if not 0 <= audit_flags <= 0xFF:
         raise ValueError("invalid cargo audit flags")
     if not 0 <= audit_id <= 0xFF or not 0 <= total_count <= 0xFF:
         raise ValueError("invalid audit id or total count")
