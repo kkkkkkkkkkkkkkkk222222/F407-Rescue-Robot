@@ -135,7 +135,7 @@ typedef struct {
   uint32_t last_update_ms;
   MotorTurnStatus angle_status;
   int64_t start_raw_yaw_mdeg;
-  float turn_deg, max_rate_dps, requested_speed_mm_s;
+  float turn_deg, min_rate_dps, max_rate_dps, requested_speed_mm_s;
   uint32_t started_ms;
   uint32_t last_sample_count, last_sample_ms;
   uint16_t settled_ms;
@@ -2651,8 +2651,9 @@ static void motor_finish_spin_angle(MotorTurnStatus status)
   spin_move.angle_status = status;
 }
 
-MotorTurnStatus Motor_MoveSpinAngle(float speed_mm_s, float direction_deg,
-                                   float turn_deg, float max_rate_dps)
+static MotorTurnStatus motor_move_spin_angle(float speed_mm_s, float direction_deg,
+                                             float turn_deg, float min_rate_dps,
+                                             float max_rate_dps)
 {
   const uint32_t mask = motor_enter_critical();
   if (spin_move.angle_status != MOTOR_TURN_IDLE) {
@@ -2676,6 +2677,7 @@ MotorTurnStatus Motor_MoveSpinAngle(float speed_mm_s, float direction_deg,
     spin_move.angle_status = MOTOR_TURN_RUNNING;
     spin_move.start_raw_yaw_mdeg = IMU_GetData().yaw_mdeg;
     spin_move.turn_deg = turn_deg;
+    spin_move.min_rate_dps = min_rate_dps;
     spin_move.max_rate_dps = max_rate_dps;
     spin_move.requested_speed_mm_s = motor_abs_float(speed_mm_s);
     spin_move.started_ms = HAL_GetTick();
@@ -2685,6 +2687,18 @@ MotorTurnStatus Motor_MoveSpinAngle(float speed_mm_s, float direction_deg,
   const MotorTurnStatus status = spin_move.angle_status;
   motor_leave_critical(mask);
   return status;
+}
+
+MotorTurnStatus Motor_MoveSpinAngle(float speed_mm_s, float direction_deg,
+                                   float turn_deg, float max_rate_dps)
+{
+  return motor_move_spin_angle(speed_mm_s, direction_deg, turn_deg, 8.0f, max_rate_dps);
+}
+
+MotorTurnStatus Motor_TurnClawClearance(float turn_deg)
+{
+  return motor_move_spin_angle(0.0f, 0.0f, turn_deg, APP_BLACK_CLEARANCE_MIN_RATE_DPS,
+                               APP_BLACK_CLEARANCE_MAX_RATE_DPS);
 }
 
 static void motor_update_spin_angle(void)
@@ -2725,7 +2739,7 @@ static void motor_update_spin_angle(void)
   float command_rate = fminf(spin_move.max_rate_dps,
       fminf(APP_MOVE_SPIN_ANGLE_KP * remaining,
             sqrtf(2.0f * APP_MOVE_SPIN_DECEL_DPS2 * remaining)));
-  command_rate = fmaxf(8.0f, command_rate) * (error < 0 ? -1.0f : 1.0f);
+  command_rate = fmaxf(spin_move.min_rate_dps, command_rate) * (error < 0 ? -1.0f : 1.0f);
   /* Do not reverse the requested yaw while the body is still turning fast. */
   if (error * rate < 0 && motor_abs_float(rate) > 3.0f) { command_rate = 0.0f; }
   const bool overshot = error * spin_move.turn_deg < 0.0f;

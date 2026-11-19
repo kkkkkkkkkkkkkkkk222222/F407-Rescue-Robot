@@ -223,6 +223,8 @@
 #define APP_MOVE_SPIN_MAX_LINEAR_MM_S       500.0f
 #define APP_MOVE_SPIN_MAX_RATE_DPS           90.0f
 #define APP_MOVE_SPIN_ANGLE_KP                2.5f
+#define APP_BLACK_CLEARANCE_MIN_RATE_DPS     12.0f
+#define APP_BLACK_CLEARANCE_MAX_RATE_DPS     20.0f
 #define APP_MOVE_SPIN_DECEL_DPS2            120.0f
 #define APP_MOVE_SPIN_ANGLE_TOL_DEG           1.0f
 #define APP_MOVE_SPIN_SETTLE_MS              150U

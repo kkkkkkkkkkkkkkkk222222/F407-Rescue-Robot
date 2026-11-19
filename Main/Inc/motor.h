@@ -70,6 +70,8 @@ bool Motor_MoveSpin(float speed_mm_s, float direction_deg,
  * Latches arguments once; DONE/FAULT remain until Motor_Stop. Units: mm/s, deg, deg, deg/s. */
 MotorTurnStatus Motor_MoveSpinAngle(float speed_mm_s, float direction_deg,
                                    float turn_deg, float max_rate_dps);
+/* In-place black/blue claw-clearance turn, with the same completion semantics. */
+MotorTurnStatus Motor_TurnClawClearance(float turn_deg);
 /* 0 deg=forward, 90 deg=left, 180 deg=backward, 270 deg=right. */
 bool Motor_MoveAngle(float speed_mm_s, float angle_deg);
 /* STAGE FINE translation. Returns the current drive PWM activity while the

@@ -7155,8 +7155,7 @@ static void task_process_remote_action(const VisionMissionCommand *command,
           if (remote_action.heading_cdeg == VISION_SEPARATION_BLACK_CLEARANCE) {
             const float travelled = (float)(IMU_GetData().yaw_mdeg -
                 remote_action.black_turn_start_yaw_mdeg) * 0.001f * APP_LOCATION_IMU_YAW_SIGN;
-            const MotorTurnStatus result = Motor_MoveSpinAngle(
-                0.0f, 0.0f, turn_deg - travelled, 20.0f);
+            const MotorTurnStatus result = Motor_TurnClawClearance(turn_deg - travelled);
             task_status.motors_active = result == MOTOR_TURN_RUNNING;
             if (result == MOTOR_TURN_DONE) {
               task_remote_action_advance(now_ms);

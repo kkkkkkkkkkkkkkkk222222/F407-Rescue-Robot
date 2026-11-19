@@ -16,6 +16,12 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## 蓝黑让爪小角度提速、绿蓝保侧（2026-11-20）
+
+对照上位 [2e336f8](https://github.com/danmo-teng/shijue_fangan/commit/2e336f8981b2b32c1180d46dd6b5ce4e183f8dd3)。仅对 0x10、U=1 的蓝黑原地试转提高低速段角速度指令。剩余 4° 时从 10 提到 12°/s，剩余 2° 时从 8 提到 12°/s，上限仍为 20°/s。进入原 1° 容差后轮速目标归零，按原停稳条件完成，再回 140° 复审。已用 F405 电机代码验证正反转的轮速目标、重复指令和停稳出口，实车耗时待测。
+
+绿蓝分爪按绿所在侧保留，前后叠放由上位每批决定拨动一次。保留侧图像计数为零时，上位附原图帧号并置 DISPERSE_NEAR_KEEP。下位真实报文解析和任务状态机已验证两种选侧的左右镜像，同一动作重发只计一次，完成均回 mode35、140°。
+
 ## 首绿五次分离、门口见黑与红 1 发车排查（2026-11-20）
 
 对照上位 [6e16c72](https://github.com/danmo-teng/shijue_fangan/commit/6e16c72b3065ab31081767972f789e9b8e5cbd35)。用下位旧版 `0171b39` 的对应模块分别复现了第 4 次分离被拒、0x12 的 P5=0x80 被解包器拒绝。NormalRun 已去掉首绿的独立三次限制，并让解包器和本地报文工具接收完整审核标志字节。上位负责五次上限，下位保留原审核和重复动作确认。
