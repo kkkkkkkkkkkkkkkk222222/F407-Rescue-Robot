@@ -203,7 +203,7 @@ static bool vision_mission_code_valid(uint8_t command)
 {
   return (command == VISION_CMD_STOP) ||
          (command == VISION_CMD_PAUSE) ||
-         (command == VISION_CMD_ORANGE_CORE_FILTER) ||
+         (command == VISION_CMD_ORANGE_CORE_FILTER) || (command == VISION_CMD_GREEN_TOPUP) ||
          (command == VISION_CMD_ORANGE_GATE_FILTER) || (command == VISION_CMD_CORRIDOR_NUDGE) ||
          ((command >= VISION_CMD_GRAB_CONFIRMED) &&
            (command <= VISION_CMD_BULLDOZER_STEP));
@@ -284,6 +284,14 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
 
   const int16_t arg_a = (int16_t)vision_u16_be(&payload[2]);
   const int16_t arg_b = (int16_t)vision_u16_be(&payload[4]);
+  if (code == VISION_CMD_GREEN_TOPUP) {
+    const bool argument_ok =
+        ((arg_a == TOPUP_VIEW || arg_a == TOPUP_CANCEL || arg_a == TOPUP_ROLLBACK) && arg_b == 0) ||
+        (arg_a == TOPUP_ALIGN && arg_b >= 0 && arg_b <= APP_VISION_MAX_X) ||
+        (arg_a == TOPUP_ADVANCE && arg_b > 0 && arg_b <= APP_APPROACH_RANGE_MAX_MM);
+    if (!argument_ok || heading != 0U ||
+        flags != (VISION_CMD_VALID | (flags & VISION_CMD_RED_SIDE))) goto rejected_payload;
+  }
   if (code == VISION_CMD_ORANGE_CORE_FILTER &&
       ((flags & (uint8_t)~(VISION_CMD_VALID | VISION_CMD_RED_SIDE)) != 0U ||
        arg_a != -100 || arg_b != APP_LIFT_ORANGE_TRAVEL_ANGLE * 100 ||

@@ -40,7 +40,7 @@ MotorDistanceStatus Motor_MoveDistanceHeading(float distance_m,
                                               float max_speed_mm_s,
                                               float field_heading_deg);
 /* Closed single-load filter: reverse 100 mm on the latched field heading. */
-MotorDistanceStatus Motor_MoveSingleFilterBack(float field_heading_deg);
+MotorDistanceStatus Motor_MoveSingleFilterBack(float field_heading_deg, bool first_green);
 /* Opening forward leg with its own acceleration and heading-based speed cap. */
 MotorDistanceStatus Motor_MoveStartForward(float field_heading_deg);
 /* Distance progress along the latched request; wrong-way travel is negative. */

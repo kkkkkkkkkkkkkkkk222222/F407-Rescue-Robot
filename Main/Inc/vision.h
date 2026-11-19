@@ -92,6 +92,10 @@
 #define VISION_ZONE_3             0x03U
 #define VISION_ZONE_4             0x04U
 
+typedef enum {
+  TOPUP_VIEW = 1, TOPUP_ALIGN, TOPUP_ADVANCE, TOPUP_CANCEL, TOPUP_ROLLBACK
+} GreenTopupStep;
+
 #define VISION_COUNT_NORMAL(v)    ((uint8_t)((v) & 0x03U))
 #define VISION_COUNT_CORE(v)      ((uint8_t)(((v) >> 2) & 0x03U))
 #define VISION_COUNT_CASUALTY(v)  ((uint8_t)(((v) >> 4) & 0x03U))
@@ -195,7 +199,8 @@ typedef enum {
   VISION_CMD_BULLDOZER_STEP = 20,
   VISION_CMD_ORANGE_GATE_FILTER = 22,
   VISION_CMD_CORRIDOR_NUDGE = 23,
-  VISION_CMD_ORANGE_CORE_FILTER = 24
+  VISION_CMD_ORANGE_CORE_FILTER = 24,
+  VISION_CMD_GREEN_TOPUP = 25
 } VisionMissionCode;
 
 typedef enum {

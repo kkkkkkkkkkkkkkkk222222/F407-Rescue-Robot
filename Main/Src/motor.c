@@ -2129,10 +2129,11 @@ MotorDistanceStatus Motor_MoveDistanceHeading(float distance_m, float max_speed_
                                      field_heading_deg, false);
 }
 
-MotorDistanceStatus Motor_MoveSingleFilterBack(float field_heading_deg)
+MotorDistanceStatus Motor_MoveSingleFilterBack(float field_heading_deg, bool first_green)
 {
-  return motor_move_distance(-0.100f, APP_SINGLE_FILTER_FAST_BACK_MM_S,
-                             APP_SINGLE_FILTER_BACK_SLOW_MM, APP_GO_DISTANCE_MIN_SPEED_MM_S,
+  const float speed = first_green ? APP_FIRST_GREEN_FILTER_BACK_MM_S : APP_SINGLE_FILTER_FAST_BACK_MM_S;
+  const float slowdown = first_green ? APP_FIRST_GREEN_FILTER_BACK_SLOW_MM : APP_SINGLE_FILTER_BACK_SLOW_MM;
+  return motor_move_distance(-0.100f, speed, slowdown, APP_GO_DISTANCE_MIN_SPEED_MM_S,
                              false, true, field_heading_deg, DISTANCE_SINGLE_FILTER);
 }
 

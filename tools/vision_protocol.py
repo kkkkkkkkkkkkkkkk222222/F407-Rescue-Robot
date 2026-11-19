@@ -71,6 +71,7 @@ CMD_CARGO_AUDIT = 0x12
 CMD_CLEAR_SAFE_ZONE = 0x13
 CMD_BULLDOZER_STEP = 0x14
 CMD_ORANGE_FILTER_AT_PICKUP = 0x10  # Opcode 0x16 only.
+CMD_GREEN_TOPUP = 0x19
 CMD_ORANGE_CORE_FILTER = 0x18
 CMD_CORRIDOR_NUDGE = 0x17
 CMD_ORANGE_GATE_FILTER = 0x16
@@ -349,7 +350,7 @@ def mission_frame(
     heading_cdeg: int = 0,
 ) -> bytes:
     if (command not in (CMD_STOP, CMD_PAUSE, CMD_ORANGE_GATE_FILTER,
-                        CMD_CORRIDOR_NUDGE, CMD_ORANGE_CORE_FILTER) and
+                        CMD_CORRIDOR_NUDGE, CMD_ORANGE_CORE_FILTER, CMD_GREEN_TOPUP) and
             not CMD_GRAB_CONFIRMED <= command <= CMD_BULLDOZER_STEP):
         raise ValueError("invalid mission command")
     allowed_flags = 0xF9 if command == CMD_BULLDOZER_STEP else 0x1F
@@ -367,6 +368,12 @@ def mission_frame(
         )
     if not flags & CMD_VALID or flags & ~allowed_flags:
         raise ValueError("invalid mission flags")
+    if command == CMD_GREEN_TOPUP and not (
+            flags in (CMD_VALID, CMD_VALID | CMD_RED_SIDE) and heading_cdeg == 0 and
+            ((target_x_mm in (1, 4, 5) and target_y_mm == 0) or
+             (target_x_mm == 2 and 0 <= target_y_mm < 1280) or
+             (target_x_mm == 3 and 0 < target_y_mm <= 2500))):
+        raise ValueError("invalid green top-up")
     if command == CMD_ORANGE_CORE_FILTER and (
             flags not in (CMD_VALID, CMD_VALID | CMD_RED_SIDE) or
             (target_x_mm, target_y_mm, heading_cdeg) != (-100, 8600, 8200)):

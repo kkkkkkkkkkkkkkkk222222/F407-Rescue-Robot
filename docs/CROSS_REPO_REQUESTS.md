@@ -16,6 +16,14 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-PICKUP-RETURN-20261119 首绿分离、补抓及进攻返程（NormalRun 已接入）
+
+对照上位 [`859df98`](https://github.com/danmo-teng/shijue_fangan/commit/859df9831f8e4bcfef2e4b4f1b8fa09786db4b13)。首绿仍可见时，上位可在本批发起第三次实际分离。观察转向单独计数，蓝块与单件目标的 ±10° 观察也可用于首绿之后。首件单绿抬到 82° 后退 100 mm，上限 500 mm/s、最后 40 mm 减速；单橙仍为 300 mm/s、最后 20 mm 减速。
+
+首绿后，mode22 已确认一件材料，上位可发 0x19 补抓前方独立绿，每批一次。闭爪观察和对准各报本动作 DONE；取消回 mode22，保留原载荷。前进和退回实际轮程均在重新合爪后回 mode23 报 DONE，重新审核。各步独立 action_id，只有对准携带视觉帧号。
+
+进攻开局释放后退 100 mm，随后的第一段 step13 以首包场地方向和本地投影轮程完成横移；第二段返回①，在最后 350 mm 接实时定位，两段上限均为 1000 mm/s。已核对红蓝报文、补抓成功和取消、230 mm 请求实走 223 mm 的回退、第三次分离和首绿/单橙速度，以及两段返程的独立完成回包。实车抓取效果与返程精度待验证。
+
 ## MATCH-FIRST-GREEN-VIEW-20261119 首绿靠蓝块原地试转（NormalRun 已接入）
 
 对照上位 [`0ba974b`](https://github.com/danmo-teng/shijue_fangan/commit/0ba974b3def01d2eb9dfcc1e8b46ece1bfecbcf6)。上位从 140° 图像判断首绿跨中线和蓝块所在侧，发无侧 0x10，A=+10 向左、A=−10 向右，B=U=0。下位按首绿抓前已确认的含蓝两件非法审核受理。转完回 140° 报同动作 mode35/DONE，观察不计物理分离次数。上位复审后可另发一次同向观察、保绿或弃批。
