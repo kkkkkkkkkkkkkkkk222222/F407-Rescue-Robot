@@ -308,6 +308,14 @@ static uint32_t approach_phase_path_mm;
 static uint32_t tracking_report_generation;
 static uint8_t mission_sequence;
 static float start_target_heading_deg;
+static struct {
+  bool enabled;
+  float goal_x, goal_y, nominal_heading;
+  float remaining_x, remaining_y;
+  int32_t origin_x, origin_y;
+  uint32_t last_fix_tick;
+  float speed;
+} opening_line;
 static uint32_t scan_entry_report_generation;
 static uint32_t nav_final_push_start_path_mm;
 static uint32_t safe_enter_start_path_mm;
@@ -1763,7 +1771,7 @@ static void task_enter(TaskState next, uint32_t now_ms)
 
   if (next == TASK_START) {
     const LocationPose pose = Location_GetPose();
-    start_target_heading_deg = task_wrap_angle(
+    start_target_heading_deg = opening_line.enabled ? opening_line.nominal_heading : task_wrap_angle(
         (float)pose.heading_mdeg * 0.001f + APP_START_TURN_DEG);
     start_motion_phase = START_REVERSE;
   } else if (next == TASK_SEARCH) {
@@ -2026,6 +2034,7 @@ static void task_initialize(uint32_t now_ms, bool claws_already_stowed)
   approach_phase_path_mm = 0U;
   mission_sequence = 0U;
   start_target_heading_deg = 0.0f;
+  memset(&opening_line, 0, sizeof(opening_line));
   scan_entry_report_generation = 0U;
   nav_final_push_start_path_mm = 0U;
   safe_enter_start_path_mm = 0U;
@@ -2405,9 +2414,56 @@ static void task_finish_start(uint32_t now_ms, bool center_reached)
   task_enter(TASK_OPEN_CLAW, now_ms);
 }
 
+/* Keep the field goal fixed. Between fused packets propagate its remaining
+ * vector by local wheel displacement, without restarting the speed ramp. */
+static void task_guided_start_forward(const LocationPose *pose, const VisionFusedPose *fix, uint32_t now_ms)
+{
+  const bool new_fix = fix->received && fix->tick_ms != opening_line.last_fix_tick &&
+      (int32_t)(fix->tick_ms - step_started_ms) >= 0;
+  if (new_fix) {
+    opening_line.last_fix_tick = fix->tick_ms;
+    if ((fix->status & VISION_POSE_VALID) != 0U) {
+      opening_line.origin_x = pose->x_mm;
+      opening_line.origin_y = pose->y_mm;
+      opening_line.remaining_x = opening_line.goal_x - fix->x_mm;
+      opening_line.remaining_y = opening_line.goal_y - fix->y_mm;
+      if (hypotf(opening_line.remaining_x, opening_line.remaining_y) <= APP_START_CENTER_ARRIVAL_MM) {
+        TaskDiag_Event("START_GRIP", fix->x_mm, fix->y_mm, (int32_t)opening_line.goal_x,
+                       (int32_t)opening_line.goal_y, pose->heading_mdeg, 0U);
+        task_begin_close_claw(now_ms);
+        return;
+      }
+    }
+  }
+  const float dx = opening_line.remaining_x - (float)(pose->x_mm - opening_line.origin_x);
+  const float dy = opening_line.remaining_y - (float)(pose->y_mm - opening_line.origin_y);
+  const float remaining = hypotf(dx, dy);
+  if (remaining <= APP_GO_DISTANCE_TOLERANCE_MM ||
+      dx * opening_line.remaining_x + dy * opening_line.remaining_y <= 0.0f) {
+    task_finish_start(now_ms, false); /* Wheel endpoint without confirmed arrival: visual pickup. */
+    return;
+  }
+  const float yaw = pose->heading_mdeg * 0.001f;
+  const float error = task_abs(task_wrap_angle(opening_line.nominal_heading - yaw));
+  const float error_span = APP_START_FORWARD_SLOW_SPEED_ERROR_DEG - APP_START_FORWARD_FULL_SPEED_ERROR_DEG;
+  const float fraction = fminf(1.0f, fmaxf(0.0f, (error - APP_START_FORWARD_FULL_SPEED_ERROR_DEG) / error_span));
+  const float yaw_cap = APP_START_FORWARD_SPEED_MM_S + fraction *
+      (APP_START_FORWARD_LARGE_ERROR_SPEED_MM_S - APP_START_FORWARD_SPEED_MM_S);
+  const float slow_mm = APP_GO_DISTANCE_SLOWDOWN_MM * APP_START_FORWARD_SPEED_MM_S / APP_GO_DISTANCE_SPEED_MM_S;
+  const float target = fminf(yaw_cap, APP_GO_DISTANCE_MIN_SPEED_MM_S +
+      (APP_START_FORWARD_SPEED_MM_S - APP_GO_DISTANCE_MIN_SPEED_MM_S) * fminf(1.0f, remaining / slow_mm));
+  const float rate = target < opening_line.speed ? APP_GO_DISTANCE_DECEL_MM_S2 : APP_START_FORWARD_ACCEL_MM_S2;
+  opening_line.speed = task_step_toward(opening_line.speed, target, rate * APP_TASK_PERIOD_MS * 0.001f);
+  const float direction = atan2f(dy, dx) * 57.2957795f;
+  if (!Motor_MoveAngleHeading(opening_line.speed, task_wrap_angle(direction - yaw), opening_line.nominal_heading)) {
+    task_stop(TASK_FAULT_MOTOR, now_ms);
+    return;
+  }
+  task_status.motors_active = true;
+}
+
 static void task_process_start(const VisionFusedPose *fused_pose, uint32_t now_ms)
 {
-  (void)fused_pose;
   if ((uint32_t)(now_ms - state_started_ms) >= APP_START_TIMEOUT_MS) {
     task_stop(TASK_FAULT_START_TIMEOUT, now_ms);
     return;
@@ -2468,11 +2524,26 @@ static void task_process_start(const VisionFusedPose *fused_pose, uint32_t now_m
     task_status.motors_active = false;
     const bool claws_ready = task_open_claws(now_ms);
     if (now_ms - step_started_ms >= APP_START_SETTLE_MS && claws_ready) {
+      if (opening_line.enabled) {
+        const float angle = opening_line.nominal_heading * 0.01745329252f;
+        opening_line.origin_x = pose.x_mm;
+        opening_line.origin_y = pose.y_mm;
+        opening_line.remaining_x = 1000.0f * APP_START_FORWARD_DISTANCE_M * cosf(angle);
+        opening_line.remaining_y = 1000.0f * APP_START_FORWARD_DISTANCE_M * sinf(angle);
+        opening_line.last_fix_tick = now_ms - 1U;
+        step_started_ms = now_ms;
+        Camera_SetAngle(APP_GRAB_VIEW_ANGLE);
+        camera_angle = (float)APP_GRAB_VIEW_ANGLE;
+      }
       start_motion_phase = START_FORWARD;
     }
     return;
   }
   if (start_motion_phase == START_FORWARD) {
+    if (opening_line.enabled) {
+      task_guided_start_forward(&pose, fused_pose, now_ms);
+      return;
+    }
     const MotorDistanceStatus result = Motor_MoveStartForward(start_target_heading_deg);
     task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
     if (distance_failed(result)) {
@@ -5558,6 +5629,15 @@ static void task_start_configured_round(const VisionData *vision, uint32_t now_m
   /* A recognized first delivery plus low byte 0 is a positive even count. */
   search_yaw_direction = first_delivery_done &&
       (vision->config_delivery_count & 1U) == 0U ? -1 : 1;
+  memset(&opening_line, 0, sizeof(opening_line));
+  if (vision->guided_opening && !vision->config_resume) {
+    const float sx = vision->start_zone == VISION_ZONE_1 || vision->start_zone == VISION_ZONE_3 ? -1.0f : 1.0f;
+    const float sy = vision->start_zone <= VISION_ZONE_2 ? 1.0f : -1.0f;
+    opening_line.enabled = true;
+    opening_line.goal_x = sx * vision->opening_axis_mm;
+    opening_line.goal_y = sy * vision->opening_axis_mm;
+    opening_line.nominal_heading = atan2f(-sy, -sx) * 57.2957795f;
+  }
   Location_Reset((LocationStart)vision->start_zone);
   const uint16_t word = vision->yaw_config_word;  /* validated by vision_save_config */
   yaw_round_tag = word & VISION_YAW_ROUND_FLAG ? word & ~VISION_YAW_ROUND_FLAG : 0U;
@@ -7235,7 +7315,8 @@ static void task_process_remote_action(const VisionMissionCommand *command,
               APP_DISPERSE_OBSERVE_TURN_DEG : (float)remote_action.arg_a;
           (void)task_remote_turn(turn_deg, now_ms);
         } else if (remote_action.phase == 1U) {
-          if (task_scan_camera_to(APP_GRAB_VIEW_ANGLE, now_ms)) {
+          if ((remote_action.arg_a == 0 || !Motor_IsBraking()) &&
+              task_scan_camera_to(APP_GRAB_VIEW_ANGLE, now_ms)) {
             task_remote_action_advance(now_ms);
           }
         } else if ((uint32_t)(now_ms - step_started_ms) >=
@@ -8150,6 +8231,9 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
       /* Marker for the observation-turn variant. It deliberately retains no
        * side until the upper computer has received a new audit. */
       remote_action.arg_b = 1;
+      /* The signed observation starts in the audited 140-degree claw view. */
+      if (remote_action.arg_a != 0 && Camera_GetAngle() == APP_GRAB_VIEW_ANGLE)
+        task_status.claw_visible = true;
       separation_keep_side = 0;
     }
   } else if (command->command == VISION_CMD_DISPERSE_PILE) {
@@ -8649,6 +8733,10 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
       remote_action.orange_core_82) goto rejected;
   if (incoming.command == VISION_CMD_DISPERSE_PILE && !new_action &&
       incoming.target_x_mm != remote_action.arg_a) goto rejected;
+  const bool view_brake = incoming.command == VISION_CMD_DISPERSE_PILE && incoming.target_y_mm == 1;
+  if (view_brake && (new_action || incoming.vision_frame == 0U ||
+      state != TASK_REMOTE_ACTION || remote_action.type != REMOTE_ACTION_DISPERSE ||
+      remote_action.arg_b != 1 || remote_action.arg_a != incoming.target_x_mm)) goto rejected;
   if (separation_request && !new_action &&
       incoming.heading_cdeg != (remote_action.orange_core_82 ? VISION_SEPARATION_ORANGE_CORE_82 : 0U))
     goto rejected;
@@ -8870,6 +8958,13 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     task_status.acknowledged_sequence = incoming.sequence;
     command_accepted = true;
     task_begin_capture_escape(now_ms);
+    mission_paused = false;
+  } else if (view_brake) {
+    /* Finish only the rotation leg. Repeated brakes and older turn heartbeats
+     * cannot re-enter phase zero; camera review and DONE follow normally. */
+    if (!remote_action.done && remote_action.phase == 0U) task_remote_action_advance(now_ms);
+    task_status.acknowledged_sequence = incoming.sequence;
+    command_accepted = true;
     mission_paused = false;
   } else if (!new_action && !overlay && !task_dynamic_opcode(incoming.command) && !live_bulldozer) {
     /* A finite action is an epoch, not a pulse repeated at 100 Hz. */

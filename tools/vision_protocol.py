@@ -166,9 +166,14 @@ def parse_config_ack(frame: bytes) -> dict[str, bool]:
     return {"accepted": True}
 
 
-def config_frame(sequence: int, color: int, zone: int) -> bytes:
+def config_frame(sequence: int, color: int, zone: int, *, opening_axis_mm: int | None = None) -> bytes:
     if color not in (0x11, 0x12) or zone not in range(1, 5):
         raise ValueError("invalid color or start zone")
+    if opening_axis_mm is not None:
+        if not -1500 <= opening_axis_mm <= 1500:
+            raise ValueError("opening axis outside field")
+        payload = bytes((color, zone, 0x47)) + opening_axis_mm.to_bytes(2, "big", signed=True) + bytes(3)
+        return build_frame(MSG_CONFIG, sequence, payload)
     return build_frame(MSG_CONFIG, sequence, bytes((color, zone, 0, 0, 0, 0, 0, 0)))
 
 
@@ -395,7 +400,8 @@ def mission_frame(
     if command in (CMD_DISPERSE_PILE, CMD_RELEASE_LEFT, CMD_RELEASE_RIGHT):
         view_turn = (command == CMD_DISPERSE_PILE and flags in (CMD_VALID, CMD_VALID | CMD_RED_SIDE)
                      and target_x_mm in (-10, 10) and heading_cdeg == 0)
-        if (target_x_mm and not view_turn) or target_y_mm or heading_cdeg not in (0, SEPARATION_ORANGE_CORE_82):
+        if ((target_x_mm and not view_turn) or (target_y_mm and not (view_turn and target_y_mm == 1)) or
+                heading_cdeg not in (0, SEPARATION_ORANGE_CORE_82)):
             raise ValueError("invalid separation lift payload")
         if command == CMD_DISPERSE_PILE and flags & CMD_KEEP_ORANGE and not flags & CMD_SIDE_VALID:
             raise ValueError("orange separation requires an explicit retained side")

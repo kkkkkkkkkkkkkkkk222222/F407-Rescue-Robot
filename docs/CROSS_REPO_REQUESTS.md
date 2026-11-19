@@ -16,6 +16,12 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-GUIDED-OPENING / MATCH-BLUE-PAIR-MIDLINE（NormalRun 已接入）
+
+对照上位 [`e38e606`](https://github.com/danmo-teng/shijue_fangan/commit/e38e6060bb3828fa27b9fc7a727e21161d9b1870)。正式新局可用 CONFIG 的 G 标志和有符号轴坐标指定设计抓取点。下位采纳首份合法配置。前进中锁定出发区对角航向，用融合定位修正平移方向，包间靠本地轮程推进。有效定位确认到点后合爪，进入 mode23 的真实暂存审核；仅靠轮程走到终点则回开爪视觉流程。旧 CONFIG 和 R 快速重发沿用原入口。
+
+同批无侧 ±10° 试转中报告 140° 爪区可见。上位锁定中线已在蓝块与目标之间时发同一动作的 B=1 和真实帧号。下位刹停后走原 mode35/DONE 复审出口。已离线核对上位实际 CONFIG 三帧及重发、80/81 mm 边界、有货与空爪、丢定位回退，以及试转停车重发和迟到转向包。实车到点误差和停车惯性待验证。
+
 ## MATCH-PICKUP-RETURN-20261119 首绿分离、补抓及进攻返程（NormalRun 已接入）
 
 对照上位 [`859df98`](https://github.com/danmo-teng/shijue_fangan/commit/859df9831f8e4bcfef2e4b4f1b8fa09786db4b13)。首绿仍可见时，上位可在本批发起第三次实际分离。观察转向单独计数，蓝块与单件目标的 ±10° 观察也可用于首绿之后。首件单绿抬到 82° 后退 100 mm，上限 500 mm/s、最后 40 mm 减速；单橙仍为 300 mm/s、最后 20 mm 减速。

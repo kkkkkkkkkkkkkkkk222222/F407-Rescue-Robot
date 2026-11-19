@@ -56,6 +56,7 @@
 
 
 #define VISION_MSG_CONFIG         0x11U
+#define VISION_CONFIG_GUIDED_OPENING 0x47U
 #define VISION_CONFIG_RESUME      0x52U
 #define VISION_RESUME_FIRST_GREEN 0x01U
 #define VISION_RESUME_ATTACK_DONE 0x02U
@@ -304,6 +305,8 @@ typedef struct {
   uint16_t yaw_offer_tag;
   int16_t yaw_offer_cdeg;
   bool config_resume;
+  bool guided_opening;
+  int16_t opening_axis_mm;
   uint8_t sequence;
   uint8_t cargo_counts;
   uint8_t last_frame[VISION_FRAME_SIZE];
