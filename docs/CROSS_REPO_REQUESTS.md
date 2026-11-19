@@ -1,6 +1,6 @@
 # 两端当前要求与回执
 
-更新日期为 2026-11-19，时区 Asia/Shanghai。
+更新日期为 2026-11-20，时区 Asia/Shanghai。
 
 ## 固定入口与协作方式
 
@@ -15,6 +15,12 @@
 人保留知情、拒绝和选择权。已经明确批准的范围直接推进，超范围的重要取舍先由人决定，AI 不能互相授权。
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
+
+## MATCH-BLACK-BLUE-CLEARANCE-20261120 / MATCH-ZONE-REVIEW-20261120（NormalRun 已接入）
+
+对照上位 [d6fd2d0](https://github.com/danmo-teng/shijue_fangan/commit/d6fd2d0aace023f35a25249fe98ac58c6723c6c0)。首绿已送后，抓前一黑一蓝使用 0x10、U=1。下位按上位给出的角度原地转 2～20°，上限 20°/s，停稳后回 mode35/DONE 在 140° 复审。上位也可直接指定保黑爪，包括两块均落在另一侧半幅的情形。本条取代下方旧交接中的黑侧固定追加 10°。
+
+远绿、远橙如疑似在安全区内，从 120° 或 105° 搜索进入的普通及聚堆目标均可在首次正距离前进前从 mode52 请求 U=3。下位原地在 105° 复看，随后按上位新图以单目标继续，或由 HOLD 接续本站搜索。已核对上下位报文、下位状态机和 NormalRun 编译。现场相机识别与分离效果待实车验收。
 
 ## MATCH-PICKUP-ROLLBACK-20261119 开局、空爪重选和多件材料重推（NormalRun 已接入）
 

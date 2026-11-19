@@ -310,7 +310,12 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
     const bool view_turn = code == VISION_CMD_DISPERSE_PILE &&
         flags == (VISION_CMD_VALID | (flags & VISION_CMD_RED_SIDE)) &&
         (arg_a == 10 || arg_a == -10) && heading == 0U;
-    if ((arg_a != 0 && !view_turn) || (arg_b != 0 && !(view_turn && arg_b == 1)) ||
+    if (heading == VISION_SEPARATION_BLACK_CLEARANCE) {
+      const uint8_t side = VISION_CMD_VALID | (flags & VISION_CMD_RED_SIDE);
+      const bool turn = flags == side && ((arg_a >= 2 && arg_a <= 20) || (arg_a <= -2 && arg_a >= -20));
+      const bool keep = flags == (side | VISION_CMD_SIDE_VALID | (flags & VISION_CMD_TARGET_RIGHT)) && arg_a == 0;
+      if (code != VISION_CMD_DISPERSE_PILE || arg_b != 0 || !(turn || keep)) goto rejected_payload;
+    } else if ((arg_a != 0 && !view_turn) || (arg_b != 0 && !(view_turn && arg_b == 1)) ||
         (heading != 0U && heading != VISION_SEPARATION_ORANGE_CORE_82)) goto rejected_payload;
     if (code == VISION_CMD_DISPERSE_PILE && (flags & VISION_CMD_KEEP_ORANGE) != 0U &&
         (flags & VISION_CMD_SIDE_VALID) == 0U) goto rejected_payload;

@@ -111,6 +111,8 @@ MotorDistanceStatus Motor_MoveDistanceLinear(float distance, float speed, float 
 float Motor_GetDistanceTravelledMm(void) { return distance_travelled_mm; }
 MotorDistanceStatus Motor_MoveDistanceConstant(float distance, float speed)
 { (void)distance; (void)speed; return MOTOR_DISTANCE_DONE; }
+MotorTurnStatus Motor_MoveSpinAngle(float speed, float direction, float turn, float max_rate)
+{ (void)speed; (void)direction; (void)turn; (void)max_rate; return MOTOR_TURN_DONE; }
 MotorTurnStatus Motor_TurnAngle(float angle) { (void)angle; return MOTOR_TURN_DONE; }
 MotorTurnStatus Motor_TurnAngleSpeed(float angle, float speed)
 { (void)angle; (void)speed; return MOTOR_TURN_DONE; }

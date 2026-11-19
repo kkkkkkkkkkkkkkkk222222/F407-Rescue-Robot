@@ -89,6 +89,7 @@ typedef struct {
   bool orange_core_82, lift_ready;
   bool restoring_gate_height;
   uint32_t lift_started_ms;
+  int64_t black_turn_start_yaw_mdeg;
   int64_t straight_start_counts[3];
   bool lateral_started, obstacle_right, filter_at_pickup;
   uint16_t nudge_forward_mm;
@@ -1030,6 +1031,20 @@ static bool task_disperse_keep_side_valid(
   if (command == NULL) {
     return true;
   }
+  if (command->heading_cdeg == VISION_SEPARATION_BLACK_CLEARANCE) {
+    const uint8_t left = audit_last_counts & 3U;
+    const uint8_t right = (audit_last_counts >> 2U) & 3U;
+    /* In one image half the wire class is UNKNOWN. The host still sends the
+     * real counts; its mechanical reach decision can name the opposite claw. */
+    const bool mixed = (left == 2U && right == 0U && audit_last_left_class == VISION_CARGO_UNKNOWN) ||
+                       (right == 2U && left == 0U && audit_last_right_class == VISION_CARGO_UNKNOWN);
+    const bool split = left == 1U && right == 1U &&
+        ((audit_last_left_class == VISION_CARGO_CORE && audit_last_right_class == VISION_CARGO_DANGER) ||
+         (audit_last_right_class == VISION_CARGO_CORE && audit_last_left_class == VISION_CARGO_DANGER));
+    return command->command == VISION_CMD_DISPERSE_PILE && first_delivery_done && !audit_initial_stash &&
+        !task_status.gripper_closed && (state == TASK_GRAB_OBSERVE || state == TASK_DISPERSE_READY) &&
+        audit_last_total_count == 2U && task_audit_has_danger() && (mixed || split);
+  }
   if ((command->flags & VISION_CMD_SIDE_VALID) == 0U) {
     return (command->flags & VISION_CMD_DISPERSE_NEAR_KEEP) == 0U;
   }
@@ -1636,7 +1651,8 @@ static void task_enter(TaskState next, uint32_t now_ms)
   if (next == TASK_SEARCH) Lift_SetTravelPosition();
   if (next == TASK_APPROACH && state == TASK_SEARCH) {
     memset(&zone_view, 0, sizeof(zone_view));
-    zone_view.search_entry = Camera_GetAngle() == APP_SEARCH_HIGH_CAMERA_ANGLE;
+    zone_view.search_entry = Camera_GetAngle() == APP_SEARCH_HIGH_CAMERA_ANGLE ||
+        Camera_GetAngle() == APP_SEARCH_LOW_CAMERA_ANGLE;
     zone_view.search_phase = search_phase;
     zone_view.search_turn_mdeg = turn_tracker.accumulated_mdeg;
   } else {
@@ -7141,7 +7157,20 @@ static void task_process_remote_action(const VisionMissionCommand *command,
            * for a fresh 140-degree claw audit. */
           const float turn_deg = remote_action.arg_a == 0 ?
               APP_DISPERSE_OBSERVE_TURN_DEG : (float)remote_action.arg_a;
-          (void)task_remote_turn(turn_deg, now_ms);
+          if (remote_action.heading_cdeg == VISION_SEPARATION_BLACK_CLEARANCE) {
+            const float travelled = (float)(IMU_GetData().yaw_mdeg -
+                remote_action.black_turn_start_yaw_mdeg) * 0.001f * APP_LOCATION_IMU_YAW_SIGN;
+            const MotorTurnStatus result = Motor_MoveSpinAngle(
+                0.0f, 0.0f, turn_deg - travelled, 20.0f);
+            task_status.motors_active = result == MOTOR_TURN_RUNNING;
+            if (result == MOTOR_TURN_DONE) {
+              task_remote_action_advance(now_ms);
+            } else if (result == MOTOR_TURN_FAULT || result == MOTOR_TURN_INVALID) {
+              task_stop(TASK_FAULT_MOTOR, now_ms);
+            }
+          } else {
+            (void)task_remote_turn(turn_deg, now_ms);
+          }
         } else if (remote_action.phase == 1U) {
           if ((remote_action.arg_a == 0 || !Motor_IsBraking()) &&
               task_scan_camera_to(APP_GRAB_VIEW_ANGLE, now_ms)) {
@@ -7539,6 +7568,7 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
       zone_view.done = false;
       zone_view.orange_top = command->heading_cdeg == VISION_APPROACH_ORANGE_TOP_VIEW;
       if (zone_view.orange_top) approach_phase = APPROACH_TRACK;
+      else cluster_target_active = false;  /* A zone-reviewed anchor resumes as a single target. */
       mission_paused = false;
       zone_view.source_frame = zone_view.frame_floor = command->vision_frame;
       zone_view.wait_ms = Camera_PositionWaitMs(APP_SEARCH_LOW_CAMERA_ANGLE);
@@ -8059,6 +8089,9 @@ static void task_accept_mission_legacy(const VisionMissionCommand *command,
       /* Marker for the observation-turn variant. It deliberately retains no
        * side until the upper computer has received a new audit. */
       remote_action.arg_b = 1;
+      if (remote_action.heading_cdeg == VISION_SEPARATION_BLACK_CLEARANCE) {
+        remote_action.black_turn_start_yaw_mdeg = IMU_GetData().yaw_mdeg;
+      }
       /* The signed observation starts in the audited 140-degree claw view. */
       if (remote_action.arg_a != 0 && Camera_GetAngle() == APP_GRAB_VIEW_ANGLE)
         task_status.claw_visible = true;
@@ -8561,7 +8594,7 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
       state != TASK_REMOTE_ACTION || remote_action.type != REMOTE_ACTION_DISPERSE ||
       remote_action.arg_b != 1 || remote_action.arg_a != incoming.target_x_mm)) goto rejected;
   if (separation_request && !new_action &&
-      incoming.heading_cdeg != (remote_action.orange_core_82 ? VISION_SEPARATION_ORANGE_CORE_82 : 0U))
+      incoming.heading_cdeg != (remote_action.orange_core_82 ? VISION_SEPARATION_ORANGE_CORE_82 : remote_action.heading_cdeg))
     goto rejected;
   if (separation82 && new_action) {
     const bool keep_right = incoming.command == VISION_CMD_RELEASE_LEFT ||
@@ -8630,15 +8663,16 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     const uint8_t expected = VISION_CMD_VALID | VISION_CMD_APPROACH_RANGE |
         VISION_CMD_DISTANCE_VALID | (incoming.flags & VISION_CMD_RED_SIDE);
     if (new_target || state != TASK_APPROACH || task_status.gripper_closed ||
-        cluster_target_active || opening_claw_probe_active || cargo_recheck_pending ||
+        opening_claw_probe_active || cargo_recheck_pending ||
         !zone_view.search_entry || !task_side_flag_valid(incoming.flags) ||
         incoming.flags != expected || incoming.target_x_mm != 0 ||
         incoming.target_y_mm != APP_SEARCH_LOW_CAMERA_ANGLE * 100 ||
         incoming.vision_frame == 0U || approach_phase != APPROACH_RANGE_WAIT) goto rejected;
     if (zone_view.active) {
       if (zone_view.orange_top || new_action || incoming.vision_frame != zone_view.source_frame) goto rejected;
-    } else if (!new_action || !command_visual_new ||
-               approach_measure_pitch != APP_SEARCH_HIGH_CAMERA_ANGLE) goto rejected;
+    } else if (!new_action || !command_visual_new || approach_range_mm != 0U ||
+               (approach_measure_pitch != APP_SEARCH_HIGH_CAMERA_ANGLE &&
+                approach_measure_pitch != APP_SEARCH_LOW_CAMERA_ANGLE)) goto rejected;
   } else if (pickup_relook) {
     if (new_target || !task_side_flag_valid(incoming.flags) || incoming.vision_frame == 0U ||
         (new_action ? (!task_pre_grab_entry() || pre_grab.moving || !command_visual_new ||

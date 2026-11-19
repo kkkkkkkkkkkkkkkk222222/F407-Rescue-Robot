@@ -90,6 +90,7 @@ APPROACH_RANGE_PRE_GRAB = 2
 APPROACH_RANGE_ZONE_VIEW = 3
 APPROACH_ORANGE_TOP_VIEW = 4
 APPROACH_PRE_GRAB_RELOOK = 5
+SEPARATION_BLACK_CLEARANCE = 1
 SEPARATION_ORANGE_CORE_82 = 8200
 RELEASE_SAME_SIDE_BLUE = 1
 MODE_APPROACH_RANGE_WAIT = 52
@@ -389,7 +390,13 @@ def mission_frame(
     if command in (CMD_DISPERSE_PILE, CMD_RELEASE_LEFT, CMD_RELEASE_RIGHT):
         view_turn = (command == CMD_DISPERSE_PILE and flags in (CMD_VALID, CMD_VALID | CMD_RED_SIDE)
                      and target_x_mm in (-10, 10) and heading_cdeg == 0)
-        if ((target_x_mm and not view_turn) or (target_y_mm and not (view_turn and target_y_mm == 1)) or
+        if heading_cdeg == SEPARATION_BLACK_CLEARANCE:
+            side = CMD_VALID | (flags & CMD_RED_SIDE)
+            turn = flags == side and 2 <= abs(target_x_mm) <= 20
+            keep = flags in (side | CMD_SIDE_VALID, side | CMD_SIDE_VALID | CMD_TARGET_RIGHT) and target_x_mm == 0
+            if command != CMD_DISPERSE_PILE or target_y_mm != 0 or not (turn or keep):
+                raise ValueError("invalid black/blue clearance action")
+        elif ((target_x_mm and not view_turn) or (target_y_mm and not (view_turn and target_y_mm == 1)) or
                 heading_cdeg not in (0, SEPARATION_ORANGE_CORE_82)):
             raise ValueError("invalid separation lift payload")
         if command == CMD_DISPERSE_PILE and flags & CMD_KEEP_ORANGE and not flags & CMD_SIDE_VALID:
