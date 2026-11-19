@@ -16,6 +16,14 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-STATION-COARSE-FINE-20261119 空车站点移动最后 350 mm 精靠（NormalRun 已接入）
+
+对照上位 [`e5c4f1a`](https://github.com/danmo-teng/shijue_fangan/commit/e5c4f1a6bd51ede4cd8cafd56a27a32850812094)。空车回 S1/S3、换站及站点补位沿用 step13。远段锁首包场地方向 H 和底盘航向 U，按首包 D 与本地前向投影轮程计算余量，速度上限 1000 mm/s。后续上位 D 可以缩短该段，轮程回退或 D 回升都不会延长该段。
+
+本地余量或上位 D 任一 ≤350 mm，当次控制就改用实时 H/D 精靠，保持首包 U。切换连续，无额外回包。精靠速度为 250～350 mm/s，同一动作内不会切回远段。D=0 时停车并沿用原完成回包。
+
+已用命令入口做定向仿真，覆盖 800 mm 行进 450 mm 后切换、上位提前报近及回跳、短程直接精靠、D=0 完成、新动作重置，以及非站点绕行的实时方向和限速。实车到点精度待验证。
+
 ## MATCH-STATION-SPEED-20261119 空车返站、换点与开局长直行（NormalRun 已接入）
 
 已对照上位 `b11af33`。防守首放完成后，同批 RETURN（D=0）让 F405 先沿释放航向退出暂存堆 350 mm，再交给 SEARCH 发起的 step13 直达 S1。从空爪 SEARCH 发起的站点平移及其连续补位采用 1000 mm/s 巡航上限，动作重发沿用原速度设置；进攻绕行仍用 350 mm/s 上限。开局向中心 1.10 m 的定距前进上限也改为 1000 mm/s，初始后退 600 mm 的速度为 600 mm/s，PWM 上限为 600‰。定向仿真已核对退让交接、目标速度、补位及到站停止；实际地速待实车测量。[上位交接](https://github.com/danmo-teng/shijue_fangan/blob/b11af339a02a378e1961b54b6285aeadfc9cf32b/docs/CROSS_REPO_REQUESTS.md)
