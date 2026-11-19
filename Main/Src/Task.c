@@ -396,6 +396,7 @@ static struct {
   uint32_t repush_wait_ms;
 } delivery;
 static bool first_delivery_done;
+static bool returning_to_delivery_station;
 /* Field yaw is CCW-positive. Explicit station direction survives deliveries. */
 static int8_t search_yaw_direction;
 static bool search_direction_latched;
@@ -1659,6 +1660,9 @@ static void task_enter(TaskState next, uint32_t now_ms)
   cluster_align_sample_valid = false;
   const bool return_just_completed =
       (state == TASK_FACE_FIELD_CENTER) && (next == TASK_SEARCH);
+  /* An ordinary delivery exits locally before RETURN hands off to the empty station move. */
+  returning_to_delivery_station = (state == TASK_EXIT_SAFE_ZONE && next == TASK_FACE_FIELD_CENTER) ||
+      (returning_to_delivery_station && return_just_completed);
   Motor_Stop();
   if (next != TASK_ALIGN_SAFE_ZONE) remote_action.nudge_forward_mm = 0U;
   state = next;
@@ -1915,6 +1919,7 @@ static void task_enter(TaskState next, uint32_t now_ms)
 
 static void task_initialize(uint32_t now_ms, bool claws_already_stowed)
 {
+  returning_to_delivery_station = false;
   held_load = LIFT_LOAD_UNKNOWN;
   orange_gate_attempted = orange_gate_lowered = orange_core_filter_attempted = false;
   task_clear_confirmed_load();
@@ -5132,7 +5137,9 @@ static void task_process_bulldozer(const VisionMissionCommand *command,
     }
     const float body_angle = task_wrap_angle(command->target_y_mm * 0.01f -
                                              pose.heading_mdeg * 0.001f);
-    const float speed = fminf(APP_SAFE_SWEEP_RETURN_SPEED_MM_S,
+    const float max_speed = returning_to_delivery_station ?
+        APP_DELIVERY_STATION_RETURN_SPEED_MM_S : APP_SAFE_SWEEP_RETURN_SPEED_MM_S;
+    const float speed = fminf(max_speed,
         fmaxf(APP_NAV_TERMINAL_MIN_SPEED_MM_S, (float)command->target_x_mm));
     task_status.motors_active = Motor_MoveAngleFineHeading(speed, body_angle, heading_deg);
     return;
@@ -5362,7 +5369,9 @@ static bool task_accept_bulldozer(const VisionMissionCommand *command,
       !attack_face_entry) {
     return false;
   }
+  const bool delivery_station_move = empty_move && returning_to_delivery_station;
   task_start_remote_action(REMOTE_ACTION_BULLDOZER, command, now_ms);
+  returning_to_delivery_station = delivery_station_move;
   if (station_turn) {
     search_yaw_direction = (int8_t)command->target_y_mm;
     search_direction_latched = true;
@@ -8041,6 +8050,7 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
     TaskDiag_Event("SESSION", context_session_generation, vision->session_generation,
                    state, accepted_context.task_id, accepted_context.action_id, 0);
     context_session_generation = vision->session_generation;
+    returning_to_delivery_station = false;
     remote_action.nudge_forward_mm = 0U;
     safe_enter_resume_mm = safe_enter_resume_push_ms = 0U;
     task_clear_confirmed_load();
