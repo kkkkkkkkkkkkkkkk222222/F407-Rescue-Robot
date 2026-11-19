@@ -266,6 +266,7 @@ typedef struct {
 } BenchClaw;
 
 static BenchClaw bench_left, bench_right;
+static uint16_t bench_close_step_cdeg;
 
 static int bench_clamp(int value, int low, int high)
 {
@@ -304,7 +305,7 @@ static int bench_start_opening(uint8_t id, int pulse, int trim_us)
 }
 
 bool Claw_BeginBenchSeparation(bool keep_left, uint16_t retained_cdeg,
-                               int16_t left_trim_us, int16_t right_trim_us)
+                               int16_t left_trim_us, int16_t right_trim_us, uint16_t close_dps)
 {
   const int left = Servo_GetEnabledPulseUs(4U), right = Servo_GetEnabledPulseUs(2U);
   if (left < 500 || left > 2500 || right < 500 || right > 2500) { return false; }
@@ -312,6 +313,7 @@ bool Claw_BeginBenchSeparation(bool keep_left, uint16_t retained_cdeg,
       keep_left ? retained_cdeg : 18000, left_trim_us};
   bench_right = (BenchClaw){bench_start_opening(2U, right, right_trim_us),
       keep_left ? 18000 : retained_cdeg, right_trim_us};
+  bench_close_step_cdeg = (uint16_t)(close_dps * APP_TASK_PERIOD_MS / 10U);
   Claw_RestartAction();
   return true;
 }
@@ -319,7 +321,8 @@ bool Claw_BeginBenchSeparation(bool keep_left, uint16_t retained_cdeg,
 static bool bench_step_to(uint8_t id, uint16_t target)
 {
   BenchClaw *claw = id == 4U ? &bench_left : &bench_right;
-  const int opening = claw_next_position(claw->opening_cdeg, target, APP_CLAW_SEPARATE_STEP_DEG * 100);
+  const int step = target < claw->opening_cdeg ? bench_close_step_cdeg : APP_CLAW_SEPARATE_STEP_DEG * 100;
+  const int opening = claw_next_position(claw->opening_cdeg, target, step);
   const uint8_t deg = (uint8_t)((opening + 50) / 100);
   Servo_SetCalibratedPulse(id, id == 4U ? deg : 180U - deg, bench_pulse(id, opening, claw->trim_us));
   claw->opening_cdeg = opening;

@@ -5847,6 +5847,7 @@ const char *ClawBench_Command(const char *command, bool available)
   float turn_deg = APP_CARGO_SEPARATE_ONE_OR_TWO_TURN_DEG;
   bool grip = false;
   long closed_cdeg = 0, left_trim = 0, right_trim = 0, tighten = 0;
+  long close_dps = APP_CLAW_SEPARATE_STEP_DEG * 1000U / APP_TASK_PERIOD_MS;
   if (strcmp(arg, "FWD") != 0) {
     if (*arg != 'L' && *arg != 'R') { return "ERR CB COMMAND\r\n"; }
     side = *arg++ == 'L' ? 1 : -1;
@@ -5859,8 +5860,11 @@ const char *ClawBench_Command(const char *command, bool available)
     grip = *arg != '\0';
     if (grip && (!bench_read_arg(&arg, tighten * 100, 18000, &closed_cdeg) ||
         !bench_read_arg(&arg, -2000, 2000, &left_trim) ||
-        !bench_read_arg(&arg, -2000, 2000, &right_trim) || *arg != '\0')) {
+        !bench_read_arg(&arg, -2000, 2000, &right_trim))) {
       return "ERR CB GRIP ARGS\r\n";
+    }
+    if (*arg != '\0' && (!bench_read_arg(&arg, 1, APP_BENCH_CLAW_MAX_CLOSE_DPS, &close_dps) || *arg != '\0')) {
+      return "ERR CB CLOSE SPEED\r\n";
     }
   }
   const IMUData imu = IMU_GetData();
@@ -5868,7 +5872,7 @@ const char *ClawBench_Command(const char *command, bool available)
   const LocationPose pose = Location_GetPose();
   if (side != 0 && !pose.valid && pose.start_zone != LOCATION_START_UNKNOWN) { return "ERR CB POSE\r\n"; }
   if (grip && !Claw_BeginBenchSeparation(side > 0, (uint16_t)(closed_cdeg - tighten * 100),
-                                          (int16_t)left_trim, (int16_t)right_trim)) {
+                                          (int16_t)left_trim, (int16_t)right_trim, (uint16_t)close_dps)) {
     return "ERR CB CLAWS DISABLED\r\n";
   }
   if (side != 0 && !pose.valid) {

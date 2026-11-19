@@ -734,6 +734,7 @@
 #define APP_CLAW_SEPARATE_SOFT_CLOSE_DEG           5U
 #define APP_CLAW_SEPARATE_ORANGE_OPEN_DEG          5U
 #define APP_CLAW_SEPARATE_STEP_DEG                 4U /* Per 20 ms Task period. */
+#define APP_BENCH_CLAW_MAX_CLOSE_DPS              500U
 #define APP_CLAW_SEPARATE_SETTLE_MS              260U /* After the final angle command. */
 #define APP_CARGO_SEPARATE_ARC_BACK_MM_S        300.0f
 #define APP_CARGO_SEPARATE_ARC_SIDE_MM_S          0.0f

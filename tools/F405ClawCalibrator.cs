@@ -39,6 +39,7 @@ internal sealed class CalibratorForm : Form, IMessageFilter
     private readonly NumericUpDown opening = new NumericUpDown();
     private readonly NumericUpDown leftOffset = new NumericUpDown();
     private readonly NumericUpDown rightOffset = new NumericUpDown();
+    private readonly NumericUpDown closeSpeed = new NumericUpDown();
     private readonly NumericUpDown liftOutput = new NumericUpDown();
     private readonly NumericUpDown cameraOutput = new NumericUpDown();
     private readonly Label liftReadback = new Label();
@@ -132,7 +133,13 @@ internal sealed class CalibratorForm : Form, IMessageFilter
         layout.Controls.Add(presetRow, 0, 2);
 
         state.AutoSize = true; state.Text = "未连接；打开窗口不会自动移动。"; state.Margin = new Padding(3, 8, 3, 8);
-        layout.Controls.Add(state, 0, 3);
+        var separationSettings = Row();
+        separationSettings.Controls.Add(new Label { Text = "分离闭爪速度 (°/s)", AutoSize = true, Margin = new Padding(3, 10, 3, 3) });
+        ConfigureNumber(closeSpeed, 1, Define("APP_BENCH_CLAW_MAX_CLOSE_DPS"), 0, 10, MatchCloseSpeed);
+        closeSpeed.Width = 75;
+        separationSettings.Controls.Add(closeSpeed);
+        separationSettings.Controls.Add(state);
+        layout.Controls.Add(separationSettings, 0, 3);
         var movement = Row();
         movement.Controls.Add(new Label { Text = "统一动作开度 A", AutoSize = true, Margin = new Padding(3, 10, 3, 3) });
         ConfigureNumber(opening, 0, 180, 2, 0.09M, closedOpening); movement.Controls.Add(opening);
@@ -205,7 +212,7 @@ internal sealed class CalibratorForm : Form, IMessageFilter
         foreach (Control row in layout.Controls)
             if (row is FlowLayoutPanel)
                 foreach (Control child in row.Controls)
-                    if (child != stopMotion) motionControls.Add(child);
+                    if (child != stopMotion && child != state) motionControls.Add(child);
         presetTimer.Tick += delegate {
             presetTimer.Stop(); presetSequencing = false;
             Execute(delegate { ApplyCurrent(); Log("收纳完成：左爪先到内侧，再收右爪。"); });
@@ -215,6 +222,8 @@ internal sealed class CalibratorForm : Form, IMessageFilter
         LoadSaved(); UpdatePreview();
         Log("先连接读取当前姿态。初次折算offset只是保持原姿态的起点，不是自动测得的安装误差。");
     }
+
+    private int MatchCloseSpeed { get { return Define("APP_CLAW_SEPARATE_STEP_DEG") * 1000 / Define("APP_TASK_PERIOD_MS"); } }
 
     private void ReloadSourceConfiguration()
     {
@@ -318,9 +327,12 @@ internal sealed class CalibratorForm : Form, IMessageFilter
         ApplyOther(1); ApplyOther(3);
         if (selected.Tighten > 0)
         {
-            SendMotion(String.Format(CultureInfo.InvariantCulture, "CB {0}{1} {2} {3} {4}",
+            string command = String.Format(CultureInfo.InvariantCulture, "CB {0}{1} {2} {3} {4}",
                 selected.KeepLeft ? "L" : "R", selected.Tighten, (int)(closedOpening * 100M),
-                (int)leftOffset.Value, (int)rightOffset.Value));
+                (int)leftOffset.Value, (int)rightOffset.Value);
+            if (closeSpeed.Value != MatchCloseSpeed)
+                command += " " + ((int)closeSpeed.Value).ToString(CultureInfo.InvariantCulture);
+            SendMotion(command);
             return;
         }
         ApplyPoseClaws(selected.Stow);
@@ -360,12 +372,14 @@ internal sealed class CalibratorForm : Form, IMessageFilter
         {
             if (command != "CB FWD" && error.Message.Contains("ERR CB ANGLE"))
                 throw new IOException("当前固件只支持旧式分离指令，请烧录支持板端夹紧的配套固件。", error);
+            if (closeSpeed.Value != MatchCloseSpeed && error.Message.Contains("ERR CB GRIP ARGS"))
+                throw new IOException("当前固件不支持自定义闭爪速度，请更新配套固件，或把速度设回 " + MatchCloseSpeed + "°/s。", error);
             if (error.Message.Contains("ERR CB CLAWS DISABLED"))
                 throw new IOException("请先点“启用双爪/标定合爪”。", error);
             throw;
         }
         state.Text = command == "CB FWD" ? "正在前进 20 cm，目标速度 500 mm/s。" :
-            "F405 正按比赛节拍夹爪，到位后执行一次分离。";
+            "F405 正按 " + closeSpeed.Value + "°/s 闭爪，到位后执行一次分离。";
         Log(state.Text);
         motionTimer.Interval = 150; motionTimer.Start();
     }
@@ -847,6 +861,7 @@ internal sealed class CalibratorForm : Form, IMessageFilter
             closedOpening = opening.Value;
             leftOffset.Value = SavedInt("left_offset_us");
             rightOffset.Value = SavedInt("right_offset_us");
+            if (saved.ContainsKey("separation_close_dps")) closeSpeed.Value = Clamp(closeSpeed, SavedInt("separation_close_dps"));
             loading = false;
             Log("发现已保存参数；不会自动应用，连接后可点“应用已保存姿态”。");
         }
@@ -867,6 +882,7 @@ internal sealed class CalibratorForm : Form, IMessageFilter
             { "pose_right_delta_cdeg", clawsAtOpen ? 0 : poseRightDeltaCdeg },
             { "pose_name", clawsAtOpen ? "全开" : poseName }, { "claws_full_open", clawsAtOpen },
             { "left_offset_us", (int)leftOffset.Value }, { "right_offset_us", (int)rightOffset.Value },
+            { "separation_close_dps", (int)closeSpeed.Value },
             { "left_pulse_us", liveLeft }, { "right_pulse_us", liveRight },
             { "s1_pulse_us", livePulses[1] }, { "s1_enabled", servoEnabled[1] },
             { "s3_pulse_us", livePulses[3] }, { "s3_enabled", servoEnabled[3] },
@@ -903,6 +919,7 @@ internal sealed class CalibratorForm : Form, IMessageFilter
             poseRightDeltaCdeg = saved.ContainsKey("pose_right_delta_cdeg") ? SavedInt("pose_right_delta_cdeg") : 0;
             closedPose = poseRightDeltaCdeg == 0 && opening.Value == closedOpening;
             poseName = saved.ContainsKey("pose_name") ? Convert.ToString(saved["pose_name"]) : "合爪";
+            if (saved.ContainsKey("separation_close_dps")) closeSpeed.Value = Clamp(closeSpeed, SavedInt("separation_close_dps"));
             leftOffset.Value = SavedInt("left_offset_us");
             rightOffset.Value = SavedInt("right_offset_us");
             if (saved.ContainsKey("s1_pulse_us")) liftOutput.Value = Clamp(liftOutput, (SavedInt("s1_pulse_us") - 500) * 0.09M);
