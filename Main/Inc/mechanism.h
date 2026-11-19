@@ -34,6 +34,10 @@ bool Claw_OpenLeft(uint32_t now_ms);
 bool Claw_OpenRight(uint32_t now_ms);
 bool Claw_ClusterOpenLeft(uint32_t now_ms);
 bool Claw_ClusterOpenRight(uint32_t now_ms);
+/* Calibrated bench targets use physical opening in hundredths of a degree. */
+bool Claw_BeginBenchSeparation(bool keep_left, uint16_t retained_cdeg,
+                               int16_t left_trim_us, int16_t right_trim_us);
+bool Claw_RunBenchSeparation(uint32_t now_ms);
 bool Claw_SetBumpPosition(bool closed, uint32_t now_ms);
 bool Claw_Retract(uint32_t now_ms);
 bool Claw_Touch(uint32_t now_ms);

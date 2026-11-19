@@ -7,6 +7,7 @@
 #undef camera_angle
 
 static uint8_t servo_angles[4];
+static uint16_t servo_pulses[4];
 static float reverse_output;
 static float lateral_output, yaw_output;
 static VisionData test_vision;
@@ -21,7 +22,11 @@ static MotorDistanceStatus distance_result;
 static float distance_request;
 static float distance_travelled_mm;
 static unsigned distance_calls, finite_pauses, finite_resumes;
-void Servo_SetAngle(uint8_t id, uint8_t angle) { servo_angles[id - 1U] = angle; }
+void Servo_SetAngle(uint8_t id, uint8_t angle)
+{ servo_angles[id - 1U] = angle; servo_pulses[id - 1U] = Servo_OutputPulseUs(id, angle); }
+uint16_t Servo_GetEnabledPulseUs(uint8_t id) { return servo_pulses[id - 1U]; }
+void Servo_SetCalibratedPulse(uint8_t id, uint8_t angle, uint16_t pulse)
+{ servo_angles[id - 1U] = angle; servo_pulses[id - 1U] = pulse; }
 uint8_t Servo_GetAngle(uint8_t id) { return servo_angles[id - 1U]; }
 uint8_t Servo_OutputAngle(uint8_t id, uint8_t angle)
 {

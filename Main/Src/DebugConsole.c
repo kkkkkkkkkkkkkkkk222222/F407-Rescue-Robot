@@ -16,7 +16,7 @@
 extern UART_HandleTypeDef huart1;
 
 #define DEBUG_RX_RING_SIZE  32U
-#define DEBUG_LINE_SIZE     24U
+#define DEBUG_LINE_SIZE     32U
 
 static volatile uint8_t rx_byte;
 static volatile uint8_t rx_ring[DEBUG_RX_RING_SIZE];
@@ -170,7 +170,7 @@ static void debug_execute(char *command)
     return;
   }
   if (strcmp(command, "HELP") == 0) {
-    debug_send("CALIBRATION: DEBUG / CB? / CB L20|R20|L10|R10|L5|R5|FWD|STOP\r\n");
+    debug_send("CALIBRATION: DEBUG / CB? / CB FWD|STOP / CB L20|R20|L10|R10|L5|R5 [closed_cdeg left_us_trim right_us_trim]\r\n");
     debug_send("NORMALDEBUG: PING / STAT / IMU / ENC / MOTOR / DEBUG / S id deg / O id +/-deg / RUN\r\n");
     debug_send(preset_help);
     debug_send("TASK LOG: TLOG 1 / TLOG 0 / TSTAT / TDUMP; NO MOTION\r\n");

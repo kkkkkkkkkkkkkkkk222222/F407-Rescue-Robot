@@ -201,6 +201,22 @@ uint8_t Servo_GetAngle(uint8_t id)
   return id >= 1U && id <= 4U ? angles[id - 1U] : 0U;
 }
 
+uint16_t Servo_GetEnabledPulseUs(uint8_t id)
+{
+  if (!started || id < 1U || id > 4U) { return 0U; }
+  const uint8_t index = id - 1U;
+  if (edge_bsrr[2U * index] != pins[index]) { return 0U; }
+  return (uint16_t)(edge_ticks[2U * index] - servo_slot_start(index));
+}
+
+void Servo_SetCalibratedPulse(uint8_t id, uint8_t logical_deg, uint16_t pulse_us)
+{
+  if (!started || (id != 2U && id != 4U) || pulse_us < 500U || pulse_us > 2500U) { return; }
+  const uint8_t index = id - 1U;
+  angles[index] = logical_deg;
+  edge_ticks[2U * index] = servo_slot_start(index) + pulse_us;
+}
+
 void Servo_SetOffset(uint8_t id, int16_t offset_deg)
 {
   if (id < 1U || id > 4U) { return; }

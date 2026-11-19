@@ -10,6 +10,10 @@ uint8_t Servo_GetAngle(uint8_t id);
 uint8_t Servo_OutputAngle(uint8_t id, uint8_t angle);
 /* Exact commanded pulse, including the sub-degree installation trim. */
 uint16_t Servo_OutputPulseUs(uint8_t id, uint8_t angle);
+/* F405 bench mode reads the actual DMA slot, including desktop PWM adjustments.
+ * Zero means the channel is disabled. */
+uint16_t Servo_GetEnabledPulseUs(uint8_t id);
+void Servo_SetCalibratedPulse(uint8_t id, uint8_t logical_deg, uint16_t pulse_us);
 /* F405 maintenance adjustment. The logical angle stays available to callers. */
 void Servo_SetOffset(uint8_t id, int16_t offset_deg);
 

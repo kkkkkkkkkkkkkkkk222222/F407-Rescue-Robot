@@ -17,7 +17,8 @@ typedef enum {
   CLAW_ACTION_RETRACT,
   CLAW_ACTION_TOUCH,
   CLAW_ACTION_HALF_TOUCH,
-  CLAW_ACTION_FULL_OPEN
+  CLAW_ACTION_FULL_OPEN,
+  CLAW_ACTION_BENCH_SEPARATION
 } ClawAction;
 
 static ClawAction claw_action;
@@ -212,22 +213,26 @@ bool Claw_OpenIfNeeded(uint32_t now_ms)
   return Claw_Open(now_ms);
 }
 
-static bool claw_step_to(uint8_t id, uint8_t target)
+static int claw_next_position(int current, int target, int step)
+{
+  int delta = target - current;
+  if (delta > step) { delta = step; }
+  if (delta < -step) { delta = -step; }
+  return current + delta;
+}
+
+static bool claw_step_to(uint8_t id, uint16_t target)
 {
   const int current = Servo_GetAngle(id);
   if (current == target) { return true; }
-  const int step = APP_CLAW_SEPARATE_STEP_DEG;
-  int delta = (int)target - current;
-  if (delta > step) { delta = step; }
-  if (delta < -step) { delta = -step; }
-  const uint8_t next = (uint8_t)(current + delta);
+  const uint8_t next = (uint8_t)claw_next_position(current, target, APP_CLAW_SEPARATE_STEP_DEG);
   Servo_SetAngle(id, next);
   return next == target;
 }
 
-static bool claw_move_separation(ClawAction action, uint32_t now_ms,
-                                 uint8_t left_angle, uint8_t right_angle,
-                                 uint32_t settle_ms)
+static bool claw_move_steps(ClawAction action, uint32_t now_ms, uint16_t left_target,
+                            uint16_t right_target, uint32_t settle_ms,
+                            bool (*step_to)(uint8_t, uint16_t))
 {
   if (claw_action != action) {
     claw_action = action;
@@ -238,8 +243,8 @@ static bool claw_move_separation(ClawAction action, uint32_t now_ms,
   if (!claw_done && claw_step == 1U &&
       (uint32_t)(now_ms - claw_step_ms) >= APP_TASK_PERIOD_MS) {
     /* At most one step after a pause; never catch up with a large angle jump. */
-    const bool left_at_target = claw_step_to(4U, left_angle);
-    const bool right_at_target = claw_step_to(2U, right_angle);
+    const bool left_at_target = step_to(4U, left_target);
+    const bool right_at_target = step_to(2U, right_target);
     claw_step_ms = now_ms;
     if (left_at_target && right_at_target) { claw_step = 2U; }
   }
@@ -248,6 +253,85 @@ static bool claw_move_separation(ClawAction action, uint32_t now_ms,
   }
   return claw_done;
 }
+
+static bool claw_move_separation(ClawAction action, uint32_t now_ms,
+                                 uint8_t left_angle, uint8_t right_angle, uint32_t settle_ms)
+{
+  return claw_move_steps(action, now_ms, left_angle, right_angle, settle_ms, claw_step_to);
+}
+
+#if APP_BOARD_F405_ROBO
+typedef struct {
+  int opening_cdeg, target_cdeg, trim_us;
+} BenchClaw;
+
+static BenchClaw bench_left, bench_right;
+
+static int bench_clamp(int value, int low, int high)
+{
+  return value < low ? low : (value > high ? high : value);
+}
+
+/* The S4 and S2 logical axes are mirrored. The mounted-PWM and opening
+ * axes are also mirrors of each other on exactly one side. */
+static int bench_mount(uint8_t id, int angle_cdeg)
+{
+  return ((id == 4U) == (APP_CLAW_SERVOS_INVERTED != 0)) ? 18000 - angle_cdeg : angle_cdeg;
+}
+
+static int bench_deg_trim(uint8_t id)
+{
+  return (id == 4U ? APP_SERVO_S4_OFFSET_DEG : APP_SERVO_S2_OFFSET_DEG) * 100;
+}
+
+static int bench_pulse(uint8_t id, int opening, int trim_us)
+{
+  const int mounted = bench_mount(id, opening);
+  if (opening == 18000) { return 500 + mounted / 9; }
+  return bench_clamp(500 + bench_clamp(mounted + bench_deg_trim(id), 0, 18000) / 9 + trim_us, 500, 2500);
+}
+
+static int bench_start_opening(uint8_t id, int pulse, int trim_us)
+{
+  const int logical = Servo_GetAngle(id);
+  const int cached = (id == 4U ? logical : 180 - logical) * 100;
+  if (bench_pulse(id, cached, trim_us) == pulse) { return cached; }
+  if (bench_pulse(id, 18000, trim_us) == pulse) { return 18000; }
+  /* SWD fine tuning can have changed the DMA pulse since the last S command. */
+  const int opening = bench_clamp(bench_mount(id, (pulse - 500 - trim_us) * 9 - bench_deg_trim(id)), 0, 18000);
+  const int whole = ((opening + 50) / 100) * 100;
+  return bench_pulse(id, whole, trim_us) == pulse ? whole : opening;
+}
+
+bool Claw_BeginBenchSeparation(bool keep_left, uint16_t retained_cdeg,
+                               int16_t left_trim_us, int16_t right_trim_us)
+{
+  const int left = Servo_GetEnabledPulseUs(4U), right = Servo_GetEnabledPulseUs(2U);
+  if (left < 500 || left > 2500 || right < 500 || right > 2500) { return false; }
+  bench_left = (BenchClaw){bench_start_opening(4U, left, left_trim_us),
+      keep_left ? retained_cdeg : 18000, left_trim_us};
+  bench_right = (BenchClaw){bench_start_opening(2U, right, right_trim_us),
+      keep_left ? 18000 : retained_cdeg, right_trim_us};
+  Claw_RestartAction();
+  return true;
+}
+
+static bool bench_step_to(uint8_t id, uint16_t target)
+{
+  BenchClaw *claw = id == 4U ? &bench_left : &bench_right;
+  const int opening = claw_next_position(claw->opening_cdeg, target, APP_CLAW_SEPARATE_STEP_DEG * 100);
+  const uint8_t deg = (uint8_t)((opening + 50) / 100);
+  Servo_SetCalibratedPulse(id, id == 4U ? deg : 180U - deg, bench_pulse(id, opening, claw->trim_us));
+  claw->opening_cdeg = opening;
+  return opening == target;
+}
+
+bool Claw_RunBenchSeparation(uint32_t now_ms)
+{
+  return claw_move_steps(CLAW_ACTION_BENCH_SEPARATION, now_ms, bench_left.target_cdeg,
+                         bench_right.target_cdeg, APP_CLAW_SEPARATE_SETTLE_MS, bench_step_to);
+}
+#endif
 
 bool Claw_SetBumpPosition(bool closed, uint32_t now_ms)
 {

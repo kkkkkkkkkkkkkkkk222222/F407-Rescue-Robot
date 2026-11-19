@@ -51,8 +51,6 @@ internal sealed class CalibratorForm : Form, IMessageFilter
     private readonly List<Control> motionControls = new List<Control>();
     private Button stopMotion;
     private string motionCommand;
-    private bool clawsSettling, wheelsRequested;
-    private int clawStepUs, clawSettleMs;
     private readonly Dictionary<Control, int> wheelZones = new Dictionary<Control, int>();
     private readonly int[] livePulses = new int[5];
     private readonly bool[] servoEnabled = new bool[5];
@@ -129,7 +127,7 @@ internal sealed class CalibratorForm : Form, IMessageFilter
             presetRow.Controls.Add(Button(selected.Name, delegate { ApplyPreset(selected); }));
         }
         presetRow.Controls.Add(Button("前进 20 cm · 500 mm/s", delegate {
-            PrepareMotion(); BeginMotion("CB FWD"); SendMotion();
+            PrepareMotion(); SendMotion("CB FWD");
         }));
         layout.Controls.Add(presetRow, 0, 2);
 
@@ -305,8 +303,6 @@ internal sealed class CalibratorForm : Form, IMessageFilter
             decimal retained = closedOpening - selected.Tighten;
             left = selected.KeepLeft ? retained : 180M;
             right = selected.KeepLeft ? 180M : retained;
-            clawStepUs = Math.Max(1, Define("APP_CLAW_SEPARATE_STEP_DEG") * 100 / 9);
-            clawSettleMs = Define("APP_CLAW_SEPARATE_SETTLE_MS");
         }
         CancelRepeat(); loading = true;
         try
@@ -322,11 +318,9 @@ internal sealed class CalibratorForm : Form, IMessageFilter
         ApplyOther(1); ApplyOther(3);
         if (selected.Tighten > 0)
         {
-            RefreshAll(false);
-            if (!servoEnabled[4] || !servoEnabled[2]) throw new IOException("请先启用双爪。");
-            BeginMotion("CB " + (selected.KeepLeft ? "L" : "R") + selected.Tighten);
-            state.Text = selected.Name + "：正在调整双爪。";
-            motionTimer.Interval = Define("APP_TASK_PERIOD_MS"); motionTimer.Start();
+            SendMotion(String.Format(CultureInfo.InvariantCulture, "CB {0}{1} {2} {3} {4}",
+                selected.KeepLeft ? "L" : "R", selected.Tighten, (int)(closedOpening * 100M),
+                (int)leftOffset.Value, (int)rightOffset.Value));
             return;
         }
         ApplyPoseClaws(selected.Stow);
@@ -357,56 +351,51 @@ internal sealed class CalibratorForm : Form, IMessageFilter
         catch (IOException error) { throw new IOException("未读到标定运动接口 CB?。请确认板端已使用配套固件。\n" + error.Message); }
         if (result == "RUNNING") throw new IOException("板端正在运动，可按“停止动作”结束。");
     }
-    private void BeginMotion(string command)
+    private void SendMotion(string command)
     {
-        motionCommand = command; clawsSettling = wheelsRequested = false;
+        motionCommand = command;
         foreach (Control control in motionControls) control.Enabled = false;
-    }
-    private void EndMotion(string message)
-    {
-        motionTimer.Stop(); motionCommand = null; clawsSettling = wheelsRequested = false;
-        foreach (Control control in motionControls) control.Enabled = true;
-        state.Text = message; Log(message);
-    }
-    private void SendMotion()
-    {
-        wheelsRequested = true;
-        ConsoleCommand(motionCommand, @"(?m)^CB ACCEPT\r?$");
-        state.Text = motionCommand == "CB FWD" ? "正在前进 20 cm，目标速度 500 mm/s。" : "正在执行一次分离。";
+        try { ConsoleCommand(command, @"(?m)^CB ACCEPT\r?$"); }
+        catch (IOException error)
+        {
+            if (command != "CB FWD" && error.Message.Contains("ERR CB ANGLE"))
+                throw new IOException("当前固件只支持旧式分离指令，请烧录支持板端夹紧的配套固件。", error);
+            if (error.Message.Contains("ERR CB CLAWS DISABLED"))
+                throw new IOException("请先点“启用双爪/标定合爪”。", error);
+            throw;
+        }
+        state.Text = command == "CB FWD" ? "正在前进 20 cm，目标速度 500 mm/s。" :
+            "F405 正按比赛节拍夹爪，到位后执行一次分离。";
         Log(state.Text);
         motionTimer.Interval = 150; motionTimer.Start();
     }
-    private static int StepPulse(int current, int target, int stepUs)
+    private void EndMotion(string message)
     {
-        return current + Math.Sign(target - current) * Math.Min(stepUs, Math.Abs(target - current));
+        bool refreshClaws = motionCommand != null && motionCommand != "CB FWD";
+        motionTimer.Stop(); motionCommand = null;
+        foreach (Control control in motionControls) control.Enabled = true;
+        state.Text = message; Log(message);
+        if (refreshClaws && connected)
+        {
+            try { RefreshAll(false); }
+            catch (IOException error) { Log("未能更新夹爪脉宽读回：" + error.Message); }
+        }
     }
     private void MotionTick()
     {
         motionTimer.Stop();
         if (motionCommand == null) return;
-        if (wheelsRequested)
-        {
-            string result = ReadMotionStatus();
-            if (result == "RUNNING") { motionTimer.Start(); return; }
-            EndMotion(result == "DONE" ? "动作已完成，底盘已停车。" :
-                      result == "LIMIT" ? "分离已到轮程、侧移或进展限制，底盘已停车。" :
-                      result == "STOPPED" ? "动作已停止。" : "动作未完成，板端状态 " + result);
-            return;
-        }
-        if (clawsSettling) { SendMotion(); return; }
-        SetClawPair(StepPulse(liveLeft, LeftPulse, clawStepUs), StepPulse(liveRight, RightPulse, clawStepUs));
-        if (liveLeft == LeftPulse && liveRight == RightPulse)
-        {
-            clawsSettling = true; motionTimer.Interval = clawSettleMs;
-        }
-        motionTimer.Start();
+        string result = ReadMotionStatus();
+        if (result == "RUNNING") { motionTimer.Start(); return; }
+        EndMotion(result == "DONE" ? "动作已完成，底盘已停车。" :
+                  result == "LIMIT" ? "分离已到轮程、侧移或进展限制，底盘已停车。" :
+                  result == "STOPPED" ? "动作已停止。" : "动作未完成，板端状态 " + result);
     }
     private void StopMotion()
     {
         if (!connected) return;
         motionTimer.Stop();
-        if (wheelsRequested || motionCommand == null)
-            ConsoleCommand("CB STOP", @"(?m)^CB STOPPED\r?$");
+        ConsoleCommand("CB STOP", @"(?m)^CB STOPPED\r?$");
         EndMotion("标定动作已停止，保持最后爪位。");
     }
 
@@ -437,11 +426,8 @@ internal sealed class CalibratorForm : Form, IMessageFilter
             {
                 motionTimer.Stop();
                 string message = "已取消后续动作。";
-                if (wheelsRequested)
-                {
-                    try { ConsoleCommand("CB STOP", @"(?m)^CB STOPPED\r?$"); }
-                    catch (Exception stopError) { message = "停车未获确认：" + stopError.Message; }
-                }
+                try { ConsoleCommand("CB STOP", @"(?m)^CB STOPPED\r?$"); }
+                catch (Exception stopError) { message = "停车未获确认：" + stopError.Message; }
                 EndMotion(message);
             }
             Log("错误：" + error.Message); reportingError = true;

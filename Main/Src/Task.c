@@ -4,6 +4,7 @@
 #include "TaskDiag.h"
 
 #include <math.h>
+#include <stdlib.h>
 
 #include "app_config.h"
 #include "encoder.h"
@@ -5782,6 +5783,7 @@ static bool task_remote_separation_curve(uint32_t distance_mm, uint32_t now_ms)
 /* Calibration uses a separate curve origin and never enters the competition state machine. */
 static SeparationMotion bench_curve;
 static int8_t bench_side;
+static bool bench_gripping;
 static float bench_turn_deg;
 static bool bench_local_reference;
 typedef enum { BENCH_IDLE, BENCH_RUNNING, BENCH_DONE, BENCH_LIMIT, BENCH_FAULT, BENCH_STOPPED } BenchState;
@@ -5810,6 +5812,18 @@ void ClawBench_Stop(void)
   if (ClawBench_IsRunning()) { bench_finish(BENCH_STOPPED); }
 }
 
+static bool bench_read_arg(const char **cursor, long min, long max, long *value)
+{
+  if (**cursor != ' ') { return false; }
+  const char *start = *cursor + 1;
+  char *end;
+  const long parsed = strtol(start, &end, 10);
+  if (end == start || parsed < min || parsed > max) { return false; }
+  *cursor = end;
+  *value = parsed;
+  return true;
+}
+
 const char *ClawBench_Command(const char *command, bool available)
 {
   if (strcmp(command, "CB?") == 0) { return bench_reply[bench_state]; }
@@ -5822,17 +5836,33 @@ const char *ClawBench_Command(const char *command, bool available)
   const char *arg = command + 3;
   int8_t side = 0;
   float turn_deg = APP_CARGO_SEPARATE_ONE_OR_TWO_TURN_DEG;
+  bool grip = false;
+  long closed_cdeg = 0, left_trim = 0, right_trim = 0, tighten = 0;
   if (strcmp(arg, "FWD") != 0) {
     if (*arg != 'L' && *arg != 'R') { return "ERR CB COMMAND\r\n"; }
     side = *arg++ == 'L' ? 1 : -1;
-    if (strcmp(arg, "10") == 0) { turn_deg = APP_CARGO_SEPARATE_THREE_TURN_DEG; }
-    else if (strcmp(arg, "20") != 0 && strcmp(arg, "5") != 0) { return "ERR CB ANGLE\r\n"; }
+    if (strncmp(arg, "20", 2) == 0) { tighten = 20; arg += 2; }
+    else if (strncmp(arg, "10", 2) == 0) {
+      tighten = 10; arg += 2; turn_deg = APP_CARGO_SEPARATE_THREE_TURN_DEG;
+    } else if (*arg == '5') { tighten = 5; ++arg; }
+    else { return "ERR CB ANGLE\r\n"; }
+    /* Older panels have already positioned the claws before the bare command. */
+    grip = *arg != '\0';
+    if (grip && (!bench_read_arg(&arg, tighten * 100, 18000, &closed_cdeg) ||
+        !bench_read_arg(&arg, -2000, 2000, &left_trim) ||
+        !bench_read_arg(&arg, -2000, 2000, &right_trim) || *arg != '\0')) {
+      return "ERR CB GRIP ARGS\r\n";
+    }
   }
   const IMUData imu = IMU_GetData();
   if (!imu.ready || imu.heading_uncertain) { return "ERR CB IMU\r\n"; }
   const LocationPose pose = Location_GetPose();
+  if (side != 0 && !pose.valid && pose.start_zone != LOCATION_START_UNKNOWN) { return "ERR CB POSE\r\n"; }
+  if (grip && !Claw_BeginBenchSeparation(side > 0, (uint16_t)(closed_cdeg - tighten * 100),
+                                          (int16_t)left_trim, (int16_t)right_trim)) {
+    return "ERR CB CLAWS DISABLED\r\n";
+  }
   if (side != 0 && !pose.valid) {
-    if (pose.start_zone != LOCATION_START_UNKNOWN) { return "ERR CB POSE\r\n"; }
     /* Before match configuration the curve needs only a local wheel/gyro origin. */
     Location_ResetReference(0, 0, 0);
     bench_local_reference = true;
@@ -5843,6 +5873,7 @@ const char *ClawBench_Command(const char *command, bool available)
   Motor_Stop();
 #endif
   bench_side = side;
+  bench_gripping = grip;
   bench_turn_deg = turn_deg;
   bench_curve = (SeparationMotion){0};
   bench_state = BENCH_RUNNING;
@@ -5864,6 +5895,10 @@ void ClawBench_Process(uint32_t now_ms)
       bench_finish(result == MOTOR_DISTANCE_DONE ? BENCH_DONE : BENCH_FAULT);
     }
     return;
+  }
+  if (bench_gripping) {
+    if (!Claw_RunBenchSeparation(now_ms)) { return; }
+    bench_gripping = false;
   }
   const CurveResult result = drive_separation_curve(&bench_curve, pose, bench_side, bench_turn_deg,
                                                     false, APP_SELECTIVE_DISPERSE_CURVE_MM, now_ms);
