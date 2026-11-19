@@ -33,12 +33,18 @@ typedef struct {
 } MotorPwm;
 #endif
 
+typedef enum {
+  DISTANCE_STANDARD,
+  DISTANCE_START_FORWARD,
+  DISTANCE_SINGLE_FILTER
+} MotorDistanceProfile;
+
 typedef struct {
   MotorDistanceStatus status;
   bool slowing;
   bool waiting_for_stop;
   bool field_heading_hold;
-  bool start_forward;
+  MotorDistanceProfile profile;
   int32_t field_heading_mdeg;
   float travelled_mm;
   float target_mm;
@@ -350,7 +356,7 @@ static void motor_set_target_counts(uint8_t id, float target_counts)
     zero_limit_mm_s = APP_NAV_FINE_WHEEL_ZERO_MM_S;
   } else if (id == 3U &&
              ((distance_move.status == MOTOR_DISTANCE_RUNNING &&
-               distance_move.start_forward) ||
+               distance_move.profile == DISTANCE_START_FORWARD) ||
               (direction_move.active && direction_move.absolute_heading &&
                direction_move.low_rear_deadband && !direction_move.reversing))) {
     zero_limit_mm_s = APP_MOTOR_REAR_HEADING_ZERO_MM_S;
@@ -750,8 +756,10 @@ static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
   if (remaining_mm < distance_move.slowdown_start_mm) {
     if (!distance_move.slowing) {
       distance_move.slowing = true;
-      Pid_Reset(&speed_pids[0]);
-      Pid_Reset(&speed_pids[1]);
+      if (distance_move.profile != DISTANCE_SINGLE_FILTER) {
+        Pid_Reset(&speed_pids[0]);
+        Pid_Reset(&speed_pids[1]);
+      }
     }
 
     const float usable_slowdown =
@@ -778,7 +786,7 @@ static void motor_update_distance_move(const EncoderStatus encoder[MOTOR_COUNT])
   }
   const float heading_error_deg = (float)heading_error_mdeg / 1000.0f;
   float accel_mm_s2 = APP_GO_DISTANCE_ACCEL_MM_S2;
-  if (distance_move.start_forward) {
+  if (distance_move.profile == DISTANCE_START_FORWARD) {
     const float error_span_deg = APP_START_FORWARD_SLOW_SPEED_ERROR_DEG -
                                  APP_START_FORWARD_FULL_SPEED_ERROR_DEG;
     const float speed_fraction = motor_clamp_float(
@@ -1990,7 +1998,7 @@ static MotorDistanceStatus motor_move_distance(float distance_m,
                                                bool limit_slowdown_to_half,
                                                bool field_heading_hold,
                                                float field_heading_deg,
-                                               bool start_forward)
+                                               MotorDistanceProfile profile)
 {
   const uint32_t primask = motor_enter_critical();
   if (distance_move.status != MOTOR_DISTANCE_IDLE) {
@@ -2070,7 +2078,7 @@ static MotorDistanceStatus motor_move_distance(float distance_m,
   distance_move.start_m2_count = 0;
   distance_move.target_yaw_mdeg = 0;
   distance_move.field_heading_hold = field_heading_hold;
-  distance_move.start_forward = start_forward;
+  distance_move.profile = profile;
   distance_move.field_heading_mdeg = field_heading_hold ?
       (int32_t)lroundf(motor_wrap_angle_deg(field_heading_deg) * 1000.0f) : 0;
   distance_move.slowdown_start_mm = slowdown_mm;
@@ -2104,9 +2112,9 @@ static MotorDistanceStatus motor_move_distance_default(float distance_m,
       max_speed_mm_s : APP_GO_DISTANCE_MIN_SPEED_MM_S;
   const float slowdown_mm = APP_GO_DISTANCE_SLOWDOWN_MM *
       max_speed_mm_s / APP_GO_DISTANCE_SPEED_MM_S;
+  const MotorDistanceProfile profile = start_forward ? DISTANCE_START_FORWARD : DISTANCE_STANDARD;
   return motor_move_distance(distance_m, max_speed_mm_s, slowdown_mm,
-                             end_speed_mm_s, true, field_heading_hold,
-                             field_heading_deg, start_forward);
+                             end_speed_mm_s, true, field_heading_hold, field_heading_deg, profile);
 }
 
 MotorDistanceStatus Motor_MoveDistance(float distance_m, float max_speed_mm_s)
@@ -2119,6 +2127,13 @@ MotorDistanceStatus Motor_MoveDistanceHeading(float distance_m, float max_speed_
 {
   return motor_move_distance_default(distance_m, max_speed_mm_s, true,
                                      field_heading_deg, false);
+}
+
+MotorDistanceStatus Motor_MoveSingleFilterBack(float field_heading_deg)
+{
+  return motor_move_distance(-0.100f, APP_SINGLE_FILTER_FAST_BACK_MM_S,
+                             APP_SINGLE_FILTER_BACK_SLOW_MM, APP_GO_DISTANCE_MIN_SPEED_MM_S,
+                             false, true, field_heading_deg, DISTANCE_SINGLE_FILTER);
 }
 
 MotorDistanceStatus Motor_MoveStartForward(float field_heading_deg)
@@ -2143,7 +2158,7 @@ MotorDistanceStatus Motor_MoveDistanceLinear(float distance_m,
                                              float end_speed_mm_s)
 {
   return motor_move_distance(distance_m, max_speed_mm_s, slowdown_mm,
-                             end_speed_mm_s, false, false, 0.0f, false);
+                             end_speed_mm_s, false, false, 0.0f, DISTANCE_STANDARD);
 }
 
 MotorDistanceStatus Motor_MoveDistanceConstant(float distance_m,
@@ -2151,7 +2166,7 @@ MotorDistanceStatus Motor_MoveDistanceConstant(float distance_m,
 {
   return motor_move_distance(distance_m, speed_mm_s,
                              APP_GO_DISTANCE_TOLERANCE_MM + 1.0f,
-                             speed_mm_s, false, false, 0.0f, false);
+                             speed_mm_s, false, false, 0.0f, DISTANCE_STANDARD);
 }
 
 MotorTurnStatus Motor_TurnAngle(float angle_deg)

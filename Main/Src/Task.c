@@ -533,6 +533,14 @@ static bool task_report_valid(const VisionData *vision)
   return (vision != NULL) && vision->valid && (vision->tick_ms != 0U);
 }
 
+/* Speed from which the existing deceleration can reach the old profile at
+ * the join. Only the distance before that join earns additional speed. */
+static float task_entry_speed(float extra_mm, float join_speed, float limit, float decel)
+{
+  if (extra_mm <= 0.0f) { return join_speed; }
+  return fminf(limit, sqrtf(join_speed * join_speed + 2.0f * decel * extra_mm));
+}
+
 static float task_step_toward(float current, float target, float step)
 {
   if (current < target) {
@@ -1194,6 +1202,15 @@ static TaskCommandReject task_disperse_reject_reason(
       ((state == TASK_POST_GRAB_AUDIT) || first_delivery_done ||
        first_green_bump_done || audit_initial_stash ||
        (audit_last_total_count < 2U) || !task_audit_has_green())) {
+    return TASK_COMMAND_REJECT_AUDIT;
+  }
+  /* The upper 140-degree image distinguishes a center green in a mixed side.
+   * The compact audit can encode that side as UNKNOWN. */
+  if (command != NULL && command->command == VISION_CMD_DISPERSE_PILE &&
+      command->target_x_mm != 0 &&
+      (first_delivery_done || audit_initial_stash || task_status.gripper_closed ||
+       (state != TASK_GRAB_OBSERVE && state != TASK_DISPERSE_READY) ||
+       !task_audit_has_danger() || audit_last_total_count != 2U)) {
     return TASK_COMMAND_REJECT_AUDIT;
   }
   if (!task_disperse_keep_side_valid(command)) {
@@ -3246,8 +3263,13 @@ static void task_process_approach(const VisionData *vision, uint32_t now_ms)
         return;
       }
       Motor_ResumeFiniteMotion();
+      const float remaining_mm = (float)approach_range_mm -
+          fmaxf(0.0f, Motor_GetDistanceTravelledMm());
+      const float cruise = task_entry_speed(
+          remaining_mm - APP_APPROACH_RANGE_SLOW_MM, APP_APPROACH_RANGE_SPEED_MM_S,
+          APP_APPROACH_RANGE_FAST_MM_S, APP_GO_DISTANCE_DECEL_MM_S2);
       const MotorDistanceStatus result = Motor_MoveDistanceLinear(
-          approach_range_mm * 0.001f, APP_APPROACH_RANGE_SPEED_MM_S,
+          approach_range_mm * 0.001f, cruise,
           APP_APPROACH_RANGE_SLOW_MM, APP_APPROACH_RANGE_END_MM_S);
       task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
       const bool range_done = result == MOTOR_DISTANCE_DONE ||
@@ -3767,8 +3789,11 @@ static void task_process_single_filter(uint32_t now_ms)
   }
   if (single_filter_phase == 2U) {
     Motor_ResumeFiniteMotion();
-    const MotorDistanceStatus result = Motor_MoveDistanceHeading(
-        -0.100f, APP_SINGLE_CARGO_FILTER_BACK_SPEED_MM_S, single_filter_heading_deg);
+    const bool single = !mixed_pair && audit_last_total_count == 1U;
+    const MotorDistanceStatus result = single ?
+        Motor_MoveSingleFilterBack(single_filter_heading_deg) :
+        Motor_MoveDistanceHeading(-0.100f, APP_SINGLE_CARGO_FILTER_BACK_SPEED_MM_S,
+                                  single_filter_heading_deg);
     task_status.motors_active = result == MOTOR_DISTANCE_RUNNING;
     if (result == MOTOR_DISTANCE_FAULT || result == MOTOR_DISTANCE_INVALID) {
       task_stop(TASK_FAULT_MOTOR, now_ms);
@@ -4537,7 +4562,10 @@ static void task_process_safe_align(uint32_t now_ms)
 static float safe_enter_speed(int16_t fence_distance_mm)
 {
   if (fence_distance_mm >= (int16_t)APP_SAFE_ENTER_SLOWDOWN_MM) {
-    return APP_SAFE_ENTER_CRUISE_SPEED_MM_S;
+    const float front_mm = APP_SAFE_ENTER_TOTAL_DISTANCE_MM - APP_SAFE_FINAL_PUSH_DISTANCE_MM;
+    const float remaining_mm = (float)fence_distance_mm - APP_SAFE_ENTER_CONTACT_DISTANCE_MM;
+    return task_entry_speed(remaining_mm - 0.5f * front_mm, APP_SAFE_ENTER_CRUISE_SPEED_MM_S,
+                            APP_SAFE_ENTER_FAST_MM_S, APP_NAV_SPEED_DECEL_MM_S2);
   }
   const float span_mm = APP_SAFE_ENTER_SLOWDOWN_MM -
                         (float)APP_SAFE_ENTER_CONTACT_DISTANCE_MM;
@@ -6938,7 +6966,9 @@ static void task_process_remote_action(const VisionMissionCommand *command,
           /* When the host cannot distinguish left from right, do not ram or
            * guess a claw. Shift the view by a small in-place turn, then ask
            * for a fresh 140-degree claw audit. */
-          (void)task_remote_turn(APP_DISPERSE_OBSERVE_TURN_DEG, now_ms);
+          const float turn_deg = remote_action.arg_a == 0 ?
+              APP_DISPERSE_OBSERVE_TURN_DEG : (float)remote_action.arg_a;
+          (void)task_remote_turn(turn_deg, now_ms);
         } else if (remote_action.phase == 1U) {
           if (task_scan_camera_to(APP_GRAB_VIEW_ANGLE, now_ms)) {
             task_remote_action_advance(now_ms);
@@ -8346,6 +8376,8 @@ static void task_accept_mission(VisionData *vision, uint32_t now_ms)
   reject_stage = 7U;
   if (separation_request && new_action && state == TASK_REMOTE_ACTION &&
       remote_action.orange_core_82) goto rejected;
+  if (incoming.command == VISION_CMD_DISPERSE_PILE && !new_action &&
+      incoming.target_x_mm != remote_action.arg_a) goto rejected;
   if (separation_request && !new_action &&
       incoming.heading_cdeg != (remote_action.orange_core_82 ? VISION_SEPARATION_ORANGE_CORE_82 : 0U))
     goto rejected;

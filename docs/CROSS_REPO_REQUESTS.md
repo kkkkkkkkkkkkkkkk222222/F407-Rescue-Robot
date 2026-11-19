@@ -16,6 +16,18 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-FIRST-GREEN-VIEW-20261119 首绿靠蓝块原地试转（NormalRun 已接入）
+
+对照上位 [`0ba974b`](https://github.com/danmo-teng/shijue_fangan/commit/0ba974b3def01d2eb9dfcc1e8b46ece1bfecbcf6)。上位从 140° 图像判断首绿跨中线和蓝块所在侧，发无侧 0x10，A=+10 向左、A=−10 向右，B=U=0。下位按首绿抓前已确认的含蓝两件非法审核受理。转完回 140° 报同动作 mode35/DONE，观察不计物理分离次数。上位复审后可另发一次同向观察、保绿或弃批。
+
+已比对两端红蓝命令字节并经下位解析，定向验证左右试转、重发与改角拒绝、复审后第二次同向试转和旧 A=0 的 20° 观察。实际转后绿蓝是否分开待实车验证。
+
+## MATCH-PICKUP-PUSH-FILTER-SPEED-20261119 测距接近、推入和单件滤除速度（NormalRun 已接入）
+
+对照上位 [`c95cc04`](https://github.com/danmo-teng/shijue_fangan/commit/c95cc04f3ec25f41d35c67e1ad556055fc5f0581)。测距接近远段目标上限 1000 mm/s，按剩余轮程减到 500 mm/s，从最后 250 mm 接原 500 至 200 mm/s 曲线。入区前段共 400 mm，前半程上限 800 mm/s，余 200 mm 时回到 400 mm/s，随后按原曲线降至 200 mm/s；挤障轮程可抵扣，末段 270 mm 盲推仍为 330 mm/s。
+
+首件单绿、单橙在 82° 保持原航向后退 100 mm，上限 300 mm/s，最后 20 mm 减向 120 mm/s，切换时保留两驱动轮已有的速度环补偿。多绿材料及抓取点一橙一黑仍用 250 mm/s，最后 50 mm 减速。定向验证已覆盖测距与推进速度交界、抵扣 300 mm 后的剩余推进、盲推、滤除分支、两轮补偿及原到位容差。实际速度与是否仍有中段停顿待实车验证。
+
 ## MATCH-STATION-COARSE-FINE-20261119 空车站点移动最后 350 mm 精靠（NormalRun 已接入）
 
 对照上位 [`e5c4f1a`](https://github.com/danmo-teng/shijue_fangan/commit/e5c4f1a6bd51ede4cd8cafd56a27a32850812094)。空车回 S1/S3、换站及站点补位沿用 step13。远段锁首包场地方向 H 和底盘航向 U，按首包 D 与本地前向投影轮程计算余量，速度上限 1000 mm/s。后续上位 D 可以缩短该段，轮程回退或 D 回升都不会延长该段。

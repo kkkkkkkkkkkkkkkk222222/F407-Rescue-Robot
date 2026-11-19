@@ -472,6 +472,7 @@
 #define APP_APPROACH_RANGE_WAIT_MS      5000U
 #define APP_APPROACH_RANGE_TIMEOUT_MS  12000U
 #define APP_APPROACH_RANGE_MAX_MM       2500U
+#define APP_APPROACH_RANGE_FAST_MM_S   1000.0f
 #define APP_APPROACH_RANGE_SPEED_MM_S   500.0f
 #define APP_APPROACH_RANGE_END_MM_S     200.0f
 #define APP_APPROACH_RANGE_SLOW_MM      250.0f
@@ -619,6 +620,7 @@
 #define APP_SAFE_ALIGN_LATERAL_MM_S_PER_PX    1.0f
 #define APP_SAFE_ALIGN_LATERAL_MIN_MM_S     270.0f
 #define APP_SAFE_ALIGN_LATERAL_MAX_MM_S     400.0f
+#define APP_SAFE_ENTER_FAST_MM_S           800.0f
 #define APP_SAFE_ENTER_CRUISE_SPEED_MM_S   400.0f
 #define APP_SAFE_ENTER_MIN_SPEED_MM_S      200.0f
 #define APP_SAFE_ENTER_SLOWDOWN_MM         300.0f
@@ -674,6 +676,8 @@
 /* Temporary lift position for filtering and orange/core separation. */
 #define APP_LIFT_FIRST_GREEN_FILTER_ANGLE 82U
 #define APP_SINGLE_CARGO_FILTER_BACK_SPEED_MM_S 250.0f
+#define APP_SINGLE_FILTER_FAST_BACK_MM_S      300.0f
+#define APP_SINGLE_FILTER_BACK_SLOW_MM         20.0f
 /* S2/S4 mounting: 1 mirrors the PWM angle, 0 selects the original mounting. */
 #define APP_CLAW_SERVOS_INVERTED           1
 #define APP_CLAW_MOUNT_ANGLE(deg) (APP_CLAW_SERVOS_INVERTED ? (180U - (deg)) : (deg))

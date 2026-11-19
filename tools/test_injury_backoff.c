@@ -87,6 +87,10 @@ MotorDistanceStatus Motor_MoveDistanceHeading(float distance, float speed, float
   ++distance_calls;
   return distance_result;
 }
+MotorDistanceStatus Motor_MoveSingleFilterBack(float heading)
+{
+  return Motor_MoveDistanceHeading(-0.100f, APP_SINGLE_FILTER_FAST_BACK_MM_S, heading);
+}
 MotorDistanceStatus Motor_MoveStartForward(float heading)
 {
   return Motor_MoveDistanceHeading(APP_START_FORWARD_DISTANCE_M,

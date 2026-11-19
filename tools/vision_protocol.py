@@ -386,7 +386,9 @@ def mission_frame(
                 heading_cdeg != heading):
             raise ValueError("orange filter requires black side, 100mm, lift86 and the site heading mode")
     if command in (CMD_DISPERSE_PILE, CMD_RELEASE_LEFT, CMD_RELEASE_RIGHT):
-        if target_x_mm or target_y_mm or heading_cdeg not in (0, SEPARATION_ORANGE_CORE_82):
+        view_turn = (command == CMD_DISPERSE_PILE and flags in (CMD_VALID, CMD_VALID | CMD_RED_SIDE)
+                     and target_x_mm in (-10, 10) and heading_cdeg == 0)
+        if (target_x_mm and not view_turn) or target_y_mm or heading_cdeg not in (0, SEPARATION_ORANGE_CORE_82):
             raise ValueError("invalid separation lift payload")
         if command == CMD_DISPERSE_PILE and flags & CMD_KEEP_ORANGE and not flags & CMD_SIDE_VALID:
             raise ValueError("orange separation requires an explicit retained side")
