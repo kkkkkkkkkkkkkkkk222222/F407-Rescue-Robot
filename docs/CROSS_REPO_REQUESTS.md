@@ -16,6 +16,10 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-STATION-SPEED-20261119 空车返站、换点与开局长直行（NormalRun 已接入）
+
+已对照上位 `b11af33`。防守首放完成后，同批 RETURN（D=0）让 F405 先沿释放航向退出暂存堆 350 mm，再交给 SEARCH 发起的 step13 直达 S1。从空爪 SEARCH 发起的站点平移及其连续补位采用 1000 mm/s 巡航上限，动作重发沿用原速度设置；进攻绕行仍用 350 mm/s 上限。开局向中心 1.10 m 的定距前进上限也改为 1000 mm/s，初始后退 600 mm 的速度为 600 mm/s，PWM 上限为 600‰。定向仿真已核对退让交接、目标速度、补位及到站停止；实际地速待实车测量。[上位交接](https://github.com/danmo-teng/shijue_fangan/blob/b11af339a02a378e1961b54b6285aeadfc9cf32b/docs/CROSS_REPO_REQUESTS.md)
+
 ## MATCH-NUDGE-CREDIT-THREE-REPUSH 侧挤后就地续推与三件材料重推（NormalRun 已接入）
 
 已核对上位比赛分支 `c1425ef`。侧挤中间直行结束时保存实测正向毫米数，最后横移回线完成才报同动作 DONE/mode54。上位从当前位置重做航向及视觉对准、判通道；通道清空后发送视觉 ENTER（A=-1、B=0、U=0），F405 仅在该次 ENTER 开始时抵扣 400 mm 前段。横移和后续对准行程不参与抵扣。回预备线、弃批、换会话或故障恢复后不能复用该值。[上位交接](https://github.com/danmo-teng/shijue_fangan/blob/c1425ef1117010640b08e92e1bd3a1dbc5715dfb/docs/CROSS_REPO_REQUESTS.md)

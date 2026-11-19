@@ -28,7 +28,7 @@
 
 1. 上电后先保持TIM8舵机PWM关闭，完成IMU配置、静止稳定和陀螺仪零偏校准。只有`IMU_Init()`成功后才启动4路舵机PWM，随后摄像头到90°、舵机1到55°，左右爪依次收缩到左23°、右147°；IMU失败则机构和正式Task均不启动。
 2. 收到合法`TYPE=0x11`红蓝方和出发区配置后回复一次`A3 B3 01 C3`并启动连续任务，不设置180秒自动终止。
-3. 开局采用分段动作：以600 mm/s后退600 mm，稳定250 ms，原地转180°（轮端切向速度250 mm/s），稳定并完成开爪后，以800 mm/s前进1100 mm到中心附近；每段独立定距/定角。不再使用开局边平移边转180°。
+3. 开局先以 600 mm/s 后退 600 mm，稳定 250 ms，原地转 180°（轮端切向速度 250 mm/s）。稳定并完成开爪后，向中心前进 1100 mm，巡航上限 1000 mm/s。实际指令受加减速、航向偏差和到点控制调节。
 4. 开爪完成后进入`SEARCH`。聚集目标持续发送带`CLUSTER_TARGET`的APPROACH，F407保持双爪Open靠近，相机130°水平对正后到140°，稳定250 ms并进入`mode=38`，以200 mm/s锁航向慢爬夹内观察；足够非空样本时停车，收到STABLE后进入`mode=37`。能分侧时发送带`SIDE_VALID`的曲线分离；不能分侧时发送无侧DISPERSE，F407只转20°并以mode35请求新审核。125°/130°不新增固定空等。
 5. 观察点①、③各累计扫描 540° 仍无合法目标时，由上位机发起直达另一点的换点动作。仅①无果去③时，到站姿态使用 `opcode 0x14 / step14 / A=3`，B 为扫描方向 ±1，U 为朝场地中心的航向。F405 空爪准备到 105°，机构就绪后回报同任务、同动作的 `mode3 / 10500 / DONE`，随即按 B 同向扫描。③无果返①及投送后直返原点沿用 A=2，从 120° 开始。上位依对应视角的新图选目标。[配对报文](docs/contracts/f405_station_turn_search_20261117.json)
 6. 收到1帧原生1280×1024合法单目标坐标后锁定类别并进入`APPROACH`。舵机3达到125°时停车并水平对正到误差≤24 px，随后移动到140°并稳定250 ms；不再要求原track重新出现，直接进入`mode=21`并置`CLAW_VISIBLE=1`。车头视觉PID为0.18/0/0.0025；摄像头俯仰PID为0.55/0.00875/0.00168，接近跟踪变化率上限45°/s，两者不可混用。
@@ -136,7 +136,8 @@ A3 B3 12 10 02 80 02 00 00 00 01 09 DD FD C3
 - 门口已确认运输单橙、复审发现混黑时，上位仍可用任务命令 0x16，A=100 mm、B=8600、U 为红方 9000 或蓝方 27000。先向黑块异侧横移，降到 86° 移回，回 mode48 报 DONE 并复审。
 - 通道单障碍侧挤使用 TYPE 0x18 的操作码 0x17。完成航向和视觉对准后，上位发送 VALID、SIDE_VALID、队色及障碍侧；A=100 mm，B2/B3/B4/B5 的前进距离 B 分别为 300/230/100/50 mm，B1 直接扫障，U 为本方航向。下位闭爪向异侧横移 A，前进 B，再反向横移 A。实测前进量在结束直行时取值，回线完成后报同动作 DONE/mode54。上位在当前位置重新对准和判障；通道清空用 A=-1 续推，仍堵或侧挤失败按原预备线流程处理。
 - 首件绿色若在140°ROI中与其他物资挤在中心且曲线无法取出，上位机可发送`DISPERSE_PILE + FIRST_GREEN_BUMP(bit5)`，不得同时置SIDE_VALID/TARGET_RIGHT。F407仅在首件尚未完成、审核至少2件且含绿色时接受，并且每轮任务最多一次：后退0.10 m→Touch闭爪→前进0.20 m→后退0.10 m→双爪全开→直接回SEARCH。该动作不改变无侧DISPERSE的20°观察语义。
-- 临时藏堆NAV不使用`STAGE_ONLY`，也不执行任何安全区补推；到点后`RELEASE_BOTH`。释放完成后至返中完成期间，F407拒绝`APPROACH_TARGET`和`DISPERSE_PILE`，避免残留找物命令抢占藏堆回程。第一条`RETURN_CENTER`先触发F407保持释放航向直退0.35 m，编码器累计距离且IMU修正航向；退到安全距离后才使用上位机持续更新的H原地调头并按D返中。该退让只对临时藏堆生效，正式安全区投送仍使用既有mode16后退0.30 m，不会重复后退。
+- 防守开局暂存到点后执行 `RELEASE_BOTH`。上位收到 mode34 后同批发送 `RETURN_CENTER`（D=0）。F405 保持释放航向直退 350 mm，完成后回 SEARCH。上位再按退完时的定位发 step13 直达 S1。正式投送则在退出安全区 300 mm 后返回本次出发的搜索点。
+- 从空爪 SEARCH 发起的 step13 回站、S1↔S3 换点及站点补位，目标速度上限为 1000 mm/s。剩余距离 D 以 mm 计，D>0 时速度取 D 的数值并限制在 250～1000 mm/s；D=0 时停止平移。进攻脱堆绕行的 step13 上限为 350 mm/s。
 - `YIELD_BACKOFF`只在F407已确认完成普通单侧释放且`cargo_recheck_pending=1`时接受。单侧释放与带侧DISPERSE共用上述保留爪分档，曲线和直退由下位机执行。不带SIDE_VALID只执行20°观察并以mode35请求新审核。通用CMD12已删除；局部capture_escape仍表示必要的抓取失败退让，不是通用脱困。
 - `RELEASE_BOTH`在普通非法抓取审核中表示放弃：张爪后mode24退300 mm、转90°再SEARCH；INITIAL_STASH/藏堆及扫障原释放流程仍以mode34完成。无侧DISPERSE仍为20°观察/mode35，不能混用。
 - 对外mode映射为`3 SEARCH、15 DELIVERY_VERIFY、16 EXIT_SAFE_ZONE、17 FACE_FIELD_CENTER、18 STOPPED、20 APPROACH_TARGET、21 CAPTURE_AUDIT、22 CAPTURE_DONE、23 POST_GRAB_AUDIT、30 YIELD_DONE、31 退役保留、32/33/34 RELEASE_DONE、35 DISPERSE_DONE、36 LANE_DONE、37 DISPERSE_READY、38 CLUSTER_CAPTURE_AUDIT、39 SAFE_SWEEP、40 SAFE_SWEEP_DONE、41 BOUNDARY_RECOVER、42 SAFE_SWEEP_APPROACH、43 SAFE_SWEEP_AUDIT、44 SAFE_SWEEP_RETRIEVE、45 SAFE_SWEEP_RETRIEVE_AUDIT、46 SAFE_SWEEP_RETRIEVE_FAILED、47 CAPTURE_RETURN_WAIT、48 TRANSPORT_AUDIT、49 INJURY_BACKOFF、50 INJURY_RECLOSE、51 RECOVERY_WAIT`。
