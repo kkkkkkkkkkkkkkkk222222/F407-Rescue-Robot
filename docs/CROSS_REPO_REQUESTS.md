@@ -16,6 +16,10 @@
 不得擅自新增新鲜度、反复握手、资格等待、停车/FAULT、高频巡检或无效测试。
 持久化规则见 [AGENTS.md](../AGENTS.md)，对端规则见 [CHANGE_WORKFLOW.md](https://github.com/danmo-teng/shijue_fangan/blob/codex/gamepad-teleop/docs/CHANGE_WORKFLOW.md)。
 
+## MATCH-PICKUP-ROLLBACK-20261119 开局、空爪重选和多件材料重推（NormalRun 已接入）
+
+对照上位 [efee291](https://github.com/danmo-teng/shijue_fangan/commit/efee2912282afdac5049f7c433b688d844caddd8)。普通 CONFIG 恢复旧格式，1.10 m 前进沿原轮程和航向控制，之后走开爪视觉审核；闭爪补抓 0x19 已撤回。抓前空爪可接同任务新动作 0x09，A=0、B=12000、U=5 并带图像帧号，回 mode3/120° 等上位重选。原 U=2 仍用于 50 mm 补进。黑蓝中线复审后向黑侧追加的独立 10° 观察复用 0x10；蓝色 40% 覆盖阈值由上位判定。两件、三件绿黑材料的重推同时适用于本轮审核和已确认载荷续运，沿用原一次重推及视觉提前完成出口。
+
 ## MATCH-GUIDED-OPENING / MATCH-BLUE-PAIR-MIDLINE（NormalRun 已接入）
 
 对照上位 [`e38e606`](https://github.com/danmo-teng/shijue_fangan/commit/e38e6060bb3828fa27b9fc7a727e21161d9b1870)。正式新局可用 CONFIG 的 G 标志和有符号轴坐标指定设计抓取点。下位采纳首份合法配置。前进中锁定出发区对角航向，用融合定位修正平移方向，包间靠本地轮程推进。有效定位确认到点后合爪，进入 mode23 的真实暂存审核；仅靠轮程走到终点则回开爪视觉流程。旧 CONFIG 和 R 快速重发沿用原入口。

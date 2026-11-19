@@ -105,8 +105,6 @@ static void vision_save_config(const uint8_t *payload, uint8_t sequence)
   const uint8_t color = payload[0];
   const uint8_t zone = payload[1];
   const bool resume = payload[2] == VISION_CONFIG_RESUME;
-  const bool guided = payload[2] == VISION_CONFIG_GUIDED_OPENING;
-  const int16_t axis = (int16_t)vision_u16_be(payload + 3);
   const uint16_t yaw_word = vision_u16_be(payload + 6);
   const bool yaw_word_ok = yaw_word == 0U || yaw_word > VISION_YAW_ROUND_FLAG ||
       (yaw_word >= VISION_YAW_START_BASE && yaw_word <= VISION_YAW_START_BASE + 2U * VISION_YAW_MAX_CDEG);
@@ -117,7 +115,6 @@ static void vision_save_config(const uint8_t *payload, uint8_t sequence)
                  color == latest_data.color && zone == latest_data.start_zone &&
                  (payload[3] & ~(VISION_RESUME_FIRST_GREEN | VISION_RESUME_ATTACK_DONE)) == 0U &&
                  payload[5] == config_stop_sequence && sequence <= VISION_CONFIG_LAST_RETRY_SEQ) :
-                guided ? (axis >= -1500 && axis <= 1500 && payload[5] == 0U) :
                 (payload[2] == 0U && payload[3] == 0U && payload[4] == 0U && payload[5] == 0U));
   if (latest_data.config_ready || abort_pending || !valid) { return; }
 
@@ -127,8 +124,6 @@ static void vision_save_config(const uint8_t *payload, uint8_t sequence)
   latest_data.start_zone = zone;
   latest_data.config_sequence = sequence;
   latest_data.config_resume = resume;
-  latest_data.guided_opening = guided;
-  latest_data.opening_axis_mm = guided ? axis : 0;
   latest_data.yaw_config_word = yaw_word;
   latest_data.yaw_offer_tag = 0U;
   latest_data.config_resume_flags = resume ? payload[3] : 0U;
@@ -208,7 +203,7 @@ static bool vision_mission_code_valid(uint8_t command)
 {
   return (command == VISION_CMD_STOP) ||
          (command == VISION_CMD_PAUSE) ||
-         (command == VISION_CMD_ORANGE_CORE_FILTER) || (command == VISION_CMD_GREEN_TOPUP) ||
+         (command == VISION_CMD_ORANGE_CORE_FILTER) ||
          (command == VISION_CMD_ORANGE_GATE_FILTER) || (command == VISION_CMD_CORRIDOR_NUDGE) ||
          ((command >= VISION_CMD_GRAB_CONFIRMED) &&
            (command <= VISION_CMD_BULLDOZER_STEP));
@@ -289,14 +284,6 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
 
   const int16_t arg_a = (int16_t)vision_u16_be(&payload[2]);
   const int16_t arg_b = (int16_t)vision_u16_be(&payload[4]);
-  if (code == VISION_CMD_GREEN_TOPUP) {
-    const bool argument_ok =
-        ((arg_a == TOPUP_VIEW || arg_a == TOPUP_CANCEL || arg_a == TOPUP_ROLLBACK) && arg_b == 0) ||
-        (arg_a == TOPUP_ALIGN && arg_b >= 0 && arg_b <= APP_VISION_MAX_X) ||
-        (arg_a == TOPUP_ADVANCE && arg_b > 0 && arg_b <= APP_APPROACH_RANGE_MAX_MM);
-    if (!argument_ok || heading != 0U ||
-        flags != (VISION_CMD_VALID | (flags & VISION_CMD_RED_SIDE))) goto rejected_payload;
-  }
   if (code == VISION_CMD_ORANGE_CORE_FILTER &&
       ((flags & (uint8_t)~(VISION_CMD_VALID | VISION_CMD_RED_SIDE)) != 0U ||
        arg_a != -100 || arg_b != APP_LIFT_ORANGE_TRAVEL_ANGLE * 100 ||
@@ -360,10 +347,12 @@ static void vision_save_mission(const uint8_t *payload, uint8_t sequence,
       const bool zone_view = heading == VISION_APPROACH_RANGE_ZONE_VIEW &&
           arg_a == 0 && arg_b == APP_SEARCH_LOW_CAMERA_ANGLE * 100 &&
           (flags & VISION_CMD_CLUSTER_TARGET) == 0U;
+      const bool relook = heading == VISION_APPROACH_PRE_GRAB_RELOOK && arg_a == 0 &&
+          arg_b == APP_SEARCH_HIGH_CAMERA_ANGLE * 100 && (flags & VISION_CMD_CLUSTER_TARGET) == 0U;
       const bool orange_view = heading == VISION_APPROACH_ORANGE_TOP_VIEW &&
           arg_a == 0 && arg_b == APP_SEARCH_LOW_CAMERA_ANGLE * 100;
       if ((flags & VISION_CMD_DISTANCE_VALID) == 0U || (flags & (uint8_t)~permitted) != 0U ||
-          (!ordinary && !pre_grab && !zone_view && !orange_view)) goto rejected_payload;
+          (!ordinary && !pre_grab && !zone_view && !orange_view && !relook)) goto rejected_payload;
     } else if ((flags & VISION_CMD_DISTANCE_VALID) != 0U ||
                arg_a < 0 || arg_a > (int16_t)APP_VISION_MAX_X ||
                arg_b < 0 || arg_b > (int16_t)APP_VISION_MAX_Y) {

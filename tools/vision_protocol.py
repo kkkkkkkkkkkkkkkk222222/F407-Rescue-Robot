@@ -71,7 +71,6 @@ CMD_CARGO_AUDIT = 0x12
 CMD_CLEAR_SAFE_ZONE = 0x13
 CMD_BULLDOZER_STEP = 0x14
 CMD_ORANGE_FILTER_AT_PICKUP = 0x10  # Opcode 0x16 only.
-CMD_GREEN_TOPUP = 0x19
 CMD_ORANGE_CORE_FILTER = 0x18
 CMD_CORRIDOR_NUDGE = 0x17
 CMD_ORANGE_GATE_FILTER = 0x16
@@ -90,6 +89,7 @@ APPROACH_RANGE_REOBSERVE = 1
 APPROACH_RANGE_PRE_GRAB = 2
 APPROACH_RANGE_ZONE_VIEW = 3
 APPROACH_ORANGE_TOP_VIEW = 4
+APPROACH_PRE_GRAB_RELOOK = 5
 SEPARATION_ORANGE_CORE_82 = 8200
 RELEASE_SAME_SIDE_BLUE = 1
 MODE_APPROACH_RANGE_WAIT = 52
@@ -166,14 +166,9 @@ def parse_config_ack(frame: bytes) -> dict[str, bool]:
     return {"accepted": True}
 
 
-def config_frame(sequence: int, color: int, zone: int, *, opening_axis_mm: int | None = None) -> bytes:
+def config_frame(sequence: int, color: int, zone: int) -> bytes:
     if color not in (0x11, 0x12) or zone not in range(1, 5):
         raise ValueError("invalid color or start zone")
-    if opening_axis_mm is not None:
-        if not -1500 <= opening_axis_mm <= 1500:
-            raise ValueError("opening axis outside field")
-        payload = bytes((color, zone, 0x47)) + opening_axis_mm.to_bytes(2, "big", signed=True) + bytes(3)
-        return build_frame(MSG_CONFIG, sequence, payload)
     return build_frame(MSG_CONFIG, sequence, bytes((color, zone, 0, 0, 0, 0, 0, 0)))
 
 
@@ -355,7 +350,7 @@ def mission_frame(
     heading_cdeg: int = 0,
 ) -> bytes:
     if (command not in (CMD_STOP, CMD_PAUSE, CMD_ORANGE_GATE_FILTER,
-                        CMD_CORRIDOR_NUDGE, CMD_ORANGE_CORE_FILTER, CMD_GREEN_TOPUP) and
+                        CMD_CORRIDOR_NUDGE, CMD_ORANGE_CORE_FILTER) and
             not CMD_GRAB_CONFIRMED <= command <= CMD_BULLDOZER_STEP):
         raise ValueError("invalid mission command")
     allowed_flags = 0xF9 if command == CMD_BULLDOZER_STEP else 0x1F
@@ -373,12 +368,6 @@ def mission_frame(
         )
     if not flags & CMD_VALID or flags & ~allowed_flags:
         raise ValueError("invalid mission flags")
-    if command == CMD_GREEN_TOPUP and not (
-            flags in (CMD_VALID, CMD_VALID | CMD_RED_SIDE) and heading_cdeg == 0 and
-            ((target_x_mm in (1, 4, 5) and target_y_mm == 0) or
-             (target_x_mm == 2 and 0 <= target_y_mm < 1280) or
-             (target_x_mm == 3 and 0 < target_y_mm <= 2500))):
-        raise ValueError("invalid green top-up")
     if command == CMD_ORANGE_CORE_FILTER and (
             flags not in (CMD_VALID, CMD_VALID | CMD_RED_SIDE) or
             (target_x_mm, target_y_mm, heading_cdeg) != (-100, 8600, 8200)):
@@ -431,10 +420,12 @@ def mission_frame(
             zone_view = (target_x_mm == 0 and target_y_mm == 10500 and
                          heading_cdeg == APPROACH_RANGE_ZONE_VIEW and
                          not flags & CMD_CLUSTER_TARGET)
+            relook = (heading_cdeg == APPROACH_PRE_GRAB_RELOOK and target_x_mm == 0 and
+                      target_y_mm == 12000 and not flags & CMD_CLUSTER_TARGET)
             orange_view = (target_x_mm == 0 and target_y_mm == 10500 and
                            heading_cdeg == APPROACH_ORANGE_TOP_VIEW)
             if (not flags & CMD_DISTANCE_VALID or flags & ~permitted or
-                    not (ordinary or pre_grab or zone_view or orange_view)):
+                    not (ordinary or pre_grab or zone_view or orange_view or relook)):
                 raise ValueError("invalid calibrated approach distance/pitch")
         elif flags & CMD_DISTANCE_VALID or not 0 <= target_x_mm < IMAGE_WIDTH or not 0 <= target_y_mm < IMAGE_HEIGHT:
             raise ValueError("invalid approach pixels")

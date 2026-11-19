@@ -56,7 +56,6 @@
 
 
 #define VISION_MSG_CONFIG         0x11U
-#define VISION_CONFIG_GUIDED_OPENING 0x47U
 #define VISION_CONFIG_RESUME      0x52U
 #define VISION_RESUME_FIRST_GREEN 0x01U
 #define VISION_RESUME_ATTACK_DONE 0x02U
@@ -92,10 +91,6 @@
 #define VISION_ZONE_2             0x02U
 #define VISION_ZONE_3             0x03U
 #define VISION_ZONE_4             0x04U
-
-typedef enum {
-  TOPUP_VIEW = 1, TOPUP_ALIGN, TOPUP_ADVANCE, TOPUP_CANCEL, TOPUP_ROLLBACK
-} GreenTopupStep;
 
 #define VISION_COUNT_NORMAL(v)    ((uint8_t)((v) & 0x03U))
 #define VISION_COUNT_CORE(v)      ((uint8_t)(((v) >> 2) & 0x03U))
@@ -145,6 +140,7 @@ typedef enum {
 #define VISION_APPROACH_RANGE_PRE_GRAB  2U
 #define VISION_APPROACH_RANGE_ZONE_VIEW 3U
 #define VISION_APPROACH_ORANGE_TOP_VIEW 4U
+#define VISION_APPROACH_PRE_GRAB_RELOOK 5U
 #define VISION_SEPARATION_ORANGE_CORE_82 8200U
 #define VISION_RELEASE_SAME_SIDE_BLUE      1U
 #define VISION_PRE_GRAB_ADVANCE_MM      50U
@@ -200,8 +196,7 @@ typedef enum {
   VISION_CMD_BULLDOZER_STEP = 20,
   VISION_CMD_ORANGE_GATE_FILTER = 22,
   VISION_CMD_CORRIDOR_NUDGE = 23,
-  VISION_CMD_ORANGE_CORE_FILTER = 24,
-  VISION_CMD_GREEN_TOPUP = 25
+  VISION_CMD_ORANGE_CORE_FILTER = 24
 } VisionMissionCode;
 
 typedef enum {
@@ -305,8 +300,6 @@ typedef struct {
   uint16_t yaw_offer_tag;
   int16_t yaw_offer_cdeg;
   bool config_resume;
-  bool guided_opening;
-  int16_t opening_axis_mm;
   uint8_t sequence;
   uint8_t cargo_counts;
   uint8_t last_frame[VISION_FRAME_SIZE];
