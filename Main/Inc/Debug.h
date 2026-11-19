@@ -82,6 +82,7 @@ DebugFilterStatus Debug_GetFilterStatus(void);
 DebugConsoleResult Debug_SubmitConsoleFilter(uint8_t lift_angle, uint8_t *sequence);
 /* Cancel the current motion and discard commands received during a bench test. */
 void Debug_SetWheelCheckActive(bool enabled);
+bool Debug_IsWheelCheckActive(void);
 DebugConsoleResult Debug_SubmitConsoleCommand(uint8_t opcode, int16_t arg1,
     int16_t arg2, uint16_t speed, uint8_t *sequence);
 /* Console-only fixed-reference batch; ordinary TURN remains relative. */

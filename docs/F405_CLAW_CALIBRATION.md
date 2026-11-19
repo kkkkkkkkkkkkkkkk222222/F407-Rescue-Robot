@@ -148,7 +148,9 @@ S1升降、S3相机不套用这套夹爪开度换算。
 ## 当前自助工具：四路滚轮与全开返回
 
 桌面`F405 Claw Calibration/Start.cmd`启动；源码为`tools/F405ClawCalibrator.cs`，
-安装入口为`tools/Start-F405ClawCalibrator.ps1 -Install`。复用既有程序器串口及SWD，无需重烧固件。
+安装入口为`tools/Start-F405ClawCalibrator.ps1 -Install`。舵机微调复用原串口及 SWD。动车按钮需要支持 `CB?` 的 NormalRun 或 MotionDebug 固件。
+
+- 保左/保右按当前标定合爪开度再内收 20°、10° 或 5°，另一侧全开。双爪到位后执行一次比赛用的镜像分离曲线，停车后保持爪位。“前进 20 cm”使用编码器定距，目标速度上限 500 mm/s。动作中按 Esc 或点“停止动作”可中止。
 
 - 窗口打开不自动连接、移动。点一次“连接并读取”，随后鼠标停在对应行直接滚轮，不要求点击该行或增减按钮。
   NormalRun使用原DEBUG进入维护，MotionDebug保持其服务。滚轮消息由本窗口命中过滤并拦截默认二次增量，不用全局鼠标钩子或Computer Use。

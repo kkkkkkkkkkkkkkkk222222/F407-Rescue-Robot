@@ -131,6 +131,8 @@ bool Motor_IsBraking(void) { return false; }
 bool Motor_MoveSpin(float speed, float angle, float yaw)
 { (void)speed; (void)angle; (void)yaw; return true; }
 void Location_Reset(LocationStart start) { (void)start; }
+void Location_ResetReference(int32_t x, int32_t y, int32_t heading)
+{ test_pose = (LocationPose){.valid = true, .x_mm = x, .y_mm = y, .heading_mdeg = heading}; }
 #if APP_BOARD_F405_ROBO && APP_ENABLE_TASK
 void TaskDiag_Event(const char *kind, uint32_t a, uint32_t b, uint32_t c,
                     uint32_t d, uint32_t e, uint32_t f)

@@ -47,6 +47,12 @@ internal sealed class CalibratorForm : Form, IMessageFilter
     private readonly NumericUpDown extraDwell = new NumericUpDown();
     private readonly System.Windows.Forms.Timer repeatTimer = new System.Windows.Forms.Timer();
     private readonly System.Windows.Forms.Timer presetTimer = new System.Windows.Forms.Timer();
+    private readonly System.Windows.Forms.Timer motionTimer = new System.Windows.Forms.Timer();
+    private readonly List<Control> motionControls = new List<Control>();
+    private Button stopMotion;
+    private string motionCommand;
+    private bool clawsSettling, wheelsRequested;
+    private int clawStepUs, clawSettleMs;
     private readonly Dictionary<Control, int> wheelZones = new Dictionary<Control, int>();
     private readonly int[] livePulses = new int[5];
     private readonly bool[] servoEnabled = new bool[5];
@@ -78,6 +84,8 @@ internal sealed class CalibratorForm : Form, IMessageFilter
     {
         public string Name;
         public int Left, Right, Lift, Camera;
+        public int Tighten;
+        public bool KeepLeft;
         public bool Stow, Closed;
     }
 
@@ -103,13 +111,15 @@ internal sealed class CalibratorForm : Form, IMessageFilter
         for (int row = 0; row < 13; ++row) layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         Controls.Add(layout);
-        layout.Controls.Add(Note("鼠标停在哪一行，滚轮就调哪一行；默认1 µs/格。只调舵机，不烧录、不动车轮，关闭窗口保持最后脉宽。"), 0, 0);
+        layout.Controls.Add(Note("滚轮微调舵机，默认 1 µs/格。保左、保右会夹紧后动车分离；直行按钮会前进 20 cm。"), 0, 0);
         var connection = Row();
         connection.Controls.Add(new Label { Text = "程序器串口", AutoSize = true, Margin = new Padding(3, 10, 3, 3) });
         port.Text = portName; port.Width = 90; connection.Controls.Add(port);
         connection.Controls.Add(Button("连接并读取", delegate { ConnectBoard(); }));
         connection.Controls.Add(Button("断开并保持", delegate { DisconnectBoard(); Log("已断开，保持最后脉宽。"); }));
         connection.Controls.Add(Button("启用双爪/标定合爪", delegate { RestoreCalibratedClosed(); }));
+        stopMotion = Button("停止动作 [Esc]", StopMotion);
+        connection.Controls.Add(stopMotion);
         layout.Controls.Add(connection, 0, 1);
         var presetRow = Row();
         presetRow.MaximumSize = new Size(1000, 0);
@@ -118,6 +128,9 @@ internal sealed class CalibratorForm : Form, IMessageFilter
             Pose selected = configured;
             presetRow.Controls.Add(Button(selected.Name, delegate { ApplyPreset(selected); }));
         }
+        presetRow.Controls.Add(Button("前进 20 cm · 500 mm/s", delegate {
+            PrepareMotion(); BeginMotion("CB FWD"); SendMotion();
+        }));
         layout.Controls.Add(presetRow, 0, 2);
 
         state.AutoSize = true; state.Text = "未连接；打开窗口不会自动移动。"; state.Margin = new Padding(3, 8, 3, 8);
@@ -190,12 +203,17 @@ internal sealed class CalibratorForm : Form, IMessageFilter
         liftOutput.ValueChanged += delegate { if (!loading && connected) Execute(delegate { ApplyOther(1); }); };
         cameraOutput.ValueChanged += delegate { if (!loading && connected) Execute(delegate { ApplyOther(3); }); };
         repeatTimer.Tick += delegate { Execute(RepeatTick); };
+        motionTimer.Tick += delegate { Execute(MotionTick); };
+        foreach (Control row in layout.Controls)
+            if (row is FlowLayoutPanel)
+                foreach (Control child in row.Controls)
+                    if (child != stopMotion) motionControls.Add(child);
         presetTimer.Tick += delegate {
             presetTimer.Stop(); presetSequencing = false;
             Execute(delegate { ApplyCurrent(); Log("收纳完成：左爪先到内侧，再收右爪。"); });
         };
         Application.AddMessageFilter(this);
-        FormClosing += delegate { DisconnectBoard(); repeatTimer.Dispose(); presetTimer.Dispose(); Application.RemoveMessageFilter(this); session.Dispose(); };
+        FormClosing += delegate { DisconnectBoard(); repeatTimer.Dispose(); presetTimer.Dispose(); motionTimer.Dispose(); Application.RemoveMessageFilter(this); session.Dispose(); };
         LoadSaved(); UpdatePreview();
         Log("先连接读取当前姿态。初次折算offset只是保持原姿态的起点，不是自动测得的安装误差。");
     }
@@ -257,10 +275,9 @@ internal sealed class CalibratorForm : Form, IMessageFilter
         foreach (int tighten in new int[] { Define("APP_CLAW_SEPARATE_ONE_OR_TWO_CLOSE_DEG"),
             Define("APP_CLAW_SEPARATE_THREE_CLOSE_DEG"), Define("APP_CLAW_SEPARATE_SOFT_CLOSE_DEG") })
         {
-            int retained = Define("APP_CLAW_LEFT_TOUCH_ANGLE") - tighten;
-            yield return new Pose { Name = "保左/夹紧" + tighten + "°", Left = retained, Right = 180,
+            yield return new Pose { Name = "保左 " + tighten + "° 分离", Tighten = tighten, KeepLeft = true,
                 Lift = Define("APP_LIFT_TRAVEL_ANGLE"), Camera = Define("APP_GRAB_VIEW_ANGLE") };
-            yield return new Pose { Name = "保右/夹紧" + tighten + "°", Left = 180, Right = retained,
+            yield return new Pose { Name = "保右 " + tighten + "° 分离", Tighten = tighten, KeepLeft = false,
                 Lift = Define("APP_LIFT_TRAVEL_ANGLE"), Camera = Define("APP_GRAB_VIEW_ANGLE") };
         }
     }
@@ -273,25 +290,45 @@ internal sealed class CalibratorForm : Form, IMessageFilter
     }
     private void ApplyPreset(Pose selected)
     {
-        if (!connected) throw new IOException("先连接读取；点击预设只执行机构姿态，不运行比赛动作。");
+        if (!connected) throw new IOException("请先连接并读取。");
         ReloadSourceConfiguration();
         Pose current = null;
         foreach (Pose candidate in Presets())
             if (candidate.Name == selected.Name) { current = candidate; break; }
         if (current == null) throw new IOException("该预设已从源码移除，请重新打开窗口。");
         selected = current;
+        decimal left = selected.Left, right = selected.Right;
+        if (selected.Tighten > 0)
+        {
+            PrepareMotion();
+            if (closedOpening < selected.Tighten) throw new IOException("当前标定的合爪开度不足以继续内收所选角度。");
+            decimal retained = closedOpening - selected.Tighten;
+            left = selected.KeepLeft ? retained : 180M;
+            right = selected.KeepLeft ? 180M : retained;
+            clawStepUs = Math.Max(1, Define("APP_CLAW_SEPARATE_STEP_DEG") * 100 / 9);
+            clawSettleMs = Define("APP_CLAW_SEPARATE_SETTLE_MS");
+        }
         CancelRepeat(); loading = true;
         try
         {
             poseName = selected.Name; closedPose = selected.Closed;
-            poseRightDeltaCdeg = (selected.Right - selected.Left) * 100;
-            opening.Value = selected.Closed ? closedOpening : selected.Left;
+            poseRightDeltaCdeg = (int)((right - left) * 100M);
+            opening.Value = selected.Closed ? closedOpening : left;
             liftOutput.Value = (ConfigPulse(1, selected.Lift) - 500) * 0.09M;
             cameraOutput.Value = (ConfigPulse(3, selected.Camera) - 500) * 0.09M;
         }
         finally { loading = false; }
         clawsAtOpen = false;
         ApplyOther(1); ApplyOther(3);
+        if (selected.Tighten > 0)
+        {
+            RefreshAll(false);
+            if (!servoEnabled[4] || !servoEnabled[2]) throw new IOException("请先启用双爪。");
+            BeginMotion("CB " + (selected.KeepLeft ? "L" : "R") + selected.Tighten);
+            state.Text = selected.Name + "：正在调整双爪。";
+            motionTimer.Interval = Define("APP_TASK_PERIOD_MS"); motionTimer.Start();
+            return;
+        }
         ApplyPoseClaws(selected.Stow);
         state.Text = "当前预设：" + selected.Name + "；可继续滚轮微调。首绿预设只抬机构，不后退或启动Task。";
         Log("预设 " + selected.Name + "，S1=" + selected.Lift + "°，S3=" + selected.Camera + "°；安装offset保留。");
@@ -304,6 +341,73 @@ internal sealed class CalibratorForm : Form, IMessageFilter
         presetSequencing = true;
         presetTimer.Interval = Math.Max(1, (int)Math.Ceiling(Math.Abs(liveLeft - previousLeft) * 0.2925));
         presetTimer.Start();
+    }
+
+    private string ReadMotionStatus()
+    {
+        const string pattern = @"(?m)^CB (IDLE|RUNNING|DONE|LIMIT|FAULT|STOPPED)\r?$";
+        return Regex.Match(ConsoleCommand("CB?", pattern), pattern).Groups[1].Value;
+    }
+    private void PrepareMotion()
+    {
+        if (!connected || motionCommand != null) throw new IOException("请先连接并等待上一动作结束。");
+        CancelRepeat();
+        string result;
+        try { result = ReadMotionStatus(); }
+        catch (IOException error) { throw new IOException("未读到标定运动接口 CB?。请确认板端已使用配套固件。\n" + error.Message); }
+        if (result == "RUNNING") throw new IOException("板端正在运动，可按“停止动作”结束。");
+    }
+    private void BeginMotion(string command)
+    {
+        motionCommand = command; clawsSettling = wheelsRequested = false;
+        foreach (Control control in motionControls) control.Enabled = false;
+    }
+    private void EndMotion(string message)
+    {
+        motionTimer.Stop(); motionCommand = null; clawsSettling = wheelsRequested = false;
+        foreach (Control control in motionControls) control.Enabled = true;
+        state.Text = message; Log(message);
+    }
+    private void SendMotion()
+    {
+        wheelsRequested = true;
+        ConsoleCommand(motionCommand, @"(?m)^CB ACCEPT\r?$");
+        state.Text = motionCommand == "CB FWD" ? "正在前进 20 cm，目标速度 500 mm/s。" : "正在执行一次分离。";
+        Log(state.Text);
+        motionTimer.Interval = 150; motionTimer.Start();
+    }
+    private static int StepPulse(int current, int target, int stepUs)
+    {
+        return current + Math.Sign(target - current) * Math.Min(stepUs, Math.Abs(target - current));
+    }
+    private void MotionTick()
+    {
+        motionTimer.Stop();
+        if (motionCommand == null) return;
+        if (wheelsRequested)
+        {
+            string result = ReadMotionStatus();
+            if (result == "RUNNING") { motionTimer.Start(); return; }
+            EndMotion(result == "DONE" ? "动作已完成，底盘已停车。" :
+                      result == "LIMIT" ? "分离已到轮程、侧移或进展限制，底盘已停车。" :
+                      result == "STOPPED" ? "动作已停止。" : "动作未完成，板端状态 " + result);
+            return;
+        }
+        if (clawsSettling) { SendMotion(); return; }
+        SetClawPair(StepPulse(liveLeft, LeftPulse, clawStepUs), StepPulse(liveRight, RightPulse, clawStepUs));
+        if (liveLeft == LeftPulse && liveRight == RightPulse)
+        {
+            clawsSettling = true; motionTimer.Interval = clawSettleMs;
+        }
+        motionTimer.Start();
+    }
+    private void StopMotion()
+    {
+        if (!connected) return;
+        motionTimer.Stop();
+        if (wheelsRequested || motionCommand == null)
+            ConsoleCommand("CB STOP", @"(?m)^CB STOPPED\r?$");
+        EndMotion("标定动作已停止，保持最后爪位。");
     }
 
     private static FlowLayoutPanel Row()
@@ -329,6 +433,17 @@ internal sealed class CalibratorForm : Form, IMessageFilter
         try { action(); }
         catch (Exception error)
         {
+            if (motionCommand != null)
+            {
+                motionTimer.Stop();
+                string message = "已取消后续动作。";
+                if (wheelsRequested)
+                {
+                    try { ConsoleCommand("CB STOP", @"(?m)^CB STOPPED\r?$"); }
+                    catch (Exception stopError) { message = "停车未获确认：" + stopError.Message; }
+                }
+                EndMotion(message);
+            }
             Log("错误：" + error.Message); reportingError = true;
             try { MessageBox.Show(this, error.Message, "未继续调节，保持最后脉宽"); }
             finally { reportingError = false; }
@@ -387,7 +502,7 @@ internal sealed class CalibratorForm : Form, IMessageFilter
         foreach (KeyValuePair<Control, int> zone in wheelZones)
         {
             if (!zone.Key.RectangleToScreen(zone.Key.ClientRectangle).Contains(cursor)) continue;
-            if (!connected) return true;
+            if (!connected || motionCommand != null) return true;
             int delta = unchecked((short)(((long)message.WParam >> 16) & 0xffff));
             if (lastWheelZone != zone.Value) { wheelRemainder = 0; lastWheelZone = zone.Value; }
             wheelRemainder += delta;
@@ -413,6 +528,12 @@ internal sealed class CalibratorForm : Form, IMessageFilter
     }
     protected override bool ProcessCmdKey(ref Message message, Keys keyData)
     {
+        if (motionCommand != null)
+        {
+            if (keyData == Keys.Escape) { Execute(StopMotion); return true; }
+            if (keyData == Keys.Space || keyData == Keys.F2 || keyData == Keys.F3 ||
+                keyData == (Keys.Control | Keys.S)) return true;
+        }
         if (keyData == Keys.Space) { Execute(StartRepeat); return true; }
         if (keyData == Keys.F2) { Execute(FullOpenHold); return true; }
         if (keyData == Keys.F3 || keyData == Keys.Escape) { Execute(ReturnClosed); return true; }
@@ -525,7 +646,7 @@ internal sealed class CalibratorForm : Form, IMessageFilter
             ConsoleCommand("DEBUG", "DEBUG OK");
         }
         else throw new IOException("未识别到F405的MotionDebug或Task维护控制台。");
-        Log(motionService ? "已识别MotionDebug；只读取/调整双爪。" : "已用原DEBUG进入Task维护，比赛任务暂停。");
+        Log(motionService ? "已识别 MotionDebug 标定控制台。" : "已进入 NormalRun 维护，比赛任务暂停。");
     }
     private static string Quote(string text)
     {
@@ -704,6 +825,12 @@ internal sealed class CalibratorForm : Form, IMessageFilter
     }
     private void DisconnectBoard()
     {
+        if (motionCommand != null)
+        {
+            motionTimer.Stop();
+            try { StopMotion(); }
+            catch (Exception error) { EndMotion("断开前停车未获确认：" + error.Message); }
+        }
         CancelRepeat();
         connected = false;
         if (rpcStream != null) { try { Rpc("shutdown"); } catch { } rpcStream.Dispose(); rpcStream = null; }

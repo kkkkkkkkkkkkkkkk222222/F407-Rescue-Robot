@@ -879,6 +879,8 @@ void Debug_SetWheelCheckActive(bool enabled)
   debug_leave_critical(primask);
 }
 
+bool Debug_IsWheelCheckActive(void) { return wheel_check_active; }
+
 DebugConsoleResult Debug_SubmitConsoleCommand(uint8_t opcode, int16_t arg1,
     int16_t arg2, uint16_t speed, uint8_t *sequence)
 {

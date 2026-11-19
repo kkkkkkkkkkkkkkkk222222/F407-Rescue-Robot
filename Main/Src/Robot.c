@@ -7,6 +7,7 @@
 #include "CenteringTask.h"
 #include "Debug.h"
 #include "DebugConsole.h"
+#include "ClawBench.h"
 #include "encoder.h"
 #include "Gamepad.h"
 #include "imu.h"
@@ -641,6 +642,9 @@ void Robot_RunDeferredTask(void)
   if (released != task_consumed_sequence) {
     const uint32_t now_ms = task_release_ms;
     task_consumed_sequence = released;
+#if APP_BOARD_F405_ROBO
+    ClawBench_Process(now_ms);
+#endif
     bool console_active = false;
 #if APP_ENABLE_RUNTIME_SERVO_DEBUG
     console_active = DebugConsole_IsActive();

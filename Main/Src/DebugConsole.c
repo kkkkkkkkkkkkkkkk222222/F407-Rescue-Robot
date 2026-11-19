@@ -1,4 +1,5 @@
 #include "DebugConsole.h"
+#include "ClawBench.h"
 #include "TaskDiag.h"
 
 #include <limits.h>
@@ -153,6 +154,11 @@ static void debug_execute(char *command)
 
 #if APP_BOARD_F405_ROBO
 #if APP_ENABLE_TASK
+  if (strncmp(command, "CB", 2U) == 0) {
+    const char *reply = ClawBench_Command(command, status.active && pending_preset == NULL);
+    debug_send(reply != NULL ? reply : "ERR CB COMMAND\r\n");
+    return;
+  }
   if (strcmp(command, "TLOG 1") == 0 || strcmp(command, "TLOG 0") == 0) {
     TaskDiag_Enable(command[5] == '1'); debug_send("TLOG OK\r\n"); return;
   }
@@ -164,6 +170,7 @@ static void debug_execute(char *command)
     return;
   }
   if (strcmp(command, "HELP") == 0) {
+    debug_send("CALIBRATION: DEBUG / CB? / CB L20|R20|L10|R10|L5|R5|FWD|STOP\r\n");
     debug_send("NORMALDEBUG: PING / STAT / IMU / ENC / MOTOR / DEBUG / S id deg / O id +/-deg / RUN\r\n");
     debug_send(preset_help);
     debug_send("TASK LOG: TLOG 1 / TLOG 0 / TSTAT / TDUMP; NO MOTION\r\n");
@@ -177,6 +184,7 @@ static void debug_execute(char *command)
 #endif
   if (strcmp(command, "DEBUG") == 0) {
 #if APP_BOARD_F405_ROBO
+    ClawBench_Stop();
     pending_preset = NULL;
 #endif
     status.active = true;
@@ -186,12 +194,17 @@ static void debug_execute(char *command)
     status.servo_angle = Servo_GetAngle(3U);
     debug_send("DEBUG OK\r\n");
   } else if (status.active && (strcmp(command, "RUN") == 0)) {
+#if APP_BOARD_F405_ROBO
+    ClawBench_Stop();
+#endif
     Motor_Stop();
     debug_send("RUN RESET\r\n");
     NVIC_SystemReset();
 #if APP_BOARD_F405_ROBO
   } else if (strcmp(command, "P") == 0) {
     debug_send(preset_help);
+  } else if (ClawBench_IsRunning()) {
+    debug_send("BUSY: CB\r\n");
   } else if ((command[0] == 'P') && (command[1] == ' ')) {
     debug_start_preset(&command[2]);
   } else if ((command[0] == 'O') && (command[1] == ' ')) {

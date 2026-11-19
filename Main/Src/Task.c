@@ -1,4 +1,6 @@
 #include "Task.h"
+#include "ClawBench.h"
+#include "Debug.h"
 #include "TaskDiag.h"
 
 #include <math.h>
@@ -5596,140 +5598,238 @@ static bool task_remote_lateral(int16_t distance_mm, float speed_mm_s,
   return false;
 }
 
-static bool task_remote_separation_curve(uint32_t distance_mm, uint32_t now_ms)
+typedef enum { CURVE_RUNNING, CURVE_DONE, CURVE_LIMIT } CurveResult;
+
+static CurveResult drive_separation_curve(SeparationMotion *motion, LocationPose pose,
+                                          int8_t side_sign, float turn_deg, bool retry,
+                                          uint32_t distance_mm, uint32_t now_ms)
 {
-  if (distance_mm == 0U || separation_keep_side == 0) {
-    task_remote_action_advance(now_ms);
-    return true;
-  }
-  LocationPose pose;
-  if (!task_get_location_pose(&pose, now_ms)) { return false; }
   const float heading = (float)pose.heading_mdeg * 0.001f;
-  const float side_sign = separation_keep_side > 0 ? 1.0f : -1.0f;
-  if (!separation_motion.active) {
-    separation_motion = (SeparationMotion){
+  if (!motion->active) {
+    *motion = (SeparationMotion){
       .active = true, .stage = SEPARATION_PREPULL,
       .start_path_mm = pose.path_mm, .last_update_ms = now_ms,
       .started_ms = now_ms, .progress_ms = now_ms, .progress_path_mm = pose.path_mm,
       .progress_heading_deg = heading, .stage_path_mm = pose.path_mm,
       .origin_pose = pose, .start_heading_deg = heading,
-      .target_heading_deg = task_heading_360(heading - side_sign * separation_turn_deg)
+      .target_heading_deg = task_heading_360(heading - side_sign * turn_deg)
     };
   }
-  const float heading_rad = separation_motion.start_heading_deg *
+  const float heading_rad = motion->start_heading_deg *
                             (3.14159265358979323846f / 180.0f);
-  const float dx = (float)pose.x_mm - separation_motion.origin_pose.x_mm;
-  const float dy = (float)pose.y_mm - separation_motion.origin_pose.y_mm;
+  const float dx = (float)pose.x_mm - motion->origin_pose.x_mm;
+  const float dy = (float)pose.y_mm - motion->origin_pose.y_mm;
   const float lateral_offset = -sinf(heading_rad) * dx + cosf(heading_rad) * dy;
   /* Bound the swept corridor, not the sum of rounded one-millimetre steps. */
-  separation_motion.lateral_peak_mm =
-      fmaxf(separation_motion.lateral_peak_mm, task_abs(lateral_offset));
-  const uint32_t travelled = pose.path_mm - separation_motion.start_path_mm;
-  if (pose.path_mm - separation_motion.progress_path_mm >= 3U ||
-      task_abs(task_wrap_angle(heading - separation_motion.progress_heading_deg)) >= 1.0f) {
-    separation_motion.progress_ms = now_ms;
-    separation_motion.progress_path_mm = pose.path_mm;
-    separation_motion.progress_heading_deg = heading;
+  motion->lateral_peak_mm =
+      fmaxf(motion->lateral_peak_mm, task_abs(lateral_offset));
+  const uint32_t travelled = pose.path_mm - motion->start_path_mm;
+  if (pose.path_mm - motion->progress_path_mm >= 3U ||
+      task_abs(task_wrap_angle(heading - motion->progress_heading_deg)) >= 1.0f) {
+    motion->progress_ms = now_ms;
+    motion->progress_path_mm = pose.path_mm;
+    motion->progress_heading_deg = heading;
   }
-  if (now_ms - separation_motion.progress_ms >= APP_CARGO_SEPARATE_NO_PROGRESS_MS ||
-      now_ms - separation_motion.started_ms >= APP_CARGO_SEPARATE_TOTAL_TIMEOUT_MS) {
+  if (now_ms - motion->progress_ms >= APP_CARGO_SEPARATE_NO_PROGRESS_MS ||
+      now_ms - motion->started_ms >= APP_CARGO_SEPARATE_TOTAL_TIMEOUT_MS) {
     /* A bounded physical attempt ends in a fresh audit, never a latched stop. */
-    task_remote_action_advance(now_ms);
-    return true;
+    return CURVE_LIMIT;
   }
   if (travelled >= distance_mm) {
-    task_remote_action_advance(now_ms);
-    return true;
+    return CURVE_DONE;
   }
   const float side_remaining = APP_CARGO_SEPARATE_SIDE_BUDGET_MM -
-                               separation_motion.lateral_peak_mm;
+                               motion->lateral_peak_mm;
   if (side_remaining <= APP_CARGO_SEPARATE_SIDE_BRAKE_MARGIN_MM) {
     /* Do not finish a nominal distance by drifting farther sideways even
      * after lateral/yaw commands have been removed. Re-audit this shorter run. */
-    task_remote_action_advance(now_ms);
-    return true;
+    return CURVE_LIMIT;
   }
-  const float turned = task_abs(task_wrap_angle(heading - separation_motion.start_heading_deg));
-  const bool turn_limit = turned >= separation_turn_deg;
-  /* Every retry uses the original second-attempt arc limit. */
+  const float turned = task_abs(task_wrap_angle(heading - motion->start_heading_deg));
+  const bool turn_limit = turned >= turn_deg;
   const uint32_t arc_limit = APP_CARGO_SEPARATE_ARC_MAX_MM +
-      (separation_total_attempts > 1U ? APP_CARGO_SEPARATE_ARC_RETRY_STEP_MM : 0U);
-  const float arc_error = task_wrap_angle(separation_motion.target_heading_deg - heading);
-  if (separation_motion.stage == SEPARATION_PREPULL &&
+      (retry ? APP_CARGO_SEPARATE_ARC_RETRY_STEP_MM : 0U);
+  const float arc_error = task_wrap_angle(motion->target_heading_deg - heading);
+  if (motion->stage == SEPARATION_PREPULL &&
       travelled >= APP_CARGO_SEPARATE_PREPULL_MM) {
-    separation_motion.stage = SEPARATION_ARC;
-    separation_motion.stage_path_mm = pose.path_mm;
+    motion->stage = SEPARATION_ARC;
+    motion->stage_path_mm = pose.path_mm;
   }
-  if (separation_motion.stage == SEPARATION_ARC &&
-      (pose.path_mm - separation_motion.stage_path_mm >= arc_limit ||
+  if (motion->stage == SEPARATION_ARC &&
+      (pose.path_mm - motion->stage_path_mm >= arc_limit ||
         side_remaining <= 10.0f || turn_limit ||
         task_abs(arc_error) <= APP_NAV_HEADING_TOLERANCE_DEG)) {
-    separation_motion.stage = SEPARATION_BLEND;
+    motion->stage = SEPARATION_BLEND;
   }
-  if (separation_motion.stage == SEPARATION_PULL &&
-      pose.path_mm - separation_motion.stage_path_mm >= APP_CARGO_SEPARATE_TAIL_MM) {
-    task_remote_action_advance(now_ms);
-    return true;
+  if (motion->stage == SEPARATION_PULL &&
+      pose.path_mm - motion->stage_path_mm >= APP_CARGO_SEPARATE_TAIL_MM) {
+    return CURVE_DONE;
   }
 
   float lateral = 0.0f;
   float yaw = 0.0f;
   float back = APP_CARGO_SEPARATE_BACK_SPEED_MM_S;
-  if (separation_motion.stage == SEPARATION_PREPULL) {
+  if (motion->stage == SEPARATION_PREPULL) {
     back = APP_CARGO_SEPARATE_ARC_BACK_MM_S;
-    yaw = nav_yaw(task_wrap_angle(separation_motion.start_heading_deg - heading));
+    yaw = nav_yaw(task_wrap_angle(motion->start_heading_deg - heading));
   }
-  if (separation_motion.stage == SEPARATION_ARC) {
+  if (motion->stage == SEPARATION_ARC) {
     back = fminf(APP_CARGO_SEPARATE_ARC_BACK_MM_S,
                  fmaxf(80.0f, task_abs(arc_error) * 12.0f));
     lateral = side_sign * APP_CARGO_SEPARATE_ARC_SIDE_MM_S;
     yaw = nav_yaw(arc_error);
-  } else if (separation_motion.stage == SEPARATION_PULL) {
-    yaw = nav_yaw(task_wrap_angle(separation_motion.pull_heading_deg - heading));
+  } else if (motion->stage == SEPARATION_PULL) {
+    yaw = nav_yaw(task_wrap_angle(motion->pull_heading_deg - heading));
   }
   if (yaw > APP_CARGO_SEPARATE_ARC_YAW_MM_S) { yaw = APP_CARGO_SEPARATE_ARC_YAW_MM_S; }
   if (yaw < -APP_CARGO_SEPARATE_ARC_YAW_MM_S) { yaw = -APP_CARGO_SEPARATE_ARC_YAW_MM_S; }
   const float remaining = (float)(distance_mm - travelled);
   back = fminf(back, fmaxf(80.0f, remaining * 4.0f));
-  uint32_t elapsed_ms = now_ms - separation_motion.last_update_ms;
+  uint32_t elapsed_ms = now_ms - motion->last_update_ms;
   if (elapsed_ms > APP_TASK_PERIOD_MS) { elapsed_ms = APP_TASK_PERIOD_MS; }
-  separation_motion.last_update_ms = now_ms;
+  motion->last_update_ms = now_ms;
   const float dt = elapsed_ms * 0.001f;
-  separation_motion.back_mm_s = task_step_toward(separation_motion.back_mm_s, back,
+  motion->back_mm_s = task_step_toward(motion->back_mm_s, back,
                                                 APP_NAV_SPEED_ACCEL_MM_S2 * dt);
-  separation_motion.lateral_mm_s = task_step_toward(separation_motion.lateral_mm_s, lateral,
+  motion->lateral_mm_s = task_step_toward(motion->lateral_mm_s, lateral,
                                                    APP_NAV_YAW_ACCEL_MM_S2 * dt);
-  separation_motion.yaw_mm_s = task_step_toward(separation_motion.yaw_mm_s, yaw,
+  motion->yaw_mm_s = task_step_toward(motion->yaw_mm_s, yaw,
                                                APP_NAV_YAW_ACCEL_MM_S2 * dt);
   /* Straight body-frame reverse after turning still moves sideways in the
    * initial frame. Slow the combined translation when it approaches a side. */
-  const float relative_heading_rad = task_wrap_angle(heading - separation_motion.start_heading_deg) *
+  const float relative_heading_rad = task_wrap_angle(heading - motion->start_heading_deg) *
                                      (3.14159265358979323846f / 180.0f);
-  const float side_rate = -separation_motion.back_mm_s * sinf(relative_heading_rad) +
-      APP_OMNI_LATERAL_API_SIGN * separation_motion.lateral_mm_s * cosf(relative_heading_rad);
+  const float side_rate = -motion->back_mm_s * sinf(relative_heading_rad) +
+      APP_OMNI_LATERAL_API_SIGN * motion->lateral_mm_s * cosf(relative_heading_rad);
   const float side_speed_limit = side_remaining * 4.0f;
   if (lateral_offset * side_rate > 0.0f && task_abs(side_rate) > side_speed_limit) {
     const float scale = side_speed_limit / task_abs(side_rate);
-    separation_motion.back_mm_s *= scale;
-    separation_motion.lateral_mm_s *= scale;
+    motion->back_mm_s *= scale;
+    motion->lateral_mm_s *= scale;
   }
-  if (turn_limit && separation_motion.stage != SEPARATION_PULL) {
-    separation_motion.yaw_mm_s = 0.0f;
+  if (turn_limit && motion->stage != SEPARATION_PULL) {
+    motion->yaw_mm_s = 0.0f;
   }
-  if (separation_motion.stage == SEPARATION_BLEND &&
-      task_abs(separation_motion.lateral_mm_s) <= 0.5f &&
-      task_abs(separation_motion.yaw_mm_s) <= 0.5f) {
-    separation_motion.pull_heading_deg = heading;
-    separation_motion.stage = SEPARATION_PULL;
-    separation_motion.stage_path_mm = pose.path_mm;
+  if (motion->stage == SEPARATION_BLEND &&
+      task_abs(motion->lateral_mm_s) <= 0.5f &&
+      task_abs(motion->yaw_mm_s) <= 0.5f) {
+    motion->pull_heading_deg = heading;
+    motion->stage = SEPARATION_PULL;
+    motion->stage_path_mm = pose.path_mm;
   }
-  task_move_body(-separation_motion.back_mm_s, separation_motion.lateral_mm_s,
-                 separation_motion.yaw_mm_s);
-  task_status.motors_active = separation_motion.back_mm_s > 0.5f ||
-      task_abs(separation_motion.lateral_mm_s) > 0.5f ||
-      task_abs(separation_motion.yaw_mm_s) > 0.5f;
-  return false;
+  task_move_body(-motion->back_mm_s, motion->lateral_mm_s,
+                 motion->yaw_mm_s);
+  return CURVE_RUNNING;
 }
+
+static bool task_remote_separation_curve(uint32_t distance_mm, uint32_t now_ms)
+{
+  if (distance_mm != 0U && separation_keep_side != 0) {
+    LocationPose pose;
+    if (!task_get_location_pose(&pose, now_ms)) { return false; }
+    if (drive_separation_curve(&separation_motion, pose, separation_keep_side, separation_turn_deg,
+                               separation_total_attempts > 1U, distance_mm, now_ms) == CURVE_RUNNING) {
+      task_status.motors_active = separation_motion.back_mm_s > 0.5f ||
+          task_abs(separation_motion.lateral_mm_s) > 0.5f || task_abs(separation_motion.yaw_mm_s) > 0.5f;
+      return false;
+    }
+  }
+  task_remote_action_advance(now_ms);
+  return true;
+}
+
+#if APP_BOARD_F405_ROBO
+/* Calibration uses a separate curve origin and never enters the competition state machine. */
+static SeparationMotion bench_curve;
+static int8_t bench_side;
+static float bench_turn_deg;
+static bool bench_local_reference;
+typedef enum { BENCH_IDLE, BENCH_RUNNING, BENCH_DONE, BENCH_LIMIT, BENCH_FAULT, BENCH_STOPPED } BenchState;
+static volatile BenchState bench_state;
+static const char *const bench_reply[] = {
+  "CB IDLE\r\n", "CB RUNNING\r\n", "CB DONE\r\n", "CB LIMIT\r\n", "CB FAULT\r\n", "CB STOPPED\r\n"
+};
+
+bool ClawBench_IsRunning(void) { return bench_state == BENCH_RUNNING; }
+
+static void bench_finish(BenchState result)
+{
+  bench_state = result;
+  Motor_Stop();
+  if (bench_local_reference) {
+    Location_Reset(LOCATION_START_UNKNOWN);
+    bench_local_reference = false;
+  }
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  Debug_SetWheelCheckActive(false);
+#endif
+}
+
+void ClawBench_Stop(void)
+{
+  if (ClawBench_IsRunning()) { bench_finish(BENCH_STOPPED); }
+}
+
+const char *ClawBench_Command(const char *command, bool available)
+{
+  if (strcmp(command, "CB?") == 0) { return bench_reply[bench_state]; }
+  if (strcmp(command, "CB STOP") == 0) {
+    ClawBench_Stop();
+    return "CB STOPPED\r\n";
+  }
+  if (strncmp(command, "CB ", 3U) != 0) { return NULL; }
+  if (!available || ClawBench_IsRunning()) { return "BUSY: CB\r\n"; }
+  const char *arg = command + 3;
+  int8_t side = 0;
+  float turn_deg = APP_CARGO_SEPARATE_ONE_OR_TWO_TURN_DEG;
+  if (strcmp(arg, "FWD") != 0) {
+    if (*arg != 'L' && *arg != 'R') { return "ERR CB COMMAND\r\n"; }
+    side = *arg++ == 'L' ? 1 : -1;
+    if (strcmp(arg, "10") == 0) { turn_deg = APP_CARGO_SEPARATE_THREE_TURN_DEG; }
+    else if (strcmp(arg, "20") != 0 && strcmp(arg, "5") != 0) { return "ERR CB ANGLE\r\n"; }
+  }
+  const IMUData imu = IMU_GetData();
+  if (!imu.ready || imu.heading_uncertain) { return "ERR CB IMU\r\n"; }
+  const LocationPose pose = Location_GetPose();
+  if (side != 0 && !pose.valid) {
+    if (pose.start_zone != LOCATION_START_UNKNOWN) { return "ERR CB POSE\r\n"; }
+    /* Before match configuration the curve needs only a local wheel/gyro origin. */
+    Location_ResetReference(0, 0, 0);
+    bench_local_reference = true;
+  }
+#if APP_ENABLE_MOTION_DEBUG_TASK
+  Debug_SetWheelCheckActive(true);
+#else
+  Motor_Stop();
+#endif
+  bench_side = side;
+  bench_turn_deg = turn_deg;
+  bench_curve = (SeparationMotion){0};
+  bench_state = BENCH_RUNNING;
+  return "CB ACCEPT\r\n";
+}
+
+void ClawBench_Process(uint32_t now_ms)
+{
+  if (!ClawBench_IsRunning()) { return; }
+  const LocationPose pose = Location_GetPose();
+  const IMUData imu = IMU_GetData();
+  if (!imu.ready || imu.heading_uncertain || (bench_side != 0 && !pose.valid)) {
+    bench_finish(BENCH_FAULT);
+    return;
+  }
+  if (bench_side == 0) {
+    const MotorDistanceStatus result = Motor_MoveDistanceConstant(0.200f, 500.0f);
+    if (result != MOTOR_DISTANCE_RUNNING) {
+      bench_finish(result == MOTOR_DISTANCE_DONE ? BENCH_DONE : BENCH_FAULT);
+    }
+    return;
+  }
+  const CurveResult result = drive_separation_curve(&bench_curve, pose, bench_side, bench_turn_deg,
+                                                    false, APP_SELECTIVE_DISPERSE_CURVE_MM, now_ms);
+  if (result != CURVE_RUNNING) { bench_finish(result == CURVE_DONE ? BENCH_DONE : BENCH_LIMIT); }
+}
+#endif
 
 static bool task_remote_turn(float angle_deg, uint32_t now_ms)
 {

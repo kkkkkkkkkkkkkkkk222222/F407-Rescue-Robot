@@ -1,4 +1,5 @@
 #include "WheelCheck.h"
+#include "ClawBench.h"
 #include "Uart.h"
 
 #include "app_config.h"
@@ -285,6 +286,9 @@ static void wheel_report(void)
 
 void WheelCheck_Stop(void)
 {
+#if APP_BOARD_F405_ROBO
+  ClawBench_Stop();
+#endif
   cancel_requested = true;
   Motor_Stop();
 }
@@ -686,6 +690,24 @@ static void wheel_execute(void)
   while (*command == ' ') {
     ++command;
   }
+#if APP_BOARD_F405_ROBO
+  if (strncmp(command, "CB", 2U) == 0) {
+    const uint32_t mask = __get_PRIMASK();
+    __disable_irq();
+    const DebugStatus dbg = Debug_GetStatus();
+    const bool available = !Debug_IsWheelCheckActive() && !sequence_active && !calibration_active &&
+        !cancel_requested && !dbg.console_pending && dbg.state != DEBUG_MOTION_RUNNING;
+    const char *reply = ClawBench_Command(command, available);
+    __set_PRIMASK(mask);
+    wheel_send(reply != NULL ? reply : "ERR CB COMMAND\r\n");
+    return;
+  }
+  if (ClawBench_IsRunning() && strcmp(command, "STOP") != 0 &&
+      strcmp(command, "PING") != 0 && strcmp(command, "STAT") != 0) {
+    wheel_send("BUSY: CB\r\n");
+    return;
+  }
+#endif
   char *args_text = strchr(command, ' ');
   if (args_text != NULL) {
     *args_text++ = '\0';

@@ -157,7 +157,7 @@ void Location_Update10ms(void)
   const IMUData imu = IMU_GetData();
   Encoder_GetAll(encoder);
 
-#if APP_ENABLE_MOTION_DEBUG_TASK
+#if APP_ENABLE_MOTION_DEBUG_TASK || (APP_BOARD_F405_ROBO && APP_ENABLE_TASK)
   if (!location.tracking_enabled) {
 #else
   if ((location.start_zone < (uint8_t)LOCATION_START_1) ||
