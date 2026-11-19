@@ -25,6 +25,18 @@ $app = Join-Path $DataDirectory 'F405ClawCalibrator.exe'
 $hashPath = Join-Path $DataDirectory 'build-source.sha256'
 $hash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
 $previous = if (Test-Path -LiteralPath $hashPath) { [IO.File]::ReadAllText($hashPath).Trim() } else { '' }
+if ((Test-Path -LiteralPath $app) -and $previous -ne $hash) {
+    try {
+        [IO.File]::Open($app, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None).Dispose()
+    } catch [IO.IOException] {
+        # A running window may hold this EXE and unsaved calibration settings.
+        $versions = Join-Path $DataDirectory 'versions'
+        [void][IO.Directory]::CreateDirectory($versions)
+        $app = Join-Path $versions ("F405ClawCalibrator-" + $hash.Substring(0, 12) + ".exe")
+        $hashPath = [IO.Path]::ChangeExtension($app, '.sha256')
+        $previous = if (Test-Path -LiteralPath $hashPath) { [IO.File]::ReadAllText($hashPath).Trim() } else { '' }
+    }
+}
 if (!(Test-Path -LiteralPath $app) -or $previous -ne $hash) {
     & $csc /nologo /target:winexe /platform:anycpu /codepage:65001 `
         /reference:System.Windows.Forms.dll /reference:System.Drawing.dll `
