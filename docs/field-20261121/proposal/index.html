@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>路线确认图 · 防守与物资投送</title>
+<style>
+*{box-sizing:border-box}body{font:17px/1.65 "Microsoft YaHei",sans-serif;color:#172d38;background:#fff;max-width:1240px;margin:auto;padding:1rem}header{border-bottom:2px solid #244758}
+h1{font-size:1.55rem;margin:.25rem 0}h2{font-size:1.2rem}nav{display:flex;flex-wrap:wrap;align-items:center;gap:.8rem;margin:1rem 0}select,button{font:inherit;padding:.25rem .55rem}img{display:block;max-width:100%;height:auto}figure{margin:0}p{margin:.5rem 0}
+small{color:#455965}summary{cursor:pointer;color:#11614e}article{max-width:64em}a{color:#105d93}
+</style>
+<header><small>队员确认稿 · 未实施 · 单位 mm</small><h1>防守、投送、扫障和返搜</h1></header>
+<nav><label>阵营 <select id="side"><option value="red">红方</option><option value="blue">蓝方</option></select></label>
+<label>路线 <select id="scene"><option value="0">全场位置</option><option value="1">01 防守开局</option><option value="2">02 正式送物</option><option value="3">03 推入与退出</option><option value="4">04 避障返搜</option><option value="5">05 同类抓送</option><option value="6">06 第一扫障点</option></select></label>
+<button id="next" type="button">下一图 →</button><a id="original" href="field.png">看原尺寸图</a></nav>
+<figure><img id="map" src="field.png" alt="全场位置与四块固定黄障碍"></figure>
+<article><h2>需要确认的动作</h2>
+<details open><summary>防守、伤员及两个预备点</summary>
+<p>当前缺省进攻，防守旧点为 (±700, ±550)，建议比较 (±700, ±350)。x 符号由出发区左右定，y 由阵营定。保持去暂存点直行、放下后沿原航向退 350，再直返①。图示抓取起点为场心；从其他起点不能套用同一净距。蓝图为红图转 180° 的具体实例，不代表换阵营必换搜索站。</p>
+<p>建议不主动锁定伤员，包括普通搜索、仅疑似伤员的开局堆及扫障找回，不改模型；仍把伤员/危险物保留为夹内审核证据。若误抓纯伤员、或材料混伤员，不给物资区投送许可；分离或安全释放、再搜。假伤员也不应在扫障路径中被当成可抓目标。若画面证据不足，不把“忽略伤员”当成“通道畅通”。开局暂存和正式首件分账；首件仍需一件普通物资。</p>
+<p>C=(0,±300)：拟用圆形半径 50，不是 x、y 各自 ±50 的方框，也不是只到该 y 就跳段。P 在本方围栏面 |y|=1140 前 400：红物资 (-150,740)，蓝物资 (150,-740)。C→P 的中心线最近约 120；P 比黄块远端 (|y|=660) 只多 80。中心已过不代表后轮/爪已过。若实测不够，候选替代是保持 x≈0 穿过障碍带，低位外廓完全通过后再分侧。</p></details>
+<details><summary>微调放宽多少，推进怎么同步</summary>
+<p>旧 P 距围栏 600，定位窗口横向 ±100、纵向 ±50；D≤180 时对已合格轴不再追中心。视觉另算：三个本方真框确定物资分区点（框左起 7/24）；超过 64 px 启动横移，≤32 px 停止；270～400 mm/s。新的 C 不做视觉微调。P 是车的定位目标，不是相机目标。建议先不放宽 P 的定位窗口，尤其不要扩大靠场心方向的纵差；即使按现有 ±50，最靠内 y=690，和黄块远沿只隔 30。±100/±50 是现状，不是对新场地的安全承诺。</p>
+<p>像素不是厘米。先拿 40 cm 视角的实车图、测两条横向已知距离标记的像素差并确认物资分区有效范围，再选择阈值。可对照 A=64/32 px 与 B=64/40 px（仅候选）：B 不更晚启动，只让已开始的横移早 8 px 停；不能解决从一开始就顶住的问题。新 y 的定位返补、侧挤抵扣及同类扫障返预备点都要一致；新的 P 不能沿用旧 y 补位。</p>
+<p>若保持同一名义 83° 变舵点与投送终点，600→400 使起点沿推入方向前移 200：前段 400→200，末段盲推 270 不变，总 670→470。侧挤只抵扣实际走过的一次；若抵扣已达新前段长度不能继续盲走 200，也不能绕过调舵等待。正常退出：抬舵机→轮程退 300→回运输姿态，再交接返搜。提前结束、超时、打滑以及合法多件重推都应从实际退出位算，不把退 300 当作里程证明或送达证明。</p></details>
+<details><summary>同类取障 ≠ 横扫；普通返搜 ≠ 原货找回</summary>
+<p>旧同类分支仅在非正式首件、合规同目的地等条件下进入；多障碍、贴边、已侧挤等可能改走 sweep。先朝右转、进 200 暂放原货、退 200、左转回本方围栏方向。取走挡路的可运物资后走正常抓取审核，目标是这一批实际物资的 P，不是 W1；P 完成定位和门口视觉对准再投。投后专门回原路线保存的 return_point（原物资预备点），转向原暂放物，再观察回抓，不是盲走到物块中心。找不到就放弃原找回任务恢复搜索。建议改版中这种局部抓送和原货回抓不再绕 C，等队员确认；普通场内取料则必须经 C。</p>
+<p>W1 红(-560,910)/蓝(560,-910)，旧 W2 红(-560,760)/蓝(560,-760)。非贴边 B3/B4 以往可能选 W2；改为需要横扫时一律 W1，仍扫 1000。选 W1 不自动解决接近它的路线：在新 P 处右转暂放后，按原顺序先沿 x 到扫障列、再沿 y 到 W1，第一段横跨黄块时只有 80 中心间隙。要基于车尾/敞爪外廓确认是否先移到净空足够的纵深再横移。门口单个物体的侧挤是否保留与“删 W2”分开。</p>
+<p>返搜用转向前的实际 U。保持车头朝围栏，从 U 横移至 x=0，再沿中缝倒回 y=0，最后平移至运送前记住的①或③。若“那边”指 x=±400 的搜索列，直接倒会擦障碍外沿；若指直接沿物资列 x=±150 倒，净宽也仅 100。U 确实处于黄块外侧、低位外廓有净空，是开始横移的前提。若现场偏好从黄块外绕，外侧线应按 |x|≥400+实测半宽+余量设，不是直接对着搜索列倒。</p></details>
+<p><small>图为代码/图纸推算，不是实车轨迹。满程推入点仅用于比较里程，不代表真实车能无接触越过围栏。改默认策略、禁选伤员、增加 C、改 P、单扫障点、返搜折线属于上下位配套设计，不写入封存 FinalRun。</small></p></article>
+<script>
+const sel=document.querySelector('#scene'), side=document.querySelector('#side'), map=document.querySelector('#map');
+function update(){const file=sel.value==='0'?'field.png':side.value+'-'+sel.value+'.png';map.src=file;map.alt=side.selectedOptions[0].text+' '+sel.selectedOptions[0].text;document.querySelector('#original').href=file}
+sel.onchange=side.onchange=update;document.querySelector('#next').onclick=()=>{sel.selectedIndex=(sel.selectedIndex+1)%sel.options.length;update()};
+</script></html>
