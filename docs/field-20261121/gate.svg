@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="410" viewBox="0 0 760 410" role="img" aria-labelledby="title">
+  <title id="title">红方门前局部俯视，示意横移使中心净距缩小，不代表实车外廓</title>
+  <rect width="760" height="410" fill="white"/>
+  <g font-family="Microsoft YaHei, sans-serif" fill="#192b38">
+    <text x="32" y="36" font-size="22">红方门前 · 旧路线的两个卡点</text>
+    <text x="32" y="66" font-size="15">上方为围栏方向；单位 mm。红方物资在中心线左侧，蓝方镜像。</text>
+    <!-- Scale: 0.7 px/mm; x origin 376; y=540 at 238 px. -->
+    <path d="M376 91V350" stroke="#9baab3" stroke-dasharray="5,5"/>
+    <path d="M55 238H698" stroke="#4c6571" stroke-dasharray="6,4"/>
+    <g fill="#f8d548" stroke="#59470e"><rect x="96" y="154" width="105" height="70"/><rect x="551" y="154" width="105" height="70"/></g>
+    <text x="105" y="195">固定障碍</text><text x="564" y="195">固定障碍</text>
+    <text x="308" y="192">净宽 500</text>
+    <path d="M337 347 L271 238 L271 102" fill="none" stroke="#11735f" stroke-width="4"/>
+    <path d="M271 238H215 M223 232L215 238L223 244" fill="none" stroke="#b13a29" stroke-width="4"/>
+    <circle cx="271" cy="238" r="5" fill="#11735f"/><circle cx="215" cy="238" r="5" fill="#b13a29"/>
+    <path d="M215 238L201 224" stroke="#b13a29" stroke-dasharray="3 2"/>
+    <text x="401" y="259" font-size="15">预备线 y=540；障碍近沿 y=560</text>
+    <text x="58" y="269" fill="#b13a29" font-size="14">向外横移 80 后</text><text x="58" y="291" fill="#b13a29" font-size="14">中心到障碍角 ≈28</text>
+    <text x="280" y="219" fill="#11735f" font-size="14">名义预备点</text>
+    <text x="282" y="119" fill="#11735f" font-size="14">直推时侧间隙 100</text>
+    <text x="32" y="390" font-size="15">线是定位参考点轨迹，不是轮缘；转头、开爪和带货时需要分别检查扫过的面积。</text>
+  </g>
+</svg>

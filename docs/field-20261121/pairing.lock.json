@@ -1,0 +1,27 @@
+{
+  "scope": "offline release record, not a runtime interlock",
+  "upper_repository": "https://github.com/danmo-teng/shijue_fangan-finals",
+  "upper_commit": "28deaa6861c0208adf4b00c125d213c687bd2a95",
+  "model_path": "yolo26n/x5_output_640_1121_final/yolo26n_6cls_640_1121_final_bpu_bayese_640x640_nv12.bin",
+  "model_expected_sha256": "9dae437399e38ab06b01d6555492de160f94390cac5d3799b14f99ee388070d7",
+  "lower_repository": "https://github.com/kkkkkkkkkkkkkkkk222222/Final_Run",
+  "FinalRun": {
+    "upper_commit": "28deaa6861c0208adf4b00c125d213c687bd2a95",
+    "source": "24c7dab93368bf9e46cf7366f0a9a9ca466b611b",
+    "tag": "FinalRun-backup-24c7dab",
+    "elf_sha256": "391b04efe352e5e0d5f9d9d19833a07d347c9b19d720b199fa5fb7dfd667145e",
+    "bin_sha256": "80e9391aa02c6f9d5300629b7d351725e44d86dd5ee31b7bcfbd8354736c15f1",
+    "firmware_id": "eb95f03244aa70ceaf86e3782a53c71df15bf5325958ad824531a778d00d53b8",
+    "field_actual": null
+  },
+  "FinalRun1": {
+    "upper_commit": "28deaa6861c0208adf4b00c125d213c687bd2a95",
+    "source_at_freeze": "385da2e8085ad81842ed58397833235c856305d1",
+    "field_actual": null
+  },
+  "FinalRun2": {
+    "status": "reserved source branch only; no validated pairing, launcher or flash",
+    "base": "385da2e8085ad81842ed58397833235c856305d1",
+    "upper_commit": null
+  }
+}
