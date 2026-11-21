@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>防守暂存路线确认 · 八个开局</title>
+<style>
+body{max-width:1480px;margin:1rem auto;padding:0 1rem;font:17px/1.65 "Microsoft YaHei",sans-serif;color:#192e3a}
+h1{font-size:1.6rem;margin:.3rem 0}h2{font-size:1.2rem}p{max-width:75em}select,button{font:inherit}nav{display:flex;flex-wrap:wrap;align-items:center;gap:1rem;border-block:1px solid #ccd6dc;padding:.7rem 0}img{display:block;width:100%;height:auto;margin:.5rem 0}a{color:#155d81}
+</style></head>
+<body><header><small>队员看图确认 / 未改车、未烧录</small><h1>从哪里去防守点，又怎么回到①？</h1></header>
+<nav><label>选图 <select id="scene"><option value="overview">全部八种（候选点）</option>
+<optgroup label="红方"><option value="red-1">红方 · 1 区</option><option value="red-2">红方 · 2 区</option><option value="red-3">红方 · 3 区</option><option value="red-4">红方 · 4 区</option></optgroup>
+<optgroup label="蓝方"><option value="blue-1">蓝方 · 1 区</option><option value="blue-2">蓝方 · 2 区</option><option value="blue-3">蓝方 · 3 区</option><option value="blue-4">蓝方 · 4 区</option></optgroup>
+<option value="offset">偏位抓取 / 放货航向不同</option></select></label>
+<button type="button" id="next">下一图 →</button><a id="full" href="overview.png">打开原尺寸</a><a href="../index.html">回到整场图</a></nav>
+<img id="map" src="overview.png" alt="八种开局路线总览">
+<h2>先定地点，再检查出入方向</h2>
+<p>图纸中心为 (0,0)，单位 mm。D 的 x 由出发区决定（1/3 在左，2/4 在右），y 由阵营决定（红正蓝负）。D 是放货时车辆的目标定位点，不是货物落地中心。现行 |x|=700、|y|=550；候选只把 |y| 收到 350。① 恒在 y=0，x 为同侧 ±400，③在另一侧。开局成功暂存后回的是①，不是③，也不是正式送货的门前预备点。</p>
+<p>紫线为标称对角发车：按地图默认角点标定，倒退 600、转 180°、前进 1100，进入观察区域。之后是实际夹内检查/识别、接近与抓取，不是一条固定到 (0,0) 的路线。拿到物料并经确认才有 P→D。普通图用 P=(0,0)、准确到 D、放手方向沿 P→D 做两版同条件比较，不表示车必经场心。绿线到 D，黑三角是放货朝向；橙线是相反方向倒车 350。蓝线从实际退完的 B 直返①；到站再转朝场心搜索，不是先把车头转到蓝箭头方向才开动。</p>
+<p>偏位图单独改变放手航向：同一红方 D，若车头为 215°，倒车反而靠近黄块。黄块占 |x|=250～400、|y|=560～660，高 25。数字是每段到四块矩形的最小中心距离，没有扣除轮、开爪及载荷外廓，也不是转动扫掠、打滑或碰撞实测。</p>
+<h2>伤员口径已确认，不改变本次图中路径</h2>
+<p>只看到伤员/疑似伤员，不为它追踪或开爪抓取，开局堆和扫障找回同样适用。“不为伤员开爪”不等于禁用发车、分离、清障或放货时的机构动作。为其他材料抓取时遇到混入的伤员，仍识别并正常分离、按新画面审核，不能将混装当成合法材料。在实际投送预备点仍执行正常判障和扫障，不把疑似伤员框解释为通道畅通。</p>
+<p>依据：上位 28deaa6（state_machine.py 的 stash_point、INITIAL_RELEASE、_begin_search_transfer；search_transfer.py），下位 24c7dab（Task.c 的 START、stash_backoff_pending）。开局非空暂存有专门审核分支，这份约定不能靠只从搜索优先级删一个类别实现。本次只更新图稿。</p>
+<script>
+const sel=document.getElementById('scene'),pic=document.getElementById('map'),full=document.getElementById('full');
+function update(){pic.src=sel.value+'.png';pic.alt=sel.selectedOptions[0].text;full.href=pic.src}
+sel.onchange=update;document.getElementById('next').onclick=()=>{sel.selectedIndex=(sel.selectedIndex+1)%sel.options.length;update()};
+</script></body></html>
