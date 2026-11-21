@@ -1,0 +1,27 @@
+{
+  "date": "2026-11-22 Asia/Shanghai",
+  "lower_commit": "b2738ec39c06daaaf483e317ea60f00c9c490463",
+  "lower_branch": "FinalRun2-material-push200",
+  "repository": "https://github.com/kkkkkkkkkkkkkkkk222222/Final_Run",
+  "visibility": "public",
+  "upper_commit": "2fd77f918278b2e3814c1873b7fedb199a791cbd",
+  "upper_source": "upper_changes/",
+  "upper_local_branch": "finals-material-push200",
+  "front_nominal_mm": 200,
+  "tail_mm": 270,
+  "formal_casualty_delivery": false,
+  "casualty_recognition_separation_clearance": true,
+  "casualty_only_action": "existing release, retreat300, existing turn/search exit",
+  "firmware_id": "1401da3dd06a75f529726e59cfef0bdf635b6fa45c7e644c2b18c279a9dd1e52",
+  "source_dirty": false,
+  "sha256": {
+    "elf": "b3263b8deb3eaba7696cd9abca142b987ecec0602d4feabad91b52afdeb1cc1d",
+    "hex": "f1bae6207e29ad4935b13a588d3b9f5c3ef465d80641092253001e3ff4dfe6c2",
+    "bin": "4512c8976910aa660460db026bdadbcacd083a0e215cafd5f6a691e5fe9da099"
+  },
+  "flash_bytes": 186076,
+  "ram_bytes": 37592,
+  "flashed": false,
+  "actual_lower": null,
+  "actual_upper": null
+}
