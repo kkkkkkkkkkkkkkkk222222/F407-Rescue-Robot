@@ -76,16 +76,16 @@ target_link_libraries(STM32_Drivers PUBLIC stm32cubemx)
 
 
 # Add STM32CubeMX generated application sources to the project
-target_sources(${F405_PROFILE} PRIVATE ${MX_Application_Src})
+target_sources(${firmware_target} PRIVATE ${MX_Application_Src})
 
 # Link directories setup
-target_link_directories(${F405_PROFILE} PRIVATE ${MX_LINK_DIRS})
+target_link_directories(${firmware_target} PRIVATE ${MX_LINK_DIRS})
 
 # Add libraries to the project
-target_link_libraries(${F405_PROFILE} ${MX_LINK_LIBS})
+target_link_libraries(${firmware_target} ${MX_LINK_LIBS})
 
 # Add the map file to the list of files to be removed with 'clean' target
-set_target_properties(${F405_PROFILE} PROPERTIES ADDITIONAL_CLEAN_FILES ${F405_PROFILE}.map)
+set_target_properties(${firmware_target} PROPERTIES ADDITIONAL_CLEAN_FILES ${F405_PROFILE}.map)
 
 # Validate that STM32CubeMX code is compatible with C standard
 if((CMAKE_C_STANDARD EQUAL 90) OR (CMAKE_C_STANDARD EQUAL 99))

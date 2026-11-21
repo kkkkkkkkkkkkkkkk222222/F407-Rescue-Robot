@@ -55,18 +55,24 @@ message("Build type: " ${CMAKE_BUILD_TYPE})
 enable_language(C ASM)
 
 # Create an executable object type
-add_executable(${F405_PROFILE})
+set(firmware_target ${F405_PROFILE})
+if(F405_PROFILE STREQUAL "NormalRun")
+    # The untouched FinalRun backup already exports an executable named NormalRun.
+    set(firmware_target PrelimFirmware)
+endif()
+add_executable(${firmware_target})
+set_target_properties(${firmware_target} PROPERTIES OUTPUT_NAME "${F405_PROFILE}")
 
 # Add STM32CubeMX generated sources
 add_subdirectory(cmake/stm32cubemx)
 
 # Link directories setup
-target_link_directories(${F405_PROFILE} PRIVATE
+target_link_directories(${firmware_target} PRIVATE
     # Add user defined library search paths
 )
 
 # Add sources to executable
-target_sources(${F405_PROFILE} PRIVATE
+target_sources(${firmware_target} PRIVATE
     Main/Src/CenteringTask.c
     Main/Src/Debug.c
     Main/Src/DebugClock.c
@@ -89,7 +95,7 @@ target_sources(${F405_PROFILE} PRIVATE
     Main/Src/vision.c
     Main/Src/WheelCheck.c
 )
-target_sources(${F405_PROFILE} PRIVATE
+target_sources(${firmware_target} PRIVATE
     Boards/F405/Src/encoder_f405.c
     Boards/F405/Src/diagnostics_f405.c
     Boards/F405/Src/motor_f405.c
@@ -98,14 +104,14 @@ target_sources(${F405_PROFILE} PRIVATE
 )
 
 # Add include paths
-target_include_directories(${F405_PROFILE} PRIVATE
+target_include_directories(${firmware_target} PRIVATE
     Main/Inc
 )
 
-target_compile_definitions(${F405_PROFILE} PRIVATE APP_ACTIVE_MODE=${APP_ACTIVE_MODE_OVERRIDE})
-target_compile_definitions(${F405_PROFILE} PRIVATE
+target_compile_definitions(${firmware_target} PRIVATE APP_ACTIVE_MODE=${APP_ACTIVE_MODE_OVERRIDE})
+target_compile_definitions(${firmware_target} PRIVATE
     APP_NORMALDEBUG_MOTION_TEST=$<BOOL:${APP_NORMALDEBUG_MOTION_TEST}>)
-target_compile_definitions(${F405_PROFILE} PRIVATE APP_NORMALDEBUG_UPPER_BAUD=${APP_NORMALDEBUG_UPPER_BAUD})
+target_compile_definitions(${firmware_target} PRIVATE APP_NORMALDEBUG_UPPER_BAUD=${APP_NORMALDEBUG_UPPER_BAUD})
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated")
 add_custom_target(debug_build_identity
     COMMAND ${CMAKE_COMMAND} "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
@@ -113,8 +119,8 @@ add_custom_target(debug_build_identity
         "-DIDENTITY_CONFIG=${CMAKE_BUILD_TYPE}|${APP_BOARD}|${APP_ACTIVE_MODE_OVERRIDE}|${APP_NORMALDEBUG_MOTION_TEST}|${APP_NORMALDEBUG_UPPER_BAUD}|${CMAKE_C_COMPILER}|${CMAKE_C_FLAGS}|${CMAKE_C_FLAGS_DEBUG}"
         -P "${CMAKE_SOURCE_DIR}/cmake/DebugBuildIdentity.cmake"
     BYPRODUCTS "${CMAKE_BINARY_DIR}/generated/DebugBuildIdentity.h")
-add_dependencies(${F405_PROFILE} debug_build_identity)
-target_include_directories(${F405_PROFILE} PRIVATE "${CMAKE_BINARY_DIR}/generated")
+add_dependencies(${firmware_target} debug_build_identity)
+target_include_directories(${firmware_target} PRIVATE "${CMAKE_BINARY_DIR}/generated")
 
 # Remove wrong libob.a library dependency when using cpp files
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
@@ -126,16 +132,16 @@ list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 find_program(POWERSHELL_EXECUTABLE NAMES pwsh powershell)
 
 # Add linked libraries
-target_link_libraries(${F405_PROFILE}
+target_link_libraries(${firmware_target}
     stm32cubemx
 
     # Add user defined libraries
 )
 
 option(APP_AUTO_BACKUP "Backup after firmware link" ON)
-add_custom_command(TARGET ${F405_PROFILE} POST_BUILD
-    COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:${F405_PROFILE}> ${F405_PROFILE}.hex
-    COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:${F405_PROFILE}> ${F405_PROFILE}.bin
+add_custom_command(TARGET ${firmware_target} POST_BUILD
+    COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:${firmware_target}> ${F405_PROFILE}.hex
+    COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:${firmware_target}> ${F405_PROFILE}.bin
     COMMENT "Generating firmware images"
 )
 
@@ -147,7 +153,7 @@ add_custom_target(github_backup ALL
     COMMAND ${POWERSHELL_EXECUTABLE} -NoProfile -ExecutionPolicy Bypass
             -File ${CMAKE_SOURCE_DIR}/tools/AutoBackup.ps1
             -Repository ${CMAKE_SOURCE_DIR}
-    DEPENDS ${F405_PROFILE}
+    DEPENDS ${firmware_target}
     COMMENT "Committing, pushing, and verifying GitHub backup"
     VERBATIM
 )
