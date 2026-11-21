@@ -1,0 +1,21 @@
+{
+  "date": "2026-11-22 Asia/Shanghai",
+  "lower_repo": "https://github.com/kkkkkkkkkkkkkkkk222222/Final_Run",
+  "lower_branch": "FinalRun2-pose-delivery",
+  "lower_commit": "860de9e1f6dd59da19e80d723868e109d7ae61e9",
+  "upper_commit": "46d9b0323105178071b2afc3a9bb93d94b14d856",
+  "upper_delivery": "official push returned 403; full patch published in lower docs/contracts/rdk_pose_delivery_46d9b03.patch",
+  "firmware_id": "6cb2f0b71a51977b31a06325b329c73eadc8a72b4f69045563f3721df06c8080",
+  "source_dirty": false,
+  "build_directory": "WWW/build/F405/FinalRun2",
+  "sha256": {
+    "elf": "92882885d921a2f7588e0e1d5064f49201c5003f7fc9d3a376b35c45feadbe67",
+    "hex": "b5cf1f42f0706474513cfa3b77a52f41c38bce82618d3d72b7ce20fbfd4202b8",
+    "bin": "a10ff9e55f6dad976d0ba60db2494af599ba1af40407e8b42c1ebdfd04e9906a"
+  },
+  "flash_bytes": 186092,
+  "ram_bytes": 37592,
+  "flashed": false,
+  "actual_lower": null,
+  "actual_upper": null
+}

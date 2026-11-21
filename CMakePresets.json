@@ -2,6 +2,14 @@
     "version": 3,
     "configurePresets": [
         {
+            "name": "FinalRun2",
+            "inherits": "f405",
+            "toolchainFile": "${sourceDir}/../FinalRun2/cmake/gcc-arm-none-eabi.cmake",
+            "cacheVariables": {
+                "APP_AUTO_BACKUP": "OFF"
+            }
+        },
+        {
             "name": "FinalRun1",
             "inherits": "f405",
             "toolchainFile": "${sourceDir}/../FinalRun1/cmake/gcc-arm-none-eabi.cmake",
@@ -39,6 +47,10 @@
         }
     ],
     "buildPresets": [
+        {
+            "name": "FinalRun2",
+            "configurePreset": "FinalRun2"
+        },
         { "name": "FinalRun1", "configurePreset": "FinalRun1" },
         {
             "name": "MotionDebug",
